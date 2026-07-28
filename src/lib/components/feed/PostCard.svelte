@@ -40,6 +40,8 @@
 	const imagePathPattern =
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const urlPattern = /https?:\/\/[^\s<>()]+/giu;
+	const sensitivePattern =
+		/\b(nsfw|sensitive|content warning|cw:|18\+|adult|nude|nudity|explicit|violence|graphic|gore|blood|self[-\s]?harm)\b/i;
 	const longTextLimit = 420;
 
 	const profile = $derived(profiles.get(note.pubkey));
@@ -88,8 +90,14 @@
 	const contentTokens = $derived(parseContent(visibleContent));
 	const mediaAttachments = $derived(extractMedia(note.content));
 	const firstAttachment = $derived(mediaAttachments[0]);
+	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
+	const hiddenMediaCount = $derived(
+		Math.max(0, mediaAttachments.length - visibleMediaAttachments.length)
+	);
 	let burst = $state(false);
 	let rawOpen = $state(false);
+	let previewOpen = $state(false);
+	let previewImageUrl = $state('');
 	let saved = $state(isSaved());
 	let replyOpen = $state(false);
 	let replyText = $state('');
@@ -100,6 +108,9 @@
 	let commentReplyText = $state('');
 	let commentReplying = $state(false);
 	let failedMedia = $state<Record<string, boolean>>({});
+	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
+	const sensitiveReason = $derived(sensitiveMediaReason());
+	const shouldCoverMedia = $derived(!!sensitiveReason);
 	const directReplies = $derived(
 		feed.notes
 			.filter((reply) => reply.replyTo === note.id && reply.id !== note.id)
@@ -125,6 +136,43 @@
 	function persistSaved(ids: string[]) {
 		if (!browser) return;
 		localStorage.setItem('bitos:saved-notes', JSON.stringify(ids));
+	}
+
+	function sensitiveMediaReason() {
+		const contentWarning = note.tags.find(
+			(tag) => tag[0] === 'content-warning' || tag[0] === 'warning'
+		);
+		if (contentWarning) return contentWarning[1] || 'Sensitive media';
+		const sensitiveTag = note.tags.find(
+			(tag) => tag[0] === 't' && sensitivePattern.test(tag[1] ?? '')
+		);
+		if (sensitiveTag) return `Tagged #${sensitiveTag[1]}`;
+		return sensitivePattern.test(note.content) ? 'Sensitive media' : '';
+	}
+
+	function isMediaRevealed(url: string) {
+		return !shouldCoverMedia || !!revealedSensitiveMedia[url];
+	}
+
+	function revealMedia(url: string) {
+		revealedSensitiveMedia = { ...revealedSensitiveMedia, [url]: true };
+	}
+
+	function mediaGridClass(count: number) {
+		if (count <= 1) return 'grid-cols-1';
+		if (count === 2) return 'grid-cols-2';
+		return 'grid-cols-2 auto-rows-[150px] sm:auto-rows-[180px]';
+	}
+
+	function mediaTileClass(index: number, count: number) {
+		if (count <= 2) return 'aspect-video';
+		if (count === 3 && index === 0) return 'row-span-2';
+		if (count >= 5 && index < 2) return 'row-span-2';
+		return '';
+	}
+
+	function mediaContentClass(count: number) {
+		return count <= 2 ? 'aspect-video' : 'size-full';
 	}
 
 	function compactSats(count: number) {
@@ -162,6 +210,11 @@
 		if (!browser || !firstAttachment) return;
 		window.open(firstAttachment.url, '_blank', 'noopener,noreferrer');
 		popovers.close();
+	}
+
+	function previewImage(url: string) {
+		previewImageUrl = url;
+		previewOpen = true;
 	}
 
 	function startReply() {
@@ -449,6 +502,10 @@
 			toasts.error((e as Error).message);
 		}
 	}
+
+	$effect(() => {
+		if (!previewOpen) previewImageUrl = '';
+	});
 </script>
 
 <article
@@ -654,19 +711,22 @@
 
 	{#if mediaAttachments.length}
 		<div
-			class="mx-4 mb-3 grid overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaAttachments.length ===
-			1
-				? 'grid-cols-1'
-				: 'grid-cols-2'}"
+			class="mx-4 mb-3 grid gap-0.5 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaGridClass(
+				visibleMediaAttachments.length
+			)}"
 		>
-			{#each mediaAttachments as media (media.url)}
+			{#each visibleMediaAttachments as media, mediaIndex (media.url)}
+				{@const tileClass = mediaTileClass(mediaIndex, visibleMediaAttachments.length)}
+				{@const contentClass = mediaContentClass(visibleMediaAttachments.length)}
+				{@const showMoreOverlay =
+					hiddenMediaCount > 0 && mediaIndex === visibleMediaAttachments.length - 1}
 				{#if media.type === 'image'}
 					{#if failedMedia[media.url]}
 						<a
 							href={media.url}
 							target="_blank"
 							rel="noreferrer"
-							class="flex min-h-32 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+							class="{tileClass} flex min-h-32 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
 						>
 							<span
 								class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
@@ -682,12 +742,39 @@
 								>
 							</span>
 						</a>
+					{:else if !isMediaRevealed(media.url)}
+						<div class="{tileClass} relative block bg-black">
+							<img
+								src={media.url}
+								alt="Blurred sensitive attachment"
+								loading="lazy"
+								referrerpolicy="no-referrer"
+								onerror={() => markMediaFailed(media.url)}
+								class="{contentClass} scale-105 object-cover blur-2xl saturate-50 transition"
+							/>
+							<button
+								type="button"
+								class="absolute inset-0 z-10 grid place-items-center bg-black/45 p-4 text-center text-white backdrop-blur-sm"
+								onclick={() => revealMedia(media.url)}
+								aria-label="Show sensitive media"
+							>
+								<span class="max-w-56 rounded-2xl bg-black/55 px-4 py-3 shadow-lg">
+									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6 text-white/90" />
+									<span class="block text-[13px] font-bold">Sensitive media hidden</span>
+									<span class="mt-1 block text-[11px] text-white/75">{sensitiveReason}</span>
+									<span
+										class="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
+									>
+										Show media
+									</span>
+								</span>
+							</button>
+						</div>
 					{:else}
-						<a
-							href={media.url}
-							target="_blank"
-							rel="noreferrer"
-							class="group relative block bg-black"
+						<button
+							type="button"
+							class="{tileClass} group relative block w-full bg-black"
+							onclick={() => previewImage(media.url)}
 						>
 							<img
 								src={media.url}
@@ -695,27 +782,67 @@
 								loading="lazy"
 								referrerpolicy="no-referrer"
 								onerror={() => markMediaFailed(media.url)}
-								class="aspect-video size-full object-cover transition group-hover:scale-[1.02]"
+								class="{contentClass} object-cover transition group-hover:scale-[1.02]"
 							/>
-						</a>
+							<span
+								class="absolute right-3 bottom-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white opacity-0 transition group-hover:opacity-100"
+							>
+								Preview
+							</span>
+							{#if showMoreOverlay}
+								<span
+									class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+								>
+									+{hiddenMediaCount}
+								</span>
+							{/if}
+						</button>
 					{/if}
 				{:else if media.type === 'video'}
-					<div class="relative bg-black">
+					<div class="{tileClass} relative bg-black">
 						<!-- svelte-ignore a11y_media_has_caption -->
 						<video
 							src={media.url}
-							controls
+							controls={isMediaRevealed(media.url)}
 							preload="metadata"
 							playsinline
-							class="aspect-video size-full object-cover"
+							class="{contentClass} object-cover transition {isMediaRevealed(media.url)
+								? ''
+								: 'scale-105 blur-2xl saturate-50'}"
 						></video>
+						{#if showMoreOverlay && isMediaRevealed(media.url)}
+							<div
+								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+							>
+								+{hiddenMediaCount}
+							</div>
+						{/if}
+						{#if !isMediaRevealed(media.url)}
+							<button
+								type="button"
+								class="absolute inset-0 z-10 grid place-items-center bg-black/55 p-4 text-center text-white backdrop-blur-sm"
+								onclick={() => revealMedia(media.url)}
+								aria-label="Show sensitive video"
+							>
+								<span class="max-w-56 rounded-2xl bg-black/55 px-4 py-3 shadow-lg">
+									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6 text-white/90" />
+									<span class="block text-[13px] font-bold">Sensitive video hidden</span>
+									<span class="mt-1 block text-[11px] text-white/75">{sensitiveReason}</span>
+									<span
+										class="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
+									>
+										Show video
+									</span>
+								</span>
+							</button>
+						{/if}
 					</div>
 				{:else if media.type === 'embed' && media.embedUrl}
-					<div class="overflow-hidden bg-black">
+					<div class="{tileClass} relative overflow-hidden bg-black">
 						<iframe
 							src={media.embedUrl}
 							title={`${media.provider ?? 'Video'} embed`}
-							class="aspect-video size-full"
+							class={contentClass}
 							loading="lazy"
 							allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
 							allowfullscreen
@@ -729,9 +856,16 @@
 							<span class="truncate">{media.provider ?? media.host}</span>
 							<Icon name="i-lucide-external-link" class="size-4 shrink-0" />
 						</a>
+						{#if showMoreOverlay}
+							<div
+								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+							>
+								+{hiddenMediaCount}
+							</div>
+						{/if}
 					</div>
 				{:else if media.type === 'audio'}
-					<div class="flex min-h-28 flex-col justify-center gap-3 p-4">
+					<div class="{tileClass} flex min-h-28 flex-col justify-center gap-3 p-4">
 						<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
 							<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
 							<span class="truncate">{media.host}</span>
@@ -743,7 +877,7 @@
 						href={media.url}
 						target="_blank"
 						rel="noreferrer"
-						class="flex min-h-28 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+						class="{tileClass} flex min-h-28 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<span
 							class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
@@ -1109,4 +1243,39 @@
 		<pre
 			class="max-h-[52vh] overflow-auto rounded-xl bg-[var(--ui-bg-muted)] p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text-muted)]">{rawNote}</pre>
 	</div>
+</Dialog>
+
+<Dialog bind:open={previewOpen} title="Image preview">
+	{#if previewImageUrl}
+		<div class="space-y-3">
+			<div class="overflow-hidden rounded-2xl bg-black">
+				<img
+					src={previewImageUrl}
+					alt="Preview"
+					referrerpolicy="no-referrer"
+					class="max-h-[70vh] w-full object-contain"
+				/>
+			</div>
+			<p class="truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">{previewImageUrl}</p>
+		</div>
+	{/if}
+	{#snippet footer()}
+		<button
+			type="button"
+			class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
+			onclick={() => copyText(previewImageUrl, 'Image URL')}
+		>
+			<Icon name="i-lucide-copy" class="size-4" />
+			Copy URL
+		</button>
+		<a
+			href={previewImageUrl}
+			target="_blank"
+			rel="noreferrer"
+			class="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
+		>
+			<Icon name="i-lucide-external-link" class="size-4" />
+			Open original
+		</a>
+	{/snippet}
 </Dialog>

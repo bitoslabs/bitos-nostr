@@ -16,6 +16,7 @@ import { zapSats, zapTarget } from './zaps';
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
+const MAX_TEXT_NOTE_CHARS = 16_000;
 
 function isReaction(content: string): boolean {
 	// kind 7 reactions are either a + / - or an emoji shortcode
@@ -337,6 +338,11 @@ class FeedStore {
 		if (!id) throw new Error('No identity — create or import a key first');
 		const text = content.trim();
 		if (!text) throw new Error('Nothing to post');
+		if (text.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(
+				`Normal notes are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
+			);
+		}
 		const unsigned = {
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: text,
@@ -357,6 +363,9 @@ class FeedStore {
 		if (!id) throw new Error('No identity — create or import a key first');
 		const text = content.trim();
 		if (!text) throw new Error('Nothing to reply');
+		if (text.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(`Replies are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+		}
 
 		const rootId =
 			note.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? note.replyTo ?? note.id;
