@@ -7,6 +7,8 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { contacts } from '$lib/nostr/contacts.svelte';
+	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { ensureConnected } from '$lib/nostr/pool';
 	import NavRail from '$lib/components/shell/NavRail.svelte';
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
@@ -34,11 +36,15 @@
 		lastPk = pk;
 		if (pk) {
 			ensureConnected();
+			contacts.start();
 			feed.start();
 			dms.start();
+			notifications.start();
 		} else {
+			contacts.stop();
 			feed.stop();
 			dms.stop();
+			notifications.stop();
 		}
 	});
 
@@ -49,8 +55,10 @@
 		if (sig === lastRelays || !identity.current) return;
 		lastRelays = sig;
 		ensureConnected();
+		contacts.start();
 		feed.start();
 		dms.start();
+		notifications.start();
 	});
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
@@ -77,7 +85,9 @@
 		</aside>
 
 		<!-- Main view (full-bleed; each route renders its own Pulse layout) -->
-		<main class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">
+		<main
+			class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
+		>
 			{@render children?.()}
 		</main>
 	</div>

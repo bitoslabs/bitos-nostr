@@ -14,6 +14,7 @@ export interface Profile {
 	website?: string;
 	nip05?: string;
 	lud16?: string;
+	lud06?: string;
 }
 
 /** A kind 1 text note ready for the feed UI. */
@@ -27,6 +28,19 @@ export interface FeedNote {
 	/** Reactions aggregated by emoji. */
 	reactions: { emoji: string; count: number; byMe: boolean; myEventId?: string }[];
 	repostCount: number;
+	zapCount: number;
+	zapTotalSats: number;
+}
+
+/** Activity addressed to the current user's pubkey. */
+export interface NotificationItem {
+	id: string;
+	type: 'like' | 'comment' | 'repost' | 'follow';
+	pubkey: string;
+	targetId?: string;
+	content: string;
+	createdAt: number;
+	read: boolean;
 }
 
 /** A NIP-04 direct message. */

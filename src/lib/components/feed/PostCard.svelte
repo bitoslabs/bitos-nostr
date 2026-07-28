@@ -25,7 +25,11 @@
 		provider?: string;
 	};
 
-	let { note, index = 0 }: { note: FeedNote; index?: number } = $props();
+	let {
+		note,
+		index = 0,
+		onNoteChange
+	}: { note: FeedNote; index?: number; onNoteChange?: (note: FeedNote) => void } = $props();
 
 	const contentPattern =
 		/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
@@ -40,9 +44,17 @@
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
+	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(identity.current?.pk === note.pubkey);
 	const liked = $derived(note.reactions.some((r) => r.byMe));
 	const reactionCount = $derived(note.reactions.reduce((s, r) => s + r.count, 0));
+	const zapLabel = $derived(
+		note.zapTotalSats
+			? `${compactSats(note.zapTotalSats)} sats`
+			: note.zapCount
+				? `${note.zapCount} zaps`
+				: 'Zap'
+	);
 	const menuId = $derived(`post-menu:${note.id}`);
 	const menuOpen = $derived(popovers.isOpen(menuId));
 	const noteLink = $derived(`nostr:${noteEncode(note.id)}`);
@@ -58,7 +70,9 @@
 				tags: note.tags,
 				replyTo: note.replyTo,
 				reactions: note.reactions,
-				repostCount: note.repostCount
+				repostCount: note.repostCount,
+				zapCount: note.zapCount,
+				zapTotalSats: note.zapTotalSats
 			},
 			null,
 			2
@@ -82,6 +96,9 @@
 	let replying = $state(false);
 	let replyInput: HTMLInputElement | undefined;
 	let showAllReplies = $state(false);
+	let replyingToCommentId = $state('');
+	let commentReplyText = $state('');
+	let commentReplying = $state(false);
 	let failedMedia = $state<Record<string, boolean>>({});
 	const directReplies = $derived(
 		feed.notes
@@ -110,6 +127,26 @@
 		localStorage.setItem('bitos:saved-notes', JSON.stringify(ids));
 	}
 
+	function compactSats(count: number) {
+		if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+		if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}K`;
+		return `${count}`;
+	}
+
+	function commentLiked(reply: FeedNote) {
+		return reply.reactions.some((reaction) => reaction.byMe);
+	}
+
+	function commentReactionCount(reply: FeedNote) {
+		return reply.reactions.reduce((sum, reaction) => sum + reaction.count, 0);
+	}
+
+	function childReplies(replyId: string) {
+		return feed.notes
+			.filter((reply) => reply.replyTo === replyId)
+			.sort((a, b) => a.createdAt - b.createdAt);
+	}
+
 	async function copyText(value: string, label: string) {
 		try {
 			await navigator.clipboard.writeText(value);
@@ -134,6 +171,15 @@
 		}
 		replyOpen = true;
 		setTimeout(() => replyInput?.focus(), 0);
+	}
+
+	function startCommentReply(reply: FeedNote) {
+		if (!identity.current) {
+			toasts.error('Create or import a key first');
+			return;
+		}
+		replyingToCommentId = reply.id;
+		commentReplyText = '';
 	}
 
 	function splitTrailingPunctuation(value: string) {
@@ -302,6 +348,7 @@
 		try {
 			const wasLiked = liked;
 			await feed.react(note, '❤️');
+			if (onNoteChange) onNoteChange(nextLocalReaction(note, wasLiked));
 			if (!wasLiked) {
 				burst = true;
 				setTimeout(() => (burst = false), 600);
@@ -309,6 +356,45 @@
 		} catch (e) {
 			toasts.error((e as Error).message);
 		}
+	}
+
+	function nextLocalReaction(current: FeedNote, wasLiked: boolean): FeedNote {
+		if (wasLiked) {
+			return {
+				...current,
+				reactions: current.reactions
+					.map((reaction) =>
+						reaction.byMe
+							? {
+									...reaction,
+									count: Math.max(0, reaction.count - 1),
+									byMe: false,
+									myEventId: undefined
+								}
+							: reaction
+					)
+					.filter((reaction) => reaction.count > 0)
+			};
+		}
+
+		const reactions = current.reactions.map((reaction) => ({ ...reaction }));
+		const existing = reactions.find((reaction) => reaction.emoji === '❤️');
+		if (existing) {
+			existing.count += 1;
+			existing.byMe = true;
+		} else {
+			reactions.push({ emoji: '❤️', count: 1, byMe: true });
+		}
+		return { ...current, reactions };
+	}
+
+	function zapNote() {
+		if (!lightningAddress) {
+			toasts.info('This author has no Lightning address');
+			return;
+		}
+		if (!browser) return;
+		window.location.href = `lightning:${lightningAddress}`;
 	}
 
 	async function submitReply() {
@@ -323,6 +409,44 @@
 			toasts.error((e as Error).message);
 		} finally {
 			replying = false;
+		}
+	}
+
+	async function reactToComment(reply: FeedNote) {
+		try {
+			await feed.react(reply, '❤️');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		}
+	}
+
+	async function submitCommentReply(reply: FeedNote) {
+		if (!commentReplyText.trim() || commentReplying) return;
+		commentReplying = true;
+		try {
+			await feed.reply(reply, commentReplyText);
+			commentReplyText = '';
+			replyingToCommentId = '';
+			toasts.success('Reply posted to Nostr');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			commentReplying = false;
+		}
+	}
+
+	function hideComment(reply: FeedNote) {
+		feed.hideNote(reply.id);
+		toasts.info('Comment hidden');
+	}
+
+	async function deleteComment(reply: FeedNote) {
+		if (!confirm('Request deletion for this comment?')) return;
+		try {
+			await feed.deleteNote(reply);
+			toasts.success('Deletion request published');
+		} catch (e) {
+			toasts.error((e as Error).message);
 		}
 	}
 </script>
@@ -493,7 +617,7 @@
 					{token.value}
 				{:else if token.type === 'hashtag'}
 					<a
-						href={`/discover?tag=${encodeURIComponent(token.tag)}`}
+						href={`/?tag=${encodeURIComponent(token.tag)}`}
 						class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
 					>
 						{token.value}
@@ -640,18 +764,20 @@
 	{/if}
 
 	<!-- Reactions summary -->
-	{#if reactionCount > 0}
+	{#if reactionCount > 0 || note.zapCount > 0}
 		<div
 			class="flex items-center justify-between px-4 pt-1 pb-2 text-[12px] text-[var(--ui-text-dimmed)]"
 		>
 			<div class="flex items-center gap-1.5">
-				<span
-					class="grid size-5 place-items-center rounded-full bg-primary-500 text-[10px] ring-2 ring-[var(--surface-bg)]"
-					>❤️</span
-				>
-				<span>{reactionCount}</span>
+				{#if reactionCount > 0}
+					<span
+						class="grid size-5 place-items-center rounded-full bg-primary-500 text-[10px] ring-2 ring-[var(--surface-bg)]"
+						>❤️</span
+					>
+					<span>{reactionCount}</span>
+				{/if}
 			</div>
-			<span>{note.repostCount || 0} reposts</span>
+			<span>{note.repostCount || 0} reposts · {compactSats(note.zapTotalSats)} sats</span>
 		</div>
 	{/if}
 
@@ -698,6 +824,15 @@
 		</button>
 		<button
 			type="button"
+			onclick={zapNote}
+			disabled={!lightningAddress}
+			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
+		>
+			<Icon name="i-lucide-zap" class="size-[16px]" />
+			<span>{zapLabel}</span>
+		</button>
+		<button
+			type="button"
 			onclick={toggleSaved}
 			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 		>
@@ -711,6 +846,7 @@
 				{@const replyProfile = profiles.get(reply.pubkey)}
 				{@const replyName =
 					replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
+				{@const children = childReplies(reply.id)}
 				<div class="flex gap-2.5">
 					<a href={`/profile/${reply.pubkey}`} class="shrink-0">
 						<Avatar
@@ -739,7 +875,7 @@
 									{token.value}
 								{:else if token.type === 'hashtag'}
 									<a
-										href={`/discover?tag=${encodeURIComponent(token.tag)}`}
+										href={`/?tag=${encodeURIComponent(token.tag)}`}
 										class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
 									>
 										{token.value}
@@ -763,6 +899,134 @@
 								{/if}
 							{/each}
 						</p>
+						<div class="mt-1.5 flex items-center gap-3 text-[11.5px] font-bold">
+							<button
+								type="button"
+								onclick={() => reactToComment(reply)}
+								class={commentLiked(reply)
+									? 'text-primary-500'
+									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}
+							>
+								{commentLiked(reply) ? 'Unlike' : 'Like'}
+								{#if commentReactionCount(reply)}
+									<span class="font-semibold"> · {commentReactionCount(reply)}</span>
+								{/if}
+							</button>
+							<button
+								type="button"
+								onclick={() => startCommentReply(reply)}
+								class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+							>
+								Reply
+							</button>
+							<button
+								type="button"
+								onclick={() => hideComment(reply)}
+								class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+							>
+								Hide
+							</button>
+							{#if identity.current?.pk === reply.pubkey}
+								<button
+									type="button"
+									onclick={() => deleteComment(reply)}
+									class="text-[var(--tone-error-text)] hover:underline"
+								>
+									Delete
+								</button>
+							{/if}
+						</div>
+
+						{#if children.length}
+							<div class="mt-3 space-y-2 border-l border-[var(--ui-border-muted)] pl-3">
+								{#each children.slice(0, 3) as child (child.id)}
+									{@const childProfile = profiles.get(child.pubkey)}
+									{@const childName =
+										childProfile?.display_name || childProfile?.name || shortKey(child.pubkey)}
+									<div class="flex gap-2">
+										<a href={`/profile/${child.pubkey}`} class="shrink-0">
+											<Avatar
+												pubkey={child.pubkey}
+												name={childName}
+												picture={childProfile?.picture}
+												size={22}
+											/>
+										</a>
+										<div class="min-w-0 flex-1">
+											<div class="flex min-w-0 items-center gap-1.5">
+												<a
+													href={`/profile/${child.pubkey}`}
+													class="truncate text-[12px] font-bold hover:text-primary-500"
+												>
+													{childName}
+												</a>
+												<time
+													class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
+													title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
+												>
+											</div>
+											<p
+												class="mt-0.5 text-[12.5px] leading-relaxed break-words whitespace-pre-wrap"
+											>
+												{child.content}
+											</p>
+											<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
+												<button
+													type="button"
+													onclick={() => hideComment(child)}
+													class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+												>
+													Hide
+												</button>
+												{#if identity.current?.pk === child.pubkey}
+													<button
+														type="button"
+														onclick={() => deleteComment(child)}
+														class="text-[var(--tone-error-text)] hover:underline"
+													>
+														Delete
+													</button>
+												{/if}
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+
+						{#if replyingToCommentId === reply.id}
+							<div class="mt-2 flex items-center gap-2">
+								<input
+									bind:value={commentReplyText}
+									type="text"
+									placeholder={`Reply to ${replyName}...`}
+									disabled={commentReplying}
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											void submitCommentReply(reply);
+										}
+										if (e.key === 'Escape') {
+											replyingToCommentId = '';
+											commentReplyText = '';
+										}
+									}}
+									class="h-8 flex-1 rounded-full bg-[var(--surface-bg)] px-3 text-[12.5px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/30 disabled:opacity-60"
+								/>
+								<button
+									type="button"
+									onclick={() => submitCommentReply(reply)}
+									disabled={!commentReplyText.trim() || commentReplying}
+									class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
+									aria-label="Post comment reply"
+								>
+									<Icon
+										name={commentReplying ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
+										class="size-3.5 {commentReplying ? 'animate-spin' : ''}"
+									/>
+								</button>
+							</div>
+						{/if}
 					</div>
 				</div>
 			{/each}

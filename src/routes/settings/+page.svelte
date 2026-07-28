@@ -17,7 +17,7 @@
 	import { hexToBytes } from '$lib/nostr/hex';
 
 	const me = $derived(identity.current);
-	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
+	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
 
 	const sections = [
 		{ key: 'account', label: 'Account', icon: 'i-lucide-user' },
@@ -61,25 +61,52 @@
 	let highContrast = $state(false);
 
 	// --- account / profile ---
-	let editingName = $state('');
+	let editingUsername = $state('');
+	let editingDisplayName = $state('');
 	let editingAbout = $state('');
+	let editingPicture = $state('');
+	let editingBanner = $state('');
+	let editingWebsite = $state('');
+	let editingNip05 = $state('');
+	let editingLightning = $state('');
 	let savingProfile = $state(false);
+
+	function clean(value: string) {
+		return value.trim() || undefined;
+	}
+
+	function resetProfileForm() {
+		editingUsername = myProfile?.name || '';
+		editingDisplayName = myProfile?.display_name || '';
+		editingAbout = myProfile?.about || '';
+		editingPicture = myProfile?.picture || '';
+		editingBanner = myProfile?.banner || '';
+		editingWebsite = myProfile?.website || '';
+		editingNip05 = myProfile?.nip05 || '';
+		editingLightning = myProfile?.lud16 || myProfile?.lud06 || '';
+	}
+
+	let loadedProfileKey = $state('');
 	$effect(() => {
-		if (myProfile) {
-			editingName = myProfile.display_name || myProfile.name || '';
-			editingAbout = myProfile.about || '';
-		}
+		const signature = JSON.stringify(myProfile ?? {});
+		if (signature === loadedProfileKey) return;
+		loadedProfileKey = signature;
+		resetProfileForm();
 	});
+
 	async function saveProfile() {
 		if (!me) return;
 		savingProfile = true;
 		try {
 			const meta = {
-				name: editingName.trim() || undefined,
-				display_name: editingName.trim() || undefined,
-				about: editingAbout.trim() || undefined,
-				picture: myProfile?.picture,
-				nip05: myProfile?.nip05
+				name: clean(editingUsername),
+				display_name: clean(editingDisplayName) ?? clean(editingUsername),
+				about: clean(editingAbout),
+				picture: clean(editingPicture),
+				banner: clean(editingBanner),
+				website: clean(editingWebsite),
+				nip05: clean(editingNip05),
+				lud16: clean(editingLightning)
 			};
 			const event = finalizeEvent(
 				{
@@ -268,46 +295,135 @@
 						<div
 							class="grid size-16 shrink-0 place-items-center rounded-2xl bg-warm-500 font-bold text-white"
 						>
-							{(myProfile?.display_name || 'Y').slice(0, 2).toUpperCase()}
+							{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
 						</div>
 						<div class="flex-1">
-							<p class="text-[15px] font-bold">{myProfile?.display_name || 'You'}</p>
+							<p class="text-[15px] font-bold">{editingDisplayName || editingUsername || 'You'}</p>
 							<p class="text-[12px] text-[var(--ui-text-muted)]">{me ? shortKey(me.npub) : ''}</p>
 						</div>
 						<Button
 							color="neutral"
 							variant="subtle"
-							onclick={() => toasts.info('Picture upload (paste a URL in About)')}
-							>Change photo</Button
+							onclick={() => toasts.info('Paste an image URL in Avatar URL')}>Change photo</Button
 						>
 					</div>
-					<div class="space-y-4">
+					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
 							<label
+								for="profile-username"
 								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
-								>Display name</label
+								>Username</label
 							>
 							<Input
-								bind:value={editingName}
-								icon="i-lucide-user"
-								placeholder="Your name"
+								id="profile-username"
+								bind:value={editingUsername}
+								icon="i-lucide-at-sign"
+								placeholder="username"
 								class="w-full"
 							/>
 						</div>
 						<div>
 							<label
+								for="profile-display-name"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Display name</label
+							>
+							<Input
+								id="profile-display-name"
+								bind:value={editingDisplayName}
+								icon="i-lucide-user"
+								placeholder="Your name"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="profile-bio"
 								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
 								>Bio</label
 							>
 							<textarea
+								id="profile-bio"
 								bind:value={editingAbout}
 								rows="3"
-								maxlength="160"
+								maxlength="300"
 								class="w-full resize-none rounded-lg border border-[var(--ui-border)] bg-[var(--ui-bg-muted)] px-4 py-2.5 text-[14px] transition outline-none focus:border-primary-500 focus:bg-[var(--surface-bg)]"
 							></textarea>
 							<p class="mt-1 text-[11px] text-[var(--ui-text-dimmed)]">
-								{editingAbout.length} / 160 characters
+								{editingAbout.length} / 300 characters
 							</p>
+						</div>
+						<div>
+							<label
+								for="profile-picture"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Avatar URL</label
+							>
+							<Input
+								id="profile-picture"
+								bind:value={editingPicture}
+								icon="i-lucide-image"
+								placeholder="https://..."
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-banner"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Banner URL</label
+							>
+							<Input
+								id="profile-banner"
+								bind:value={editingBanner}
+								icon="i-lucide-panorama"
+								placeholder="https://..."
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-website"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Website</label
+							>
+							<Input
+								id="profile-website"
+								bind:value={editingWebsite}
+								icon="i-lucide-link"
+								placeholder="https://example.com"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-nip05"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>NIP-05</label
+							>
+							<Input
+								id="profile-nip05"
+								bind:value={editingNip05}
+								icon="i-lucide-badge-check"
+								placeholder="name@example.com"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="profile-lightning"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Lightning address</label
+							>
+							<Input
+								id="profile-lightning"
+								bind:value={editingLightning}
+								icon="i-lucide-zap"
+								placeholder="name@getalby.com"
+								class="w-full"
+							/>
 						</div>
 					</div>
 					<div class="mt-5 flex gap-2 border-t border-[var(--ui-border-muted)] pt-5">
@@ -317,7 +433,7 @@
 							onclick={saveProfile}
 							disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save changes'}</Button
 						>
-						<Button color="neutral" variant="ghost">Cancel</Button>
+						<Button color="neutral" variant="ghost" onclick={resetProfileForm}>Cancel</Button>
 					</div>
 				</div>
 

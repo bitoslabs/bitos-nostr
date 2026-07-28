@@ -11,6 +11,7 @@ import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote } from './types';
+import { zapSats, zapTarget } from './zaps';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
@@ -31,6 +32,7 @@ class FeedStore {
 	/** Map note.id → index for O(1) updates when reactions arrive. */
 	private byId = new Map<string, number>();
 	private pendingById = new Map<string, number>();
+	private seenZapIds = new Set<string>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -45,8 +47,14 @@ class FeedStore {
 		this.connected = false;
 		this.pendingNotes = [];
 		this.pendingById.clear();
+		this.seenZapIds.clear();
 		this.unsub = subscribe(
-			[{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.REACTION], limit: INITIAL_LIMIT }],
+			[
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					limit: INITIAL_LIMIT
+				}
+			],
 			{
 				oneose: () => {
 					this.loading = false;
@@ -56,6 +64,7 @@ class FeedStore {
 					if (ev.kind === NOSTR_KINDS.TEXT_NOTE)
 						this.ingestNote(ev, { queueIfLive: this.connected });
 					else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
+					else if (ev.kind === NOSTR_KINDS.ZAP) this.ingestZap(ev);
 					// opportunistically load the author's profile
 					profiles.ensure([ev.pubkey]);
 				}
@@ -118,7 +127,9 @@ class FeedStore {
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],
-			repostCount: 0
+			repostCount: 0,
+			zapCount: 0,
+			zapTotalSats: 0
 		};
 		if (options.queueIfLive && this.notes.length > 0 && note.createdAt >= this.notes[0].createdAt) {
 			this.insertPending(note);
@@ -174,6 +185,39 @@ class FeedStore {
 		const next = this.nextReactions(note, ev);
 		if (!next) return;
 		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions: next } : n));
+	}
+
+	private ingestZap(ev: { id: string; content: string; tags: string[][] }) {
+		if (this.seenZapIds.has(ev.id)) return;
+		const target = zapTarget(ev);
+		if (!target) return;
+		const idx = this.byId.get(target);
+		const pendingIdx = this.pendingById.get(target);
+		if (idx === undefined && pendingIdx === undefined) return;
+		const sats = zapSats(ev);
+		this.seenZapIds.add(ev.id);
+		if (idx !== undefined) {
+			this.notes = this.notes.map((note, i) =>
+				i === idx
+					? {
+							...note,
+							zapCount: note.zapCount + 1,
+							zapTotalSats: note.zapTotalSats + sats
+						}
+					: note
+			);
+		}
+		if (pendingIdx !== undefined) {
+			this.pendingNotes = this.pendingNotes.map((note, i) =>
+				i === pendingIdx
+					? {
+							...note,
+							zapCount: note.zapCount + 1,
+							zapTotalSats: note.zapTotalSats + sats
+						}
+					: note
+			);
+		}
 	}
 
 	private nextReactions(

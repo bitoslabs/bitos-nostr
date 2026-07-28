@@ -5,10 +5,12 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
+	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
 
@@ -22,6 +24,7 @@
 		profile?.display_name || profile?.name || (pubkey ? shortKey(pubkey) : 'Profile')
 	);
 	const npub = $derived(pubkey ? npubEncode(pubkey) : '');
+	const lightning = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(!!pubkey && identity.current?.pk === pubkey);
 
 	let loading = $state(true);
@@ -74,7 +77,9 @@
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],
-			repostCount: 0
+			repostCount: 0,
+			zapCount: 0,
+			zapTotalSats: 0
 		};
 	}
 
@@ -110,7 +115,14 @@
 			const noteEvents = events
 				.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)
 				.sort((a, b) => b.created_at - a.created_at);
-			notes = noteEvents.map(toFeedNote);
+			const nextNotes = noteEvents.map(toFeedNote);
+			const noteIds = nextNotes.map((note) => note.id);
+			const activity = noteIds.length
+				? await queryOnce([
+						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+					])
+				: [];
+			notes = applyActivityToNotes(nextNotes, activity, identity.current?.pk);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load profile');
 		} finally {
@@ -118,13 +130,8 @@
 		}
 	}
 
-	async function copyProfile() {
-		try {
-			await navigator.clipboard.writeText(`nostr:${npub}`);
-			toasts.success('Profile link copied');
-		} catch {
-			toasts.error('Could not copy profile link');
-		}
+	function updateNote(next: FeedNote) {
+		notes = notes.map((note) => (note.id === next.id ? next : note));
 	}
 
 	onMount(() => {
@@ -210,14 +217,7 @@
 						>Message</a
 					>
 				{/if}
-				<button
-					type="button"
-					onclick={copyProfile}
-					class="grid size-10 place-items-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
-					aria-label="Copy profile link"
-				>
-					<Icon name="i-lucide-share-2" class="size-5" />
-				</button>
+				<ProfileActionMenu {pubkey} {npub} {lightning} />
 			</div>
 		</div>
 
@@ -241,6 +241,12 @@
 					<span class="flex items-center gap-1.5">
 						<Icon name="i-lucide-badge-check" class="size-3.5 text-primary-500" />
 						{profile.nip05}
+					</span>
+				{/if}
+				{#if profile?.lud16 || profile?.lud06}
+					<span class="flex items-center gap-1.5">
+						<Icon name="i-lucide-zap" class="size-3.5 text-primary-500" />
+						{profile.lud16 || profile.lud06}
 					</span>
 				{/if}
 				{#if notes[0]}
@@ -334,7 +340,7 @@
 		{:else if visibleNotes.length}
 			<div class="space-y-5 pb-8">
 				{#each visibleNotes as note, i (note.id)}
-					<PostCard {note} index={i} />
+					<PostCard {note} index={i} onNoteChange={updateNote} />
 				{/each}
 			</div>
 		{:else}

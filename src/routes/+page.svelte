@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import StoriesBar from '$lib/components/feed/StoriesBar.svelte';
 	import Composer from '$lib/components/feed/Composer.svelte';
@@ -23,6 +24,7 @@
 	];
 
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
+	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 	const filterMenuId = 'feed-filter';
 
 	$effect(() => {
@@ -32,23 +34,40 @@
 	let feedScroller: HTMLDivElement | undefined = $state();
 	const filterOpen = $derived(popovers.isOpen(filterMenuId));
 	let activeFilter = $state<FeedFilter>('all');
+	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const activeFilterLabel = $derived(
 		filterOptions.find((option) => option.key === activeFilter)?.label ?? 'All'
 	);
 	const filteredNotes = $derived(
 		feed.notes.filter((note) => {
-			if (activeFilter === 'all') return !note.replyTo;
-			if (activeFilter === 'originals') return !note.replyTo;
-			if (activeFilter === 'replies') return !!note.replyTo;
-			if (activeFilter === 'media') return hasMedia(note);
-			if (activeFilter === 'liked') return note.reactions.some((reaction) => reaction.byMe);
-			if (activeFilter === 'mine') return !!identity.current && note.pubkey === identity.current.pk;
-			return true;
+			const matchesFilter =
+				activeFilter === 'all'
+					? !note.replyTo
+					: activeFilter === 'originals'
+						? !note.replyTo
+						: activeFilter === 'replies'
+							? !!note.replyTo
+							: activeFilter === 'media'
+								? hasMedia(note)
+								: activeFilter === 'liked'
+									? note.reactions.some((reaction) => reaction.byMe)
+									: activeFilter === 'mine'
+										? !!identity.current && note.pubkey === identity.current.pk
+										: true;
+			return matchesFilter && (!activeTag || hasTag(note, activeTag));
 		})
 	);
 
 	function hasMedia(note: FeedNote) {
 		return mediaUrlPattern.test(note.content);
+	}
+
+	function hasTag(note: FeedNote, tag: string) {
+		const tagged = note.tags.some((item) => item[0] === 't' && item[1]?.toLowerCase() === tag);
+		if (tagged) return true;
+		return [...note.content.matchAll(hashtagPattern)].some(
+			(match) => match[1].toLowerCase() === tag
+		);
 	}
 
 	function setFilter(next: FeedFilter) {
@@ -152,21 +171,23 @@
 				</div>
 			</div>
 
-			{#if activeFilter !== 'all'}
+			{#if activeFilter !== 'all' || activeTag}
 				<div
 					class="mb-4 flex items-center justify-between rounded-xl border border-primary-500/15 bg-primary-500/10 px-3 py-2 text-[12px]"
 				>
 					<div class="flex min-w-0 items-center gap-2 font-semibold text-primary-600">
 						<Icon name="i-lucide-filter" class="size-4 shrink-0" />
-						<span class="truncate">{activeFilterLabel} · {filteredNotes.length} notes</span>
+						<span class="truncate">
+							{activeTag ? `#${activeTag}` : activeFilterLabel} · {filteredNotes.length} notes
+						</span>
 					</div>
-					<button
-						type="button"
+					<a
+						href="/"
 						onclick={() => setFilter('all')}
 						class="rounded-lg px-2 py-1 font-bold text-primary-600 transition hover:bg-primary-500/10"
 					>
 						Clear
-					</button>
+					</a>
 				</div>
 			{/if}
 
@@ -224,15 +245,17 @@
 					</div>
 					<div>
 						<p class="text-[15px] font-semibold">No matching notes</p>
-						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">Try a different feed filter.</p>
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+							Try a different feed filter or hashtag.
+						</p>
 					</div>
-					<button
-						type="button"
+					<a
+						href="/"
 						onclick={() => setFilter('all')}
 						class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
 					>
 						Show all
-					</button>
+					</a>
 				</div>
 			{:else}
 				<div class="space-y-5">

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
@@ -20,6 +21,7 @@
 	let trendTags = $state<TrendTag[]>([]);
 	let creators = $state<Creator[]>([]);
 	let mediaItems = $state<MediaItem[]>([]);
+	const me = $derived(identity.current?.pk ?? '');
 
 	const filteredTags = $derived(
 		trendTags.filter((item) => !query || item.tag.toLowerCase().includes(query.toLowerCase()))
@@ -61,14 +63,16 @@
 					tags[tag] = (tags[tag] ?? 0) + 1;
 				}
 
-				const author = authors[event.pubkey] ?? {
-					pubkey: event.pubkey,
-					count: 0,
-					latest: event.created_at
-				};
-				author.count += 1;
-				author.latest = Math.max(author.latest, event.created_at);
-				authors[event.pubkey] = author;
+				if (event.pubkey !== me) {
+					const author = authors[event.pubkey] ?? {
+						pubkey: event.pubkey,
+						count: 0,
+						latest: event.created_at
+					};
+					author.count += 1;
+					author.latest = Math.max(author.latest, event.created_at);
+					authors[event.pubkey] = author;
+				}
 
 				const url = mediaUrl(event.content);
 				if (url && nextMedia.length < 36) {
@@ -139,11 +143,11 @@
 			{#if filteredTags.length}
 				<div class="flex flex-wrap gap-2">
 					{#each filteredTags as item (item.tag)}
-						<button type="button" class="trend-tag" onclick={() => toasts.info(`#${item.tag}`)}>
+						<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
 							<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
 							#{item.tag}
 							<span class="font-normal text-[var(--ui-text-dimmed)]">{item.count}</span>
-						</button>
+						</a>
 					{/each}
 				</div>
 			{:else}
