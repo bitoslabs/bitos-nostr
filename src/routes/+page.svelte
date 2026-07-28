@@ -26,14 +26,14 @@
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 	const filterMenuId = 'feed-filter';
-
-	$effect(() => {
-		if (feed.notes.length) profiles.ensure(feed.notes.map((n) => n.pubkey));
-	});
+	const INITIAL_RENDER_COUNT = 15;
+	const RENDER_BATCH_SIZE = 12;
 
 	let feedScroller: HTMLDivElement | undefined = $state();
 	const filterOpen = $derived(popovers.isOpen(filterMenuId));
 	let activeFilter = $state<FeedFilter>('all');
+	let renderedCount = $state(INITIAL_RENDER_COUNT);
+	let lastViewSignature = $state('');
 	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const activeFilterLabel = $derived(
 		filterOptions.find((option) => option.key === activeFilter)?.label ?? 'All'
@@ -57,6 +57,13 @@
 			return matchesFilter && (!activeTag || hasTag(note, activeTag));
 		})
 	);
+	const renderedNotes = $derived(filteredNotes.slice(0, renderedCount));
+	const hasMoreRenderedNotes = $derived(renderedCount < filteredNotes.length);
+
+	function renderMoreNotes() {
+		if (!hasMoreRenderedNotes) return;
+		renderedCount = Math.min(filteredNotes.length, renderedCount + RENDER_BATCH_SIZE);
+	}
 
 	function hasMedia(note: FeedNote) {
 		return mediaUrlPattern.test(note.content);
@@ -72,6 +79,7 @@
 
 	function setFilter(next: FeedFilter) {
 		activeFilter = next;
+		renderedCount = INITIAL_RENDER_COUNT;
 		popovers.close();
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -81,6 +89,7 @@
 	function showNewNotes() {
 		const count = feed.revealPending();
 		if (!count) return;
+		renderedCount = INITIAL_RENDER_COUNT;
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
@@ -91,11 +100,24 @@
 	}
 
 	function handleFeedScroll() {
-		if (!feedScroller || feed.loading || feed.loadingMore || !feed.hasMore) return;
+		if (!feedScroller) return;
 		const remaining =
 			feedScroller.scrollHeight - feedScroller.scrollTop - feedScroller.clientHeight;
+		if (remaining < 1200 && hasMoreRenderedNotes) renderMoreNotes();
+		if (feed.loading || feed.loadingMore || !feed.hasMore) return;
 		if (remaining < 900) loadMoreNotes();
 	}
+
+	$effect(() => {
+		const signature = `${activeFilter}:${activeTag}`;
+		if (signature === lastViewSignature) return;
+		lastViewSignature = signature;
+		renderedCount = INITIAL_RENDER_COUNT;
+	});
+
+	$effect(() => {
+		if (renderedNotes.length) profiles.ensure(renderedNotes.map((n) => n.pubkey));
+	});
 </script>
 
 <svelte:window onclick={() => popovers.close()} />
@@ -259,27 +281,40 @@
 				</div>
 			{:else}
 				<div class="space-y-5">
-					{#each filteredNotes as note, i (note.id)}
+					{#each renderedNotes as note, i (note.id)}
 						<PostCard {note} index={i} />
 					{/each}
 				</div>
 
 				<div class="py-8 text-center">
-					<button
-						type="button"
-						onclick={loadMoreNotes}
-						disabled={feed.loadingMore || !feed.hasMore}
-						class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
-					>
-						{#if feed.loadingMore}
-							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-							Loading older notes
-						{:else if feed.hasMore}
-							Load more posts
-						{:else}
-							End of relay results
-						{/if}
-					</button>
+					{#if hasMoreRenderedNotes}
+						<button
+							type="button"
+							onclick={renderMoreNotes}
+							class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)]"
+						>
+							Show more posts
+							<span class="text-[11px] opacity-70">
+								{Math.min(RENDER_BATCH_SIZE, filteredNotes.length - renderedCount)} next
+							</span>
+						</button>
+					{:else}
+						<button
+							type="button"
+							onclick={loadMoreNotes}
+							disabled={feed.loadingMore || !feed.hasMore}
+							class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
+						>
+							{#if feed.loadingMore}
+								<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+								Loading older notes
+							{:else if feed.hasMore}
+								Load more posts
+							{:else}
+								End of relay results
+							{/if}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>

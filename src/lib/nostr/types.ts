@@ -35,13 +35,19 @@ export interface FeedNote {
 /** Activity addressed to the current user's pubkey. */
 export interface NotificationItem {
 	id: string;
-	type: 'like' | 'comment' | 'repost' | 'follow';
+	/** `mention` = a note that #p-tags you but isn't a reply; `zap` = a NIP-57 receipt. */
+	type: 'like' | 'comment' | 'repost' | 'follow' | 'mention' | 'zap';
 	pubkey: string;
 	targetId?: string;
 	content: string;
 	createdAt: number;
 	read: boolean;
+	/** Sats received, for `zap` notifications. */
+	amountSats?: number;
 }
+
+/** Logical notification category used for filtering + per-type mute. */
+export type NotificationType = NotificationItem['type'];
 
 /** A NIP-04 direct message. */
 export interface DirectMessage {

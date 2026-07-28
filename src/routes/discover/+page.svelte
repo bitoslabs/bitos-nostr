@@ -12,9 +12,20 @@
 	type TrendTag = { tag: string; count: number };
 	type Creator = { pubkey: string; count: number; latest: number };
 	type MediaItem = { id: string; url: string; pubkey: string; content: string };
+	type DiscoverCache = {
+		savedAt: number;
+		trendTags: TrendTag[];
+		creators: Creator[];
+		mediaItems: MediaItem[];
+	};
 
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 	const mediaPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
+	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v1';
+	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
+	const MAX_CACHED_TAGS = 18;
+	const MAX_CACHED_CREATORS = 8;
+	const MAX_CACHED_MEDIA = 36;
 
 	let loading = $state(true);
 	let query = $state('');
@@ -38,8 +49,38 @@
 		return content.match(mediaPattern)?.[0] ?? '';
 	}
 
-	async function loadDiscover() {
-		loading = true;
+	function applyDiscoverData(data: Omit<DiscoverCache, 'savedAt'>) {
+		trendTags = data.trendTags.slice(0, MAX_CACHED_TAGS);
+		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
+		mediaItems = data.mediaItems.slice(0, MAX_CACHED_MEDIA);
+		profiles.ensure(creators.map((creator) => creator.pubkey));
+		profiles.ensure(mediaItems.map((item) => item.pubkey));
+	}
+
+	function loadCachedDiscover() {
+		try {
+			const raw = localStorage.getItem(DISCOVER_CACHE_KEY);
+			if (!raw) return false;
+			const cached = JSON.parse(raw) as DiscoverCache;
+			if (!cached?.savedAt || Date.now() - cached.savedAt > DISCOVER_CACHE_TTL_MS) return false;
+			if (!Array.isArray(cached.trendTags) || !Array.isArray(cached.creators)) return false;
+			applyDiscoverData(cached);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	function saveDiscoverCache(data: Omit<DiscoverCache, 'savedAt'>) {
+		try {
+			localStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
+		} catch {
+			/* Ignore quota/private-mode failures; cache is only a performance hint. */
+		}
+	}
+
+	async function loadDiscover(options: { background?: boolean } = {}) {
+		if (!options.background) loading = true;
 		try {
 			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }]);
 			const seen: Record<string, true> = {};
@@ -80,25 +121,37 @@
 				}
 			}
 
-			trendTags = Object.entries(tags)
+			const nextTags = Object.entries(tags)
 				.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 				.slice(0, 18)
 				.map(([tag, count]) => ({ tag, count }));
-			creators = Object.values(authors)
+			const nextCreators = Object.values(authors)
 				.sort((a, b) => b.count - a.count || b.latest - a.latest)
 				.slice(0, 8);
-			mediaItems = nextMedia;
-			profiles.ensure(creators.map((creator) => creator.pubkey));
-			profiles.ensure(nextMedia.map((item) => item.pubkey));
+			const data = {
+				trendTags: nextTags,
+				creators: nextCreators,
+				mediaItems: nextMedia
+			};
+			applyDiscoverData(data);
+			saveDiscoverCache(data);
 		} catch (e) {
-			toasts.error((e as Error).message || 'Could not load discover data');
+			if (!options.background) {
+				toasts.error((e as Error).message || 'Could not load discover data');
+			}
 		} finally {
 			loading = false;
 		}
 	}
 
 	onMount(() => {
-		void loadDiscover();
+		const hasCache = loadCachedDiscover();
+		if (hasCache) {
+			loading = false;
+			void loadDiscover({ background: true });
+		} else {
+			void loadDiscover();
+		}
 	});
 </script>
 
@@ -117,7 +170,7 @@
 			</div>
 			<button
 				type="button"
-				onclick={loadDiscover}
+				onclick={() => loadDiscover()}
 				class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
 				aria-label="Refresh discover"
 			>

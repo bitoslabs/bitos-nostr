@@ -16,11 +16,18 @@ import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type Conversation, type DirectMessage } from './types';
 
+const STORAGE_KEY_PREFIX = 'bitos:dm-conversations';
+const MAX_CACHED_CONVERSATIONS = 80;
+const MAX_CACHED_MESSAGES_PER_CONVERSATION = 80;
+const PERSIST_DEBOUNCE_MS = 250;
+
 class DMStore {
 	conversations = $state<Conversation[]>([]);
 	loading = $state(false);
 	connected = $state(false);
+	private loadedFor = '';
 	private unsub: (() => void) | null = null;
+	private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Total unread messages across all conversations (for the nav badge). */
 	get unreadCount(): number {
@@ -33,6 +40,7 @@ class DMStore {
 		if (existing) return existing;
 		const created: Conversation = { peer, unread: 0, messages: [] };
 		this.conversations = [created, ...this.conversations];
+		this.schedulePersist();
 		return created;
 	};
 
@@ -41,6 +49,7 @@ class DMStore {
 		const me = identity.current?.pk;
 		if (!me) return;
 		this.stop();
+		this.loadCached(me);
 		this.loading = true;
 		this.connected = false;
 		// NIP-04: recipient in `p` tag. Fetch messages I authored OR addressed to me.
@@ -64,6 +73,11 @@ class DMStore {
 			this.unsub();
 			this.unsub = null;
 		}
+		this.flushPersist();
+		this.conversations = [];
+		this.loadedFor = '';
+		this.loading = false;
+		this.connected = false;
 	};
 
 	private async ingest(ev: {
@@ -113,11 +127,80 @@ class DMStore {
 		if (!msg.mine) conv.unread = (conv.unread || 0) + 1;
 		next.sort((a, b) => (b.lastMessage?.createdAt ?? 0) - (a.lastMessage?.createdAt ?? 0));
 		this.conversations = next;
+		this.schedulePersist();
 	}
 
 	/** Mark all messages in a conversation as read. */
 	markRead(peer: string) {
 		this.conversations = this.conversations.map((c) => (c.peer === peer ? { ...c, unread: 0 } : c));
+		this.schedulePersist();
+	}
+
+	private storageKey(pk = identity.current?.pk) {
+		return pk ? `${STORAGE_KEY_PREFIX}:${pk}` : '';
+	}
+
+	private isConversation(value: unknown): value is Conversation {
+		if (!value || typeof value !== 'object') return false;
+		const conversation = value as Partial<Conversation>;
+		return typeof conversation.peer === 'string' && Array.isArray(conversation.messages);
+	}
+
+	private loadCached(pk: string) {
+		if (!browser || this.loadedFor === pk) return;
+		this.loadedFor = pk;
+		try {
+			const raw = localStorage.getItem(this.storageKey(pk));
+			if (!raw) return;
+			const parsed = JSON.parse(raw) as unknown;
+			if (!Array.isArray(parsed)) return;
+			const cached = parsed.filter((item): item is Conversation => this.isConversation(item));
+			this.conversations = cached.map((conversation) => {
+				const messages = conversation.messages
+					.filter((message): message is DirectMessage => !!message?.id && !!message.peer)
+					.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
+				return {
+					peer: conversation.peer,
+					unread: conversation.unread || 0,
+					messages,
+					lastMessage: messages[messages.length - 1]
+				};
+			});
+			profiles.ensure(this.conversations.map((conversation) => conversation.peer));
+		} catch {
+			/* ignore malformed cache */
+		}
+	}
+
+	private schedulePersist() {
+		if (!browser || this.persistTimer) return;
+		this.persistTimer = setTimeout(() => {
+			this.persistTimer = null;
+			this.persist();
+		}, PERSIST_DEBOUNCE_MS);
+	}
+
+	private flushPersist() {
+		if (!this.persistTimer) return;
+		clearTimeout(this.persistTimer);
+		this.persistTimer = null;
+		this.persist();
+	}
+
+	private persist() {
+		if (!browser) return;
+		const key = this.storageKey();
+		if (!key) return;
+		const snapshot = this.conversations.slice(0, MAX_CACHED_CONVERSATIONS).map((conversation) => {
+			const messages = conversation.messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
+			return {
+				peer: conversation.peer,
+				unread: conversation.unread || 0,
+				messages,
+				lastMessage: messages[messages.length - 1]
+			};
+		});
+		localStorage.setItem(key, JSON.stringify(snapshot));
 	}
 
 	/** Encrypt + publish a DM to `peer`. */

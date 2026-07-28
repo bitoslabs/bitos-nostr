@@ -147,7 +147,7 @@
 						bind:value={secret}
 						icon="i-lucide-key-round"
 						placeholder="nsec1… or 64-char hex"
-						class="font-mono text-[12.5px]"
+						class="font-mono text-[12.5px] w-full"
 					/>
 					<Button
 						block

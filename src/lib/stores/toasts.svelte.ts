@@ -16,10 +16,10 @@ class ToastStore {
 		return id;
 	}
 
-	info = (m: string) => this.push(m, 'info');
-	success = (m: string) => this.push(m, 'success');
-	warning = (m: string) => this.push(m, 'warning');
-	error = (m: string) => this.push(m, 'error', 5000);
+	info = (m: string, ttl?: number) => this.push(m, 'info', ttl);
+	success = (m: string, ttl?: number) => this.push(m, 'success', ttl);
+	warning = (m: string, ttl?: number) => this.push(m, 'warning', ttl);
+	error = (m: string, ttl = 5000) => this.push(m, 'error', ttl);
 
 	dismiss(id: number) {
 		this.items = this.items.filter((t) => t.id !== id);

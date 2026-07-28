@@ -246,13 +246,22 @@
 					{@const profile = profiles.get(s.pubkey)}
 					{@const name = displayName(s.pubkey)}
 					<div class="flex items-center gap-3">
-						<Avatar pubkey={s.pubkey} {name} picture={profile?.picture} size={40} />
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-[13px] font-bold">{name}</p>
+						<a
+							href={`/profile/${s.pubkey}`}
+							class="shrink-0 rounded-full transition hover:ring-2 hover:ring-primary-500/30"
+							aria-label={`Open ${name} profile`}
+						>
+							<Avatar pubkey={s.pubkey} {name} picture={profile?.picture} size={40} />
+						</a>
+						<a
+							href={`/profile/${s.pubkey}`}
+							class="min-w-0 flex-1 rounded-lg transition hover:text-primary-600 dark:hover:text-primary-300"
+						>
+							<p class="truncate text-[13px] font-bold hover:underline">{name}</p>
 							<p class="truncate text-[11px] text-[var(--ui-text-dimmed)]">
 								{profileNote(s.pubkey, s.count)}
 							</p>
-						</div>
+						</a>
 						<button
 							type="button"
 							onclick={() => toggleFollow(s.pubkey)}

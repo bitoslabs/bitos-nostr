@@ -16,24 +16,68 @@
 		createdAt: number;
 		videoUrl: string;
 	};
+	type ReelsCache = {
+		savedAt: number;
+		reels: ReelNote[];
+	};
 
 	const videoPattern = /https?:\/\/\S+\.(?:m3u8|m4v|mov|mp4|webm)(?:[?#]\S*)?/i;
+	const REELS_CACHE_KEY = 'bitos:reels-cache:v1';
+	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
+	const MAX_CACHED_REELS = 40;
+	const INITIAL_RENDERED_REELS = 5;
+	const REEL_RENDER_BATCH = 5;
 
 	let loading = $state(true);
+	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
+	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let liked = $state<Record<string, boolean>>({});
 	let saved = $state<Record<string, boolean>>({});
+	const renderedReels = $derived(reels.slice(0, renderedReelCount));
+	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 
 	function extractVideo(content: string) {
 		return content.match(videoPattern)?.[0] ?? '';
 	}
 
-	async function loadReels() {
-		loading = true;
+	function applyReels(next: ReelNote[]) {
+		reels = next.slice(0, MAX_CACHED_REELS);
+		renderedReelCount = Math.min(INITIAL_RENDERED_REELS, reels.length);
+		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+	}
+
+	function loadCachedReels() {
+		try {
+			const raw = localStorage.getItem(REELS_CACHE_KEY);
+			if (!raw) return false;
+			const cached = JSON.parse(raw) as ReelsCache;
+			if (!cached?.savedAt || Date.now() - cached.savedAt > REELS_CACHE_TTL_MS) return false;
+			if (!Array.isArray(cached.reels)) return false;
+			applyReels(cached.reels);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	function saveReelsCache(next: ReelNote[]) {
+		try {
+			localStorage.setItem(
+				REELS_CACHE_KEY,
+				JSON.stringify({ savedAt: Date.now(), reels: next.slice(0, MAX_CACHED_REELS) })
+			);
+		} catch {
+			/* Cache is best-effort only. */
+		}
+	}
+
+	async function loadReels(options: { background?: boolean } = {}) {
+		if (!options.background) loading = true;
 		try {
 			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 400 }]);
 			const seen: Record<string, true> = {};
-			reels = events
+			const nextReels = events
 				.sort((a, b) => b.created_at - a.created_at)
 				.map((event) => ({ event, videoUrl: extractVideo(event.content) }))
 				.filter(({ event, videoUrl }) => {
@@ -49,12 +93,26 @@
 					createdAt: event.created_at,
 					videoUrl
 				}));
-			profiles.ensure(reels.map((reel) => reel.pubkey));
+			applyReels(nextReels);
+			saveReelsCache(nextReels);
 		} catch (e) {
-			toasts.error((e as Error).message || 'Could not load reels');
+			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
 			loading = false;
 		}
+	}
+
+	function renderMoreReels() {
+		if (!hasMoreRenderedReels) return;
+		renderedReelCount = Math.min(reels.length, renderedReelCount + REEL_RENDER_BATCH);
+		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+	}
+
+	function handleReelScroll() {
+		if (!reelScroller || !hasMoreRenderedReels) return;
+		const remaining =
+			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
+		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
 	}
 
 	function toggleLike(id: string) {
@@ -67,7 +125,13 @@
 	}
 
 	onMount(() => {
-		void loadReels();
+		const hasCache = loadCachedReels();
+		if (hasCache) {
+			loading = false;
+			void loadReels({ background: true });
+		} else {
+			void loadReels();
+		}
 	});
 </script>
 
@@ -75,7 +139,9 @@
 
 <div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	<div
+		bind:this={reelScroller}
 		class="reel-container h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto [&::-webkit-scrollbar]:hidden"
+		onscroll={handleReelScroll}
 	>
 		{#if loading}
 			<div class="flex h-full items-center justify-center">
@@ -84,7 +150,7 @@
 				></div>
 			</div>
 		{:else if reels.length}
-			{#each reels as reel (reel.id)}
+			{#each renderedReels as reel (reel.id)}
 				{@const profile = profiles.get(reel.pubkey)}
 				{@const name = profile?.display_name || profile?.name || shortKey(reel.pubkey)}
 				<div
@@ -108,7 +174,7 @@
 						<h2 class="font-display text-[26px] font-extrabold text-white">Reels</h2>
 						<button
 							type="button"
-							onclick={loadReels}
+							onclick={() => loadReels()}
 							class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
 							aria-label="Refresh reels"
 						>
@@ -189,7 +255,7 @@
 					</p>
 					<button
 						type="button"
-						onclick={loadReels}
+						onclick={() => loadReels()}
 						class="mt-5 rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
 					>
 						Refresh

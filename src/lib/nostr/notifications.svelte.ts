@@ -1,9 +1,11 @@
 /**
  * Notifications store — subscribes to public events that address the active
  * pubkey via `p` tags. This catches reactions, reply/comment notes, reposts,
- * follows so users see activity around their posts.
+ * follows, standalone mentions, and NIP-57 zap receipts so users see activity
+ * around their posts.
  */
 import { browser } from '$app/environment';
+import { SvelteSet } from 'svelte/reactivity';
 import { queryOnce, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
@@ -12,6 +14,8 @@ import { NOSTR_KINDS, type NotificationItem } from './types';
 const PAGE_LIMIT = 60;
 const MAX_ITEMS = 600;
 const STORAGE_KEY = 'bitos:read-notifications';
+/** Per-type mutes persisted to localStorage (e.g. user hides likes). */
+const MUTE_KEY = 'bitos:muted-notifications';
 
 function eventTarget(
 	tags: string[][],
@@ -29,16 +33,43 @@ function isPositiveReaction(content: string): boolean {
 	return content !== '-';
 }
 
+/** A note #p-tags the active user without being a reply (standalone mention). */
+function mentionsMe(tags: string[][], me?: string): boolean {
+	if (!me) return false;
+	return tags.some((tag) => tag[0] === 'p' && tag[1] === me);
+}
+
+/** NIP-57 zap receipt amount in sats, from the `amount` (msat) tag. */
+function parseZapAmount(tags: string[][]): number {
+	const amount = tags.find((tag) => tag[0] === 'amount')?.[1];
+	const msat = amount ? Number(amount) : 0;
+	return Number.isFinite(msat) ? Math.round(msat / 1000) : 0;
+}
+
 class NotificationsStore {
 	items = $state<NotificationItem[]>([]);
 	loading = $state(false);
 	loadingMore = $state(false);
 	hasMore = $state(true);
 	connected = $state(false);
+	/** Set when the relay subscription drops so the UI can offer retry. */
+	error = $state<string | null>(null);
+	/** Muted notification types (likes, follows, …) hidden from the list. */
+	muted = $state<Set<NotificationItem['type']>>(new SvelteSet());
 	private readIds = new Set<string>();
 	private unsub: (() => void) | null = null;
 
-	unreadCount = $derived(this.items.filter((item) => !item.read).length);
+	/** Visible items after per-type mute filtering (drives UI + badge). */
+	visible = $derived(this.items.filter((item) => !this.muted.has(item.type)));
+
+	/** Unread badge uses the visible (un-muted) set so muted types don't ping. */
+	unreadCount = $derived(this.visible.filter((item) => !item.read).length);
+
+	countByType = $derived.by(() => {
+		const counts: Record<string, number> = {};
+		for (const item of this.items) counts[item.type] = (counts[item.type] ?? 0) + 1;
+		return counts;
+	});
 
 	start = () => {
 		if (!browser) return;
@@ -46,15 +77,22 @@ class NotificationsStore {
 		if (!me) return;
 		this.stop();
 		this.loadRead();
+		this.loadMuted();
 		this.items = [];
 		this.loading = true;
 		this.loadingMore = false;
 		this.hasMore = true;
 		this.connected = false;
+		this.error = null;
 		this.unsub = subscribe([this.notificationFilter(me)], {
 			oneose: () => {
 				this.loading = false;
 				this.connected = true;
+				this.error = null;
+			},
+			onclose: () => {
+				this.loading = false;
+				this.connected = false;
 			},
 			onevent: (ev) => this.ingest(ev)
 		});
@@ -74,7 +112,8 @@ class NotificationsStore {
 				NOSTR_KINDS.TEXT_NOTE,
 				NOSTR_KINDS.CONTACT_LIST,
 				NOSTR_KINDS.REACTION,
-				NOSTR_KINDS.REPOST
+				NOSTR_KINDS.REPOST,
+				NOSTR_KINDS.ZAP
 			],
 			'#p': [me],
 			limit: PAGE_LIMIT,
@@ -135,6 +174,17 @@ class NotificationsStore {
 		tags: string[][];
 		kind: number;
 	}): NotificationItem | null {
+		if (ev.kind === NOSTR_KINDS.ZAP) {
+			return this.makeItem(
+				ev,
+				'zap',
+				eventTarget(ev.tags, { preferSecondEvent: true }),
+				ev.content,
+				{
+					amountSats: parseZapAmount(ev.tags)
+				}
+			);
+		}
 		if (ev.kind === NOSTR_KINDS.REACTION && isPositiveReaction(ev.content)) {
 			const targetId = eventTarget(ev.tags);
 			return this.makeItem(ev, 'like', targetId, ev.content || '❤️');
@@ -142,6 +192,10 @@ class NotificationsStore {
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && isReply(ev.tags)) {
 			const targetId = eventTarget(ev.tags);
 			return this.makeItem(ev, 'comment', targetId, ev.content);
+		}
+		// A note that mentions you via #p but isn't part of a reply thread.
+		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && mentionsMe(ev.tags, identity.current?.pk)) {
+			return this.makeItem(ev, 'mention', undefined, ev.content);
 		}
 		if (ev.kind === NOSTR_KINDS.CONTACT_LIST) {
 			return this.makeItem(ev, 'follow', undefined, ev.content);
@@ -162,7 +216,8 @@ class NotificationsStore {
 		},
 		type: NotificationItem['type'],
 		targetId: string | undefined,
-		content: string
+		content: string,
+		extra: Partial<Pick<NotificationItem, 'amountSats'>> = {}
 	): NotificationItem {
 		return {
 			id: ev.id,
@@ -171,7 +226,8 @@ class NotificationsStore {
 			targetId,
 			content,
 			createdAt: ev.created_at,
-			read: this.readIds.has(ev.id)
+			read: this.readIds.has(ev.id),
+			...extra
 		};
 	}
 
@@ -182,11 +238,29 @@ class NotificationsStore {
 		this.items = this.items.map((item) => (item.id === id ? { ...item, read: true } : item));
 	}
 
+	/** Mark every item currently in view as read (used when the list is opened). */
+	markVisibleRead(ids: string[]) {
+		const toRead = ids.filter((id) => !this.readIds.has(id));
+		if (!toRead.length) return;
+		for (const id of toRead) this.readIds.add(id);
+		this.persistRead();
+		const next = new Set(toRead);
+		this.items = this.items.map((item) => (next.has(item.id) ? { ...item, read: true } : item));
+	}
+
 	markAllRead() {
 		if (!this.items.some((item) => !item.read)) return;
 		for (const item of this.items) this.readIds.add(item.id);
 		this.persistRead();
 		this.items = this.items.map((item) => ({ ...item, read: true }));
+	}
+
+	toggleMute(type: NotificationItem['type']) {
+		const next = new SvelteSet(this.muted);
+		if (next.has(type)) next.delete(type);
+		else next.add(type);
+		this.muted = next;
+		this.persistMuted();
 	}
 
 	private loadRead() {
@@ -204,6 +278,22 @@ class NotificationsStore {
 	private persistRead() {
 		if (!browser) return;
 		localStorage.setItem(STORAGE_KEY, JSON.stringify([...this.readIds].slice(-500)));
+	}
+
+	private loadMuted() {
+		if (!browser) return;
+		try {
+			const value = localStorage.getItem(MUTE_KEY);
+			if (!value) return;
+			this.muted = new SvelteSet(JSON.parse(value) as NotificationItem['type'][]);
+		} catch {
+			this.muted = new SvelteSet();
+		}
+	}
+
+	private persistMuted() {
+		if (!browser) return;
+		localStorage.setItem(MUTE_KEY, JSON.stringify([...this.muted]));
 	}
 }
 
