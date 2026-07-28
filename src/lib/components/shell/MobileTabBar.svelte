@@ -5,12 +5,14 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { notifications } from '$lib/nostr/notifications.svelte';
 
 	/** iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is). */
 
 	const tabs = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
 		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true },
+		{ to: '/notifications', label: 'Activity', icon: 'i-lucide-bell', notifications: true },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' }
@@ -26,6 +28,7 @@
 		me?.pk ? profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You' : ''
 	);
 	const unread = $derived(dms.unreadCount);
+	const notificationUnread = $derived(notifications.unreadCount);
 </script>
 
 <nav
@@ -42,10 +45,16 @@
 		>
 			<span class="relative">
 				<Icon name={tab.icon} class="size-[22px]" />
-				{#if tab.badge && unread > 0}
+				{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
 					<span
 						class="absolute -top-1 -right-2 grid size-4 place-items-center rounded-full bg-warm-500 text-[9px] font-bold text-white"
-						>{unread > 9 ? '9+' : unread}</span
+						>{tab.notifications
+							? notificationUnread > 9
+								? '9+'
+								: notificationUnread
+							: unread > 9
+								? '9+'
+								: unread}</span
 					>
 				{/if}
 			</span>

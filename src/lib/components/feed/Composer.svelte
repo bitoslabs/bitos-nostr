@@ -10,8 +10,16 @@
 	let posting = $state(false);
 
 	const me = $derived(identity.current);
-	const MAX = 280;
-	const remaining = $derived(MAX - text.length);
+	const SOFT_LIMIT = 4_000;
+	const HARD_LIMIT = 16_000;
+	const remaining = $derived(HARD_LIMIT - text.length);
+	const overSoftLimit = $derived(text.length > SOFT_LIMIT);
+	const overHardLimit = $derived(text.length > HARD_LIMIT);
+	const countLabel = $derived(
+		text.length <= SOFT_LIMIT
+			? `${text.length.toLocaleString()} / ${SOFT_LIMIT.toLocaleString()}`
+			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
+	);
 
 	const actions = [
 		{ icon: 'i-lucide-image', label: 'Photo', color: 'text-primary-500', toast: 'Photo upload' },
@@ -22,6 +30,10 @@
 
 	async function submit() {
 		if (!text.trim() || posting) return;
+		if (overHardLimit) {
+			toasts.error(`Normal notes are limited to ${HARD_LIMIT.toLocaleString()} characters`);
+			return;
+		}
 		posting = true;
 		try {
 			await feed.post(text);
@@ -59,9 +71,22 @@
 					rows={2}
 					placeholder="What's happening on Nostr?"
 					onkeydown={onKey}
-					maxlength={MAX * 2}
+					maxlength={HARD_LIMIT + 1000}
 					class="min-h-[64px] rounded-xl border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-4 py-3"
 				/>
+				{#if overSoftLimit}
+					<p
+						class="mt-2 text-[11.5px] {overHardLimit
+							? 'text-[var(--tone-error-text)]'
+							: 'text-warm-500'}"
+					>
+						{#if overHardLimit}
+							This is too long for a normal note. Shorten it or use a long-form article later.
+						{:else}
+							Long note. Most relays should accept it, but shorter posts render better in feeds.
+						{/if}
+					</p>
+				{/if}
 			</div>
 		</div>
 
@@ -83,15 +108,17 @@
 			<div class="flex items-center gap-2">
 				{#if text.length > 0}
 					<span
-						class="text-[11.5px] font-medium tabular-nums {remaining < 0
+						class="text-[11.5px] font-medium tabular-nums {overHardLimit
 							? 'text-[var(--tone-error-text)]'
-							: 'text-[var(--ui-text-dimmed)]'}">{remaining}</span
+							: overSoftLimit
+								? 'text-warm-500'
+								: 'text-[var(--ui-text-dimmed)]'}">{countLabel}</span
 					>
 				{/if}
 				<button
 					type="button"
 					onclick={submit}
-					disabled={posting || !text.trim() || remaining < 0}
+					disabled={posting || !text.trim() || overHardLimit}
 					class="flex items-center gap-1.5 rounded-lg bg-primary-500 px-4 py-2 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition-all hover:scale-105 active:scale-95 disabled:pointer-events-none disabled:opacity-50"
 				>
 					<Icon

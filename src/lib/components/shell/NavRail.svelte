@@ -5,11 +5,12 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
-	import { toasts } from '$lib/stores/toasts.svelte';
+	import { notifications } from '$lib/nostr/notifications.svelte';
 
 	const nav = [
 		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
 		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true },
+		{ to: '/notifications', label: 'Notifications', icon: 'i-lucide-bell', notifications: true },
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' },
@@ -25,6 +26,7 @@
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(dms.unreadCount);
+	const notificationUnread = $derived(notifications.unreadCount);
 </script>
 
 <nav class="flex h-full flex-col items-center py-5">
@@ -49,10 +51,16 @@
 				aria-current={active ? 'page' : undefined}
 			>
 				<Icon name={item.icon} class="size-[18px]" />
-				{#if item.badge && unread > 0}
+				{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
 					<span
 						class="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-primary-500 text-[9px] font-bold text-white ring-2 ring-[var(--surface-bg)]"
-						>{unread > 9 ? '9+' : unread}</span
+						>{item.notifications
+							? notificationUnread > 9
+								? '9+'
+								: notificationUnread
+							: unread > 9
+								? '9+'
+								: unread}</span
 					>
 				{/if}
 				<span
@@ -65,20 +73,6 @@
 	</div>
 
 	<div class="flex flex-col items-center gap-2">
-		<button
-			type="button"
-			onclick={() => toasts.info('No new notifications')}
-			class="group relative grid size-11 place-items-center rounded-2xl text-[var(--ui-text-muted)] transition-all hover:bg-primary-500/10 hover:text-primary-500"
-			aria-label="Notifications"
-		>
-			<Icon name="i-lucide-bell" class="size-[18px]" />
-			<span
-				class="pointer-events-none absolute left-[calc(100%+12px)] z-50 hidden rounded-md bg-[var(--ui-text-highlighted)] px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-[var(--ui-bg)] opacity-0 shadow-[var(--shadow-pop)] transition-opacity group-hover:opacity-100 lg:block"
-			>
-				Notifications
-			</span>
-		</button>
-
 		{#if me}
 			<a
 				href="/profile"

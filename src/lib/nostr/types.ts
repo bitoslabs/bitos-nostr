@@ -14,6 +14,7 @@ export interface Profile {
 	website?: string;
 	nip05?: string;
 	lud16?: string;
+	lud06?: string;
 }
 
 /** A kind 1 text note ready for the feed UI. */
@@ -25,9 +26,30 @@ export interface FeedNote {
 	tags: string[][];
 	replyTo?: string;
 	/** Reactions aggregated by emoji. */
-	reactions: { emoji: string; count: number; byMe: boolean }[];
+	reactions: { emoji: string; count: number; byMe: boolean; myEventId?: string }[];
 	repostCount: number;
+	zapCount: number;
+	zapTotalSats: number;
 }
+
+/** Activity addressed to the current user's pubkey. */
+export interface NotificationItem {
+	id: string;
+	/** `mention` = a note that #p-tags you but isn't a reply; `zap` = a NIP-57 receipt. */
+	type: 'like' | 'comment' | 'repost' | 'follow' | 'mention' | 'zap';
+	pubkey: string;
+	targetId?: string;
+	content: string;
+	createdAt: number;
+	read: boolean;
+	/** Sats received, for `zap` notifications. */
+	amountSats?: number;
+	/** Original Nostr event for inspection/debugging. */
+	raw?: Event;
+}
+
+/** Logical notification category used for filtering + per-type mute. */
+export type NotificationType = NotificationItem['type'];
 
 /** A NIP-04 direct message. */
 export interface DirectMessage {
@@ -54,6 +76,7 @@ export interface RelayRecord {
 	write: boolean;
 	status: 'unknown' | 'connecting' | 'ok' | 'fail';
 	latency: number | null;
+	checkedAt?: number;
 }
 
 /** Identity material held in memory + localStorage. */
@@ -70,6 +93,7 @@ export interface Identity {
 export const NOSTR_KINDS = {
 	METADATA: 0,
 	TEXT_NOTE: 1,
+	DELETE: 5,
 	REACTION: 7,
 	DIRECT_MESSAGE: 4,
 	REPOST: 6,

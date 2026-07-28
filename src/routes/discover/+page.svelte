@@ -1,37 +1,183 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
+	import { queryOnce } from '$lib/nostr/pool';
+	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { trendTags, topCreators, exploreTiles, pic } from '$lib/data/mock';
+	import { shortKey } from '$lib/utils/format';
 
-	const colorBg: Record<string, string> = {
-		primary: 'bg-primary-500',
-		accent: 'bg-accent-500',
-		warm: 'bg-warm-500'
+	type TrendTag = { tag: string; count: number };
+	type Creator = { pubkey: string; count: number; latest: number };
+	type MediaItem = { id: string; url: string; pubkey: string; content: string };
+	type DiscoverCache = {
+		savedAt: number;
+		trendTags: TrendTag[];
+		creators: Creator[];
+		mediaItems: MediaItem[];
 	};
 
-	const tabs = ['For you', 'Photos', 'Videos', 'Reels'];
-	let activeTab = $state('For you');
-	let following = $state<Record<string, boolean>>({});
-	const badgeColor: Record<string, string> = {
-		REEL: 'bg-primary-500',
-		PHOTO: 'bg-warm-500 text-ink',
-		VIDEO: 'bg-accent-500'
-	};
+	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
+	const mediaPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
+	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v1';
+	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
+	const MAX_CACHED_TAGS = 18;
+	const MAX_CACHED_CREATORS = 8;
+	const MAX_CACHED_MEDIA = 36;
+
+	let loading = $state(true);
+	let query = $state('');
+	let trendTags = $state<TrendTag[]>([]);
+	let creators = $state<Creator[]>([]);
+	let mediaItems = $state<MediaItem[]>([]);
+	const me = $derived(identity.current?.pk ?? '');
+
+	const filteredTags = $derived(
+		trendTags.filter((item) => !query || item.tag.toLowerCase().includes(query.toLowerCase()))
+	);
+	const filteredCreators = $derived(
+		creators.filter((item) => {
+			const profile = profiles.get(item.pubkey);
+			const name = profile?.display_name || profile?.name || shortKey(item.pubkey);
+			return !query || name.toLowerCase().includes(query.toLowerCase());
+		})
+	);
+
+	function mediaUrl(content: string) {
+		return content.match(mediaPattern)?.[0] ?? '';
+	}
+
+	function applyDiscoverData(data: Omit<DiscoverCache, 'savedAt'>) {
+		trendTags = data.trendTags.slice(0, MAX_CACHED_TAGS);
+		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
+		mediaItems = data.mediaItems.slice(0, MAX_CACHED_MEDIA);
+		profiles.ensure(creators.map((creator) => creator.pubkey));
+		profiles.ensure(mediaItems.map((item) => item.pubkey));
+	}
+
+	function loadCachedDiscover() {
+		try {
+			const raw = localStorage.getItem(DISCOVER_CACHE_KEY);
+			if (!raw) return false;
+			const cached = JSON.parse(raw) as DiscoverCache;
+			if (!cached?.savedAt || Date.now() - cached.savedAt > DISCOVER_CACHE_TTL_MS) return false;
+			if (!Array.isArray(cached.trendTags) || !Array.isArray(cached.creators)) return false;
+			applyDiscoverData(cached);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	function saveDiscoverCache(data: Omit<DiscoverCache, 'savedAt'>) {
+		try {
+			localStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
+		} catch {
+			/* Ignore quota/private-mode failures; cache is only a performance hint. */
+		}
+	}
+
+	async function loadDiscover(options: { background?: boolean } = {}) {
+		if (!options.background) loading = true;
+		try {
+			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }]);
+			const seen: Record<string, true> = {};
+			const tags: Record<string, number> = {};
+			const authors: Record<string, Creator> = {};
+			const nextMedia: MediaItem[] = [];
+
+			for (const event of events.sort((a, b) => b.created_at - a.created_at)) {
+				if (seen[event.id]) continue;
+				seen[event.id] = true;
+
+				const noteTags = event.tags
+					.filter((tag) => tag[0] === 't' && tag[1])
+					.map((tag) => tag[1].toLowerCase());
+				const inlineTags = [...event.content.matchAll(hashtagPattern)].map((match) =>
+					match[1].toLowerCase()
+				);
+				for (const tag of [...noteTags, ...inlineTags].filter(
+					(tag, index, all) => all.indexOf(tag) === index
+				)) {
+					tags[tag] = (tags[tag] ?? 0) + 1;
+				}
+
+				if (event.pubkey !== me) {
+					const author = authors[event.pubkey] ?? {
+						pubkey: event.pubkey,
+						count: 0,
+						latest: event.created_at
+					};
+					author.count += 1;
+					author.latest = Math.max(author.latest, event.created_at);
+					authors[event.pubkey] = author;
+				}
+
+				const url = mediaUrl(event.content);
+				if (url && nextMedia.length < 36) {
+					nextMedia.push({ id: event.id, url, pubkey: event.pubkey, content: event.content });
+				}
+			}
+
+			const nextTags = Object.entries(tags)
+				.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+				.slice(0, 18)
+				.map(([tag, count]) => ({ tag, count }));
+			const nextCreators = Object.values(authors)
+				.sort((a, b) => b.count - a.count || b.latest - a.latest)
+				.slice(0, 8);
+			const data = {
+				trendTags: nextTags,
+				creators: nextCreators,
+				mediaItems: nextMedia
+			};
+			applyDiscoverData(data);
+			saveDiscoverCache(data);
+		} catch (e) {
+			if (!options.background) {
+				toasts.error((e as Error).message || 'Could not load discover data');
+			}
+		} finally {
+			loading = false;
+		}
+	}
+
+	onMount(() => {
+		const hasCache = loadCachedDiscover();
+		if (hasCache) {
+			loading = false;
+			void loadDiscover({ background: true });
+		} else {
+			void loadDiscover();
+		}
+	});
 </script>
 
 <svelte:head><title>Discover · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
 	<div class="mx-auto max-w-[1100px] px-6 py-6">
-		<!-- Header -->
-		<div class="mb-6">
-			<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight">Discover</h1>
-			<p class="mt-1.5 text-[13px] text-[var(--ui-text-muted)]">
-				Explore what's trending across Pulse
-			</p>
+		<div class="mb-6 flex items-start justify-between gap-4">
+			<div>
+				<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight">
+					Discover
+				</h1>
+				<p class="mt-1.5 text-[13px] text-[var(--ui-text-muted)]">
+					Real notes, tags, creators, and media from your relays
+				</p>
+			</div>
+			<button
+				type="button"
+				onclick={() => loadDiscover()}
+				class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
+				aria-label="Refresh discover"
+			>
+				<Icon name="i-lucide-rotate-cw" class="size-5 {loading ? 'animate-spin' : ''}" />
+			</button>
 		</div>
 
-		<!-- Search -->
 		<div class="relative mb-6">
 			<Icon
 				name="i-lucide-search"
@@ -39,126 +185,83 @@
 			/>
 			<input
 				type="text"
-				placeholder="Search creators, hashtags, sounds…"
-				class="w-full rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-3.5 pr-32 pl-12 text-[14px] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/30"
+				bind:value={query}
+				placeholder="Search creators or hashtags..."
+				class="w-full rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-3.5 pr-4 pl-12 text-[14px] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/30"
 			/>
-			<button
-				type="button"
-				onclick={() => toasts.info('Searching…')}
-				class="absolute top-1/2 right-2 -translate-y-1/2 rounded-xl bg-primary-500 px-4 py-2 text-[12px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
-				>Search</button
-			>
 		</div>
 
-		<!-- Trending tags -->
 		<div class="mb-6">
 			<h3 class="mb-3 font-display text-[18px] font-extrabold">Trending tags</h3>
-			<div class="flex flex-wrap gap-2">
-				{#each trendTags as t (t.tag)}
-					<button type="button" onclick={() => toasts.info(`Exploring ${t.tag}`)} class="trend-tag">
-						{#if t.icon}<Icon
-								name={t.icon}
-								class={t.icon === 'i-lucide-flame'
-									? 'size-3.5 text-primary-500'
-									: 'size-3.5 text-accent-500'}
-							/>{/if}
-						{t.tag}
-						<span class="font-normal text-[var(--ui-text-dimmed)]">{t.count}</span>
-					</button>
-				{/each}
-			</div>
-		</div>
-
-		<!-- Top creators -->
-		<div class="mb-8">
-			<div class="mb-3 flex items-center justify-between">
-				<h3 class="font-display text-[18px] font-extrabold">Top creators this week</h3>
-				<button type="button" class="text-[12px] font-semibold text-primary-500 hover:underline"
-					>See all</button
-				>
-			</div>
-			<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-				{#each topCreators as c (c.name)}
-					<div class="post-card cursor-pointer p-4 text-center">
-						<div
-							class="mx-auto mb-2 grid size-16 place-items-center rounded-2xl font-bold text-white {colorBg[
-								c.color
-							]}"
-						>
-							{c.initials}
-						</div>
-						<p class="text-[13px] font-bold">{c.name}</p>
-						<p class="mb-2 text-[11px] text-[var(--ui-text-muted)]">{c.role} · {c.followers}</p>
-						<button
-							type="button"
-							onclick={() => {
-								following[c.name] = !following[c.name];
-								following = { ...following };
-							}}
-							class="w-full rounded-full py-1.5 text-[11px] font-bold transition-colors {following[
-								c.name
-							]
-								? 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]'
-								: 'bg-primary-500 text-white hover:bg-primary-600'}"
-						>
-							{following[c.name] ? 'Following' : 'Follow'}
-						</button>
-					</div>
-				{/each}
-			</div>
-		</div>
-
-		<!-- Explore grid -->
-		<div class="mb-6">
-			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-				<h3 class="font-display text-[18px] font-extrabold">Explore</h3>
-				<div class="flex gap-1">
-					{#each tabs as t (t)}
-						<button
-							type="button"
-							onclick={() => (activeTab = t)}
-							class="pill-tab {activeTab === t ? 'active' : ''}">{t}</button
-						>
+			{#if filteredTags.length}
+				<div class="flex flex-wrap gap-2">
+					{#each filteredTags as item (item.tag)}
+						<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
+							<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
+							#{item.tag}
+							<span class="font-normal text-[var(--ui-text-dimmed)]">{item.count}</span>
+						</a>
 					{/each}
 				</div>
-			</div>
+			{:else}
+				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
+					{loading ? 'Loading tags from relays...' : 'No tags found from your relays.'}
+				</div>
+			{/if}
+		</div>
 
-			<div class="masonry">
-				{#each exploreTiles as tile (tile.seed)}
-					<div
-						class="group relative cursor-pointer overflow-hidden rounded-xl transition-transform hover:scale-[0.97]"
-					>
-						<img
-							src={pic(
-								tile.seed,
-								400,
-								tile.seed === 'exp3' || tile.seed === 'exp12'
-									? 600
-									: tile.seed === 'exp1' || tile.seed === 'exp10'
-										? 500
-										: 400
-							)}
-							class="w-full"
-							alt=""
-						/>
-						{#if tile.badge}
-							<span
-								class="absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-bold text-white {badgeColor[
-									tile.badge
-								] ?? 'bg-primary-500'}">{tile.badge}</span
-							>
-						{/if}
-						<div
-							class="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/40"
+		<div class="mb-8">
+			<h3 class="mb-3 font-display text-[18px] font-extrabold">Active creators</h3>
+			{#if filteredCreators.length}
+				<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					{#each filteredCreators as creator (creator.pubkey)}
+						{@const profile = profiles.get(creator.pubkey)}
+						{@const name = profile?.display_name || profile?.name || shortKey(creator.pubkey)}
+						<a href={`/profile/${creator.pubkey}`} class="post-card p-4 text-center">
+							<Avatar
+								pubkey={creator.pubkey}
+								{name}
+								picture={profile?.picture}
+								size={64}
+								class="mx-auto mb-2 rounded-2xl"
+							/>
+							<p class="truncate text-[13px] font-bold">{name}</p>
+							<p class="mb-2 text-[11px] text-[var(--ui-text-muted)]">
+								{creator.count} recent notes
+							</p>
+						</a>
+					{/each}
+				</div>
+			{:else}
+				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
+					{loading ? 'Loading creators from relays...' : 'No creators found.'}
+				</div>
+			{/if}
+		</div>
+
+		<div class="mb-6">
+			<h3 class="mb-3 font-display text-[18px] font-extrabold">Media</h3>
+			{#if mediaItems.length}
+				<div class="masonry">
+					{#each mediaItems as item (item.id)}
+						<a
+							href={`/profile/${item.pubkey}`}
+							class="group relative block cursor-pointer overflow-hidden rounded-xl transition-transform hover:scale-[0.97]"
 						>
-							<div class="text-center text-white opacity-0 transition group-hover:opacity-100">
-								<Icon name="i-lucide-heart" class="mx-auto size-6" />
-								<p class="mt-1 text-[12px] font-bold">2.4K</p>
+							<img src={item.url} class="w-full" alt="" loading="lazy" />
+							<div
+								class="absolute inset-0 flex items-end bg-black/0 p-3 text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100"
+							>
+								<p class="line-clamp-3 text-[12px] font-semibold">{item.content}</p>
 							</div>
-						</div>
-					</div>
-				{/each}
-			</div>
+						</a>
+					{/each}
+				</div>
+			{:else}
+				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
+					{loading ? 'Loading media from relays...' : 'No image media links found.'}
+				</div>
+			{/if}
 		</div>
 	</div>
 </div>

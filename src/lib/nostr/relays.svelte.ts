@@ -72,7 +72,9 @@ class RelayStore {
 
 	setStatus(url: string, status: RelayRecord['status'], latency: number | null = null) {
 		this.list = this.list.map((r) =>
-			r.url === url ? { ...r, status, latency: latency ?? r.latency } : r
+			r.url === url
+				? { ...r, status, latency: latency ?? r.latency, checkedAt: Math.floor(Date.now() / 1000) }
+				: r
 		);
 		this.persist();
 	}

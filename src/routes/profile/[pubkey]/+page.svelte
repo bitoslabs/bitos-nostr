@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { npubEncode } from 'nostr-tools/nip19';
+	import { decode, npubEncode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
@@ -13,18 +14,20 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
 
-	const NOTE_LIMIT = 80;
+	const NOTE_LIMIT = 60;
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
-	const me = $derived(identity.current);
-	const pubkey = $derived(me?.pk ?? '');
-	const myProfile = $derived(pubkey ? profiles.get(pubkey) : undefined);
-	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
+	const pubkey = $derived(resolvePubkey(page.params.pubkey));
+	const profile = $derived(pubkey ? profiles.get(pubkey) : undefined);
+	const displayName = $derived(
+		profile?.display_name || profile?.name || (pubkey ? shortKey(pubkey) : 'Profile')
+	);
 	const npub = $derived(pubkey ? npubEncode(pubkey) : '');
-	const lightning = $derived(myProfile?.lud16 || myProfile?.lud06 || '');
+	const lightning = $derived(profile?.lud16 || profile?.lud06 || '');
+	const isMe = $derived(!!pubkey && identity.current?.pk === pubkey);
 
-	let loading = $state(false);
+	let loading = $state(true);
 	let loadedFor = $state('');
 	let notes = $state<FeedNote[]>([]);
 	let activeTab = $state<'posts' | 'replies' | 'media'>('posts');
@@ -36,13 +39,27 @@
 		activeTab === 'posts' ? posts : activeTab === 'replies' ? replies : media
 	);
 	const normalizedWebsite = $derived(
-		myProfile?.website
-			? myProfile.website.startsWith('http')
-				? myProfile.website
-				: `https://${myProfile.website}`
+		profile?.website
+			? profile.website.startsWith('http')
+				? profile.website
+				: `https://${profile.website}`
 			: ''
 	);
 	const highlights = $derived(buildHighlights(notes));
+
+	function resolvePubkey(value: string | undefined) {
+		if (!value) return '';
+		if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
+		if (value.startsWith('npub1')) {
+			try {
+				const decoded = decode(value);
+				if (decoded.type === 'npub') return decoded.data as string;
+			} catch {
+				return '';
+			}
+		}
+		return '';
+	}
 
 	function toFeedNote(ev: {
 		id: string;
@@ -85,7 +102,7 @@
 			.map(([tag, count]) => ({ tag, count }));
 	}
 
-	async function loadMyProfile(nextPubkey: string) {
+	async function loadProfile(nextPubkey: string) {
 		if (!nextPubkey || loadedFor === nextPubkey) return;
 		loading = true;
 		loadedFor = nextPubkey;
@@ -95,17 +112,17 @@
 				{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 },
 				{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_LIMIT }
 			]);
-			const nextNotes = events
+			const noteEvents = events
 				.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)
-				.sort((a, b) => b.created_at - a.created_at)
-				.map(toFeedNote);
+				.sort((a, b) => b.created_at - a.created_at);
+			const nextNotes = noteEvents.map(toFeedNote);
 			const noteIds = nextNotes.map((note) => note.id);
 			const activity = noteIds.length
 				? await queryOnce([
 						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
 					])
 				: [];
-			notes = applyActivityToNotes(nextNotes, activity, me?.pk);
+			notes = applyActivityToNotes(nextNotes, activity, identity.current?.pk);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load profile');
 		} finally {
@@ -118,32 +135,34 @@
 	}
 
 	onMount(() => {
-		if (pubkey) void loadMyProfile(pubkey);
+		if (pubkey) void loadProfile(pubkey);
 	});
 
 	$effect(() => {
-		if (pubkey) void loadMyProfile(pubkey);
+		if (pubkey) void loadProfile(pubkey);
 	});
 </script>
 
-<svelte:head><title>Profile · BitOS</title></svelte:head>
+<svelte:head><title>{displayName} · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
 	<div class="relative h-[180px] bg-primary-500 sm:h-[200px]">
-		{#if myProfile?.banner}
-			<img src={myProfile.banner} class="absolute inset-0 size-full object-cover" alt="" />
+		{#if profile?.banner}
+			<img src={profile.banner} class="absolute inset-0 size-full object-cover" alt="" />
 		{:else}
 			<div
 				class="absolute inset-0 bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-accent-500))]"
 			></div>
 		{/if}
 		<div class="absolute inset-0 bg-black/15"></div>
-		<a
-			href="/settings"
-			class="absolute top-4 right-4 flex items-center gap-1.5 rounded-lg bg-black/30 px-3 py-1.5 text-[12px] font-semibold text-white backdrop-blur transition hover:bg-black/50"
-		>
-			<Icon name="i-lucide-camera" class="size-3.5" /> Edit cover
-		</a>
+		{#if isMe}
+			<a
+				href="/settings"
+				class="absolute top-4 right-4 flex items-center gap-1.5 rounded-lg bg-black/30 px-3 py-1.5 text-[12px] font-semibold text-white backdrop-blur transition hover:bg-black/50"
+			>
+				<Icon name="i-lucide-camera" class="size-3.5" /> Edit cover
+			</a>
+		{/if}
 	</div>
 
 	<div class="mx-auto max-w-[900px] px-6">
@@ -151,7 +170,7 @@
 			<Avatar
 				{pubkey}
 				name={displayName}
-				picture={myProfile?.picture}
+				picture={profile?.picture}
 				size={128}
 				class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
 			/>
@@ -162,12 +181,12 @@
 					>
 						{displayName}
 					</h1>
-					{#if myProfile?.nip05}
+					{#if profile?.nip05}
 						<Icon name="i-lucide-badge-check" class="size-5 shrink-0 text-primary-500" />
 					{/if}
 				</div>
 				<p class="mt-1 truncate font-mono text-[13px] text-[var(--ui-text-muted)]">
-					{shortKey(npub, 10, 8)}
+					{shortKey(npub)}
 				</p>
 				<div class="mt-2 flex gap-4 text-[13px]">
 					<span
@@ -185,21 +204,29 @@
 				</div>
 			</div>
 			<div class="flex gap-2 pb-2">
-				<a
-					href="/settings"
-					class="rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
-					>Edit profile</a
-				>
+				{#if isMe}
+					<a
+						href="/settings"
+						class="rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+						>Edit profile</a
+					>
+				{:else}
+					<a
+						href={`/messages?to=${pubkey}`}
+						class="rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+						>Message</a
+					>
+				{/if}
 				<ProfileActionMenu {pubkey} {npub} {lightning} />
 			</div>
 		</div>
 
 		<div class="post-card mb-5 p-4">
-			<p class="text-[14px] leading-relaxed">
-				{myProfile?.about || 'No profile bio published yet.'}
+			<p class="text-[14px] leading-relaxed text-[var(--ui-text)]">
+				{profile?.about || 'No profile bio published yet.'}
 			</p>
 			<div class="mt-3 flex flex-wrap gap-4 text-[12px] text-[var(--ui-text-muted)]">
-				{#if myProfile?.website}
+				{#if profile?.website}
 					<a
 						href={normalizedWebsite}
 						target="_blank"
@@ -207,19 +234,19 @@
 						class="flex items-center gap-1.5 hover:text-primary-500"
 					>
 						<Icon name="i-lucide-link" class="size-3.5 text-primary-500" />
-						{myProfile.website}
+						{profile.website}
 					</a>
 				{/if}
-				{#if myProfile?.nip05}
+				{#if profile?.nip05}
 					<span class="flex items-center gap-1.5">
 						<Icon name="i-lucide-badge-check" class="size-3.5 text-primary-500" />
-						{myProfile.nip05}
+						{profile.nip05}
 					</span>
 				{/if}
-				{#if myProfile?.lud16 || myProfile?.lud06}
+				{#if profile?.lud16 || profile?.lud06}
 					<span class="flex items-center gap-1.5">
 						<Icon name="i-lucide-zap" class="size-3.5 text-primary-500" />
-						{myProfile.lud16 || myProfile.lud06}
+						{profile.lud16 || profile.lud06}
 					</span>
 				{/if}
 				{#if notes[0]}
@@ -266,26 +293,41 @@
 
 		<div class="mb-5 border-b border-[var(--ui-border-muted)]">
 			<div class="flex gap-1">
-				{#each ['posts', 'replies', 'media'] as tab (tab)}
-					<button
-						type="button"
-						onclick={() => (activeTab = tab as 'posts' | 'replies' | 'media')}
-						class="border-b-2 px-4 py-3 text-[13px] font-bold capitalize transition {activeTab ===
-						tab
-							? 'border-primary-500 text-[var(--ui-text)]'
-							: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-					>
-						{tab}
-					</button>
-				{/each}
+				<button
+					type="button"
+					onclick={() => (activeTab = 'posts')}
+					class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'posts'
+						? 'border-primary-500 text-[var(--ui-text)]'
+						: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+				>
+					Posts
+				</button>
+				<button
+					type="button"
+					onclick={() => (activeTab = 'replies')}
+					class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'replies'
+						? 'border-primary-500 text-[var(--ui-text)]'
+						: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+				>
+					Replies
+				</button>
+				<button
+					type="button"
+					onclick={() => (activeTab = 'media')}
+					class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'media'
+						? 'border-primary-500 text-[var(--ui-text)]'
+						: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+				>
+					Media
+				</button>
 			</div>
 		</div>
 
-		{#if !me}
+		{#if !pubkey}
 			<div class="post-card py-16 text-center">
-				<p class="text-[15px] font-semibold">No identity loaded</p>
+				<p class="text-[15px] font-semibold">Invalid profile</p>
 				<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-					Create or import a key to view your profile.
+					This profile key could not be decoded.
 				</p>
 			</div>
 		{:else if loading}
@@ -305,7 +347,7 @@
 			<div class="post-card py-16 text-center">
 				<p class="text-[15px] font-semibold">No {activeTab} found</p>
 				<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-					Your configured relays did not return matching notes.
+					This relay set did not return matching notes.
 				</p>
 			</div>
 		{/if}

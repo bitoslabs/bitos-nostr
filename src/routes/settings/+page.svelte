@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { finalizeEvent } from 'nostr-tools/pure';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -16,7 +17,7 @@
 	import { hexToBytes } from '$lib/nostr/hex';
 
 	const me = $derived(identity.current);
-	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
+	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
 
 	const sections = [
 		{ key: 'account', label: 'Account', icon: 'i-lucide-user' },
@@ -32,6 +33,7 @@
 	const section = $derived(
 		sectionKeys.includes(page.params.section ?? '') ? (page.params.section as string) : 'account'
 	);
+	const sectionTitle = $derived(sections.find((item) => item.key === section)?.label ?? 'Settings');
 
 	// --- appearance ---
 	const modes = [
@@ -60,25 +62,52 @@
 	let highContrast = $state(false);
 
 	// --- account / profile ---
-	let editingName = $state('');
+	let editingUsername = $state('');
+	let editingDisplayName = $state('');
 	let editingAbout = $state('');
+	let editingPicture = $state('');
+	let editingBanner = $state('');
+	let editingWebsite = $state('');
+	let editingNip05 = $state('');
+	let editingLightning = $state('');
 	let savingProfile = $state(false);
+
+	function clean(value: string) {
+		return value.trim() || undefined;
+	}
+
+	function resetProfileForm() {
+		editingUsername = myProfile?.name || '';
+		editingDisplayName = myProfile?.display_name || '';
+		editingAbout = myProfile?.about || '';
+		editingPicture = myProfile?.picture || '';
+		editingBanner = myProfile?.banner || '';
+		editingWebsite = myProfile?.website || '';
+		editingNip05 = myProfile?.nip05 || '';
+		editingLightning = myProfile?.lud16 || myProfile?.lud06 || '';
+	}
+
+	let loadedProfileKey = $state('');
 	$effect(() => {
-		if (myProfile) {
-			editingName = myProfile.display_name || myProfile.name || '';
-			editingAbout = myProfile.about || '';
-		}
+		const signature = JSON.stringify(myProfile ?? {});
+		if (signature === loadedProfileKey) return;
+		loadedProfileKey = signature;
+		resetProfileForm();
 	});
+
 	async function saveProfile() {
 		if (!me) return;
 		savingProfile = true;
 		try {
 			const meta = {
-				name: editingName.trim() || undefined,
-				display_name: editingName.trim() || undefined,
-				about: editingAbout.trim() || undefined,
-				picture: myProfile?.picture,
-				nip05: myProfile?.nip05
+				name: clean(editingUsername),
+				display_name: clean(editingDisplayName) ?? clean(editingUsername),
+				about: clean(editingAbout),
+				picture: clean(editingPicture),
+				banner: clean(editingBanner),
+				website: clean(editingWebsite),
+				nip05: clean(editingNip05),
+				lud16: clean(editingLightning)
 			};
 			const event = finalizeEvent(
 				{
@@ -102,6 +131,7 @@
 
 	// --- relays ---
 	let newRelay = $state('');
+	let testingRelays = $state<Record<string, boolean>>({});
 	function addRelay() {
 		const res = relays.add(newRelay);
 		if (!res.ok) toasts.error(res.error ?? 'Invalid relay');
@@ -109,6 +139,52 @@
 			toasts.success('Relay added');
 			newRelay = '';
 		}
+	}
+
+	function formatRelayTime(unixSeconds: number | undefined) {
+		if (!unixSeconds) return 'not tested';
+		return new Date(unixSeconds * 1000).toLocaleTimeString(undefined, {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit'
+		});
+	}
+
+	async function testRelay(url: string) {
+		if (!browser || testingRelays[url]) return;
+		testingRelays = { ...testingRelays, [url]: true };
+		relays.setStatus(url, 'connecting');
+		const started = performance.now();
+		try {
+			const latency = await new Promise<number>((resolve, reject) => {
+				const ws = new WebSocket(url);
+				const timeout = window.setTimeout(() => {
+					ws.close();
+					reject(new Error('Connection timed out'));
+				}, 6000);
+				ws.onopen = () => {
+					window.clearTimeout(timeout);
+					const ms = Math.round(performance.now() - started);
+					ws.close();
+					resolve(ms);
+				};
+				ws.onerror = () => {
+					window.clearTimeout(timeout);
+					reject(new Error('Connection failed'));
+				};
+			});
+			relays.setStatus(url, 'ok', latency);
+			toasts.success(`${url} connected in ${latency}ms`);
+		} catch {
+			relays.setStatus(url, 'fail', null);
+			toasts.error(`${url} failed`);
+		} finally {
+			testingRelays = { ...testingRelays, [url]: false };
+		}
+	}
+
+	function testAllRelays() {
+		for (const relay of relays.list) void testRelay(relay.url);
 	}
 
 	// --- keys ---
@@ -136,17 +212,15 @@
 		comments: true,
 		followers: true,
 		dms: true,
-		mentions: false,
-		emailDigest: true,
-		marketing: false,
-		sms: true,
-		twoFA: true
+		mentions: false
 	});
 	function toggle(k: string) {
 		t[k] = !t[k];
 		t = { ...t };
 	}
 </script>
+
+<svelte:head><title>{sectionTitle} · Settings · BitOS</title></svelte:head>
 
 <div class="flex h-full">
 	<!-- Settings sidebar -->
@@ -224,46 +298,135 @@
 						<div
 							class="grid size-16 shrink-0 place-items-center rounded-2xl bg-warm-500 font-bold text-white"
 						>
-							{(myProfile?.display_name || 'Y').slice(0, 2).toUpperCase()}
+							{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
 						</div>
 						<div class="flex-1">
-							<p class="text-[15px] font-bold">{myProfile?.display_name || 'You'}</p>
+							<p class="text-[15px] font-bold">{editingDisplayName || editingUsername || 'You'}</p>
 							<p class="text-[12px] text-[var(--ui-text-muted)]">{me ? shortKey(me.npub) : ''}</p>
 						</div>
 						<Button
 							color="neutral"
 							variant="subtle"
-							onclick={() => toasts.info('Picture upload (paste a URL in About)')}
-							>Change photo</Button
+							onclick={() => toasts.info('Paste an image URL in Avatar URL')}>Change photo</Button
 						>
 					</div>
-					<div class="space-y-4">
+					<div class="grid gap-4 sm:grid-cols-2">
 						<div>
 							<label
+								for="profile-username"
 								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
-								>Display name</label
+								>Username</label
 							>
 							<Input
-								bind:value={editingName}
-								icon="i-lucide-user"
-								placeholder="Your name"
+								id="profile-username"
+								bind:value={editingUsername}
+								icon="i-lucide-at-sign"
+								placeholder="username"
 								class="w-full"
 							/>
 						</div>
 						<div>
 							<label
+								for="profile-display-name"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Display name</label
+							>
+							<Input
+								id="profile-display-name"
+								bind:value={editingDisplayName}
+								icon="i-lucide-user"
+								placeholder="Your name"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="profile-bio"
 								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
 								>Bio</label
 							>
 							<textarea
+								id="profile-bio"
 								bind:value={editingAbout}
 								rows="3"
-								maxlength="160"
+								maxlength="300"
 								class="w-full resize-none rounded-lg border border-[var(--ui-border)] bg-[var(--ui-bg-muted)] px-4 py-2.5 text-[14px] transition outline-none focus:border-primary-500 focus:bg-[var(--surface-bg)]"
 							></textarea>
 							<p class="mt-1 text-[11px] text-[var(--ui-text-dimmed)]">
-								{editingAbout.length} / 160 characters
+								{editingAbout.length} / 300 characters
 							</p>
+						</div>
+						<div>
+							<label
+								for="profile-picture"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Avatar URL</label
+							>
+							<Input
+								id="profile-picture"
+								bind:value={editingPicture}
+								icon="i-lucide-image"
+								placeholder="https://..."
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-banner"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Banner URL</label
+							>
+							<Input
+								id="profile-banner"
+								bind:value={editingBanner}
+								icon="i-lucide-panorama"
+								placeholder="https://..."
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-website"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Website</label
+							>
+							<Input
+								id="profile-website"
+								bind:value={editingWebsite}
+								icon="i-lucide-link"
+								placeholder="https://example.com"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="profile-nip05"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>NIP-05</label
+							>
+							<Input
+								id="profile-nip05"
+								bind:value={editingNip05}
+								icon="i-lucide-badge-check"
+								placeholder="name@example.com"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="profile-lightning"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Lightning address</label
+							>
+							<Input
+								id="profile-lightning"
+								bind:value={editingLightning}
+								icon="i-lucide-zap"
+								placeholder="name@getalby.com"
+								class="w-full"
+							/>
 						</div>
 					</div>
 					<div class="mt-5 flex gap-2 border-t border-[var(--ui-border-muted)] pt-5">
@@ -273,12 +436,12 @@
 							onclick={saveProfile}
 							disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save changes'}</Button
 						>
-						<Button color="neutral" variant="ghost">Cancel</Button>
+						<Button color="neutral" variant="ghost" onclick={resetProfileForm}>Cancel</Button>
 					</div>
 				</div>
 
 				<div class="mb-5 grid grid-cols-3 gap-3">
-					{#each [{ l: 'Notes', v: '348', d: '+12 this month', c: 'text-accent-500' }, { l: 'Followers', v: '12.4K', d: '+248 this week', c: 'text-accent-500' }, { l: 'Reactions', v: '1.2M', d: '+89% growth', c: 'text-primary-500' }] as s}
+					{#each [{ l: 'Notes', v: '348', d: '+12 this month', c: 'text-accent-500' }, { l: 'Followers', v: '12.4K', d: '+248 this week', c: 'text-accent-500' }, { l: 'Reactions', v: '1.2M', d: '+89% growth', c: 'text-primary-500' }] as s (s.l)}
 						<div class="post-card p-4">
 							<p
 								class="text-[11px] font-semibold tracking-wide text-[var(--ui-text-muted)] uppercase"
@@ -336,7 +499,7 @@
 				<div class="post-card mb-5 p-5">
 					<h3 class="mb-4 text-[15px] font-bold">Account privacy</h3>
 					<div class="space-y-3">
-						{#each [['privateAcc', 'Private account', 'Only approved followers can see your posts'], ['activity', 'Activity status', "Show when you're active"], ['readReceipts', 'Read receipts', 'Let others know you saw their messages']] as [k, title, desc]}
+						{#each [['privateAcc', 'Private account', 'Only approved followers can see your posts'], ['activity', 'Activity status', "Show when you're active"], ['readReceipts', 'Read receipts', 'Let others know you saw their messages']] as [k, title, desc] (k)}
 							<div
 								class="flex items-center justify-between {k !== 'privateAcc'
 									? 'border-t border-[var(--ui-border-muted)] pt-3'
@@ -409,7 +572,7 @@
 				<div class="post-card mb-5 p-5">
 					<h3 class="mb-4 text-[15px] font-bold">Push notifications</h3>
 					<div class="space-y-3">
-						{#each [['likes', 'i-lucide-heart', 'text-primary-500', 'Likes and reactions', 'When someone likes your post'], ['comments', 'i-lucide-message-circle', 'text-accent-500', 'Comments', 'When someone comments on your post'], ['followers', 'i-lucide-user-plus', 'text-warm-500', 'New followers', 'When you get a new follower'], ['dms', 'i-lucide-send', 'text-primary-500', 'Direct messages', 'When you receive a message'], ['mentions', 'i-lucide-at-sign', 'text-accent-500', 'Mentions', 'When someone mentions you']] as [k, ic, col, title, desc]}
+						{#each [['likes', 'i-lucide-heart', 'text-primary-500', 'Likes and reactions', 'When someone likes your post'], ['comments', 'i-lucide-message-circle', 'text-accent-500', 'Comments', 'When someone comments on your post'], ['followers', 'i-lucide-user-plus', 'text-warm-500', 'New followers', 'When you get a new follower'], ['dms', 'i-lucide-send', 'text-primary-500', 'Direct messages', 'When you receive a message'], ['mentions', 'i-lucide-at-sign', 'text-accent-500', 'Mentions', 'When someone mentions you']] as [k, ic, col, title, desc] (k)}
 							<div
 								class="flex items-center justify-between {k !== 'likes'
 									? 'border-t border-[var(--ui-border-muted)] pt-3'
@@ -423,25 +586,6 @@
 										<p class="text-[13.5px] font-semibold">{title}</p>
 										<p class="text-[11px] text-[var(--ui-text-muted)]">{desc}</p>
 									</div>
-								</div>
-								<button type="button" class="toggle {t[k] ? 'on' : ''}" onclick={() => toggle(k)}
-								></button>
-							</div>
-						{/each}
-					</div>
-				</div>
-				<div class="post-card p-5">
-					<h3 class="mb-4 text-[15px] font-bold">Email & SMS</h3>
-					<div class="space-y-3">
-						{#each [['emailDigest', 'Email digest', 'Weekly summary of activity'], ['marketing', 'Marketing emails', 'Product updates and news'], ['sms', 'SMS alerts', 'Critical security alerts only']] as [k, title, desc]}
-							<div
-								class="flex items-center justify-between {k !== 'emailDigest'
-									? 'border-t border-[var(--ui-border-muted)] pt-3'
-									: ''}"
-							>
-								<div>
-									<p class="text-[13.5px] font-semibold">{title}</p>
-									<p class="text-[11px] text-[var(--ui-text-muted)]">{desc}</p>
 								</div>
 								<button type="button" class="toggle {t[k] ? 'on' : ''}" onclick={() => toggle(k)}
 								></button>
@@ -566,14 +710,19 @@
 							<button
 								type="button"
 								onclick={() => preferences.setDensity(d.key)}
-								class="rounded-xl border p-4 text-left transition {preferences.state.density === d.key
+								class="rounded-xl border p-4 text-left transition {preferences.state.density ===
+								d.key
 									? 'border-primary-500 bg-primary-500/10 text-primary-500'
 									: 'border-[var(--ui-border)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]'}"
 							>
 								<div class="mb-3 space-y-1.5">
 									<div class="h-2 rounded-full bg-current/25"></div>
-									<div class="h-2 rounded-full bg-current/20 {d.key === 'compact' ? 'w-3/4' : 'w-5/6'}"></div>
-									<div class="h-2 rounded-full bg-current/15 {d.key === 'compact' ? 'w-1/2' : 'w-2/3'}"></div>
+									<div
+										class="h-2 rounded-full bg-current/20 {d.key === 'compact' ? 'w-3/4' : 'w-5/6'}"
+									></div>
+									<div
+										class="h-2 rounded-full bg-current/15 {d.key === 'compact' ? 'w-1/2' : 'w-2/3'}"
+									></div>
 								</div>
 								<p class="text-[13px] font-bold text-[var(--ui-text)]">{d.label}</p>
 								<p class="mt-0.5 text-[11px] text-[var(--ui-text-muted)]">{d.description}</p>
@@ -632,10 +781,12 @@
 				</div>
 			{/if}
 
-			<!-- SECURITY (Nostr keys + relays + demo sessions) -->
+			<!-- SECURITY (Nostr keys + relays) -->
 			{#if section === 'security' && me}
 				<h2 class="mb-1 font-display text-[24px] font-extrabold">Security</h2>
-				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Your keys, relays, and sessions</p>
+				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
+					Your local keys and relay connections
+				</p>
 
 				<!-- Keys -->
 				<div class="post-card mb-5 p-5">
@@ -720,6 +871,13 @@
 							onclick={addRelay}
 							disabled={!newRelay.trim()}>Add</Button
 						>
+						<Button
+							color="neutral"
+							variant="subtle"
+							icon="i-lucide-wifi"
+							onclick={testAllRelays}
+							disabled={!relays.list.length}>Test all</Button
+						>
 					</div>
 					<ul
 						class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
@@ -740,9 +898,21 @@
 									<div class="text-[10.5px] text-[var(--ui-text-dimmed)]">
 										{r.read ? 'read' : '—'} · {r.write ? 'write' : '—'}{#if r.latency != null}
 											· {r.latency}ms{/if}
+										· {formatRelayTime(r.checkedAt)}
 									</div>
 								</div>
 								<div class="flex shrink-0 items-center gap-0.5">
+									<button
+										type="button"
+										onclick={() => testRelay(r.url)}
+										disabled={!!testingRelays[r.url]}
+										class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold text-primary-500 transition hover:bg-primary-500/10 disabled:opacity-60"
+									>
+										<Icon
+											name={testingRelays[r.url] ? 'i-lucide-loader-circle' : 'i-lucide-wifi'}
+											class="size-3 {testingRelays[r.url] ? 'animate-spin' : ''}"
+										/>
+									</button>
 									<button
 										type="button"
 										onclick={() => relays.toggle(r.url, 'read')}
@@ -770,72 +940,6 @@
 						{/each}
 					</ul>
 				</div>
-
-				<!-- 2FA (demo) -->
-				<div class="post-card mb-5 p-5">
-					<div class="mb-4 flex items-center justify-between">
-						<div>
-							<h3 class="text-[15px] font-bold">Two-factor authentication</h3>
-							<p class="mt-0.5 text-[12px] text-[var(--ui-text-muted)]">
-								Add an extra layer of security
-							</p>
-						</div>
-						<button
-							type="button"
-							class="toggle {t.twoFA ? 'on' : ''}"
-							onclick={() => toggle('twoFA')}
-						></button>
-					</div>
-					<div
-						class="flex items-center gap-3 rounded-xl border border-accent-500/20 bg-accent-500/5 p-3"
-					>
-						<Icon name="i-lucide-shield-check" class="size-5 text-accent-500" />
-						<p class="flex-1 text-[12px] font-semibold text-accent-500">
-							2FA is enabled via authenticator app
-						</p>
-						<button type="button" class="text-[12px] font-bold text-accent-500 hover:underline"
-							>Manage</button
-						>
-					</div>
-				</div>
-
-				<!-- Sessions (demo) -->
-				<div class="post-card p-5">
-					<h3 class="mb-4 text-[15px] font-bold">Active sessions</h3>
-					<div class="space-y-3">
-						<div
-							class="flex items-center gap-3 rounded-xl border border-accent-500/20 bg-accent-500/5 p-3"
-						>
-							<div class="grid size-9 place-items-center rounded-lg bg-accent-500/10">
-								<Icon name="i-lucide-laptop" class="size-4 text-accent-500" />
-							</div>
-							<div class="flex-1">
-								<p class="flex items-center gap-2 text-[13px] font-semibold">
-									MacBook Pro · Chrome <span
-										class="rounded-full bg-accent-500 px-1.5 py-0.5 text-[9px] font-bold text-white"
-										>CURRENT</span
-									>
-								</p>
-								<p class="text-[11px] text-[var(--ui-text-muted)]">This device · Active now</p>
-							</div>
-						</div>
-						<div
-							class="flex items-center gap-3 rounded-xl p-3 transition hover:bg-[var(--interactive-hover-bg)]"
-						>
-							<div class="grid size-9 place-items-center rounded-lg bg-[var(--ui-bg-muted)]">
-								<Icon name="i-lucide-smartphone" class="size-4 text-[var(--ui-text-muted)]" />
-							</div>
-							<div class="flex-1">
-								<p class="text-[13px] font-semibold">iPhone 15 Pro · BitOS app</p>
-								<p class="text-[11px] text-[var(--ui-text-muted)]">2 hours ago</p>
-							</div>
-							<button
-								type="button"
-								class="text-[12px] font-semibold text-primary-500 hover:underline">Revoke</button
-							>
-						</div>
-					</div>
-				</div>
 			{/if}
 
 			<!-- LANGUAGE -->
@@ -847,7 +951,7 @@
 				<div class="post-card mb-5 p-5">
 					<h3 class="mb-4 text-[15px] font-bold">Language</h3>
 					<div class="space-y-2">
-						{#each [{ l: 'English (US)', d: 'Default' }, { l: 'Español' }, { l: 'Français' }, { l: 'Deutsch' }, { l: '日本語' }] as lang, i}
+						{#each [{ l: 'English (US)', d: 'Default' }, { l: 'Español' }, { l: 'Français' }, { l: 'Deutsch' }, { l: '日本語' }] as lang, i (lang.l)}
 							<label
 								class="flex cursor-pointer items-center gap-3 rounded-xl p-3 transition hover:bg-[var(--interactive-hover-bg)]"
 							>
@@ -895,7 +999,7 @@
 				<h2 class="mb-1 font-display text-[24px] font-extrabold">Help & Support</h2>
 				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Find answers and get support</p>
 				<div class="mb-5 grid grid-cols-2 gap-3">
-					{#each [{ i: 'i-lucide-circle-help', c: 'text-primary-500', t: 'Help Center', d: 'Browse guides and FAQs' }, { i: 'i-lucide-headset', c: 'text-accent-500', t: 'Contact Support', d: 'Chat with our team 24/7' }, { i: 'i-lucide-flag', c: 'text-warm-500', t: 'Report a Problem', d: "Tell us what's wrong" }, { i: 'i-lucide-lightbulb', c: 'text-ink', t: 'Feature Request', d: 'Suggest new features' }] as h}
+					{#each [{ i: 'i-lucide-circle-help', c: 'text-primary-500', t: 'Help Center', d: 'Browse guides and FAQs' }, { i: 'i-lucide-headset', c: 'text-accent-500', t: 'Contact Support', d: 'Chat with our team 24/7' }, { i: 'i-lucide-flag', c: 'text-warm-500', t: 'Report a Problem', d: "Tell us what's wrong" }, { i: 'i-lucide-lightbulb', c: 'text-ink', t: 'Feature Request', d: 'Suggest new features' }] as h (h.t)}
 						<button
 							type="button"
 							onclick={() => toasts.info(h.t)}
@@ -912,7 +1016,7 @@
 				<div class="post-card p-5">
 					<h3 class="mb-3 text-[15px] font-bold">Popular articles</h3>
 					<div class="space-y-2">
-						{#each ['How Nostr identities work', 'Backing up your nsec', 'Understanding relays', 'Sending encrypted DMs (NIP-04)'] as a}
+						{#each ['How Nostr identities work', 'Backing up your nsec', 'Understanding relays', 'Sending encrypted DMs (NIP-04)'] as a (a)}
 							<button
 								type="button"
 								class="flex w-full items-center justify-between rounded-lg p-3 text-left transition hover:bg-[var(--interactive-hover-bg)]"
@@ -946,7 +1050,7 @@
 				</div>
 				<div class="post-card mb-5 p-5">
 					<div class="space-y-3">
-						{#each ['Terms of Service', 'Privacy Policy', 'Community Guidelines', 'Open Source Licenses'] as l}
+						{#each ['Terms of Service', 'Privacy Policy', 'Community Guidelines', 'Open Source Licenses'] as l (l)}
 							<a
 								href="https://github.com/nostr-protocol/nostr"
 								target="_blank"

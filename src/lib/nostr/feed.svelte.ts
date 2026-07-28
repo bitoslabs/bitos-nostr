@@ -11,10 +11,12 @@ import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote } from './types';
+import { zapSats, zapTarget } from './zaps';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
+const MAX_TEXT_NOTE_CHARS = 16_000;
 
 function isReaction(content: string): boolean {
 	// kind 7 reactions are either a + / - or an emoji shortcode
@@ -31,6 +33,7 @@ class FeedStore {
 	/** Map note.id → index for O(1) updates when reactions arrive. */
 	private byId = new Map<string, number>();
 	private pendingById = new Map<string, number>();
+	private seenZapIds = new Set<string>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -45,8 +48,14 @@ class FeedStore {
 		this.connected = false;
 		this.pendingNotes = [];
 		this.pendingById.clear();
+		this.seenZapIds.clear();
 		this.unsub = subscribe(
-			[{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.REACTION], limit: INITIAL_LIMIT }],
+			[
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					limit: INITIAL_LIMIT
+				}
+			],
 			{
 				oneose: () => {
 					this.loading = false;
@@ -56,6 +65,7 @@ class FeedStore {
 					if (ev.kind === NOSTR_KINDS.TEXT_NOTE)
 						this.ingestNote(ev, { queueIfLive: this.connected });
 					else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
+					else if (ev.kind === NOSTR_KINDS.ZAP) this.ingestZap(ev);
 					// opportunistically load the author's profile
 					profiles.ensure([ev.pubkey]);
 				}
@@ -118,7 +128,9 @@ class FeedStore {
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],
-			repostCount: 0
+			repostCount: 0,
+			zapCount: 0,
+			zapTotalSats: 0
 		};
 		if (options.queueIfLive && this.notes.length > 0 && note.createdAt >= this.notes[0].createdAt) {
 			this.insertPending(note);
@@ -149,6 +161,7 @@ class FeedStore {
 	}
 
 	private ingestReaction(ev: {
+		id: string;
 		pubkey: string;
 		content: string;
 		tags: string[][];
@@ -175,9 +188,43 @@ class FeedStore {
 		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions: next } : n));
 	}
 
+	private ingestZap(ev: { id: string; content: string; tags: string[][] }) {
+		if (this.seenZapIds.has(ev.id)) return;
+		const target = zapTarget(ev);
+		if (!target) return;
+		const idx = this.byId.get(target);
+		const pendingIdx = this.pendingById.get(target);
+		if (idx === undefined && pendingIdx === undefined) return;
+		const sats = zapSats(ev);
+		this.seenZapIds.add(ev.id);
+		if (idx !== undefined) {
+			this.notes = this.notes.map((note, i) =>
+				i === idx
+					? {
+							...note,
+							zapCount: note.zapCount + 1,
+							zapTotalSats: note.zapTotalSats + sats
+						}
+					: note
+			);
+		}
+		if (pendingIdx !== undefined) {
+			this.pendingNotes = this.pendingNotes.map((note, i) =>
+				i === pendingIdx
+					? {
+							...note,
+							zapCount: note.zapCount + 1,
+							zapTotalSats: note.zapTotalSats + sats
+						}
+					: note
+			);
+		}
+	}
+
 	private nextReactions(
 		note: FeedNote,
 		ev: {
+			id: string;
 			pubkey: string;
 			content: string;
 		}
@@ -189,12 +236,37 @@ class FeedStore {
 		const next = note.reactions.map((r) => ({ ...r }));
 		const existing = next.find((r) => r.emoji === emoji);
 		if (existing) {
+			if (byMe && existing.byMe) {
+				existing.myEventId = ev.id;
+				return next;
+			}
 			existing.count += 1;
-			if (byMe) existing.byMe = true;
+			if (byMe) {
+				existing.byMe = true;
+				existing.myEventId = ev.id;
+			}
 		} else {
-			next.push({ emoji, count: 1, byMe });
+			next.push({ emoji, count: 1, byMe, myEventId: byMe ? ev.id : undefined });
 		}
 		return next;
+	}
+
+	private removeMyReaction(noteId: string, emoji: string) {
+		const idx = this.byId.get(noteId);
+		if (idx === undefined) return;
+		const note = this.notes[idx];
+		const reactions = note.reactions
+			.map((reaction) => {
+				if (reaction.emoji !== emoji || !reaction.byMe) return reaction;
+				return {
+					...reaction,
+					count: Math.max(0, reaction.count - 1),
+					byMe: false,
+					myEventId: undefined
+				};
+			})
+			.filter((reaction) => reaction.count > 0);
+		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions } : n));
 	}
 
 	private rebuildIndex() {
@@ -205,6 +277,38 @@ class FeedStore {
 	private rebuildPendingIndex() {
 		this.pendingById.clear();
 		this.pendingNotes.forEach((n, i) => this.pendingById.set(n.id, i));
+	}
+
+	hideNote(id: string) {
+		this.notes = this.notes.filter((note) => note.id !== id);
+		this.pendingNotes = this.pendingNotes.filter((note) => note.id !== id);
+		this.rebuildIndex();
+		this.rebuildPendingIndex();
+	}
+
+	muteAuthor(pubkey: string) {
+		this.notes = this.notes.filter((note) => note.pubkey !== pubkey);
+		this.pendingNotes = this.pendingNotes.filter((note) => note.pubkey !== pubkey);
+		this.rebuildIndex();
+		this.rebuildPendingIndex();
+	}
+
+	async deleteNote(note: FeedNote) {
+		if (!browser) return;
+		const id = identity.current;
+		if (!id) throw new Error('No identity');
+		if (id.pk !== note.pubkey) throw new Error('You can only delete your own notes');
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.DELETE,
+				content: 'Deleted from BitOS',
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [['e', note.id]]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		this.hideNote(note.id);
 	}
 
 	/** Move live subscription notes into the visible feed, newest-first. */
@@ -234,6 +338,11 @@ class FeedStore {
 		if (!id) throw new Error('No identity — create or import a key first');
 		const text = content.trim();
 		if (!text) throw new Error('Nothing to post');
+		if (text.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(
+				`Normal notes are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
+			);
+		}
 		const unsigned = {
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: text,
@@ -247,11 +356,69 @@ class FeedStore {
 		return event.id;
 	}
 
+	/** Publish a kind-1 reply to an existing note using NIP-10 style tags. */
+	async reply(note: FeedNote, content: string): Promise<string> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		const text = content.trim();
+		if (!text) throw new Error('Nothing to reply');
+		if (text.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(`Replies are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+		}
+
+		const rootId =
+			note.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? note.replyTo ?? note.id;
+		const taggedPubkeys = [
+			note.pubkey,
+			...note.tags.filter((tag) => tag[0] === 'p' && tag[1]).map((tag) => tag[1])
+		].filter((pubkey, index, all) => all.indexOf(pubkey) === index);
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.TEXT_NOTE,
+				content: text,
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [
+					['e', rootId, '', 'root'],
+					['e', note.id, '', 'reply'],
+					...taggedPubkeys.map((pubkey) => ['p', pubkey])
+				]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		this.ingestNote(event, { queueIfLive: false });
+		return event.id;
+	}
+
 	/** React to a note with a ❤️ (kind 7). */
 	async react(note: FeedNote, emoji = '❤️') {
 		if (!browser) return;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
+		const existing = note.reactions.find((reaction) => reaction.emoji === emoji && reaction.byMe);
+		if (existing?.myEventId) {
+			const deleteEvent = finalizeEvent(
+				{
+					kind: NOSTR_KINDS.DELETE,
+					content: 'Deleted reaction from BitOS',
+					created_at: Math.floor(Date.now() / 1000),
+					tags: [
+						['e', existing.myEventId],
+						['e', note.id],
+						['p', note.pubkey]
+					]
+				},
+				hexToBytes(id.sk)
+			);
+			await publish(deleteEvent);
+			this.removeMyReaction(note.id, emoji);
+			return;
+		}
+		if (existing) {
+			this.removeMyReaction(note.id, emoji);
+			return;
+		}
 		const event = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.REACTION,

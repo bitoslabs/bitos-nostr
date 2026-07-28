@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import StoriesBar from '$lib/components/feed/StoriesBar.svelte';
 	import Composer from '$lib/components/feed/Composer.svelte';
@@ -7,6 +8,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 
@@ -22,35 +24,63 @@
 	];
 
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
-
-	$effect(() => {
-		if (feed.notes.length) profiles.ensure(feed.notes.map((n) => n.pubkey));
-	});
+	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
+	const filterMenuId = 'feed-filter';
+	const INITIAL_RENDER_COUNT = 15;
+	const RENDER_BATCH_SIZE = 12;
 
 	let feedScroller: HTMLDivElement | undefined = $state();
-	let filterOpen = $state(false);
+	const filterOpen = $derived(popovers.isOpen(filterMenuId));
 	let activeFilter = $state<FeedFilter>('all');
+	let renderedCount = $state(INITIAL_RENDER_COUNT);
+	let lastViewSignature = $state('');
+	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const activeFilterLabel = $derived(
 		filterOptions.find((option) => option.key === activeFilter)?.label ?? 'All'
 	);
 	const filteredNotes = $derived(
 		feed.notes.filter((note) => {
-			if (activeFilter === 'originals') return !note.replyTo;
-			if (activeFilter === 'replies') return !!note.replyTo;
-			if (activeFilter === 'media') return hasMedia(note);
-			if (activeFilter === 'liked') return note.reactions.some((reaction) => reaction.byMe);
-			if (activeFilter === 'mine') return !!identity.current && note.pubkey === identity.current.pk;
-			return true;
+			const matchesFilter =
+				activeFilter === 'all'
+					? !note.replyTo
+					: activeFilter === 'originals'
+						? !note.replyTo
+						: activeFilter === 'replies'
+							? !!note.replyTo
+							: activeFilter === 'media'
+								? hasMedia(note)
+								: activeFilter === 'liked'
+									? note.reactions.some((reaction) => reaction.byMe)
+									: activeFilter === 'mine'
+										? !!identity.current && note.pubkey === identity.current.pk
+										: true;
+			return matchesFilter && (!activeTag || hasTag(note, activeTag));
 		})
 	);
+	const renderedNotes = $derived(filteredNotes.slice(0, renderedCount));
+	const hasMoreRenderedNotes = $derived(renderedCount < filteredNotes.length);
+
+	function renderMoreNotes() {
+		if (!hasMoreRenderedNotes) return;
+		renderedCount = Math.min(filteredNotes.length, renderedCount + RENDER_BATCH_SIZE);
+	}
 
 	function hasMedia(note: FeedNote) {
 		return mediaUrlPattern.test(note.content);
 	}
 
+	function hasTag(note: FeedNote, tag: string) {
+		const tagged = note.tags.some((item) => item[0] === 't' && item[1]?.toLowerCase() === tag);
+		if (tagged) return true;
+		return [...note.content.matchAll(hashtagPattern)].some(
+			(match) => match[1].toLowerCase() === tag
+		);
+	}
+
 	function setFilter(next: FeedFilter) {
 		activeFilter = next;
-		filterOpen = false;
+		renderedCount = INITIAL_RENDER_COUNT;
+		popovers.close();
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
@@ -59,10 +89,10 @@
 	function showNewNotes() {
 		const count = feed.revealPending();
 		if (!count) return;
+		renderedCount = INITIAL_RENDER_COUNT;
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
-		toasts.success(`${count} new ${count === 1 ? 'note' : 'notes'}`);
 	}
 
 	function loadMoreNotes() {
@@ -70,12 +100,29 @@
 	}
 
 	function handleFeedScroll() {
-		if (!feedScroller || feed.loading || feed.loadingMore || !feed.hasMore) return;
+		if (!feedScroller) return;
 		const remaining =
 			feedScroller.scrollHeight - feedScroller.scrollTop - feedScroller.clientHeight;
+		if (remaining < 1200 && hasMoreRenderedNotes) renderMoreNotes();
+		if (feed.loading || feed.loadingMore || !feed.hasMore) return;
 		if (remaining < 900) loadMoreNotes();
 	}
+
+	$effect(() => {
+		const signature = `${activeFilter}:${activeTag}`;
+		if (signature === lastViewSignature) return;
+		lastViewSignature = signature;
+		renderedCount = INITIAL_RENDER_COUNT;
+	});
+
+	$effect(() => {
+		if (renderedNotes.length) profiles.ensure(renderedNotes.map((n) => n.pubkey));
+	});
 </script>
+
+<svelte:head><title>Feed · BitOS</title></svelte:head>
+
+<svelte:window onclick={() => popovers.close()} />
 
 <div class="flex h-full">
 	<!-- Center feed -->
@@ -109,7 +156,10 @@
 					</button>
 					<button
 						type="button"
-						onclick={() => (filterOpen = !filterOpen)}
+						onclick={(e) => {
+							e.stopPropagation();
+							popovers.toggle(filterMenuId);
+						}}
 						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {activeFilter !==
 						'all'
 							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
@@ -145,21 +195,23 @@
 				</div>
 			</div>
 
-			{#if activeFilter !== 'all'}
+			{#if activeFilter !== 'all' || activeTag}
 				<div
 					class="mb-4 flex items-center justify-between rounded-xl border border-primary-500/15 bg-primary-500/10 px-3 py-2 text-[12px]"
 				>
 					<div class="flex min-w-0 items-center gap-2 font-semibold text-primary-600">
 						<Icon name="i-lucide-filter" class="size-4 shrink-0" />
-						<span class="truncate">{activeFilterLabel} · {filteredNotes.length} notes</span>
+						<span class="truncate">
+							{activeTag ? `#${activeTag}` : activeFilterLabel} · {filteredNotes.length} notes
+						</span>
 					</div>
-					<button
-						type="button"
+					<a
+						href="/"
 						onclick={() => setFilter('all')}
 						class="rounded-lg px-2 py-1 font-bold text-primary-600 transition hover:bg-primary-500/10"
 					>
 						Clear
-					</button>
+					</a>
 				</div>
 			{/if}
 
@@ -217,39 +269,54 @@
 					</div>
 					<div>
 						<p class="text-[15px] font-semibold">No matching notes</p>
-						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">Try a different feed filter.</p>
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+							Try a different feed filter or hashtag.
+						</p>
 					</div>
-					<button
-						type="button"
+					<a
+						href="/"
 						onclick={() => setFilter('all')}
 						class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
 					>
 						Show all
-					</button>
+					</a>
 				</div>
 			{:else}
 				<div class="space-y-5">
-					{#each filteredNotes as note, i (note.id)}
+					{#each renderedNotes as note, i (note.id)}
 						<PostCard {note} index={i} />
 					{/each}
 				</div>
 
 				<div class="py-8 text-center">
-					<button
-						type="button"
-						onclick={loadMoreNotes}
-						disabled={feed.loadingMore || !feed.hasMore}
-						class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
-					>
-						{#if feed.loadingMore}
-							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-							Loading older notes
-						{:else if feed.hasMore}
-							Load more posts
-						{:else}
-							End of relay results
-						{/if}
-					</button>
+					{#if hasMoreRenderedNotes}
+						<button
+							type="button"
+							onclick={renderMoreNotes}
+							class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)]"
+						>
+							Show more posts
+							<span class="text-[11px] opacity-70">
+								{Math.min(RENDER_BATCH_SIZE, filteredNotes.length - renderedCount)} next
+							</span>
+						</button>
+					{:else}
+						<button
+							type="button"
+							onclick={loadMoreNotes}
+							disabled={feed.loadingMore || !feed.hasMore}
+							class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
+						>
+							{#if feed.loadingMore}
+								<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+								Loading older notes
+							{:else if feed.hasMore}
+								Load more posts
+							{:else}
+								End of relay results
+							{/if}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>
