@@ -120,6 +120,8 @@
 	});
 </script>
 
+<svelte:head><title>Feed · BitOS</title></svelte:head>
+
 <svelte:window onclick={() => popovers.close()} />
 
 <div class="flex h-full">

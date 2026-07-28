@@ -33,6 +33,7 @@
 	const section = $derived(
 		sectionKeys.includes(page.params.section ?? '') ? (page.params.section as string) : 'account'
 	);
+	const sectionTitle = $derived(sections.find((item) => item.key === section)?.label ?? 'Settings');
 
 	// --- appearance ---
 	const modes = [
@@ -218,6 +219,8 @@
 		t = { ...t };
 	}
 </script>
+
+<svelte:head><title>{sectionTitle} · Settings · BitOS</title></svelte:head>
 
 <div class="flex h-full">
 	<!-- Settings sidebar -->

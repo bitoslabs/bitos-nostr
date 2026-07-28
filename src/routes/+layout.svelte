@@ -202,7 +202,10 @@
 	const hasIdentity = $derived(identity.ready && !!identity.current);
 </script>
 
-<svelte:head><link rel="icon" href={favicon} /></svelte:head>
+<svelte:head>
+	<title>BitOS</title>
+	<link rel="icon" href={favicon} />
+</svelte:head>
 
 {#if !identity.ready}
 	<!-- brief boot state -->
