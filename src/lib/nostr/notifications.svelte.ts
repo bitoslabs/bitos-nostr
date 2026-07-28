@@ -9,7 +9,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { queryOnce, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
-import { NOSTR_KINDS, type NotificationItem } from './types';
+import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
 const MAX_ITEMS = 600;
@@ -141,14 +141,7 @@ class NotificationsStore {
 		}
 	}
 
-	private ingest(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		created_at: number;
-		tags: string[][];
-		kind: number;
-	}) {
+	private ingest(ev: Event) {
 		const me = identity.current?.pk;
 		if (!me || ev.pubkey === me || this.items.some((item) => item.id === ev.id)) return;
 
@@ -166,14 +159,7 @@ class NotificationsStore {
 		profiles.ensure([item.pubkey]);
 	}
 
-	private toNotification(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		created_at: number;
-		tags: string[][];
-		kind: number;
-	}): NotificationItem | null {
+	private toNotification(ev: Event): NotificationItem | null {
 		if (ev.kind === NOSTR_KINDS.ZAP) {
 			return this.makeItem(
 				ev,
@@ -208,12 +194,7 @@ class NotificationsStore {
 	}
 
 	private makeItem(
-		ev: {
-			id: string;
-			pubkey: string;
-			content: string;
-			created_at: number;
-		},
+		ev: Event,
 		type: NotificationItem['type'],
 		targetId: string | undefined,
 		content: string,
@@ -227,6 +208,7 @@ class NotificationsStore {
 			content,
 			createdAt: ev.created_at,
 			read: this.readIds.has(ev.id),
+			raw: ev,
 			...extra
 		};
 	}

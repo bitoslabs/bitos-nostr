@@ -10,6 +10,7 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { groupSync } from '$lib/nostr/group-sync.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { ensureConnected } from '$lib/nostr/pool';
@@ -196,6 +197,7 @@
 		for (const conversation of dms.conversations) {
 			void conversation.messages.length;
 		}
+		if (page.url.pathname !== '/messages') groupSync.processDms();
 		alertIncomingCalls();
 	});
 

@@ -44,6 +44,8 @@ export interface NotificationItem {
 	read: boolean;
 	/** Sats received, for `zap` notifications. */
 	amountSats?: number;
+	/** Original Nostr event for inspection/debugging. */
+	raw?: Event;
 }
 
 /** Logical notification category used for filtering + per-type mute. */

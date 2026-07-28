@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -46,6 +47,8 @@
 
 	let filter = $state<Filter>('all');
 	let query = $state('');
+	let rawOpen = $state(false);
+	let rawEvent = $state('');
 
 	const unread = $derived(notifications.unreadCount);
 
@@ -161,6 +164,37 @@
 		} catch {
 			toasts.error('Could not copy id');
 		}
+		popovers.close();
+	}
+
+	async function copyRawEvent() {
+		try {
+			await navigator.clipboard.writeText(rawEvent);
+			toasts.success('Raw event copied');
+		} catch {
+			toasts.error('Could not copy raw event');
+		}
+	}
+
+	function rawEventJson(item: NotificationItem) {
+		return JSON.stringify(
+			item.raw ?? {
+				id: item.id,
+				type: item.type,
+				pubkey: item.pubkey,
+				targetId: item.targetId,
+				content: item.content,
+				createdAt: item.createdAt,
+				amountSats: item.amountSats
+			},
+			null,
+			2
+		);
+	}
+
+	function viewRawEvent(item: NotificationItem) {
+		rawEvent = rawEventJson(item);
+		rawOpen = true;
 		popovers.close();
 	}
 
@@ -340,9 +374,9 @@
 								{@const menuId = `notif:${item.id}`}
 								{@const menuOpen = popovers.isOpen(menuId)}
 								<article
-									class="post-card relative overflow-hidden transition hover:border-primary-500/25 {!item.read
-										? 'bg-[var(--active-surface-bg)]'
-										: ''}"
+									class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
+										? 'z-30'
+										: 'z-0'} {!item.read ? 'bg-[var(--active-surface-bg)]' : ''}"
 								>
 									<!-- Unread accent stripe -->
 									{#if !item.read}
@@ -355,7 +389,7 @@
 									<a
 										href={targetLink(item)}
 										onclick={() => openRow(item)}
-										class="flex items-start gap-3 p-4"
+										class="flex items-start gap-3 p-4 pr-14"
 										aria-label="{actorName(item.pubkey)} {meta.verb}"
 									>
 										<div class="relative shrink-0">
@@ -469,7 +503,7 @@
 										</button>
 										{#if menuOpen}
 											<div
-												class="absolute top-9 right-0 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+												class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
 												role="menu"
 											>
 												{#if !item.read}
@@ -502,6 +536,15 @@
 												>
 													<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
 													{item.targetId ? 'Copy note id' : 'Copy profile id'}
+												</button>
+												<button
+													type="button"
+													role="menuitem"
+													onclick={() => viewRawEvent(item)}
+													class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+												>
+													<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
+													View raw event
 												</button>
 												<button
 													type="button"
@@ -549,6 +592,23 @@
 		{/if}
 	</div>
 </div>
+
+<Dialog bind:open={rawOpen} title="Raw event">
+	<div class="space-y-3">
+		<div class="flex items-center gap-2">
+			<button
+				type="button"
+				onclick={copyRawEvent}
+				class="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
+			>
+				<Icon name="i-lucide-copy" class="size-4" />
+				Copy JSON
+			</button>
+		</div>
+		<pre
+			class="max-h-[52vh] overflow-auto rounded-xl bg-[var(--ui-bg-muted)] p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text-muted)]">{rawEvent}</pre>
+	</div>
+</Dialog>
 
 <svelte:window
 	onclick={() => popovers.close()}

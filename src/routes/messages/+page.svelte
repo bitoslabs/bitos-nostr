@@ -11,6 +11,7 @@
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import type { Conversation, DirectMessage } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
@@ -75,6 +76,13 @@
 		body: string;
 	};
 
+	type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
+	type GroupControlPayload = GroupInvite & {
+		type: GroupControlType;
+		member: string;
+		members?: string[];
+	};
+
 	type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
 	type CallState = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'connected';
 	type CallSignal = {
@@ -97,9 +105,12 @@
 	const GROUPS_KEY_PREFIX = 'bitos:message-groups';
 	const GROUP_INVITE_PREFIX = 'bitos://group-invite?';
 	const GROUP_MESSAGE_PREFIX = 'bitos://group-message?';
+	const GROUP_CONTROL_PREFIX = 'bitos://group-control?';
+	const GROUP_CONTROL_PROCESSED_KEY_PREFIX = 'bitos:processed-group-controls';
 	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
 	const MAX_CACHED_GROUPS = 60;
 	const MAX_CACHED_GROUP_MESSAGES_PER_GROUP = 150;
+	const MAX_PROCESSED_GROUP_CONTROLS = 1200;
 	const GROUP_PERSIST_DEBOUNCE_MS = 250;
 
 	let selected = $state('');
@@ -125,6 +136,7 @@
 	let cameraEnabled = $state(true);
 	let showCall = $state(false);
 	let groupsLoaded = $state(false);
+	let processedGroupControlsLoaded = false;
 	let lastResolvedTo = $state('');
 	let lastAutoAnswerCallId = $state('');
 	let callStartedAt = 0;
@@ -134,9 +146,11 @@
 	let remoteVideoEl: HTMLVideoElement | undefined = $state();
 	let remoteAudioEl: HTMLAudioElement | undefined = $state();
 	const processedGroupMessageIds = new Set<string>();
+	const processedGroupControlIds = new Set<string>();
 	const processedCallSignalIds = new Set<string>();
 	const processedGroupCallLogIds = new Set<string>();
 	const closedCallIds = new Set<string>();
+	const removedGroupIds = new Set<string>();
 	let localStream: MediaStream | null = null;
 	let remoteStream: MediaStream | null = null;
 	let remoteParticipants = $state<RemoteParticipant[]>([]);
@@ -179,36 +193,35 @@
 	);
 
 	const dmRows = $derived<ChatRow[]>(
-		dms.conversations.map((conversation) => {
-			const profile = profiles.get(conversation.peer);
-			const name = profile?.display_name || profile?.name || shortKey(conversation.peer);
-			const visibleLastMessage =
-				[...conversation.messages].reverse().find((message) => {
-					const signal = parseCallSignal(message.content);
-					return !signal || signal.type === 'offer' || signal.type === 'log';
-				}) ?? conversation.lastMessage;
-			const invite = visibleLastMessage ? parseGroupInvite(visibleLastMessage.content) : null;
-			const groupMessage = visibleLastMessage
-				? parseGroupMessage(visibleLastMessage.content)
-				: null;
-			const callSignal = visibleLastMessage ? parseCallSignal(visibleLastMessage.content) : null;
-			return {
-				key: conversation.peer,
-				id: conversation.peer,
-				kind: 'dm',
-				name,
-				preview: invite
-					? `Group invite: ${invite.name}`
-					: groupMessage
-						? `Group: ${groupMessage.body}`
+		dms.conversations
+			.map((conversation) => {
+				const profile = profiles.get(conversation.peer);
+				const name = profile?.display_name || profile?.name || shortKey(conversation.peer);
+				const visibleLastMessage = [...conversation.messages].reverse().find(isVisibleDmMessage);
+				const invite = visibleLastMessage ? parseGroupInvite(visibleLastMessage.content) : null;
+				const callSignal = visibleLastMessage ? parseCallSignal(visibleLastMessage.content) : null;
+				return {
+					key: conversation.peer,
+					id: conversation.peer,
+					kind: 'dm' as const,
+					name,
+					preview: invite
+						? `Group invite: ${invite.name}`
 						: callSignal
 							? `${callSignal.kind === 'video' ? 'Video' : 'Voice'} call`
 							: (visibleLastMessage?.content ?? 'No messages yet'),
-				previewPrefix: visibleLastMessage?.mine ? 'You:' : '',
-				time: visibleLastMessage ? timeAgo(visibleLastMessage.createdAt) : '',
-				unread: conversation.unread
-			};
-		})
+					previewPrefix: visibleLastMessage?.mine ? 'You:' : '',
+					time: visibleLastMessage ? timeAgo(visibleLastMessage.createdAt) : '',
+					unread: visibleDmUnread(conversation)
+				};
+			})
+			.filter(
+				(row) =>
+					row.preview !== 'No messages yet' ||
+					selected === row.key ||
+					dms.conversations.find((conversation) => conversation.peer === row.id)?.messages
+						.length === 0
+			)
 	);
 
 	const conversations = $derived<ChatRow[]>([...groupRows, ...dmRows]);
@@ -234,17 +247,16 @@
 			? (dms.conversations.find((conversation) => conversation.peer === active.id)?.messages ?? [])
 			: []
 	);
-	const visibleActiveMessages = $derived(
-		activeMessages.filter((message) => {
-			const signal = parseCallSignal(message.content);
-			return !signal || signal.type === 'offer' || signal.type === 'log';
-		})
-	);
+	const visibleActiveMessages = $derived(activeMessages.filter(isVisibleDmMessage));
 	const unreadTotal = $derived(
-		dms.unreadCount + groupThreads.reduce((total, group) => total + group.unread, 0)
+		dms.conversations.reduce((total, conversation) => total + visibleDmUnread(conversation), 0) +
+			groupThreads.reduce((total, group) => total + group.unread, 0)
 	);
 
 	const groupsStorageKey = $derived(`${GROUPS_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`);
+	const processedGroupControlsStorageKey = $derived(
+		`${GROUP_CONTROL_PROCESSED_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`
+	);
 
 	function isExpiredCallOffer(createdAt: number) {
 		return Math.floor(Date.now() / 1000) - createdAt > 90;
@@ -375,6 +387,88 @@
 		} catch {
 			return null;
 		}
+	}
+
+	function groupControlText(group: GroupThread, type: GroupControlType, member: string) {
+		const params = new URLSearchParams({
+			id: group.id,
+			name: group.name,
+			from: identity.current?.pk ?? '',
+			type,
+			member
+		});
+		const memberPubkeys = group.members
+			.map((item) => item.pubkey)
+			.filter((pubkey): pubkey is string => !!pubkey);
+		if (memberPubkeys.length) params.set('members', memberPubkeys.join(','));
+		const label =
+			type === 'add-member'
+				? `A member was added to "${group.name}" on BitOS.`
+				: type === 'remove-member'
+					? `A member was removed from "${group.name}" on BitOS.`
+					: `A member left "${group.name}" on BitOS.`;
+		return [
+			label,
+			'Open BitOS Messages to sync this local group membership update.',
+			`${GROUP_CONTROL_PREFIX}${params.toString()}`
+		].join('\n\n');
+	}
+
+	function parseGroupControl(content: string): GroupControlPayload | null {
+		const line = content
+			.split(/\s+/)
+			.find(
+				(part) =>
+					part.startsWith(GROUP_CONTROL_PREFIX) || part.startsWith(`nostr:${GROUP_CONTROL_PREFIX}`)
+			);
+		if (!line) return null;
+		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
+		try {
+			const params = new URLSearchParams(raw.slice(GROUP_CONTROL_PREFIX.length));
+			const id = params.get('id')?.trim();
+			const name = params.get('name')?.trim();
+			const from = params.get('from')?.trim();
+			const type = params.get('type')?.trim() as GroupControlType | undefined;
+			const member = params.get('member')?.trim();
+			const members =
+				params
+					.get('members')
+					?.split(',')
+					.map((item) => item.trim().toLowerCase())
+					.filter((item) => /^[0-9a-fA-F]{64}$/.test(item)) ?? [];
+			if (
+				!id ||
+				!name ||
+				!from ||
+				!/^[0-9a-fA-F]{64}$/.test(from) ||
+				!type ||
+				!['add-member', 'remove-member', 'leave-group'].includes(type) ||
+				!member ||
+				!/^[0-9a-fA-F]{64}$/.test(member)
+			) {
+				return null;
+			}
+			return { id, name, from: from.toLowerCase(), type, member: member.toLowerCase(), members };
+		} catch {
+			return null;
+		}
+	}
+
+	function isVisibleDmMessage(message: DirectMessage) {
+		const groupMessage = parseGroupMessage(message.content);
+		const control = parseGroupControl(message.content);
+		const signal = parseCallSignal(message.content);
+		return (
+			!groupMessage && !control && (!signal || signal.type === 'offer' || signal.type === 'log')
+		);
+	}
+
+	function visibleDmUnread(conversation: Conversation) {
+		if (!conversation.unread) return 0;
+		return conversation.messages
+			.filter((message) => !message.mine)
+			.slice(-conversation.unread)
+			.filter(isVisibleDmMessage).length;
 	}
 
 	function callSignalText(signal: CallSignal) {
@@ -716,6 +810,17 @@
 		}));
 	}
 
+	function normalizeGroupAdminState(group: GroupThread) {
+		if (!group.description.startsWith('Accepted from')) return group;
+		const members = group.members.map((member, index) => ({
+			...member,
+			admin: index === 0 && member.name === 'You' && !member.pubkey ? false : member.admin
+		}));
+		const inviterIndex = members.findIndex((member) => member.pubkey);
+		if (inviterIndex >= 0) members[inviterIndex] = { ...members[inviterIndex], admin: true };
+		return { ...group, members };
+	}
+
 	function loadGroups() {
 		if (!browser) return;
 		try {
@@ -726,7 +831,9 @@
 				groupThreads = parsed
 					.filter(isGroupThread)
 					.slice(0, MAX_CACHED_GROUPS)
-					.map((group) => ({ ...group, messages: trimGroupMessages(group.messages) }));
+					.map((group) =>
+						normalizeGroupAdminState({ ...group, messages: trimGroupMessages(group.messages) })
+					);
 			}
 		} catch {
 			toasts.warning('Saved groups could not be loaded');
@@ -740,6 +847,36 @@
 			groupPersistTimer = null;
 			localStorage.setItem(groupsStorageKey, JSON.stringify(groupCacheSnapshot()));
 		}, GROUP_PERSIST_DEBOUNCE_MS);
+	}
+
+	function loadProcessedGroupControls() {
+		if (!browser || processedGroupControlsLoaded) return;
+		processedGroupControlsLoaded = true;
+		try {
+			const raw = localStorage.getItem(processedGroupControlsStorageKey);
+			if (!raw) return;
+			const ids = JSON.parse(raw) as unknown;
+			if (Array.isArray(ids)) {
+				for (const id of ids) {
+					if (typeof id === 'string') processedGroupControlIds.add(id);
+				}
+			}
+		} catch {
+			processedGroupControlIds.clear();
+		}
+	}
+
+	function rememberProcessedGroupControl(id: string) {
+		processedGroupControlIds.add(id);
+		if (!browser) return;
+		localStorage.setItem(
+			processedGroupControlsStorageKey,
+			JSON.stringify([...processedGroupControlIds].slice(-MAX_PROCESSED_GROUP_CONTROLS))
+		);
+	}
+
+	function isFreshGroupControl(createdAt: number) {
+		return Math.floor(Date.now() / 1000) - createdAt <= 120;
 	}
 
 	function resolveTo(param: string | null) {
@@ -806,6 +943,15 @@
 		);
 	}
 
+	function addGroupSystemMessage(groupId: string, content: string) {
+		addGroupMessageById(groupId, {
+			author: 'BitOS',
+			initials: 'BI',
+			content,
+			type: 'text'
+		});
+	}
+
 	function appendIncomingGroupMessage(
 		dmId: string,
 		payload: GroupMessagePayload,
@@ -865,6 +1011,51 @@
 		return group.members.some((member) => member.pubkey === pubkey);
 	}
 
+	function membersFromControlSnapshot(payload: GroupControlPayload) {
+		const seen = new Set<string>();
+		return [payload.from, ...(payload.members ?? []), payload.member]
+			.filter((pubkey) => {
+				if (!pubkey || seen.has(pubkey)) return false;
+				seen.add(pubkey);
+				return true;
+			})
+			.map((pubkey) => ({
+				...memberForPubkey(pubkey),
+				admin: pubkey === payload.from
+			}));
+	}
+
+	function mergeControlMembers(group: GroupThread, payload: GroupControlPayload) {
+		const snapshotMembers = membersFromControlSnapshot(payload);
+		const nextMembers = [...group.members];
+		const me = identity.current?.pk;
+		for (const member of snapshotMembers) {
+			const existingIndex = nextMembers.findIndex(
+				(item) =>
+					(item.pubkey && item.pubkey === member.pubkey) ||
+					(member.pubkey === me && !item.pubkey && item.name === 'You')
+			);
+			if (existingIndex >= 0) {
+				nextMembers[existingIndex] = {
+					...nextMembers[existingIndex],
+					pubkey: nextMembers[existingIndex].pubkey ?? member.pubkey,
+					admin: nextMembers[existingIndex].admin || member.admin
+				};
+			} else {
+				nextMembers.push(member);
+			}
+		}
+		return nextMembers;
+	}
+
+	function currentUserIsGroupAdmin(group: GroupThread) {
+		const me = identity.current?.pk;
+		return group.members.some(
+			(member) =>
+				member.admin && (member.pubkey === me || (!member.pubkey && member.name === 'You'))
+		);
+	}
+
 	async function sendGroupInvite(group: GroupThread, member: GroupMember) {
 		if (!member.pubkey || member.pubkey === identity.current?.pk) return;
 		await dms.send(member.pubkey, groupInviteText(group));
@@ -899,6 +1090,29 @@
 		}
 	}
 
+	async function broadcastGroupControl(
+		group: GroupThread,
+		type: GroupControlType,
+		member: string,
+		extraRecipients: string[] = []
+	) {
+		const recipients = [
+			...new Set([
+				...group.members
+					.map((item) => item.pubkey)
+					.filter((pubkey): pubkey is string => !!pubkey && pubkey !== identity.current?.pk),
+				...extraRecipients.filter((pubkey) => pubkey !== identity.current?.pk)
+			])
+		];
+		if (!recipients.length) return;
+		const content = groupControlText(group, type, member);
+		const results = await Promise.allSettled(recipients.map((pubkey) => dms.send(pubkey, content)));
+		const failed = results.filter((result) => result.status === 'rejected').length;
+		if (failed) {
+			toasts.warning(`${failed} membership update DM${failed === 1 ? '' : 's'} could not be sent`);
+		}
+	}
+
 	async function addMembersToGroup(groupId: string) {
 		const members = parseMembers(memberInput);
 		if (!members.length) {
@@ -921,7 +1135,13 @@
 			toasts.info('Those members are already in the group');
 			return;
 		}
-		if (updatedGroup) await notifyMembers(updatedGroup, added);
+		if (updatedGroup) {
+			await notifyMembers(updatedGroup, added);
+			const pubkeyMembers = added.filter((member) => member.pubkey);
+			for (const member of pubkeyMembers) {
+				await broadcastGroupControl(updatedGroup, 'add-member', member.pubkey!, [member.pubkey!]);
+			}
+		}
 	}
 
 	async function addDmPeerToGroup(groupId: string, pubkey: string) {
@@ -943,24 +1163,165 @@
 			toasts.info('That contact is already in the group');
 			return;
 		}
-		if (updatedGroup) await notifyMembers(updatedGroup, [member]);
+		if (updatedGroup) {
+			await notifyMembers(updatedGroup, [member]);
+			if (member.pubkey) {
+				await broadcastGroupControl(updatedGroup, 'add-member', member.pubkey, [member.pubkey]);
+			}
+		}
 	}
 
-	function removeMemberFromGroup(groupId: string, memberName: string) {
+	async function removeMemberFromGroup(groupId: string, memberName: string) {
+		let removed: GroupMember | undefined;
+		const originalGroup = groupThreads.find((group) => group.id === groupId);
+		if (!originalGroup || !currentUserIsGroupAdmin(originalGroup)) {
+			toasts.error('Only group admins can remove members');
+			return;
+		}
 		groupThreads = groupThreads.map((group) =>
 			group.id === groupId
 				? {
 						...group,
-						members: group.members.filter(
-							(member) => memberKey(member) !== memberName || member.admin
-						)
+						members: group.members.filter((member) => {
+							const keep = memberKey(member) !== memberName || member.admin;
+							if (!keep) removed = member;
+							return keep;
+						})
 					}
 				: group
 		);
+		if (!removed) return;
+		addGroupSystemMessage(groupId, `${removed.name} was removed from the group`);
+		if (removed.pubkey && originalGroup) {
+			await broadcastGroupControl(originalGroup, 'remove-member', removed.pubkey, [removed.pubkey]);
+		}
+	}
+
+	async function leaveGroup(groupId: string) {
+		const me = identity.current;
+		const group = groupThreads.find((thread) => thread.id === groupId);
+		if (!me || !group) return;
+		if (browser && !window.confirm(`Leave "${group.name}"?`)) return;
+		await broadcastGroupControl(group, 'leave-group', me.pk);
+		removedGroupIds.add(groupId);
+		groupThreads = groupThreads.filter((thread) => thread.id !== groupId);
+		if (selected === `group:${groupId}`) selected = '';
+		showDetails = false;
+		toasts.info(`Left ${group.name}`);
+	}
+
+	function applyGroupControl(payload: GroupControlPayload, options: { notify?: boolean } = {}) {
+		const notify = options.notify ?? true;
+		const me = identity.current?.pk;
+		const group = groupThreads.find((thread) => thread.id === payload.id);
+		const memberName = displayNameForPubkey(payload.member);
+		if (!group) {
+			if (
+				payload.type === 'add-member' &&
+				me &&
+				(payload.member === me || payload.members?.includes(me))
+			) {
+				const members: GroupMember[] = membersFromControlSnapshot(payload).map((member) =>
+					member.pubkey === me
+						? { ...member, name: 'You', initials: 'YO', status: 'Online' }
+						: member
+				);
+				if (!members.some((member) => member.pubkey === me)) {
+					members.unshift({ name: 'You', initials: 'YO', status: 'Online' });
+				}
+				const restoredGroup: GroupThread = {
+					id: payload.id,
+					name: payload.name,
+					initials: initialsFor(payload.name) || 'GC',
+					description: 'Re-added from a local group membership update.',
+					pinned: 'No pinned message yet',
+					unread: 0,
+					members,
+					messages: [],
+					files: []
+				};
+				removedGroupIds.delete(payload.id);
+				groupThreads = [restoredGroup, ...groupThreads];
+				if (notify) toasts.success(`Re-added to ${payload.name}`);
+				return true;
+			}
+			return false;
+		}
+		if (payload.type === 'add-member') {
+			const alreadyHasMember = group.members.some(
+				(member) =>
+					member.pubkey === payload.member ||
+					(payload.member === me && !member.pubkey && member.name === 'You')
+			);
+			if (alreadyHasMember) {
+				groupThreads = groupThreads.map((thread) =>
+					thread.id === payload.id
+						? { ...thread, members: mergeControlMembers(thread, payload) }
+						: thread
+				);
+				return true;
+			}
+			const member = memberForPubkey(payload.member);
+			groupThreads = groupThreads.map((thread) =>
+				thread.id === payload.id
+					? {
+							...thread,
+							members: mergeControlMembers(
+								{ ...thread, members: [...thread.members, member] },
+								payload
+							),
+							messages: [
+								...thread.messages,
+								{
+									id: `control:${payload.type}:${payload.id}:${payload.member}:${Date.now()}`,
+									author: 'BitOS',
+									initials: 'BI',
+									content: `${memberName} joined the group`,
+									createdAt: Math.floor(Date.now() / 1000),
+									type: 'text'
+								}
+							]
+						}
+					: thread
+			);
+			return true;
+		}
+		if (payload.type === 'remove-member' && payload.member === me) {
+			removedGroupIds.add(payload.id);
+			groupThreads = groupThreads.filter((thread) => thread.id !== payload.id);
+			if (selected === `group:${payload.id}`) selected = '';
+			showDetails = false;
+			if (notify) toasts.info(`You were removed from ${payload.name}`);
+			return true;
+		}
+		groupThreads = groupThreads.map((thread) =>
+			thread.id === payload.id
+				? {
+						...thread,
+						members: thread.members.filter((member) => member.pubkey !== payload.member),
+						messages: [
+							...thread.messages,
+							{
+								id: `control:${payload.type}:${payload.id}:${payload.member}:${Date.now()}`,
+								author: 'BitOS',
+								initials: 'BI',
+								content:
+									payload.type === 'leave-group'
+										? `${memberName} left the group`
+										: `${memberName} was removed from the group`,
+								createdAt: Math.floor(Date.now() / 1000),
+								type: 'text'
+							}
+						]
+					}
+				: thread
+		);
+		return true;
 	}
 
 	function deleteGroup(groupId: string) {
 		if (browser && !window.confirm('Delete this local group and its messages?')) return;
+		removedGroupIds.add(groupId);
 		groupThreads = groupThreads.filter((group) => group.id !== groupId);
 		if (selected === `group:${groupId}`) selected = '';
 		showDetails = false;
@@ -971,6 +1332,7 @@
 			toasts.info('Group already added');
 			return;
 		}
+		removedGroupIds.delete(invite.id);
 		const inviter = memberForPubkey(invite.from);
 		const createdGroup: GroupThread = {
 			id: invite.id,
@@ -979,7 +1341,10 @@
 			description: 'Accepted from a local DM invite. Group relay sync is not enabled yet.',
 			pinned: 'No pinned message yet',
 			unread: 0,
-			members: [{ name: 'You', initials: 'YO', status: 'Online', admin: true }, inviter],
+			members: [
+				{ name: 'You', initials: 'YO', status: 'Online' },
+				{ ...inviter, admin: true }
+			],
 			messages: [],
 			files: []
 		};
@@ -1440,6 +1805,9 @@
 			newGroupName = '';
 			newGroupMembers = '';
 			await notifyMembers(createdGroup, members);
+			for (const member of members.filter((item) => item.pubkey)) {
+				await broadcastGroupControl(createdGroup, 'add-member', member.pubkey!, [member.pubkey!]);
+			}
 			return;
 		}
 
@@ -1502,6 +1870,21 @@
 				if (appendIncomingGroupMessage(message.id, payload, message.createdAt)) {
 					processedGroupMessageIds.add(message.id);
 				}
+			}
+		}
+	});
+	$effect(() => {
+		void groupThreads.length;
+		loadProcessedGroupControls();
+		for (const conversation of dms.conversations) {
+			for (const message of conversation.messages) {
+				if (message.mine || processedGroupControlIds.has(message.id)) continue;
+				const payload = parseGroupControl(message.content);
+				if (!payload) continue;
+				const applied = applyGroupControl(payload, {
+					notify: isFreshGroupControl(message.createdAt)
+				});
+				if (applied) rememberProcessedGroupControl(message.id);
 			}
 		}
 	});
@@ -2375,12 +2758,12 @@
 										</p>
 										<p class="text-[11px] text-[var(--ui-text-muted)]">{member.status}</p>
 									</div>
-									{#if !member.admin}
+									{#if currentUserIsGroupAdmin(activeGroup) && !member.admin}
 										<button
 											type="button"
 											class="grid size-8 shrink-0 place-items-center rounded-lg text-[var(--ui-text-dimmed)] transition hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]"
 											aria-label={`Remove ${member.name}`}
-											onclick={() => removeMemberFromGroup(activeGroup.id, memberKey(member))}
+											onclick={() => void removeMemberFromGroup(activeGroup.id, memberKey(member))}
 										>
 											<Icon name="i-lucide-user-minus" class="size-4" />
 										</button>
@@ -2416,10 +2799,20 @@
 					</div>
 					<div class="border-t border-[var(--ui-border-muted)] px-5 py-4">
 						<Button
+							color="neutral"
+							variant="subtle"
+							icon="i-lucide-log-out"
+							block
+							onclick={() => void leaveGroup(activeGroup.id)}
+						>
+							Leave group
+						</Button>
+						<Button
 							color="error"
 							variant="subtle"
 							icon="i-lucide-trash-2"
 							block
+							class="mt-2"
 							onclick={() => deleteGroup(activeGroup.id)}
 						>
 							Delete group
@@ -2646,12 +3039,12 @@
 									{member.pubkey ? shortKey(member.pubkey) : member.status}
 								</p>
 							</div>
-							{#if !member.admin}
+							{#if currentUserIsGroupAdmin(activeGroup) && !member.admin}
 								<button
 									type="button"
 									class="grid size-8 shrink-0 place-items-center rounded-lg text-[var(--ui-text-dimmed)] transition hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]"
 									aria-label={`Remove ${member.name}`}
-									onclick={() => removeMemberFromGroup(activeGroup.id, memberKey(member))}
+									onclick={() => void removeMemberFromGroup(activeGroup.id, memberKey(member))}
 								>
 									<Icon name="i-lucide-user-minus" class="size-4" />
 								</button>
@@ -2664,6 +3057,14 @@
 	{/if}
 	{#snippet footer()}
 		{#if activeGroup}
+			<Button
+				color="neutral"
+				variant="subtle"
+				icon="i-lucide-log-out"
+				onclick={() => void leaveGroup(activeGroup.id)}
+			>
+				Leave group
+			</Button>
 			<Button
 				color="error"
 				variant="subtle"
