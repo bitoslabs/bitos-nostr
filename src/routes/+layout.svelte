@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
@@ -197,8 +197,12 @@
 		for (const conversation of dms.conversations) {
 			void conversation.messages.length;
 		}
-		if (page.url.pathname !== '/messages') groupSync.processDms();
-		alertIncomingCalls();
+		// These routines update other reactive stores. Keep those writes out of this
+		// effect's dependency set so a call alert update cannot re-run this effect.
+		untrack(() => {
+			if (page.url.pathname !== '/messages') groupSync.processDms();
+			alertIncomingCalls();
+		});
 	});
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
