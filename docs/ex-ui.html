@@ -1,0 +1,2373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pulse — Where Conversations Come Alive</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          primary: '#2F95F6',
+          'primary-dark': '#1677D2',
+          accent: '#55D69A',
+          'accent-dark': '#35B97D',
+          cream: '#F4F7FB',
+          'cream-dark': '#EAF0F7',
+          ink: '#202837',
+          'ink-soft': '#7A8798',
+          'ink-faint': '#B9C4D1',
+          warm: '#FF755F',
+        },
+        fontFamily: {
+          display: ['Bricolage Grotesque', 'sans-serif'],
+          sans: ['Plus Jakarta Sans', 'sans-serif'],
+        }
+      }
+    }
+  }
+</script>
+<style>
+  * { font-family: 'Plus Jakarta Sans', sans-serif; }
+  body { margin: 0; padding: 0; background: #FFFFFF; color: #202837; overflow: hidden; }
+  .font-display { font-family: 'Bricolage Grotesque', sans-serif; }
+  
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(32,40,55,0.12); border-radius: 3px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(32,40,55,0.25); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  
+  .chat-bg {
+    background-color: #F7FAFD;
+    
+  }
+  
+  .story-ring {
+    background: #2F95F6;
+    padding: 2.5px;
+    border-radius: 9999px;
+  }
+  .story-ring-viewed { background: #D6DFEA; padding: 2.5px; border-radius: 9999px; }
+  
+  .online-dot { position: relative; }
+  .online-dot::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    background: #55D69A;
+    opacity: 0.4;
+    animation: pulse-ring 2s ease-out infinite;
+  }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 0.6; }
+    100% { transform: scale(1.8); opacity: 0; }
+  }
+  
+  .chat-item { transition: all 0.18s ease; border-left: 3px solid transparent; }
+  .chat-item:hover { background: rgba(47, 149, 246, 0.04); }
+  .chat-item.active {
+    background: rgba(47, 149, 246, 0.08);
+    border-left-color: #2F95F6;
+  }
+  
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .msg-in { animation: msgIn 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+  
+  @keyframes wave {
+    0%, 100% { transform: scaleY(0.3); }
+    50% { transform: scaleY(1); }
+  }
+  .wave-bar { animation: wave 1.2s ease-in-out infinite; transform-origin: center; }
+  
+  @keyframes typing {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+  .typing-dot { animation: typing 1.4s ease-in-out infinite; }
+  
+  .accent-text {
+    color: #2F95F6;
+  }
+  
+  .glow-pink { box-shadow: 0 8px 32px rgba(47, 149, 246, 0.25); }
+  .glow-mint { box-shadow: 0 8px 32px rgba(85, 214, 154, 0.25); }
+  
+  .nav-btn {
+    width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 14px;
+    color: #7A8798;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+  .nav-btn:hover { background: rgba(47, 149, 246, 0.06); color: #2F95F6; }
+  .nav-btn.active {
+    background: #2F95F6;
+    color: white;
+    box-shadow: 0 6px 16px rgba(47, 149, 246, 0.35);
+  }
+  .nav-btn .tooltip {
+    position: absolute;
+    left: calc(100% + 12px);
+    background: #202837;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    z-index: 50;
+  }
+  .nav-btn:hover .tooltip { opacity: 1; }
+  
+  .tab {
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #7A8798;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .tab:hover { background: rgba(32,40,55,0.04); }
+  .tab.active { background: #202837; color: white; }
+  
+  .bubble-in {
+    background: white;
+    border-radius: 4px 18px 18px 18px;
+    box-shadow: 0 1px 2px rgba(32,40,55,0.06);
+  }
+  .bubble-out {
+    background: #2F95F6;
+    color: white;
+    border-radius: 18px 4px 18px 18px;
+    box-shadow: 0 2px 12px rgba(47, 149, 246, 0.25);
+  }
+  
+  .reaction {
+    position: absolute;
+    bottom: -8px;
+    right: 8px;
+    background: white;
+    border-radius: 9999px;
+    padding: 2px 6px;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border: 1px solid rgba(0,0,0,0.04);
+  }
+  
+  .toggle {
+    width: 38px; height: 22px;
+    background: #E8E4DC;
+    border-radius: 9999px;
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    background: white;
+    border-radius: 9999px;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .toggle.on { background: #55D69A; }
+  .toggle.on::after { transform: translateX(16px); }
+  
+  .send-btn {
+    background: #2F95F6;
+    transition: all 0.2s;
+  }
+  .send-btn:hover { transform: scale(1.05); box-shadow: 0 6px 20px rgba(47, 149, 246, 0.4); }
+  .send-btn:active { transform: scale(0.96); }
+  
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #202837;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    opacity: 0;
+    pointer-events: none;
+    transition: all 0.3s;
+    z-index: 100;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  
+  .date-divider { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+  .date-divider::before, .date-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(32,40,55,0.08);
+  }
+  
+  .media-item {
+    aspect-ratio: 1;
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.2s;
+  }
+  .media-item:hover { transform: scale(0.97); }
+  
+  /* Feed specific */
+  .post-card {
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 1px 3px rgba(32,40,55,0.04), 0 4px 16px rgba(32,40,55,0.03);
+    transition: all 0.2s;
+  }
+  .post-card:hover { box-shadow: 0 4px 12px rgba(32,40,55,0.06), 0 8px 32px rgba(32,40,55,0.04); }
+  
+  .like-btn.liked .heart-icon { color: #2F95F6; transform: scale(1.1); }
+  .like-btn .heart-icon { transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .like-btn:active .heart-icon { transform: scale(0.85); }
+  
+  @keyframes heartBurst {
+    0% { transform: scale(0); opacity: 1; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  .heart-burst { animation: heartBurst 0.6s ease-out forwards; }
+  
+  /* Reels */
+  .reel-container { scroll-snap-type: y mandatory; }
+  .reel-card { scroll-snap-align: start; scroll-snap-stop: always; }
+  
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .spin-slow { animation: spin 8s linear infinite; }
+  
+  /* Discover masonry */
+  .masonry { column-count: 3; column-gap: 12px; }
+  .masonry > * { break-inside: avoid; margin-bottom: 12px; }
+  
+  /* Settings nav */
+  .settings-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    color: #7A8798;
+    cursor: pointer;
+    transition: all 0.18s;
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .settings-nav-item:hover { background: rgba(47, 149, 246, 0.05); color: #2F95F6; }
+  .settings-nav-item.active {
+    background: rgba(47, 149, 246, 0.08);
+    color: #2F95F6;
+    font-weight: 600;
+  }
+  .settings-nav-item.active i { color: #2F95F6; }
+  
+  /* Profile cover */
+  .profile-cover {
+    background: #2F95F6;
+  }
+  
+  /* Range slider */
+  input[type="range"] {
+    -webkit-appearance: none;
+    height: 6px;
+    background: #E8E4DC;
+    border-radius: 3px;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #2F95F6;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(47, 149, 246, 0.4);
+  }
+  
+  /* Views */
+  .view { display: none; height: 100%; }
+  .view.active { display: flex; }
+  
+  /* Fade up */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .fade-up { animation: fadeUp 0.5s ease-out backwards; }
+  
+  /* Story progress */
+  .story-progress {
+    height: 3px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .story-progress-fill {
+    height: 100%;
+    background: white;
+    width: 0%;
+    animation: storyFill 5s linear forwards;
+  }
+  @keyframes storyFill { from { width: 0%; } to { width: 100%; } }
+  
+  /* Reel action button */
+  .reel-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .reel-action:hover { transform: scale(1.1); }
+  .reel-action:active { transform: scale(0.9); }
+  .reel-action .icon-circle {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+  
+  /* Trending tag */
+  .trend-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: white;
+    border: 1px solid rgba(32,40,55,0.06);
+    border-radius: 9999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #202837;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .trend-tag:hover { background: #202837; color: white; border-color: #202837; }
+  
+  /* Hide scrollbar for stories */
+  .stories-row { scrollbar-width: none; }
+  .stories-row::-webkit-scrollbar { display: none; }
+  
+  /* Comment input focus */
+  .comment-input:focus { background: white; box-shadow: 0 0 0 2px rgba(47, 149, 246, 0.15); }
+  
+  /* Pulsing live indicator */
+  .live-pulse { animation: livePulse 1.5s ease-in-out infinite; }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+</style>
+</head>
+<body>
+
+<div class="flex h-screen w-screen overflow-hidden relative">
+  
+  <!-- ============ LEFT NAV RAIL ============ -->
+  <nav class="w-[76px] bg-white/80 backdrop-blur-xl border-r border-black/[0.06] flex flex-col items-center py-5 shrink-0 z-10 relative">
+    <div class="w-11 h-11 rounded-2xl bg-primary flex items-center justify-center mb-6 glow-pink cursor-pointer" onclick="switchView('feed')">
+      <span class="font-display font-extrabold text-white text-xl leading-none">P</span>
+    </div>
+    
+    <div class="flex flex-col gap-2 flex-1">
+      <button class="nav-btn active" data-view="feed" onclick="switchView('feed')">
+        <i class="fa-solid fa-house text-[18px]"></i>
+        <span class="tooltip">Home Feed</span>
+      </button>
+      <button class="nav-btn" data-view="chats" onclick="switchView('chats')">
+        <i class="fa-solid fa-comment-dots text-[18px]"></i>
+        <span class="tooltip">Chats</span>
+        <span class="absolute -top-1 -right-1 w-4 h-4 bg-primary text-white text-[9px] font-bold rounded-full flex items-center justify-center">7</span>
+      </button>
+      <button class="nav-btn" data-view="reels" onclick="switchView('reels')">
+        <i class="fa-solid fa-clapperboard text-[18px]"></i>
+        <span class="tooltip">Reels</span>
+      </button>
+      <button class="nav-btn" data-view="discover" onclick="switchView('discover')">
+        <i class="fa-solid fa-compass text-[18px]"></i>
+        <span class="tooltip">Discover</span>
+      </button>
+      <button class="nav-btn" data-view="profile" onclick="switchView('profile')">
+        <i class="fa-solid fa-user text-[18px]"></i>
+        <span class="tooltip">Profile</span>
+      </button>
+      <button class="nav-btn" data-view="settings" onclick="switchView('settings')">
+        <i class="fa-solid fa-gear text-[18px]"></i>
+        <span class="tooltip">Settings</span>
+      </button>
+    </div>
+    
+    <div class="flex flex-col gap-2">
+      <button class="nav-btn" onclick="showToast('Notifications')">
+        <i class="fa-solid fa-bell text-[18px]"></i>
+        <span class="tooltip">Notifications</span>
+      </button>
+      <button class="w-11 h-11 rounded-2xl overflow-hidden ring-2 ring-primary/30 hover:ring-primary transition-all cursor-pointer" onclick="switchView('profile')">
+        <div class="w-full h-full bg-warm flex items-center justify-center text-white font-bold text-sm">YOU</div>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ============ FEED VIEW ============ -->
+  <div class="view active flex-1" id="view-feed">
+    <!-- Center feed -->
+    <div class="flex-1 overflow-y-auto scrollbar-thin">
+      <div class="max-w-[640px] mx-auto px-5 py-6">
+        
+        <!-- Top header -->
+        <div class="flex items-center justify-between mb-5">
+          <div>
+            <h1 class="font-display font-extrabold text-[32px] tracking-tight leading-none">Discover</h1>
+            <p class="text-[12px] text-ink-soft mt-1.5">Fresh posts from people you follow</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="w-10 h-10 rounded-xl bg-white border border-black/[0.06] flex items-center justify-center text-ink-soft hover:text-primary transition">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+            <button class="w-10 h-10 rounded-xl bg-white border border-black/[0.06] flex items-center justify-center text-ink-soft hover:text-primary transition">
+              <i class="fa-solid fa-sliders"></i>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Stories bar -->
+        <div class="bg-white rounded-2xl p-4 mb-4 border border-black/[0.04]">
+          <div class="flex gap-4 stories-row overflow-x-auto no-scrollbar">
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group">
+              <div class="relative">
+                <div class="w-16 h-16 rounded-full bg-warm flex items-center justify-center text-white font-bold ring-[3px] ring-white">YOU</div>
+                <div class="absolute -bottom-0.5 -right-0.5 w-6 h-6 bg-ink rounded-full flex items-center justify-center ring-2 ring-white">
+                  <i class="fa-solid fa-plus text-white text-[11px]"></i>
+                </div>
+              </div>
+              <span class="text-[11px] text-ink-soft font-medium">Your story</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group" onclick="openStory('Sarah Chen')">
+              <div class="story-ring"><div class="w-[58px] h-[58px] rounded-full bg-primary flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">SC</div></div>
+              <span class="text-[11px] text-ink-soft font-medium">Sarah</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('Mark Davis')">
+              <div class="story-ring"><div class="w-[58px] h-[58px] rounded-full bg-accent flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">MD</div></div>
+              <span class="text-[11px] text-ink-soft font-medium">Mark</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('Emma Wilson')">
+              <div class="story-ring"><div class="w-[58px] h-[58px] rounded-full bg-warm flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">EW</div></div>
+              <span class="text-[11px] text-ink-soft font-medium">Emma</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('John Carter')">
+              <div class="story-ring-viewed"><div class="w-[58px] h-[58px] rounded-full bg-primary flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">JC</div></div>
+              <span class="text-[11px] text-ink-faint font-medium">John</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('Olivia Chen')">
+              <div class="story-ring"><div class="w-[58px] h-[58px] rounded-full bg-accent flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">OC</div></div>
+              <span class="text-[11px] text-ink-soft font-medium">Olivia</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('Sophia Lee')">
+              <div class="story-ring"><div class="w-[58px] h-[58px] rounded-full bg-warm flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">SL</div></div>
+              <span class="text-[11px] text-ink-soft font-medium">Sophia</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer" onclick="openStory('Alex Morgan')">
+              <div class="story-ring-viewed"><div class="w-[58px] h-[58px] rounded-full bg-accent flex items-center justify-center text-white font-bold text-sm ring-[3px] ring-white">AM</div></div>
+              <span class="text-[11px] text-ink-faint font-medium">Alex</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Create post composer -->
+        <div class="bg-white rounded-2xl p-4 mb-4 border border-black/[0.04]">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-sm shrink-0">YOU</div>
+            <button class="flex-1 text-left px-4 py-2.5 bg-cream-dark/60 rounded-full text-[14px] text-ink-soft hover:bg-cream-dark transition" onclick="showToast('Composer opened')">
+              Share something on your mind...
+            </button>
+          </div>
+          <div class="flex gap-1 pt-3 border-t border-black/[0.04]">
+            <button class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Photo upload')">
+              <i class="fa-solid fa-image text-primary"></i> Photo
+            </button>
+            <button class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Video upload')">
+              <i class="fa-solid fa-video text-accent"></i> Video
+            </button>
+            <button class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Reel creator')">
+              <i class="fa-solid fa-clapperboard text-warm"></i> Reel
+            </button>
+            <button class="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Poll creator')">
+              <i class="fa-solid fa-square-poll-vertical text-ink"></i> Poll
+            </button>
+          </div>
+        </div>
+        
+        <!-- Post 1: Image post -->
+        <article class="post-card mb-5 overflow-hidden fade-up">
+          <div class="flex items-center justify-between p-4 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-sm">SC</div>
+              <div>
+                <p class="font-bold text-[14px] flex items-center gap-1.5">Sarah Chen <i class="fa-solid fa-circle-check text-primary text-[11px]"></i></p>
+                <p class="text-[12px] text-ink-soft">Product Designer · 12 min ago</p>
+              </div>
+            </div>
+            <button class="w-9 h-9 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+          </div>
+          <p class="px-4 pb-3 text-[14.5px] leading-relaxed">Just wrapped up the new visual system for Pulse. Three months of work, hundreds of iterations, one beautiful design language. Swipe to see the journey →</p>
+          <div class="relative">
+            <img src="https://picsum.photos/seed/post1/800/500.jpg" class="w-full max-h-[500px] object-cover" alt="">
+            <span class="absolute top-3 left-3 bg-black/60 backdrop-blur text-white text-[11px] font-semibold px-2.5 py-1 rounded-full">1/4</span>
+          </div>
+          <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+            <div class="flex items-center gap-1">
+              <div class="flex -space-x-1.5">
+                <span class="w-6 h-6 rounded-full bg-primary border-2 border-white flex items-center justify-center text-[10px]">❤️</span>
+                <span class="w-6 h-6 rounded-full bg-warm border-2 border-white flex items-center justify-center text-[10px]">🔥</span>
+                <span class="w-6 h-6 rounded-full bg-accent border-2 border-white flex items-center justify-center text-[10px]">👏</span>
+              </div>
+              <span class="text-[12px] text-ink-soft ml-1.5">Sarah, Mark and 248 others</span>
+            </div>
+            <span class="text-[12px] text-ink-soft">62 comments · 18 shares</span>
+          </div>
+          <div class="px-3 py-2 mx-4 my-2 border-y border-black/[0.06] flex items-center justify-around">
+            <button class="like-btn flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="toggleLike(this)">
+              <i class="fa-solid fa-heart heart-icon text-[16px]"></i>
+              <span>Like</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Comments')">
+              <i class="fa-solid fa-comment text-[16px]"></i>
+              <span>Comment</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Share dialog')">
+              <i class="fa-solid fa-share text-[16px]"></i>
+              <span>Share</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft" onclick="showToast('Saved')">
+              <i class="fa-solid fa-bookmark text-[16px]"></i>
+            </button>
+          </div>
+          <div class="px-4 pb-4 pt-1">
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-lg bg-warm flex items-center justify-center text-white font-bold text-[10px] shrink-0">YOU</div>
+              <input type="text" placeholder="Add a comment..." class="comment-input flex-1 bg-cream-dark/60 rounded-full px-4 py-2 text-[13px] placeholder:text-ink-faint focus:outline-none transition">
+            </div>
+          </div>
+        </article>
+        
+        <!-- Post 2: Text only -->
+        <article class="post-card mb-5 overflow-hidden fade-up" style="animation-delay: 0.1s;">
+          <div class="flex items-center justify-between p-4 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-sm">MD</div>
+              <div>
+                <p class="font-bold text-[14px] flex items-center gap-1.5">Mark Davis</p>
+                <p class="text-[12px] text-ink-soft">Engineer · 1 hour ago</p>
+              </div>
+            </div>
+            <button class="w-9 h-9 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+          </div>
+          <div class="px-4 pb-4">
+            <p class="text-[15px] leading-relaxed mb-3">Hot take: the best UI is the one that gets out of the way. We spend so much time perfecting colors and shadows when what users really want is to get their task done in 3 clicks, not 7.</p>
+            <p class="text-[15px] leading-relaxed">Fight me in the comments. 🥊</p>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <span class="text-[12px] text-primary font-semibold">#design</span>
+              <span class="text-[12px] text-primary font-semibold">#ux</span>
+              <span class="text-[12px] text-primary font-semibold">#hottake</span>
+            </div>
+          </div>
+          <div class="px-4 py-2 border-y border-black/[0.06] flex items-center justify-between bg-cream/50">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">🔥</span>
+              <span class="text-[12px] text-ink-soft font-medium">89 reactions</span>
+            </div>
+            <span class="text-[12px] text-ink-soft">34 comments</span>
+          </div>
+          <div class="px-3 py-2 mx-4 my-2 flex items-center justify-around">
+            <button class="like-btn flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="toggleLike(this)">
+              <i class="fa-solid fa-heart heart-icon text-[16px]"></i>
+              <span>React</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-comment text-[16px]"></i>
+              <span>Comment</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-share text-[16px]"></i>
+              <span>Share</span>
+            </button>
+          </div>
+        </article>
+        
+        <!-- Post 3: Multi-image carousel -->
+        <article class="post-card mb-5 overflow-hidden fade-up" style="animation-delay: 0.2s;">
+          <div class="flex items-center justify-between p-4 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-sm">EW</div>
+              <div>
+                <p class="font-bold text-[14px] flex items-center gap-1.5">Emma Wilson <span class="text-[10px] bg-warm/20 text-warm px-2 py-0.5 rounded-full font-bold">FRIEND</span></p>
+                <p class="text-[12px] text-ink-soft">3 hours ago · 🌍 Bali, Indonesia</p>
+              </div>
+            </div>
+            <button class="w-9 h-9 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+          </div>
+          <p class="px-4 pb-3 text-[14.5px] leading-relaxed">Morning routine hits different here 🌅✨</p>
+          <div class="grid grid-cols-2 gap-0.5">
+            <img src="https://picsum.photos/seed/bali1/400/500.jpg" class="w-full h-72 object-cover" alt="">
+            <div class="grid grid-rows-2 gap-0.5">
+              <img src="https://picsum.photos/seed/bali2/400/250.jpg" class="w-full h-36 object-cover" alt="">
+              <img src="https://picsum.photos/seed/bali3/400/250.jpg" class="w-full h-36 object-cover" alt="">
+            </div>
+          </div>
+          <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+            <div class="flex items-center gap-1">
+              <div class="flex -space-x-1.5">
+                <span class="w-6 h-6 rounded-full bg-primary border-2 border-white flex items-center justify-center text-[10px]">❤️</span>
+                <span class="w-6 h-6 rounded-full bg-warm border-2 border-white flex items-center justify-center text-[10px]">😍</span>
+              </div>
+              <span class="text-[12px] text-ink-soft ml-1.5">412 reactions</span>
+            </div>
+            <span class="text-[12px] text-ink-soft">28 comments</span>
+          </div>
+          <div class="px-3 py-2 mx-4 my-2 border-y border-black/[0.06] flex items-center justify-around">
+            <button class="like-btn flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="toggleLike(this)">
+              <i class="fa-solid fa-heart heart-icon text-[16px]"></i>
+              <span>Like</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-comment text-[16px]"></i>
+              <span>Comment</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-share text-[16px]"></i>
+              <span>Share</span>
+            </button>
+          </div>
+        </article>
+        
+        <!-- Post 4: Video/Reel share -->
+        <article class="post-card mb-5 overflow-hidden fade-up" style="animation-delay: 0.3s;">
+          <div class="flex items-center justify-between p-4 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-sm">JC</div>
+              <div>
+                <p class="font-bold text-[14px]">John Carter</p>
+                <p class="text-[12px] text-ink-soft">5 hours ago</p>
+              </div>
+            </div>
+            <button class="w-9 h-9 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+          </div>
+          <p class="px-4 pb-3 text-[14.5px] leading-relaxed">This 60-second timelapse of building a design system from scratch. Worth every second ⏱️</p>
+          <div class="relative aspect-[9/16] max-h-[520px] bg-ink overflow-hidden mx-4 rounded-2xl">
+            <img src="https://picsum.photos/seed/video1/400/700.jpg" class="w-full h-full object-cover opacity-90" alt="">
+            <div class="absolute inset-0 bg-black/45"></div>
+            <button class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center hover:scale-110 transition">
+              <i class="fa-solid fa-play text-white text-xl ml-1"></i>
+            </button>
+            <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <div class="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-white font-bold text-xs ring-2 ring-white">OC</div>
+                <div class="text-white">
+                  <p class="text-[12px] font-bold">@oliviacreates</p>
+                  <p class="text-[10px] opacity-80">Original audio</p>
+                </div>
+              </div>
+              <button class="px-3 py-1 bg-white text-ink text-[11px] font-bold rounded-full">Follow</button>
+            </div>
+            <div class="absolute top-3 right-3 bg-black/60 backdrop-blur text-white text-[11px] font-semibold px-2 py-1 rounded-full flex items-center gap-1">
+              <i class="fa-solid fa-music text-[9px]"></i>
+              Reel
+            </div>
+          </div>
+          <div class="px-4 pt-3 pb-2 flex items-center justify-between">
+            <div class="flex items-center gap-1">
+              <div class="flex -space-x-1.5">
+                <span class="w-6 h-6 rounded-full bg-primary border-2 border-white flex items-center justify-center text-[10px]">🔥</span>
+                <span class="w-6 h-6 rounded-full bg-accent border-2 border-white flex items-center justify-center text-[10px]">👏</span>
+              </div>
+              <span class="text-[12px] text-ink-soft ml-1.5">1.2K reactions</span>
+            </div>
+            <span class="text-[12px] text-ink-soft">187 comments · 92 shares</span>
+          </div>
+          <div class="px-3 py-2 mx-4 mb-2 border-y border-black/[0.06] flex items-center justify-around">
+            <button class="like-btn flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-primary/5 transition text-[13px] font-semibold text-ink-soft" onclick="toggleLike(this)">
+              <i class="fa-solid fa-heart heart-icon text-[16px]"></i>
+              <span>Like</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-comment text-[16px]"></i>
+              <span>Comment</span>
+            </button>
+            <button class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-black/5 transition text-[13px] font-semibold text-ink-soft">
+              <i class="fa-solid fa-share text-[16px]"></i>
+              <span>Share</span>
+            </button>
+          </div>
+        </article>
+        
+        <!-- Post 5: Poll -->
+        <article class="post-card mb-5 overflow-hidden fade-up" style="animation-delay: 0.4s;">
+          <div class="flex items-center justify-between p-4 pb-3">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-sm">AM</div>
+              <div>
+                <p class="font-bold text-[14px]">Alex Morgan</p>
+                <p class="text-[12px] text-ink-soft">Yesterday · 📊 Poll</p>
+              </div>
+            </div>
+            <button class="w-9 h-9 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+          </div>
+          <div class="px-4 pb-4">
+            <p class="text-[15px] font-semibold mb-3">What's your biggest design pet peeve?</p>
+            <div class="space-y-2">
+              <button class="w-full text-left p-3 rounded-xl border-2 border-primary/20 bg-primary/5 hover:bg-primary/10 transition relative overflow-hidden">
+                <div class="absolute inset-y-0 left-0 bg-primary/15 rounded-xl" style="width: 67%;"></div>
+                <div class="relative flex items-center justify-between">
+                  <span class="text-[13.5px] font-semibold">Inconsistent spacing</span>
+                  <span class="text-[13px] font-bold text-primary">67%</span>
+                </div>
+              </button>
+              <button class="w-full text-left p-3 rounded-xl border-2 border-black/[0.06] hover:bg-black/[0.02] transition relative overflow-hidden">
+                <div class="absolute inset-y-0 left-0 bg-ink/5 rounded-xl" style="width: 18%;"></div>
+                <div class="relative flex items-center justify-between">
+                  <span class="text-[13.5px] font-semibold">Bad contrast</span>
+                  <span class="text-[13px] font-bold text-ink-soft">18%</span>
+                </div>
+              </button>
+              <button class="w-full text-left p-3 rounded-xl border-2 border-black/[0.06] hover:bg-black/[0.02] transition relative overflow-hidden">
+                <div class="absolute inset-y-0 left-0 bg-ink/5 rounded-xl" style="width: 15%;"></div>
+                <div class="relative flex items-center justify-between">
+                  <span class="text-[13.5px] font-semibold">Tiny click targets</span>
+                  <span class="text-[13px] font-bold text-ink-soft">15%</span>
+                </div>
+              </button>
+            </div>
+            <p class="text-[11px] text-ink-soft mt-2">2,847 votes · ends in 2 days</p>
+          </div>
+        </article>
+        
+        <div class="text-center py-6">
+          <button class="px-6 py-2.5 bg-white border border-black/[0.06] rounded-full text-[13px] font-semibold text-ink-soft hover:bg-cream transition">
+            Load more posts
+          </button>
+        </div>
+        
+      </div>
+    </div>
+    
+    <!-- Right sidebar: Trending -->
+    <aside class="w-[320px] bg-white border-l border-black/[0.06] overflow-y-auto scrollbar-thin p-5 shrink-0 hidden xl:block">
+      <div class="mb-6">
+        <h3 class="font-display font-extrabold text-[18px] mb-3">Trending now</h3>
+        <div class="space-y-2">
+          <div class="p-3 rounded-xl hover:bg-cream-dark/60 cursor-pointer transition">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-ink-soft font-semibold">#1 · Design</span>
+              <i class="fa-solid fa-arrow-trend-up text-accent text-xs"></i>
+            </div>
+            <p class="font-bold text-[14px]">#DesignSystem</p>
+            <p class="text-[11px] text-ink-soft">12.4K posts</p>
+          </div>
+          <div class="p-3 rounded-xl hover:bg-cream-dark/60 cursor-pointer transition">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-ink-soft font-semibold">#2 · Tech</span>
+              <i class="fa-solid fa-arrow-trend-up text-accent text-xs"></i>
+            </div>
+            <p class="font-bold text-[14px]">#WebDev</p>
+            <p class="text-[11px] text-ink-soft">8.9K posts</p>
+          </div>
+          <div class="p-3 rounded-xl hover:bg-cream-dark/60 cursor-pointer transition">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-ink-soft font-semibold">#3 · Lifestyle</span>
+              <i class="fa-solid fa-arrow-trend-up text-warm text-xs"></i>
+            </div>
+            <p class="font-bold text-[14px]">#MorningRoutine</p>
+            <p class="text-[11px] text-ink-soft">5.2K posts</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="mb-6">
+        <h3 class="font-display font-extrabold text-[18px] mb-3">Suggested for you</h3>
+        <div class="space-y-3">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-xs shrink-0">SL</div>
+            <div class="flex-1 min-w-0">
+              <p class="font-bold text-[13px] truncate">Sophia Lee</p>
+              <p class="text-[11px] text-ink-soft">Followed by Mark + 3</p>
+            </div>
+            <button class="px-3 py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-xs shrink-0">RK</div>
+            <div class="flex-1 min-w-0">
+              <p class="font-bold text-[13px] truncate">Ryan Kim</p>
+              <p class="text-[11px] text-ink-soft">Designer at Figma</p>
+            </div>
+            <button class="px-3 py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-xs shrink-0">NB</div>
+            <div class="flex-1 min-w-0">
+              <p class="font-bold text-[13px] truncate">Nina Brooks</p>
+              <p class="text-[11px] text-ink-soft">3.2M followers</p>
+            </div>
+            <button class="px-3 py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="bg-primary rounded-2xl p-4 text-white">
+        <i class="fa-solid fa-sparkles text-lg mb-2"></i>
+        <h4 class="font-display font-extrabold text-[16px] mb-1">Go Premium</h4>
+        <p class="text-[12px] opacity-90 mb-3">Unlock exclusive features, analytics, and ad-free experience.</p>
+        <button class="w-full py-2 bg-white text-primary text-[12px] font-bold rounded-full hover:bg-white/90 transition" onclick="showToast('Premium trial started!')">Try free for 30 days</button>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============ CHATS VIEW ============ -->
+  <div class="view flex-1" id="view-chats">
+    
+    <!-- Chat list sidebar -->
+    <aside class="w-[340px] bg-white border-r border-black/[0.06] flex flex-col shrink-0 z-10 relative">
+      <header class="px-5 pt-5 pb-3 border-b border-black/[0.06]">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h1 class="font-display font-extrabold text-[26px] leading-none tracking-tight">Messages</h1>
+            <p class="text-[11px] text-ink-soft mt-1.5 font-medium tracking-wide uppercase">7 new · 3 unread</p>
+          </div>
+          <button class="w-10 h-10 rounded-xl bg-ink text-white flex items-center justify-center hover:bg-primary transition-all hover:scale-105 active:scale-95" onclick="showToast('New chat')">
+            <i class="fa-solid fa-pen-to-square text-sm"></i>
+          </button>
+        </div>
+        <div class="relative">
+          <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint text-sm"></i>
+          <input type="text" placeholder="Search messages..." class="w-full pl-10 pr-4 py-2.5 bg-cream-dark/60 rounded-xl text-sm placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition-all">
+        </div>
+        <div class="flex gap-1 mt-3">
+          <button class="tab active">All</button>
+          <button class="tab">Unread <span class="ml-1 text-[10px] bg-primary text-white px-1.5 py-0.5 rounded-full">3</span></button>
+          <button class="tab">Groups</button>
+        </div>
+      </header>
+      
+      <div class="flex-1 overflow-y-auto scrollbar-thin">
+        <div class="chat-item active px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Design Chat')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white font-bold text-sm shadow-md">DC</div>
+            <span class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-accent border-2 border-white rounded-full"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate flex items-center gap-1.5">Design Chat <i class="fa-solid fa-users text-[10px] text-ink-faint"></i></h3>
+              <span class="text-[11px] text-primary font-semibold shrink-0 ml-2">9:42</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <p class="text-[13px] text-ink-soft truncate"><span class="font-semibold text-ink">Sarah:</span> Morning team! Ready for review?</p>
+              <span class="ml-2 shrink-0 w-5 h-5 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center">3</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="chat-item px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Alex Morgan')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-accent flex items-center justify-center text-white font-bold text-sm">AM</div>
+            <span class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-accent border-2 border-white rounded-full"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate">Alex Morgan</h3>
+              <span class="text-[11px] text-ink-soft shrink-0 ml-2">9:30</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <p class="text-[13px] text-ink-soft truncate flex items-center gap-1.5">
+                <i class="fa-solid fa-microphone text-primary text-[11px]"></i>Voice · 0:14
+              </p>
+              <span class="ml-2 shrink-0 w-5 h-5 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center">1</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="chat-item px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Product Team')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-warm flex items-center justify-center text-white font-bold text-sm">PT</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate flex items-center gap-1.5">Product Team <i class="fa-solid fa-users text-[10px] text-ink-faint"></i></h3>
+              <span class="text-[11px] text-ink-soft shrink-0 ml-2">9:15</span>
+            </div>
+            <p class="text-[13px] text-ink-soft truncate"><span class="font-semibold text-ink">@John</span> can you review the PR?</p>
+          </div>
+        </div>
+        
+        <div class="chat-item px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Emma Wilson')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-warm flex items-center justify-center text-white font-bold text-sm">EW</div>
+            <span class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-accent border-2 border-white rounded-full"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate">Emma Wilson</h3>
+              <span class="text-[11px] text-ink-soft shrink-0 ml-2">8:50</span>
+            </div>
+            <p class="text-[13px] text-ink-soft truncate flex items-center gap-1.5">
+              <i class="fa-solid fa-image text-accent text-[11px]"></i>Photo
+            </p>
+          </div>
+        </div>
+        
+        <div class="chat-item px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Frontend Squad')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-ink flex items-center justify-center text-white font-bold text-sm">FS</div>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate flex items-center gap-1.5">Frontend Squad <i class="fa-solid fa-users text-[10px] text-ink-faint"></i></h3>
+              <span class="text-[11px] text-ink-soft shrink-0 ml-2">8:42</span>
+            </div>
+            <p class="text-[13px] text-ink-soft truncate"><span class="font-semibold text-ink">Mark:</span> Deploying to staging 🚀</p>
+          </div>
+        </div>
+        
+        <div class="chat-item px-4 py-3.5 cursor-pointer flex gap-3 items-start" onclick="selectChat(this, 'Olivia Chen')">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-2xl bg-accent flex items-center justify-center text-white font-bold text-sm">OC</div>
+            <span class="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-warm border-2 border-white rounded-full"></span>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between mb-0.5">
+              <h3 class="font-bold text-[14.5px] truncate">Olivia Chen</h3>
+              <span class="text-[11px] text-primary font-semibold shrink-0 ml-2">Yesterday</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <p class="text-[13px] text-ink-soft truncate">Let's catch up tomorrow!</p>
+              <span class="ml-2 shrink-0 w-5 h-5 bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center">2</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- Chat area -->
+    <main class="flex-1 flex chat-bg relative z-0 min-w-0">
+      <div class="flex-1 flex flex-col min-w-0">
+        <header class="h-[72px] bg-white/70 backdrop-blur-xl border-b border-black/[0.06] flex items-center justify-between px-5 shrink-0">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="relative shrink-0">
+              <div class="w-11 h-11 rounded-2xl bg-primary flex items-center justify-center text-white font-bold shadow-md">DC</div>
+              <span class="online-dot absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-accent border-2 border-white rounded-full"></span>
+            </div>
+            <div class="min-w-0">
+              <h2 class="font-bold text-[15px] flex items-center gap-2">Design Chat <span class="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-semibold">GROUP</span></h2>
+              <p class="text-[12px] text-ink-soft flex items-center gap-1.5"><span class="text-accent">●</span> 5 online · 28 members</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
+            <button class="w-10 h-10 rounded-xl hover:bg-black/5 flex items-center justify-center text-ink-soft hover:text-primary transition" onclick="showToast('Voice call started')"><i class="fa-solid fa-phone text-[15px]"></i></button>
+            <button class="w-10 h-10 rounded-xl hover:bg-black/5 flex items-center justify-center text-ink-soft hover:text-primary transition" onclick="showToast('Video call started')"><i class="fa-solid fa-video text-[15px]"></i></button>
+            <button class="w-10 h-10 rounded-xl hover:bg-black/5 flex items-center justify-center text-ink-soft hover:text-primary transition"><i class="fa-solid fa-ellipsis-vertical text-[15px]"></i></button>
+          </div>
+        </header>
+        
+        <div class="bg-warm/10 border-b border-warm/20 px-5 py-2.5 flex items-center gap-3 shrink-0">
+          <i class="fa-solid fa-thumbtack text-warm text-sm"></i>
+          <div class="flex-1 min-w-0">
+            <p class="text-[12px] font-semibold text-ink truncate">Design Review Meeting — Today 11:00 AM</p>
+            <p class="text-[11px] text-ink-soft truncate">Pinned by Sarah Chen · 2 hours ago</p>
+          </div>
+          <button class="text-[11px] font-semibold text-primary hover:underline shrink-0">View</button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto scrollbar-thin px-6 py-5" id="messagesContainer">
+          <div class="date-divider"><span class="text-[11px] font-semibold text-ink-soft bg-white/60 backdrop-blur px-3 py-1 rounded-full">Today</span></div>
+          
+          <div class="flex gap-2.5 mb-4 msg-in">
+            <div class="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-xs shrink-0 mt-auto">SC</div>
+            <div class="max-w-[70%]">
+              <div class="flex items-baseline gap-2 mb-1"><span class="text-[12px] font-bold text-ink">Sarah Chen</span><span class="text-[10px] text-ink-faint">9:42 AM</span></div>
+              <div class="bubble-in px-4 py-2.5 text-[14px] leading-relaxed">Morning team! ☀️ Ready for the design review at 11?</div>
+            </div>
+          </div>
+          
+          <div class="flex gap-2.5 mb-4 msg-in">
+            <div class="w-8 h-8 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-xs shrink-0 mt-auto">MD</div>
+            <div class="max-w-[70%]">
+              <div class="flex items-baseline gap-2 mb-1"><span class="text-[12px] font-bold text-ink">Mark Davis</span><span class="text-[10px] text-ink-faint">9:43 AM</span></div>
+              <div class="bubble-in p-2">
+                <img src="https://picsum.photos/seed/design1/480/300.jpg" class="rounded-xl w-full" alt="">
+                <p class="px-2 py-2 text-[14px] leading-relaxed">Just pushed the new mockups to Figma. Card redesign is ready 🔥</p>
+              </div>
+              <div class="relative"><div class="reaction"><span>🔥 3</span></div></div>
+            </div>
+          </div>
+          
+          <div class="flex gap-2.5 mb-4 justify-end msg-in">
+            <div class="max-w-[70%]">
+              <div class="flex items-baseline gap-2 mb-1 justify-end"><span class="text-[10px] text-ink-faint">9:45 AM</span><span class="text-[12px] font-bold text-primary">You</span></div>
+              <div class="bubble-out px-4 py-2.5 text-[14px] leading-relaxed">These look amazing! Love the new color palette</div>
+              <div class="bubble-out px-4 py-2.5 text-[14px] leading-relaxed mt-1">The color work is <span class="font-semibold">chef's kiss</span> 👌</div>
+              <div class="flex items-center gap-1 mt-1 justify-end"><i class="fa-solid fa-check-double text-[10px] text-accent"></i><span class="text-[10px] text-ink-faint">Read by 12</span></div>
+            </div>
+          </div>
+          
+          <div class="flex gap-2.5 mb-4 msg-in">
+            <div class="w-8 h-8 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-xs shrink-0 mt-auto">EW</div>
+            <div class="max-w-[70%]">
+              <div class="flex items-baseline gap-2 mb-1"><span class="text-[12px] font-bold text-ink">Emma Wilson</span><span class="text-[10px] text-ink-faint">9:47 AM</span></div>
+              <div class="bubble-in px-4 py-3 flex items-center gap-3 min-w-[280px]">
+                <button class="w-9 h-9 rounded-full bg-primary text-white flex items-center justify-center hover:bg-primary-dark transition shrink-0"><i class="fa-solid fa-play text-[12px] ml-0.5"></i></button>
+                <div class="flex-1 flex items-center gap-[2px] h-8">
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 40%; animation-delay: 0s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 70%; animation-delay: 0.1s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 90%; animation-delay: 0.2s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 50%; animation-delay: 0.3s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 80%; animation-delay: 0.4s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 60%; animation-delay: 0.5s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 100%; animation-delay: 0.6s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 45%; animation-delay: 0.7s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 75%; animation-delay: 0.8s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 55%; animation-delay: 0.9s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 85%; animation-delay: 1s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 65%; animation-delay: 1.1s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 40%; animation-delay: 1.2s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 70%; animation-delay: 1.3s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 95%; animation-delay: 1.4s;"></div>
+                  <div class="wave-bar w-[3px] bg-primary rounded-full" style="height: 50%; animation-delay: 1.5s;"></div>
+                </div>
+                <span class="text-[11px] font-semibold text-ink-soft shrink-0">0:24</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex gap-2.5 mb-2" id="typingIndicator">
+            <div class="w-8 h-8 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-xs shrink-0">OC</div>
+            <div class="bubble-in px-4 py-3 flex items-center gap-1.5">
+              <div class="w-1.5 h-1.5 bg-ink-soft rounded-full typing-dot"></div>
+              <div class="w-1.5 h-1.5 bg-ink-soft rounded-full typing-dot" style="animation-delay: 0.2s;"></div>
+              <div class="w-1.5 h-1.5 bg-ink-soft rounded-full typing-dot" style="animation-delay: 0.4s;"></div>
+              <span class="text-[11px] text-ink-soft ml-1">Olivia is typing</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="bg-white/80 backdrop-blur-xl border-t border-black/[0.06] px-5 py-3 shrink-0">
+          <div class="flex items-end gap-2">
+            <button class="w-10 h-10 rounded-xl hover:bg-black/5 flex items-center justify-center text-ink-soft transition shrink-0"><i class="fa-solid fa-paperclip text-[16px]"></i></button>
+            <button class="w-10 h-10 rounded-xl hover:bg-black/5 flex items-center justify-center text-ink-soft transition shrink-0"><i class="fa-solid fa-image text-[16px]"></i></button>
+            <div class="flex-1 bg-cream-dark/60 rounded-2xl px-4 py-2.5 flex items-center gap-2">
+              <input type="text" id="messageInput" placeholder="Type a message..." class="flex-1 bg-transparent text-[14px] placeholder:text-ink-faint focus:outline-none">
+              <button class="text-ink-soft hover:text-warm transition"><i class="fa-regular fa-face-smile text-[18px]"></i></button>
+            </div>
+            <button class="send-btn w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0" onclick="sendMessage()"><i class="fa-solid fa-paper-plane text-[14px]"></i></button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Info panel -->
+      <aside class="w-[320px] bg-white border-l border-black/[0.06] flex flex-col shrink-0 overflow-y-auto scrollbar-thin">
+        <div class="relative pt-8 pb-5 px-6 text-center border-b border-black/[0.06]">
+          <button class="absolute top-3 right-3 w-8 h-8 rounded-lg hover:bg-black/5 flex items-center justify-center text-ink-soft"><i class="fa-solid fa-xmark text-sm"></i></button>
+          <div class="w-20 h-20 rounded-3xl bg-primary flex items-center justify-center text-white font-display font-extrabold text-2xl mx-auto mb-3 shadow-lg glow-pink">DC</div>
+          <h2 class="font-display font-extrabold text-[22px] tracking-tight">Design Chat</h2>
+          <p class="text-[12px] text-ink-soft mt-1">Group · 28 members · 5 online</p>
+        </div>
+        
+        <div class="px-5 py-4 border-b border-black/[0.06]">
+          <h3 class="text-[11px] font-bold text-ink-soft uppercase tracking-wider mb-2">Description</h3>
+          <p class="text-[13px] text-ink leading-relaxed">Where designers collaborate, share ideas, and ship beautiful products together.</p>
+        </div>
+        
+        <div class="px-5 py-4 border-b border-black/[0.06] flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center"><i class="fa-solid fa-bell text-accent text-sm"></i></div>
+            <div><p class="text-[13px] font-semibold">Notifications</p><p class="text-[11px] text-ink-soft">All messages</p></div>
+          </div>
+          <div class="toggle on" onclick="this.classList.toggle('on'); showToast('Toggled')"></div>
+        </div>
+        
+        <div class="px-5 py-4 border-b border-black/[0.06]">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-[11px] font-bold text-ink-soft uppercase tracking-wider">Members · 28</h3>
+            <button class="text-[11px] font-semibold text-primary hover:underline">View all</button>
+          </div>
+          <div class="space-y-2.5">
+            <div class="flex items-center gap-2.5 hover:bg-black/[0.02] -mx-2 px-2 py-1.5 rounded-lg cursor-pointer">
+              <div class="relative">
+                <div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-xs">SC</div>
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-accent border-2 border-white rounded-full"></span>
+              </div>
+              <div class="flex-1"><p class="text-[13px] font-semibold flex items-center gap-1.5">Sarah Chen <span class="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-bold">ADMIN</span></p><p class="text-[11px] text-accent">Online</p></div>
+            </div>
+            <div class="flex items-center gap-2.5 hover:bg-black/[0.02] -mx-2 px-2 py-1.5 rounded-lg cursor-pointer">
+              <div class="relative">
+                <div class="w-9 h-9 rounded-xl bg-accent flex items-center justify-center text-white font-bold text-xs">MD</div>
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-accent border-2 border-white rounded-full"></span>
+              </div>
+              <div class="flex-1"><p class="text-[13px] font-semibold">Mark Davis</p><p class="text-[11px] text-accent">Active now</p></div>
+            </div>
+            <div class="flex items-center gap-2.5 hover:bg-black/[0.02] -mx-2 px-2 py-1.5 rounded-lg cursor-pointer">
+              <div class="relative">
+                <div class="w-9 h-9 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-xs">EW</div>
+                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-accent border-2 border-white rounded-full"></span>
+              </div>
+              <div class="flex-1"><p class="text-[13px] font-semibold">Emma Wilson</p><p class="text-[11px] text-accent">Active now</p></div>
+            </div>
+            <div class="flex items-center gap-2.5 hover:bg-black/[0.02] -mx-2 px-2 py-1.5 rounded-lg cursor-pointer">
+              <div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white font-bold text-xs">JC</div>
+              <div class="flex-1"><p class="text-[13px] font-semibold">John Carter</p><p class="text-[11px] text-ink-soft">Last seen 5m ago</p></div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="px-5 py-4 border-b border-black/[0.06]">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-[11px] font-bold text-ink-soft uppercase tracking-wider">Media · 142</h3>
+            <button class="text-[11px] font-semibold text-primary hover:underline">See all</button>
+          </div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <div class="media-item"><img src="https://picsum.photos/seed/m1/200/200.jpg" class="w-full h-full object-cover" alt=""></div>
+            <div class="media-item"><img src="https://picsum.photos/seed/m2/200/200.jpg" class="w-full h-full object-cover" alt=""></div>
+            <div class="media-item relative">
+              <img src="https://picsum.photos/seed/m3/200/200.jpg" class="w-full h-full object-cover" alt="">
+              <div class="absolute inset-0 bg-primary/60 flex items-center justify-center"><i class="fa-solid fa-play text-white text-lg"></i></div>
+            </div>
+            <div class="media-item"><img src="https://picsum.photos/seed/m4/200/200.jpg" class="w-full h-full object-cover" alt=""></div>
+            <div class="media-item"><img src="https://picsum.photos/seed/m5/200/200.jpg" class="w-full h-full object-cover" alt=""></div>
+            <div class="media-item relative">
+              <img src="https://picsum.photos/seed/m6/200/200.jpg" class="w-full h-full object-cover" alt="">
+              <div class="absolute inset-0 bg-ink/60 flex items-center justify-center text-white font-bold text-sm">+136</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="px-5 py-4">
+          <h3 class="text-[11px] font-bold text-ink-soft uppercase tracking-wider mb-3">Files · 24</h3>
+          <div class="space-y-2">
+            <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-black/[0.03] cursor-pointer">
+              <div class="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><i class="fa-solid fa-file-image text-primary text-sm"></i></div>
+              <div class="flex-1 min-w-0"><p class="text-[12px] font-semibold truncate">Design_System_v2.fig</p><p class="text-[10px] text-ink-soft">4.2 MB · 2 hours ago</p></div>
+              <i class="fa-solid fa-download text-xs text-ink-faint"></i>
+            </div>
+            <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-black/[0.03] cursor-pointer">
+              <div class="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center shrink-0"><i class="fa-solid fa-file-pdf text-accent text-sm"></i></div>
+              <div class="flex-1 min-w-0"><p class="text-[12px] font-semibold truncate">User_Research.pdf</p><p class="text-[10px] text-ink-soft">1.8 MB · Yesterday</p></div>
+              <i class="fa-solid fa-download text-xs text-ink-faint"></i>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- ============ REELS VIEW ============ -->
+  <div class="view flex-1" id="view-reels">
+    <div class="flex-1 relative bg-ink overflow-hidden">
+      <!-- Reels container -->
+      <div class="reel-container h-full overflow-y-auto no-scrollbar" id="reelsContainer">
+        
+        <!-- Reel 1 -->
+        <div class="reel-card h-full w-full relative flex items-center justify-center">
+          <img src="https://picsum.photos/seed/reel1/800/1400.jpg" class="absolute inset-0 w-full h-full object-cover" alt="">
+          <div class="absolute inset-0 bg-black/45"></div>
+          
+          <!-- Top bar -->
+          <div class="absolute top-0 left-0 right-0 p-5 flex items-center justify-between z-10">
+            <h2 class="font-display font-extrabold text-white text-[26px]">Reels</h2>
+            <button class="w-10 h-10 rounded-xl bg-white/15 backdrop-blur text-white flex items-center justify-center hover:bg-white/25 transition">
+              <i class="fa-solid fa-camera"></i>
+            </button>
+          </div>
+          
+          <!-- Right action rail -->
+          <div class="absolute right-4 bottom-24 flex flex-col gap-5 z-10">
+            <div class="reel-action" onclick="toggleReelLike(this)">
+              <div class="icon-circle"><i class="fa-solid fa-heart"></i></div>
+              <span class="text-[11px] font-semibold">12.4K</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Comments opened')">
+              <div class="icon-circle"><i class="fa-solid fa-comment"></i></div>
+              <span class="text-[11px] font-semibold">847</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Shared!')">
+              <div class="icon-circle"><i class="fa-solid fa-share"></i></div>
+              <span class="text-[11px] font-semibold">Share</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Saved!')">
+              <div class="icon-circle"><i class="fa-solid fa-bookmark"></i></div>
+              <span class="text-[11px] font-semibold">Save</span>
+            </div>
+            <div class="reel-action" onclick="showToast('More options')">
+              <div class="icon-circle"><i class="fa-solid fa-ellipsis-vertical"></i></div>
+            </div>
+            <div class="w-10 h-10 rounded-full border-2 border-white overflow-hidden spin-slow mt-2">
+              <img src="https://picsum.photos/seed/reel1/80/80.jpg" class="w-full h-full object-cover" alt="">
+            </div>
+          </div>
+          
+          <!-- Bottom info -->
+          <div class="absolute bottom-0 left-0 right-20 p-5 z-10 text-white">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center font-bold text-sm ring-2 ring-white">SC</div>
+              <div class="flex-1">
+                <p class="font-bold text-[14px]">@sarahchen</p>
+                <p class="text-[11px] opacity-80">Product Designer</p>
+              </div>
+              <button class="px-4 py-1.5 bg-white text-ink text-[12px] font-bold rounded-full hover:bg-white/90 transition">Follow</button>
+            </div>
+            <p class="text-[13.5px] leading-relaxed mb-3">When the design finally clicks after 47 iterations 😂✨ Worth every second</p>
+            <div class="flex items-center gap-2 text-[12px]">
+              <i class="fa-solid fa-music"></i>
+              <span class="font-semibold">Original audio · Sarah Chen</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Reel 2 -->
+        <div class="reel-card h-full w-full relative flex items-center justify-center">
+          <img src="https://picsum.photos/seed/reel2/800/1400.jpg" class="absolute inset-0 w-full h-full object-cover" alt="">
+          <div class="absolute inset-0 bg-black/45"></div>
+          
+          <div class="absolute right-4 bottom-24 flex flex-col gap-5 z-10">
+            <div class="reel-action" onclick="toggleReelLike(this)">
+              <div class="icon-circle"><i class="fa-solid fa-heart" style="color:#2F95F6"></i></div>
+              <span class="text-[11px] font-semibold">89.2K</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Comments opened')">
+              <div class="icon-circle"><i class="fa-solid fa-comment"></i></div>
+              <span class="text-[11px] font-semibold">2.1K</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Shared!')">
+              <div class="icon-circle"><i class="fa-solid fa-share"></i></div>
+              <span class="text-[11px] font-semibold">Share</span>
+            </div>
+            <div class="reel-action" onclick="showToast('Saved!')">
+              <div class="icon-circle"><i class="fa-solid fa-bookmark"></i></div>
+              <span class="text-[11px] font-semibold">Save</span>
+            </div>
+          </div>
+          
+          <div class="absolute bottom-0 left-0 right-20 p-5 z-10 text-white">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-accent flex items-center justify-center font-bold text-sm ring-2 ring-white">MD</div>
+              <div class="flex-1">
+                <p class="font-bold text-[14px]">@markbuilds</p>
+                <p class="text-[11px] opacity-80">Engineer · Creator</p>
+              </div>
+              <button class="px-4 py-1.5 bg-white text-ink text-[12px] font-bold rounded-full">Follow</button>
+            </div>
+            <p class="text-[13.5px] leading-relaxed mb-3">POV: shipping to production on a Friday 🚀💀 What could go wrong?</p>
+            <div class="flex items-center gap-2 text-[12px]">
+              <i class="fa-solid fa-music"></i>
+              <span class="font-semibold">Trending · "Ocean Drive"</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Reel 3 -->
+        <div class="reel-card h-full w-full relative flex items-center justify-center">
+          <img src="https://picsum.photos/seed/reel3/800/1400.jpg" class="absolute inset-0 w-full h-full object-cover" alt="">
+          <div class="absolute inset-0 bg-black/45"></div>
+          
+          <div class="absolute right-4 bottom-24 flex flex-col gap-5 z-10">
+            <div class="reel-action" onclick="toggleReelLike(this)">
+              <div class="icon-circle"><i class="fa-solid fa-heart"></i></div>
+              <span class="text-[11px] font-semibold">5.7K</span>
+            </div>
+            <div class="reel-action">
+              <div class="icon-circle"><i class="fa-solid fa-comment"></i></div>
+              <span class="text-[11px] font-semibold">423</span>
+            </div>
+            <div class="reel-action">
+              <div class="icon-circle"><i class="fa-solid fa-share"></i></div>
+              <span class="text-[11px] font-semibold">Share</span>
+            </div>
+          </div>
+          
+          <div class="absolute bottom-0 left-0 right-20 p-5 z-10 text-white">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-warm flex items-center justify-center font-bold text-sm ring-2 ring-white">EW</div>
+              <div class="flex-1">
+                <p class="font-bold text-[14px]">@emmawanders</p>
+                <p class="text-[11px] opacity-80">Travel · Photography</p>
+              </div>
+              <button class="px-4 py-1.5 bg-white text-ink text-[12px] font-bold rounded-full">Follow</button>
+            </div>
+            <p class="text-[13.5px] leading-relaxed mb-3">Sunrise in Bali hits different 🌅 Tag someone you'd bring here</p>
+            <div class="flex items-center gap-2 text-[12px]">
+              <i class="fa-solid fa-music"></i>
+              <span class="font-semibold">"Golden Hour" · JVKE</span>
+            </div>
+          </div>
+        </div>
+        
+      </div>
+      
+      <!-- Side navigation dots -->
+      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-20">
+        <div class="w-1 h-8 bg-white rounded-full"></div>
+        <div class="w-1 h-4 bg-white/40 rounded-full"></div>
+        <div class="w-1 h-4 bg-white/40 rounded-full"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DISCOVER VIEW ============ -->
+  <div class="view flex-1" id="view-discover">
+    <div class="flex-1 overflow-y-auto scrollbar-thin">
+      <div class="max-w-[1100px] mx-auto px-6 py-6">
+        
+        <!-- Header -->
+        <div class="mb-6">
+          <h1 class="font-display font-extrabold text-[34px] tracking-tight leading-none">Discover</h1>
+          <p class="text-[13px] text-ink-soft mt-1.5">Explore what's trending across Pulse</p>
+        </div>
+        
+        <!-- Search -->
+        <div class="relative mb-6">
+          <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-ink-faint"></i>
+          <input type="text" placeholder="Search creators, hashtags, sounds..." class="w-full pl-12 pr-32 py-3.5 bg-white border border-black/[0.06] rounded-2xl text-[14px] placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-primary/30 transition">
+          <button class="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 bg-ink text-white text-[12px] font-bold rounded-xl hover:bg-primary transition">Search</button>
+        </div>
+        
+        <!-- Trending tags -->
+        <div class="mb-6">
+          <h3 class="font-display font-extrabold text-[18px] mb-3">Trending tags</h3>
+          <div class="flex flex-wrap gap-2">
+            <button class="trend-tag"><i class="fa-solid fa-fire text-primary"></i> #DesignSystem <span class="text-ink-faint font-normal">12.4K</span></button>
+            <button class="trend-tag"><i class="fa-solid fa-arrow-trend-up text-accent"></i> #WebDev <span class="text-ink-faint font-normal">8.9K</span></button>
+            <button class="trend-tag">#MorningRoutine <span class="text-ink-faint font-normal">5.2K</span></button>
+            <button class="trend-tag">#UIInspo <span class="text-ink-faint font-normal">4.7K</span></button>
+            <button class="trend-tag">#TravelDiary <span class="text-ink-faint font-normal">3.8K</span></button>
+            <button class="trend-tag">#Productivity <span class="text-ink-faint font-normal">3.1K</span></button>
+            <button class="trend-tag">#CoffeeArt <span class="text-ink-faint font-normal">2.4K</span></button>
+            <button class="trend-tag">#SideProject <span class="text-ink-faint font-normal">1.9K</span></button>
+          </div>
+        </div>
+        
+        <!-- Top creators -->
+        <div class="mb-8">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-display font-extrabold text-[18px]">Top creators this week</h3>
+            <button class="text-[12px] font-semibold text-primary hover:underline">See all</button>
+          </div>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="bg-white rounded-2xl p-4 text-center border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-white font-bold mx-auto mb-2">SC</div>
+              <p class="font-bold text-[13px]">Sarah Chen</p>
+              <p class="text-[11px] text-ink-soft mb-2">Designer · 124K</p>
+              <button class="w-full py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+            </div>
+            <div class="bg-white rounded-2xl p-4 text-center border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-accent flex items-center justify-center text-white font-bold mx-auto mb-2">MD</div>
+              <p class="font-bold text-[13px]">Mark Davis</p>
+              <p class="text-[11px] text-ink-soft mb-2">Engineer · 89K</p>
+              <button class="w-full py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+            </div>
+            <div class="bg-white rounded-2xl p-4 text-center border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-warm flex items-center justify-center text-white font-bold mx-auto mb-2">EW</div>
+              <p class="font-bold text-[13px]">Emma Wilson</p>
+              <p class="text-[11px] text-ink-soft mb-2">Traveler · 412K</p>
+              <button class="w-full py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+            </div>
+            <div class="bg-white rounded-2xl p-4 text-center border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-white font-bold mx-auto mb-2">JC</div>
+              <p class="font-bold text-[13px]">John Carter</p>
+              <p class="text-[11px] text-ink-soft mb-2">Creator · 67K</p>
+              <button class="w-full py-1.5 bg-ink text-white text-[11px] font-bold rounded-full hover:bg-primary transition" onclick="this.textContent='Following'; this.classList.remove('bg-ink'); this.classList.add('bg-cream-dark','text-ink')">Follow</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Explore grid -->
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-display font-extrabold text-[18px]">Explore</h3>
+            <div class="flex gap-1">
+              <button class="tab active">For you</button>
+              <button class="tab">Photos</button>
+              <button class="tab">Videos</button>
+              <button class="tab">Reels</button>
+            </div>
+          </div>
+          
+          <div class="masonry">
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp1/400/500.jpg" class="w-full" alt="">
+              <div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center">
+                <div class="opacity-0 group-hover:opacity-100 transition text-white text-center">
+                  <i class="fa-solid fa-heart text-2xl mb-1"></i>
+                  <p class="text-[12px] font-bold">2.4K</p>
+                </div>
+              </div>
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp2/400/300.jpg" class="w-full" alt="">
+              <div class="absolute top-2 right-2 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full">REEL</div>
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp3/400/600.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp4/400/400.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp5/400/350.jpg" class="w-full" alt="">
+              <div class="absolute top-2 right-2 bg-warm text-ink text-[10px] font-bold px-2 py-0.5 rounded-full">PHOTO</div>
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp6/400/450.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp7/400/300.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp8/400/550.jpg" class="w-full" alt="">
+              <div class="absolute top-2 right-2 bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">VIDEO</div>
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp9/400/400.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp10/400/500.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp11/400/350.jpg" class="w-full" alt="">
+            </div>
+            <div class="relative rounded-xl overflow-hidden cursor-pointer group">
+              <img src="https://picsum.photos/seed/exp12/400/600.jpg" class="w-full" alt="">
+            </div>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PROFILE VIEW ============ -->
+  <div class="view flex-1" id="view-profile">
+    <div class="flex-1 overflow-y-auto scrollbar-thin">
+      
+      <!-- Cover -->
+      <div class="profile-cover h-[200px] relative">
+        <div class="absolute inset-0 opacity-20" style="background-image: url('https://picsum.photos/seed/cover/1200/200.jpg'); background-size: cover; mix-blend-mode: overlay;"></div>
+        <button class="absolute top-4 right-4 px-3 py-1.5 bg-black/30 backdrop-blur text-white text-[12px] font-semibold rounded-lg hover:bg-black/50 transition flex items-center gap-1.5">
+          <i class="fa-solid fa-camera text-xs"></i> Edit cover
+        </button>
+      </div>
+      
+      <div class="max-w-[900px] mx-auto px-6 -mt-16 relative">
+        <!-- Profile header -->
+        <div class="flex items-end gap-5 mb-5">
+          <div class="w-32 h-32 rounded-3xl bg-warm flex items-center justify-center text-white font-display font-extrabold text-4xl ring-4 ring-cream shrink-0 shadow-xl">YOU</div>
+          <div class="flex-1 pb-2">
+            <h1 class="font-display font-extrabold text-[30px] tracking-tight leading-tight">Alex Rivera</h1>
+            <p class="text-[14px] text-ink-soft">@alexrivera · Product Designer at Pulse</p>
+            <div class="flex gap-4 mt-2 text-[13px]">
+              <span><strong class="font-bold">348</strong> <span class="text-ink-soft">posts</span></span>
+              <span><strong class="font-bold">12.4K</strong> <span class="text-ink-soft">followers</span></span>
+              <span><strong class="font-bold">892</strong> <span class="text-ink-soft">following</span></span>
+            </div>
+          </div>
+          <div class="flex gap-2 pb-2">
+            <button class="px-5 py-2.5 bg-ink text-white text-[13px] font-bold rounded-full hover:bg-primary transition">Edit profile</button>
+            <button class="w-10 h-10 rounded-full bg-white border border-black/[0.06] flex items-center justify-center text-ink-soft hover:text-primary transition"><i class="fa-solid fa-share-nodes"></i></button>
+          </div>
+        </div>
+        
+        <!-- Bio -->
+        <div class="bg-white rounded-2xl p-4 mb-5 border border-black/[0.04]">
+          <p class="text-[14px] leading-relaxed">Designing delightful experiences at Pulse ✨ Previously at Figma. Coffee enthusiast. Probably overthinking spacing right now.</p>
+          <div class="flex flex-wrap gap-4 mt-3 text-[12px] text-ink-soft">
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-location-dot text-primary"></i> San Francisco, CA</span>
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-link text-primary"></i> alexrivera.design</span>
+            <span class="flex items-center gap-1.5"><i class="fa-solid fa-cake-candles text-primary"></i> Joined March 2023</span>
+          </div>
+        </div>
+        
+        <!-- Highlights -->
+        <div class="mb-5">
+          <h3 class="font-display font-extrabold text-[16px] mb-3">Highlights</h3>
+          <div class="flex gap-3 overflow-x-auto no-scrollbar pb-1">
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-cream-dark border-2 border-dashed border-ink-faint flex items-center justify-center text-ink-faint"><i class="fa-solid fa-plus"></i></div>
+              <span class="text-[11px] text-ink-soft font-medium">New</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-white text-xl">🎨</div>
+              <span class="text-[11px] text-ink-soft font-medium">Work</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-accent flex items-center justify-center text-white text-xl">✈️</div>
+              <span class="text-[11px] text-ink-soft font-medium">Travel</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-warm flex items-center justify-center text-white text-xl">☕</div>
+              <span class="text-[11px] text-ink-soft font-medium">Coffee</span>
+            </div>
+            <div class="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer">
+              <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center text-white text-xl">🎵</div>
+              <span class="text-[11px] text-ink-soft font-medium">Music</span>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="border-b border-black/[0.06] mb-5">
+          <div class="flex gap-1">
+            <button class="px-4 py-3 text-[13px] font-bold text-ink border-b-2 border-primary" onclick="switchProfileTab(this, 'posts')">Posts</button>
+            <button class="px-4 py-3 text-[13px] font-bold text-ink-soft border-b-2 border-transparent hover:text-ink transition" onclick="switchProfileTab(this, 'reels')">Reels</button>
+            <button class="px-4 py-3 text-[13px] font-bold text-ink-soft border-b-2 border-transparent hover:text-ink transition" onclick="switchProfileTab(this, 'saved')">Saved</button>
+            <button class="px-4 py-3 text-[13px] font-bold text-ink-soft border-b-2 border-transparent hover:text-ink transition" onclick="switchProfileTab(this, 'tagged')">Tagged</button>
+          </div>
+        </div>
+        
+        <!-- Posts grid -->
+        <div class="grid grid-cols-3 gap-2 mb-8">
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p1/300/300.jpg" class="w-full h-full object-cover" alt="">
+            <div class="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition flex items-center justify-center gap-4 text-white opacity-0 group-hover:opacity-100 transition">
+              <span class="flex items-center gap-1.5 text-[13px] font-bold"><i class="fa-solid fa-heart"></i> 248</span>
+              <span class="flex items-center gap-1.5 text-[13px] font-bold"><i class="fa-solid fa-comment"></i> 18</span>
+            </div>
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p2/300/300.jpg" class="w-full h-full object-cover" alt="">
+            <div class="absolute top-2 right-2 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full">REEL</div>
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p3/300/300.jpg" class="w-full h-full object-cover" alt="">
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p4/300/300.jpg" class="w-full h-full object-cover" alt="">
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p5/300/300.jpg" class="w-full h-full object-cover" alt="">
+            <div class="absolute top-2 right-2 bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">VIDEO</div>
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p6/300/300.jpg" class="w-full h-full object-cover" alt="">
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p7/300/300.jpg" class="w-full h-full object-cover" alt="">
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p8/300/300.jpg" class="w-full h-full object-cover" alt="">
+          </div>
+          <div class="aspect-square rounded-xl overflow-hidden cursor-pointer group relative">
+            <img src="https://picsum.photos/seed/p9/300/300.jpg" class="w-full h-full object-cover" alt="">
+            <div class="absolute top-2 right-2 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full">REEL</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS VIEW ============ -->
+  <div class="view flex-1" id="view-settings">
+    <!-- Settings sidebar -->
+    <aside class="w-[280px] bg-white border-r border-black/[0.06] flex flex-col shrink-0 overflow-y-auto scrollbar-thin">
+      <div class="p-5 border-b border-black/[0.06]">
+        <h1 class="font-display font-extrabold text-[24px] tracking-tight">Settings</h1>
+        <p class="text-[12px] text-ink-soft mt-1">Manage your account and preferences</p>
+      </div>
+      
+      <div class="p-3 flex-1">
+        <div class="settings-nav-item active" onclick="switchSettingsTab(this, 'account')">
+          <i class="fa-solid fa-user w-5 text-center"></i>
+          <span>Account</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'privacy')">
+          <i class="fa-solid fa-lock w-5 text-center"></i>
+          <span>Privacy</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'notifications')">
+          <i class="fa-solid fa-bell w-5 text-center"></i>
+          <span>Notifications</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'appearance')">
+          <i class="fa-solid fa-palette w-5 text-center"></i>
+          <span>Appearance</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'security')">
+          <i class="fa-solid fa-shield-halved w-5 text-center"></i>
+          <span>Security</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'language')">
+          <i class="fa-solid fa-language w-5 text-center"></i>
+          <span>Language & Region</span>
+        </div>
+        
+        <div class="my-3 border-t border-black/[0.06]"></div>
+        
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'help')">
+          <i class="fa-solid fa-circle-question w-5 text-center"></i>
+          <span>Help & Support</span>
+        </div>
+        <div class="settings-nav-item" onclick="switchSettingsTab(this, 'about')">
+          <i class="fa-solid fa-circle-info w-5 text-center"></i>
+          <span>About</span>
+        </div>
+        
+        <div class="my-3 border-t border-black/[0.06]"></div>
+        
+        <div class="settings-nav-item text-primary hover:bg-primary/5" onclick="showToast('Logged out')">
+          <i class="fa-solid fa-arrow-right-from-bracket w-5 text-center"></i>
+          <span>Log out</span>
+        </div>
+      </div>
+      
+      <div class="p-5 border-t border-black/[0.06]">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-warm flex items-center justify-center text-white font-bold text-xs">YOU</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-[13px] font-bold truncate">Alex Rivera</p>
+            <p class="text-[11px] text-ink-soft truncate">alex@pulse.app</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- Settings content -->
+    <div class="flex-1 overflow-y-auto scrollbar-thin" id="settingsContent">
+      <div class="max-w-[680px] mx-auto px-8 py-6">
+        
+        <!-- Account section -->
+        <div class="settings-section" id="section-account">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Account</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Update your account information and profile details</p>
+          
+          <!-- Profile card -->
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <div class="flex items-center gap-4 mb-5">
+              <div class="w-16 h-16 rounded-2xl bg-warm flex items-center justify-center text-white font-bold">YOU</div>
+              <div class="flex-1">
+                <p class="font-bold text-[15px]">Alex Rivera</p>
+                <p class="text-[12px] text-ink-soft">@alexrivera</p>
+              </div>
+              <button class="px-4 py-2 bg-ink text-white text-[12px] font-bold rounded-full hover:bg-primary transition">Change photo</button>
+            </div>
+            
+            <div class="space-y-4">
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Display name</label>
+                <input type="text" value="Alex Rivera" class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition">
+              </div>
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Username</label>
+                <div class="relative">
+                  <span class="absolute left-4 top-1/2 -translate-y-1/2 text-ink-faint">@</span>
+                  <input type="text" value="alexrivera" class="w-full pl-8 pr-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition">
+                </div>
+              </div>
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Email</label>
+                <input type="email" value="alex@pulse.app" class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition">
+              </div>
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Bio</label>
+                <textarea rows="3" class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition resize-none">Designing delightful experiences at Pulse ✨ Previously at Figma. Coffee enthusiast.</textarea>
+                <p class="text-[11px] text-ink-faint mt-1">84 / 160 characters</p>
+              </div>
+            </div>
+            
+            <div class="flex gap-2 mt-5 pt-5 border-t border-black/[0.06]">
+              <button class="px-5 py-2 bg-primary text-white text-[13px] font-bold rounded-full hover:bg-primary-dark transition" onclick="showToast('Changes saved!')">Save changes</button>
+              <button class="px-5 py-2 text-[13px] font-bold text-ink-soft hover:text-ink transition">Cancel</button>
+            </div>
+          </div>
+          
+          <!-- Account stats -->
+          <div class="grid grid-cols-3 gap-3 mb-5">
+            <div class="bg-white rounded-2xl p-4 border border-black/[0.04]">
+              <p class="text-[11px] text-ink-soft font-semibold uppercase tracking-wide">Posts</p>
+              <p class="font-display font-extrabold text-[24px] mt-1">348</p>
+              <p class="text-[11px] text-accent font-semibold mt-1">+12 this month</p>
+            </div>
+            <div class="bg-white rounded-2xl p-4 border border-black/[0.04]">
+              <p class="text-[11px] text-ink-soft font-semibold uppercase tracking-wide">Followers</p>
+              <p class="font-display font-extrabold text-[24px] mt-1">12.4K</p>
+              <p class="text-[11px] text-accent font-semibold mt-1">+248 this week</p>
+            </div>
+            <div class="bg-white rounded-2xl p-4 border border-black/[0.04]">
+              <p class="text-[11px] text-ink-soft font-semibold uppercase tracking-wide">Reels views</p>
+              <p class="font-display font-extrabold text-[24px] mt-1">1.2M</p>
+              <p class="text-[11px] text-primary font-semibold mt-1">+89% growth</p>
+            </div>
+          </div>
+          
+          <!-- Danger zone -->
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-1">Danger zone</h3>
+            <p class="text-[12px] text-ink-soft mb-4">These actions are permanent and cannot be undone</p>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between p-3 rounded-xl hover:bg-cream-dark/40 transition">
+                <div>
+                  <p class="text-[13px] font-semibold">Deactivate account</p>
+                  <p class="text-[11px] text-ink-soft">Temporarily disable your account</p>
+                </div>
+                <button class="px-4 py-1.5 border border-ink/20 text-ink text-[12px] font-bold rounded-full hover:bg-ink hover:text-white transition">Deactivate</button>
+              </div>
+              <div class="flex items-center justify-between p-3 rounded-xl hover:bg-primary/5 transition">
+                <div>
+                  <p class="text-[13px] font-semibold text-primary">Delete account</p>
+                  <p class="text-[11px] text-ink-soft">Permanently remove everything</p>
+                </div>
+                <button class="px-4 py-1.5 border border-primary/30 text-primary text-[12px] font-bold rounded-full hover:bg-primary hover:text-white transition">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Privacy section -->
+        <div class="settings-section hidden" id="section-privacy">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Privacy</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Control who can see and interact with your content</p>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Account privacy</h3>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Private account</p>
+                  <p class="text-[11px] text-ink-soft">Only approved followers can see your posts</p>
+                </div>
+                <div class="toggle" onclick="this.classList.toggle('on'); showToast('Privacy updated')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Activity status</p>
+                  <p class="text-[11px] text-ink-soft">Show when you're active</p>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Read receipts</p>
+                  <p class="text-[11px] text-ink-soft">Let others know you saw their messages</p>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Interactions</h3>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Who can message you</p>
+                  <p class="text-[11px] text-ink-soft">Everyone, followers, or no one</p>
+                </div>
+                <select class="px-3 py-1.5 bg-cream-dark/60 rounded-lg text-[12px] font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option>Followers</option>
+                  <option>Everyone</option>
+                  <option>No one</option>
+                </select>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Who can comment on posts</p>
+                  <p class="text-[11px] text-ink-soft">Control who can leave comments</p>
+                </div>
+                <select class="px-3 py-1.5 bg-cream-dark/60 rounded-lg text-[12px] font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option>Everyone</option>
+                  <option>Followers</option>
+                  <option>Friends</option>
+                </select>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div>
+                  <p class="text-[13.5px] font-semibold">Story sharing</p>
+                  <p class="text-[11px] text-ink-soft">Allow others to share your stories</p>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-4">Blocked & muted</h3>
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-cream-dark/40 transition">
+                <div class="w-9 h-9 rounded-lg bg-ink flex items-center justify-center text-white font-bold text-xs">XB</div>
+                <div class="flex-1"><p class="text-[13px] font-semibold">Blocked user 1</p><p class="text-[11px] text-ink-soft">@blocked1</p></div>
+                <button class="text-[12px] font-semibold text-primary hover:underline">Unblock</button>
+              </div>
+              <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-cream-dark/40 transition">
+                <div class="w-9 h-9 rounded-lg bg-ink flex items-center justify-center text-white font-bold text-xs">XM</div>
+                <div class="flex-1"><p class="text-[13px] font-semibold">Muted user 1</p><p class="text-[11px] text-ink-soft">@muted1</p></div>
+                <button class="text-[12px] font-semibold text-primary hover:underline">Unmute</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Notifications section -->
+        <div class="settings-section hidden" id="section-notifications">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Notifications</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Choose what you want to be notified about</p>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Push notifications</h3>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center"><i class="fa-solid fa-heart text-primary text-sm"></i></div>
+                  <div><p class="text-[13.5px] font-semibold">Likes and reactions</p><p class="text-[11px] text-ink-soft">When someone likes your post</p></div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center"><i class="fa-solid fa-comment text-accent text-sm"></i></div>
+                  <div><p class="text-[13.5px] font-semibold">Comments</p><p class="text-[11px] text-ink-soft">When someone comments on your post</p></div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-warm/10 flex items-center justify-center"><i class="fa-solid fa-user-plus text-warm text-sm"></i></div>
+                  <div><p class="text-[13.5px] font-semibold">New followers</p><p class="text-[11px] text-ink-soft">When you get a new follower</p></div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center"><i class="fa-solid fa-paper-plane text-primary text-sm"></i></div>
+                  <div><p class="text-[13.5px] font-semibold">Direct messages</p><p class="text-[11px] text-ink-soft">When you receive a message</p></div>
+                </div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center"><i class="fa-solid fa-tag text-accent text-sm"></i></div>
+                  <div><p class="text-[13.5px] font-semibold">Mentions</p><p class="text-[11px] text-ink-soft">When someone mentions you</p></div>
+                </div>
+                <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-4">Email & SMS</h3>
+            <div class="space-y-3">
+              <div class="flex items-center justify-between">
+                <div><p class="text-[13.5px] font-semibold">Email digest</p><p class="text-[11px] text-ink-soft">Weekly summary of activity</p></div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div><p class="text-[13.5px] font-semibold">Marketing emails</p><p class="text-[11px] text-ink-soft">Product updates and news</p></div>
+                <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div><p class="text-[13.5px] font-semibold">SMS alerts</p><p class="text-[11px] text-ink-soft">Critical security alerts only</p></div>
+                <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Appearance section -->
+        <div class="settings-section hidden" id="section-appearance">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Appearance</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Customize how Pulse looks for you</p>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Theme</h3>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="border-2 border-primary rounded-xl p-3 cursor-pointer">
+                <div class="h-16 bg-cream rounded-lg mb-2 flex items-center justify-center"><i class="fa-solid fa-sun text-warm"></i></div>
+                <p class="text-[12px] font-bold text-center">Light</p>
+              </div>
+              <div class="border-2 border-black/[0.06] rounded-xl p-3 cursor-pointer hover:border-ink/20 transition">
+                <div class="h-16 bg-ink rounded-lg mb-2 flex items-center justify-center"><i class="fa-solid fa-moon text-white"></i></div>
+                <p class="text-[12px] font-bold text-center">Dark</p>
+              </div>
+              <div class="border-2 border-black/[0.06] rounded-xl p-3 cursor-pointer hover:border-ink/20 transition">
+                <div class="h-16 bg-cream-dark rounded-lg mb-2 flex items-center justify-center"><i class="fa-solid fa-circle-half-stroke text-ink-soft"></i></div>
+                <p class="text-[12px] font-bold text-center">System</p>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Accent color</h3>
+            <div class="flex gap-3">
+              <div class="w-10 h-10 rounded-full bg-primary ring-2 ring-offset-2 ring-primary cursor-pointer"></div>
+              <div class="w-10 h-10 rounded-full bg-accent cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-accent transition"></div>
+              <div class="w-10 h-10 rounded-full bg-warm cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-warm transition"></div>
+              <div class="w-10 h-10 rounded-full bg-purple-500 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-purple-500 transition"></div>
+              <div class="w-10 h-10 rounded-full bg-blue-500 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-blue-500 transition"></div>
+              <div class="w-10 h-10 rounded-full bg-rose-500 cursor-pointer hover:ring-2 hover:ring-offset-2 hover:ring-rose-500 transition"></div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-4">Text size</h3>
+            <div class="mb-3 flex items-center justify-between text-[12px] text-ink-soft">
+              <span>A</span>
+              <span id="sizeLabel" class="font-bold text-ink">Medium</span>
+              <span class="text-base">A</span>
+            </div>
+            <input type="range" min="0" max="4" value="2" class="w-full" oninput="updateSize(this.value)">
+            <div class="flex justify-between text-[10px] text-ink-faint mt-1">
+              <span>XS</span><span>S</span><span>M</span><span>L</span><span>XL</span>
+            </div>
+            
+            <div class="mt-5 pt-5 border-t border-black/[0.06] space-y-3">
+              <div class="flex items-center justify-between">
+                <div><p class="text-[13.5px] font-semibold">Reduced motion</p><p class="text-[11px] text-ink-soft">Minimize animations</p></div>
+                <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              </div>
+              <div class="flex items-center justify-between pt-3 border-t border-black/[0.06]">
+                <div><p class="text-[13.5px] font-semibold">High contrast</p><p class="text-[11px] text-ink-soft">Increase visual contrast</p></div>
+                <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Security section -->
+        <div class="settings-section hidden" id="section-security">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Security</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Keep your account safe and secure</p>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Password</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Current password</label>
+                <input type="password" value="••••••••••••" class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition">
+              </div>
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">New password</label>
+                <input type="password" placeholder="Enter new password" class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-white transition">
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="flex-1 h-1.5 bg-cream-dark rounded-full overflow-hidden">
+                  <div class="h-full bg-accent rounded-full" style="width: 80%;"></div>
+                </div>
+                <span class="text-[11px] font-bold text-accent">Strong</span>
+              </div>
+              <button class="px-5 py-2 bg-ink text-white text-[13px] font-bold rounded-full hover:bg-primary transition">Update password</button>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-bold text-[15px]">Two-factor authentication</h3>
+                <p class="text-[12px] text-ink-soft mt-0.5">Add an extra layer of security</p>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="bg-accent/5 border border-accent/20 rounded-xl p-3 flex items-center gap-3">
+              <i class="fa-solid fa-shield-halved text-accent"></i>
+              <p class="text-[12px] font-semibold text-accent flex-1">2FA is enabled via authenticator app</p>
+              <button class="text-[12px] font-bold text-accent hover:underline">Manage</button>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-4">Active sessions</h3>
+            <div class="space-y-3">
+              <div class="flex items-center gap-3 p-3 bg-accent/5 rounded-xl border border-accent/20">
+                <div class="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center"><i class="fa-solid fa-laptop text-accent"></i></div>
+                <div class="flex-1">
+                  <p class="text-[13px] font-semibold flex items-center gap-2">MacBook Pro · Chrome <span class="text-[9px] bg-accent text-white px-1.5 py-0.5 rounded-full font-bold">CURRENT</span></p>
+                  <p class="text-[11px] text-ink-soft">San Francisco, CA · Active now</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 p-3 hover:bg-cream-dark/40 rounded-xl transition">
+                <div class="w-9 h-9 rounded-lg bg-cream-dark flex items-center justify-center"><i class="fa-solid fa-mobile-screen text-ink-soft"></i></div>
+                <div class="flex-1">
+                  <p class="text-[13px] font-semibold">iPhone 15 Pro · Pulse app</p>
+                  <p class="text-[11px] text-ink-soft">San Francisco, CA · 2 hours ago</p>
+                </div>
+                <button class="text-[12px] font-semibold text-primary hover:underline">Revoke</button>
+              </div>
+              <div class="flex items-center gap-3 p-3 hover:bg-cream-dark/40 rounded-xl transition">
+                <div class="w-9 h-9 rounded-lg bg-cream-dark flex items-center justify-center"><i class="fa-solid fa-tablet-screen-button text-ink-soft"></i></div>
+                <div class="flex-1">
+                  <p class="text-[13px] font-semibold">iPad Air · Safari</p>
+                  <p class="text-[11px] text-ink-soft">New York, NY · 3 days ago</p>
+                </div>
+                <button class="text-[12px] font-semibold text-primary hover:underline">Revoke</button>
+              </div>
+            </div>
+            <button class="w-full mt-4 py-2.5 border border-primary/30 text-primary text-[13px] font-bold rounded-xl hover:bg-primary hover:text-white transition">Log out of all devices</button>
+          </div>
+        </div>
+        
+        <!-- Language section -->
+        <div class="settings-section hidden" id="section-language">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Language & Region</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Set your language and regional preferences</p>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <h3 class="font-bold text-[15px] mb-4">Language</h3>
+            <div class="space-y-2">
+              <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-cream-dark/40 cursor-pointer transition">
+                <input type="radio" name="lang" checked class="accent-primary">
+                <span class="text-[14px] font-semibold">English (US)</span>
+                <span class="ml-auto text-[11px] text-ink-soft">Default</span>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-cream-dark/40 cursor-pointer transition">
+                <input type="radio" name="lang" class="accent-primary">
+                <span class="text-[14px] font-semibold">Español</span>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-cream-dark/40 cursor-pointer transition">
+                <input type="radio" name="lang" class="accent-primary">
+                <span class="text-[14px] font-semibold">Français</span>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-cream-dark/40 cursor-pointer transition">
+                <input type="radio" name="lang" class="accent-primary">
+                <span class="text-[14px] font-semibold">Deutsch</span>
+              </label>
+              <label class="flex items-center gap-3 p-3 rounded-xl hover:bg-cream-dark/40 cursor-pointer transition">
+                <input type="radio" name="lang" class="accent-primary">
+                <span class="text-[14px] font-semibold">日本語</span>
+              </label>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-4">Region</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Time zone</label>
+                <select class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option>(GMT-08:00) Pacific Time</option>
+                  <option>(GMT-05:00) Eastern Time</option>
+                  <option>(GMT+00:00) UTC</option>
+                  <option>(GMT+01:00) Central European Time</option>
+                  <option>(GMT+09:00) Japan Standard Time</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-[12px] font-bold text-ink-soft uppercase tracking-wide block mb-1.5">Date format</label>
+                <select class="w-full px-4 py-2.5 bg-cream-dark/60 rounded-xl text-[14px] font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option>MM/DD/YYYY</option>
+                  <option>DD/MM/YYYY</option>
+                  <option>YYYY-MM-DD</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Help section -->
+        <div class="settings-section hidden" id="section-help">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">Help & Support</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Find answers and get support</p>
+          
+          <div class="grid grid-cols-2 gap-3 mb-5">
+            <div class="bg-white rounded-2xl p-5 border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-3"><i class="fa-solid fa-circle-question text-primary"></i></div>
+              <h4 class="font-bold text-[14px] mb-1">Help Center</h4>
+              <p class="text-[12px] text-ink-soft">Browse guides and FAQs</p>
+            </div>
+            <div class="bg-white rounded-2xl p-5 border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center mb-3"><i class="fa-solid fa-headset text-accent"></i></div>
+              <h4 class="font-bold text-[14px] mb-1">Contact Support</h4>
+              <p class="text-[12px] text-ink-soft">Chat with our team 24/7</p>
+            </div>
+            <div class="bg-white rounded-2xl p-5 border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-10 h-10 rounded-xl bg-warm/10 flex items-center justify-center mb-3"><i class="fa-solid fa-flag text-warm"></i></div>
+              <h4 class="font-bold text-[14px] mb-1">Report a Problem</h4>
+              <p class="text-[12px] text-ink-soft">Tell us what's wrong</p>
+            </div>
+            <div class="bg-white rounded-2xl p-5 border border-black/[0.04] hover:shadow-md transition cursor-pointer">
+              <div class="w-10 h-10 rounded-xl bg-ink/5 flex items-center justify-center mb-3"><i class="fa-solid fa-lightbulb text-ink"></i></div>
+              <h4 class="font-bold text-[14px] mb-1">Feature Request</h4>
+              <p class="text-[12px] text-ink-soft">Suggest new features</p>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04]">
+            <h3 class="font-bold text-[15px] mb-3">Popular articles</h3>
+            <div class="space-y-2">
+              <a href="#" class="flex items-center justify-between p-3 rounded-lg hover:bg-cream-dark/40 transition">
+                <span class="text-[13px] font-semibold">How to create a Reel</span>
+                <i class="fa-solid fa-arrow-right text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between p-3 rounded-lg hover:bg-cream-dark/40 transition">
+                <span class="text-[13px] font-semibold">Setting up two-factor authentication</span>
+                <i class="fa-solid fa-arrow-right text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between p-3 rounded-lg hover:bg-cream-dark/40 transition">
+                <span class="text-[13px] font-semibold">Understanding privacy settings</span>
+                <i class="fa-solid fa-arrow-right text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between p-3 rounded-lg hover:bg-cream-dark/40 transition">
+                <span class="text-[13px] font-semibold">Managing blocked accounts</span>
+                <i class="fa-solid fa-arrow-right text-xs text-ink-faint"></i>
+              </a>
+            </div>
+          </div>
+        </div>
+        
+        <!-- About section -->
+        <div class="settings-section hidden" id="section-about">
+          <h2 class="font-display font-extrabold text-[24px] mb-1">About</h2>
+          <p class="text-[13px] text-ink-soft mb-6">Information about Pulse</p>
+          
+          <div class="bg-primary rounded-2xl p-6 text-white mb-5">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center">
+                <span class="font-display font-extrabold text-2xl">P</span>
+              </div>
+              <div>
+                <h3 class="font-display font-extrabold text-[22px] leading-none">Pulse</h3>
+                <p class="text-[12px] opacity-90">Version 4.2.1 · Build 2841</p>
+              </div>
+            </div>
+            <p class="text-[13px] opacity-90 leading-relaxed">Where conversations come alive. Built with love by a global team of designers and engineers.</p>
+          </div>
+          
+          <div class="bg-white rounded-2xl p-5 border border-black/[0.04] mb-5">
+            <div class="space-y-3">
+              <a href="#" class="flex items-center justify-between py-2 hover:text-primary transition">
+                <span class="text-[13.5px] font-semibold">Terms of Service</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between py-2 border-t border-black/[0.06] hover:text-primary transition">
+                <span class="text-[13.5px] font-semibold">Privacy Policy</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between py-2 border-t border-black/[0.06] hover:text-primary transition">
+                <span class="text-[13.5px] font-semibold">Community Guidelines</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between py-2 border-t border-black/[0.06] hover:text-primary transition">
+                <span class="text-[13.5px] font-semibold">Open Source Licenses</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-ink-faint"></i>
+              </a>
+              <a href="#" class="flex items-center justify-between py-2 border-t border-black/[0.06] hover:text-primary transition">
+                <span class="text-[13.5px] font-semibold">Careers</span>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-ink-faint"></i>
+              </a>
+            </div>
+          </div>
+          
+          <div class="text-center py-4">
+            <p class="text-[12px] text-ink-soft">Made with ❤️ in San Francisco</p>
+            <p class="text-[11px] text-ink-faint mt-1">© 2024 Pulse Inc. All rights reserved.</p>
+          </div>
+        </div>
+        
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // View switching
+  function switchView(viewName) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + viewName).classList.add('active');
+    
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.view === viewName);
+    });
+    
+    // Scroll to top of new view
+    setTimeout(() => {
+      const view = document.getElementById('view-' + viewName);
+      const scrollable = view.querySelector('.overflow-y-auto');
+      if (scrollable) scrollable.scrollTop = 0;
+    }, 50);
+  }
+  
+  // Toast
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+  
+  // Chat selection
+  function selectChat(element, name) {
+    document.querySelectorAll('.chat-item').forEach(item => item.classList.remove('active'));
+    element.classList.add('active');
+  }
+  
+  // Send message
+  function sendMessage() {
+    const input = document.getElementById('messageInput');
+    const text = input.value.trim();
+    if (!text) { showToast('Type a message first'); return; }
+    
+    const container = document.getElementById('messagesContainer');
+    const time = new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    
+    const msg = document.createElement('div');
+    msg.className = 'flex gap-2.5 mb-4 justify-end msg-in';
+    msg.innerHTML = `
+      <div class="max-w-[70%]">
+        <div class="flex items-baseline gap-2 mb-1 justify-end">
+          <span class="text-[10px] text-ink-faint">${time}</span>
+          <span class="text-[12px] font-bold text-primary">You</span>
+        </div>
+        <div class="bubble-out px-4 py-2.5 text-[14px] leading-relaxed">${escapeHtml(text)}</div>
+        <div class="flex items-center gap-1 mt-1 justify-end">
+          <i class="fa-solid fa-check text-[10px] text-ink-faint"></i>
+          <span class="text-[10px] text-ink-faint">Sent</span>
+        </div>
+      </div>`;
+    container.appendChild(msg);
+    container.scrollTop = container.scrollHeight;
+    input.value = '';
+    
+    setTimeout(() => {
+      const replies = ['Got it! 👍', 'Sounds good!', 'Will check it out', 'Awesome work 🔥', 'Perfect, thanks!'];
+      const names = ['Sarah Chen', 'Mark Davis', 'Emma Wilson', 'John Carter'];
+      const initials = ['SC', 'MD', 'EW', 'JC'];
+      const colors = ['bg-primary', 'bg-accent', 'bg-warm', 'bg-ink'];
+      const idx = Math.floor(Math.random() * names.length);
+      const replyMsg = document.createElement('div');
+      replyMsg.className = 'flex gap-2.5 mb-4 msg-in';
+      replyMsg.innerHTML = `
+        <div class="w-8 h-8 rounded-xl ${colors[idx]} flex items-center justify-center text-white font-bold text-xs shrink-0 mt-auto">${initials[idx]}</div>
+        <div class="max-w-[70%]">
+          <div class="flex items-baseline gap-2 mb-1">
+            <span class="text-[12px] font-bold text-ink">${names[idx]}</span>
+            <span class="text-[10px] text-ink-faint">${time}</span>
+          </div>
+          <div class="bubble-in px-4 py-2.5 text-[14px] leading-relaxed">${replies[Math.floor(Math.random() * replies.length)]}</div>
+        </div>`;
+      container.appendChild(replyMsg);
+      container.scrollTop = container.scrollHeight;
+    }, 1500 + Math.random() * 1000);
+  }
+  
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+  
+  document.getElementById('messageInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  
+  // Like toggle
+  function toggleLike(btn) {
+    btn.classList.toggle('liked');
+    if (btn.classList.contains('liked')) {
+      const heart = btn.querySelector('.heart-icon');
+      const burst = document.createElement('span');
+      burst.className = 'heart-burst absolute text-primary';
+      burst.innerHTML = '<i class="fa-solid fa-heart"></i>';
+      heart.parentElement.style.position = 'relative';
+      heart.parentElement.appendChild(burst);
+      setTimeout(() => burst.remove(), 600);
+    }
+  }
+  
+  // Reel like
+  function toggleReelLike(el) {
+    const heart = el.querySelector('.icon-circle i');
+    if (heart.style.color === 'rgb(47, 149, 246)') {
+      heart.style.color = '';
+      el.querySelector('span').textContent = parseInt(el.querySelector('span').textContent.replace('K','')) - 1 + 'K';
+    } else {
+      heart.style.color = '#2F95F6';
+      el.querySelector('span').textContent = (parseInt(el.querySelector('span').textContent) + 1) + 'K';
+    }
+  }
+  
+  // Settings tab switching
+  function switchSettingsTab(element, section) {
+    document.querySelectorAll('.settings-nav-item').forEach(item => item.classList.remove('active'));
+    element.classList.add('active');
+    
+    document.querySelectorAll('.settings-section').forEach(s => s.classList.add('hidden'));
+    document.getElementById('section-' + section).classList.remove('hidden');
+  }
+  
+  // Profile tab switching
+  function switchProfileTab(element, tab) {
+    document.querySelectorAll('#view-profile button[class*="border-b-2"]').forEach(btn => {
+      btn.classList.remove('border-primary', 'text-ink');
+      btn.classList.add('border-transparent', 'text-ink-soft');
+    });
+    element.classList.remove('border-transparent', 'text-ink-soft');
+    element.classList.add('border-primary', 'text-ink');
+  }
+  
+  // Open story
+  function openStory(name) {
+    showToast('Viewing ' + name + "'s story");
+  }
+  
+  // Text size update
+  function updateSize(val) {
+    const labels = ['XS', 'S', 'M', 'L', 'XL'];
+    document.getElementById('sizeLabel').textContent = ['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large'][val];
+  }
+  
+  // Tab switching for tabs
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const siblings = tab.parentElement.querySelectorAll('.tab');
+      siblings.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+    });
+  });
+  
+  // Auto-scroll chat to bottom
+  window.addEventListener('load', () => {
+    const container = document.getElementById('messagesContainer');
+    if (container) container.scrollTop = container.scrollHeight;
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,842 @@
+/* ==========================================================================
+   BitOS Nostr — Pulse Design System
+   A bright, social-first design language:
+     • Primary = electric blue (#2F95F6), accent = mint (#55D69A),
+       warm = coral (#FF755F) on a flat white canvas.
+     • Typography: Plus Jakarta Sans (body) + Bricolage Grotesque (display).
+     • Surface-token architecture (School ERP lineage) so every component
+       flips cleanly between light and dark.
+   ========================================================================== */
+
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+/* ---------------------------------------------------------------------------
+   Color scales. `--color-primary-*` is the accent the user picks (rewritten
+   at runtime by theme/preferences). `--color-accent-*` (mint) and
+   `--color-warm-*` (coral) are fixed Pulse secondaries.
+--------------------------------------------------------------------------- */
+@theme {
+	--font-sans:
+		'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+		Arial, sans-serif;
+	--font-display: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
+	--font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+
+	/* Pulse primary = electric blue. */
+	--color-primary-50: #eff6ff;
+	--color-primary-100: #dbeafe;
+	--color-primary-200: #bfdbfe;
+	--color-primary-300: #93c5fd;
+	--color-primary-400: #60a5fa;
+	--color-primary-500: #2f95f6; /* signature */
+	--color-primary-600: #1677d2;
+	--color-primary-700: #135da8;
+	--color-primary-800: #0f4a82;
+	--color-primary-900: #0b3863;
+	--color-primary-950: #072543;
+
+	/* brand mirrors primary (single source of truth for the logo / favicon). */
+	--color-brand-500: var(--color-primary-500);
+
+	/* Pulse mint accent (online dots, voice, success highlights). */
+	--color-accent-300: #8be9bf;
+	--color-accent-400: #6edfb0;
+	--color-accent-500: #55d69a;
+	--color-accent-600: #35b97d;
+
+	/* Pulse warm coral (warnings, "add story", alerts). */
+	--color-warm-400: #ff9485;
+	--color-warm-500: #ff755f;
+	--color-warm-600: #f25a42;
+
+	/* Semantic aliases that map onto the flipping surface tokens, so ex-ui-style
+	   utilities (text-ink, bg-cream, text-ink-soft …) work in light + dark. */
+	--color-ink: var(--ui-text);
+	--color-ink-soft: var(--ui-text-muted);
+	--color-ink-faint: var(--ui-text-dimmed);
+	--color-cream: var(--ui-bg-muted);
+	--color-cream-dark: var(--ui-bg-accented);
+
+	/* Neutral = cool blue-gray, swappable via data-neutral later. */
+	--color-neutral-50: #f7fafd;
+	--color-neutral-100: #eef2f7;
+	--color-neutral-200: #dde5ee;
+	--color-neutral-300: #c4d0de;
+	--color-neutral-400: #9aa8bc;
+	--color-neutral-500: #6b7888;
+	--color-neutral-600: #4c5867;
+	--color-neutral-700: #353f4d;
+	--color-neutral-800: #202837; /* ink */
+	--color-neutral-900: #141a26;
+	--color-neutral-950: #0b0f1a;
+}
+
+/* ---------------------------------------------------------------------------
+   Surface tokens — LIGHT (ex-ui flat white shell, white cards, blue accents).
+--------------------------------------------------------------------------- */
+@layer base {
+	:root {
+		--ui-radius-sm: 0.625rem;
+		--ui-radius-md: 0.75rem;
+		--ui-radius-lg: 0.875rem;
+		--ui-radius-xl: 1.125rem;
+		--ui-radius: var(--ui-radius-lg); /* Pulse rounded feel */
+		--ui-container: 80rem;
+
+		--ui-color-primary-200: var(--color-primary-200);
+		--ui-color-primary-300: var(--color-primary-300);
+		--ui-color-primary-400: var(--color-primary-400);
+		--ui-color-primary-500: var(--color-primary-500);
+		--ui-color-primary-600: var(--color-primary-600);
+		--ui-color-primary-700: var(--color-primary-700);
+
+		/* Text tiers (ink / ink-soft / ink-faint). */
+		--ui-text-dimmed: var(--color-neutral-400);
+		--ui-text-muted: var(--color-neutral-500);
+		--ui-text-toned: var(--color-neutral-500);
+		--ui-text: var(--color-neutral-800);
+		--ui-text-highlighted: var(--color-neutral-900);
+		--ui-text-inverted: #ffffff;
+
+		/* Canvas: match docs/ex-ui.html — no outer tint or ambient glow. */
+		--ui-bg: #ffffff;
+		--ui-bg-muted: var(--color-neutral-50);
+		--ui-bg-elevated: #ffffff; /* cards, popovers */
+		--ui-bg-accented: var(--color-neutral-100); /* quiet hover/active */
+		--surface-bg: #ffffff;
+		--surface-bg-soft: #ffffff;
+		--table-head-bg: var(--color-neutral-50);
+		--table-row-hover-bg: color-mix(in oklab, var(--ui-color-primary-500) 8%, transparent);
+		--active-surface-bg: color-mix(in oklab, var(--ui-color-primary-500) 9%, transparent);
+		--active-surface-text: var(--ui-color-primary-700);
+		--active-badge-bg: color-mix(in oklab, var(--ui-color-primary-500) 14%, var(--surface-bg));
+		--active-badge-text: var(--ui-color-primary-700);
+		--tone-success-bg: #e3f7ef;
+		--tone-success-text: #1a8a5e;
+		--tone-info-bg: #e0f1ff;
+		--tone-info-text: #1677d2;
+		--tone-warning-bg: #ffeee9;
+		--tone-warning-text: #d8492f;
+		--tone-error-bg: #ffecec;
+		--tone-error-text: #e23b3b;
+		--tone-neutral-bg: var(--color-neutral-100);
+		--tone-neutral-text: var(--color-neutral-600);
+		--interactive-hover-bg: color-mix(in oklab, var(--color-neutral-800) 5%, transparent);
+
+		--ui-border: var(--color-neutral-200);
+		--ui-border-muted: color-mix(in oklab, var(--color-neutral-100) 78%, #ffffff);
+		--ui-border-accented: var(--color-neutral-300);
+
+		/* Glass / vibrancy / hairlines. */
+		--glass-bg: #ffffff;
+		--glass-border: color-mix(in oklab, var(--color-neutral-800) 6%, transparent);
+		--hairline-strong: color-mix(in oklab, var(--color-neutral-800) 10%, transparent);
+
+		/* Soft Pulse shadows (cards lift gently). */
+		--shadow-card: 0 1px 2px color-mix(in oklab, var(--color-neutral-800) 4%, transparent),
+			0 4px 16px color-mix(in oklab, var(--color-neutral-800) 4%, transparent);
+		--shadow-card-hover: 0 4px 12px color-mix(in oklab, var(--color-neutral-800) 7%, transparent),
+			0 12px 32px color-mix(in oklab, var(--color-neutral-800) 6%, transparent);
+		--shadow-pop: 0 12px 40px color-mix(in oklab, var(--color-neutral-800) 16%, transparent);
+		--glow-primary: 0 2px 8px rgba(47, 149, 246, 0.18);
+
+		--page-glow-1: transparent;
+		--page-glow-2: transparent;
+		--scroll-thumb: rgba(32, 40, 55, 0.18);
+		--selection: rgba(47, 149, 246, 0.22);
+
+		/* Chat canvas + bubble tones. */
+		--chat-bg: #f7fafd;
+		--bubble-in-bg: #ffffff;
+		--bubble-in-border: var(--ui-border);
+		--bubble-out-bg: var(--ui-color-primary-500);
+
+		color-scheme: light;
+	}
+
+	/* DARK — deep blue-black canvas, near-black cards, brighter accents. */
+	.dark {
+		--ui-color-primary-300: var(--color-primary-300);
+		--ui-color-primary-400: var(--color-primary-400);
+		--ui-color-primary-500: var(--color-primary-500);
+		--ui-color-primary-600: var(--color-primary-600);
+		--ui-color-primary-700: var(--color-primary-300);
+
+		--ui-text-dimmed: var(--color-neutral-600);
+		--ui-text-muted: var(--color-neutral-400);
+		--ui-text-toned: var(--color-neutral-400);
+		--ui-text: color-mix(in oklab, var(--color-neutral-50) 92%, #ffffff);
+		--ui-text-highlighted: #ffffff;
+		--ui-text-inverted: #0b0f1a;
+
+		--ui-bg: var(--color-neutral-950);
+		--ui-bg-muted: var(--color-neutral-900);
+		--ui-bg-elevated: color-mix(in oklab, var(--color-neutral-900) 78%, var(--color-neutral-800));
+		--ui-bg-accented: var(--color-neutral-800);
+		--surface-bg: color-mix(in oklab, var(--color-neutral-900) 72%, var(--color-neutral-800));
+		--surface-bg-soft: var(--color-neutral-800);
+		--table-head-bg: var(--color-neutral-800);
+		--table-row-hover-bg: color-mix(in oklab, var(--ui-color-primary-500) 12%, transparent);
+		--active-surface-bg: color-mix(in oklab, var(--ui-color-primary-500) 16%, transparent);
+		--active-surface-text: var(--ui-color-primary-300);
+		--active-badge-bg: color-mix(in oklab, var(--ui-color-primary-500) 22%, var(--surface-bg));
+		--active-badge-text: var(--ui-color-primary-300);
+		--tone-success-bg: #103026;
+		--tone-success-text: #6ee7b7;
+		--tone-info-bg: #0f2737;
+		--tone-info-text: #7cc7ff;
+		--tone-warning-bg: #36201a;
+		--tone-warning-text: #ff9b85;
+		--tone-error-bg: #381c1f;
+		--tone-error-text: #ff9b96;
+		--tone-neutral-bg: var(--color-neutral-800);
+		--tone-neutral-text: var(--color-neutral-300);
+		--interactive-hover-bg: rgba(255, 255, 255, 0.06);
+
+		--ui-border: var(--color-neutral-700);
+		--ui-border-muted: color-mix(in oklab, var(--color-neutral-800) 72%, transparent);
+		--ui-border-accented: color-mix(in oklab, var(--color-neutral-700) 72%, var(--color-neutral-600));
+
+		--glass-bg: color-mix(in oklab, var(--surface-bg) 68%, transparent);
+		--glass-border: rgba(255, 255, 255, 0.08);
+		--hairline-strong: rgba(255, 255, 255, 0.1);
+
+		--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.22);
+		--shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.35), 0 16px 40px rgba(0, 0, 0, 0.3);
+		--shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.5);
+		--glow-primary: 0 2px 10px rgba(47, 149, 246, 0.24);
+
+		--page-glow-1: rgba(47, 149, 246, 0.1);
+		--page-glow-2: rgba(85, 214, 154, 0.06);
+		--scroll-thumb: rgba(255, 255, 255, 0.18);
+		--selection: rgba(47, 149, 246, 0.28);
+
+		--chat-bg: #0e1320;
+		--bubble-in-bg: #1b2333;
+		--bubble-in-border: var(--ui-border);
+		--bubble-out-bg: var(--ui-color-primary-600);
+
+		color-scheme: dark;
+	}
+
+	html {
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
+		text-rendering: optimizeLegibility;
+		font-size: 16px;
+	}
+
+	body {
+		font-family: var(--font-sans);
+		background-color: var(--ui-bg);
+		background-image: none;
+		color: var(--ui-text);
+	}
+
+	::selection {
+		background: var(--selection);
+	}
+
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: var(--scroll-thumb) transparent;
+	}
+	*::-webkit-scrollbar {
+		width: 8px;
+		height: 8px;
+	}
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	*::-webkit-scrollbar-thumb {
+		background-color: var(--scroll-thumb);
+		border-radius: 999px;
+		border: 2px solid transparent;
+		background-clip: content-box;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+   Component primitives — Pulse cards, glass, chat bubbles, dots.
+--------------------------------------------------------------------------- */
+@layer components {
+	.glass {
+		background-color: var(--glass-bg);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+
+	/* Card with the signature soft Pulse shadow. */
+	.surface-card {
+		background-color: var(--surface-bg);
+		border: 1px solid var(--ui-border);
+		border-radius: calc(var(--ui-radius) + 0.25rem);
+		box-shadow: var(--shadow-card);
+	}
+	.surface-card-hover {
+		transition:
+			box-shadow 0.2s ease,
+			transform 0.2s ease;
+	}
+	.surface-card-hover:hover {
+		box-shadow: var(--shadow-card-hover);
+	}
+
+	/* macOS traffic-light dots (kept as a subtle desktop titlebar nod). */
+	.traffic {
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background: var(--c, #ccc);
+		display: inline-block;
+	}
+
+	.is-active-surface {
+		background-color: var(--active-surface-bg);
+		color: var(--active-surface-text);
+	}
+	.is-active-badge {
+		background-color: var(--active-badge-bg);
+		color: var(--active-badge-text);
+	}
+	.soft-hover {
+		transition:
+			background-color 0.12s ease,
+			color 0.12s ease;
+	}
+	.soft-hover:hover {
+		background-color: var(--interactive-hover-bg);
+	}
+	.tone-success {
+		background-color: var(--tone-success-bg);
+		color: var(--tone-success-text);
+	}
+	.tone-info {
+		background-color: var(--tone-info-bg);
+		color: var(--tone-info-text);
+	}
+	.tone-warning {
+		background-color: var(--tone-warning-bg);
+		color: var(--tone-warning-text);
+	}
+	.tone-error {
+		background-color: var(--tone-error-bg);
+		color: var(--tone-error-text);
+	}
+	.tone-neutral {
+		background-color: var(--tone-neutral-bg);
+		color: var(--tone-neutral-text);
+	}
+
+	.focus-brand {
+		outline: none;
+	}
+	.focus-brand:focus-visible {
+		box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-color-primary-500) 35%, transparent);
+	}
+
+	/* Active nav indicator — left-edge bar in the accent color. */
+	.nav-active {
+		position: relative;
+	}
+	.nav-active::before {
+		content: '';
+		position: absolute;
+		left: -0.5rem;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 3px;
+		height: 1.1rem;
+		border-radius: 0 3px 3px 0;
+		background: var(--ui-color-primary-500);
+		opacity: 0;
+	}
+	.nav-active.nav-active-on::before {
+		opacity: 1;
+	}
+
+	/* Chat bubbles (Pulse). */
+	.bubble-in {
+		background-color: var(--bubble-in-bg);
+		border: 1px solid var(--bubble-in-border);
+		color: var(--ui-text);
+	}
+	.bubble-out {
+		background-color: var(--bubble-out-bg);
+		color: #ffffff;
+	}
+	.chat-canvas {
+		background-color: var(--chat-bg);
+	}
+
+	/* Online presence dot with a subtle pulsing ring. */
+	.online-dot {
+		position: relative;
+		display: inline-block;
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: var(--color-accent-500);
+	}
+	.online-dot::after {
+		content: '';
+		position: absolute;
+		inset: -3px;
+		border-radius: 999px;
+		border: 1px solid var(--color-accent-500);
+		animation: bitos-ping 2s ease-out infinite;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+   Pulse view primitives — cards, chat list, nav, tabs, toggles, stories,
+   reels, masonry, settings nav. All token-driven so they flip in dark mode.
+--------------------------------------------------------------------------- */
+@layer components {
+	/* Feed post card */
+	.post-card {
+		background-color: var(--surface-bg);
+		border: 1px solid var(--ui-border-muted);
+		border-radius: calc(var(--ui-radius) + 0.4rem);
+		box-shadow: var(--shadow-card);
+		transition:
+			box-shadow 0.2s ease,
+			transform 0.2s ease;
+	}
+	.post-card:hover {
+		box-shadow: var(--shadow-card-hover);
+	}
+
+	/* Stories ring (unread vs viewed) */
+	.story-ring {
+		background: var(--ui-color-primary-500);
+		padding: 2.5px;
+		border-radius: 9999px;
+	}
+	.story-ring-viewed {
+		background: var(--ui-border-accented);
+		padding: 2.5px;
+		border-radius: 9999px;
+	}
+
+	/* Chat list item */
+	.chat-item {
+		transition: all 0.18s ease;
+		border-left: 3px solid transparent;
+	}
+	.chat-item:hover {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 5%, transparent);
+	}
+	.chat-item.active {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 9%, transparent);
+		border-left-color: var(--ui-color-primary-500);
+	}
+
+	/* Rounded pill tabs (All / Unread / For you …) */
+	.pill-tab {
+		padding: 6px 14px;
+		border-radius: 9999px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--ui-text-muted);
+		transition: all 0.2s;
+		cursor: pointer;
+	}
+	.pill-tab:hover {
+		background: var(--interactive-hover-bg);
+	}
+	.pill-tab.active {
+		background: var(--ui-color-primary-500);
+		color: #ffffff;
+	}
+
+	/* iOS-style toggle */
+	.toggle {
+		width: 38px;
+		height: 22px;
+		background: var(--ui-border-accented);
+		border-radius: 9999px;
+		position: relative;
+		cursor: pointer;
+		transition: background 0.2s;
+		flex-shrink: 0;
+	}
+	.toggle::after {
+		content: '';
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 18px;
+		height: 18px;
+		background: #ffffff;
+		border-radius: 9999px;
+		transition: transform 0.2s;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+	}
+	.toggle.on {
+		background: var(--ui-color-primary-500);
+	}
+	.toggle.on::after {
+		transform: translateX(16px);
+	}
+
+	/* Message bubbles (Pulse) */
+	.bubble-in {
+		background-color: var(--bubble-in-bg);
+		border: 1px solid var(--bubble-in-border);
+		color: var(--ui-text);
+		border-radius: 4px 18px 18px 18px;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	}
+	.bubble-out {
+		background-color: var(--bubble-out-bg);
+		color: #ffffff;
+		border-radius: 18px 4px 18px 18px;
+		box-shadow: 0 2px 12px color-mix(in oklab, var(--ui-color-primary-500) 28%, transparent);
+	}
+	.chat-canvas {
+		background-color: var(--chat-bg);
+	}
+
+	/* Date divider between chat days */
+	.date-divider {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin: 16px 0;
+	}
+	.date-divider::before,
+	.date-divider::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		background: var(--hairline-strong);
+	}
+
+	/* Settings sidebar nav item */
+	.settings-nav-item {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 10px 14px;
+		border-radius: 12px;
+		color: var(--ui-text-muted);
+		cursor: pointer;
+		transition: all 0.18s;
+		font-size: 13.5px;
+		font-weight: 500;
+	}
+	.settings-nav-item:hover {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 6%, transparent);
+		color: var(--ui-color-primary-500);
+	}
+	.settings-nav-item.active {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 10%, transparent);
+		color: var(--ui-color-primary-500);
+		font-weight: 600;
+	}
+	.settings-nav-item.active svg {
+		color: var(--ui-color-primary-500);
+	}
+
+	/* Trending tag chip */
+	.trend-tag {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		background: var(--surface-bg);
+		border: 1px solid var(--ui-border-muted);
+		border-radius: 9999px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--ui-text);
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+	.trend-tag:hover {
+		background: var(--ui-text-highlighted);
+		color: var(--ui-bg);
+		border-color: var(--ui-text-highlighted);
+	}
+
+	/* Reel action button (vertical rail) */
+	.reel-action {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+		color: #ffffff;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+	.reel-action:hover {
+		transform: scale(1.1);
+	}
+	.reel-action:active {
+		transform: scale(0.9);
+	}
+	.reel-action .icon-circle {
+		width: 46px;
+		height: 46px;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.16);
+		backdrop-filter: blur(10px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	/* Discover / profile masonry + grids */
+	.masonry {
+		column-count: 3;
+		column-gap: 12px;
+	}
+	.masonry > * {
+		break-inside: avoid;
+		margin-bottom: 12px;
+	}
+	@media (max-width: 1023px) {
+		.masonry {
+			column-count: 2;
+		}
+	}
+	@media (max-width: 639px) {
+		.masonry {
+			column-count: 2;
+		}
+	}
+
+	/* Reels snap container */
+	.reel-container {
+		scroll-snap-type: y mandatory;
+	}
+	.reel-card {
+		scroll-snap-align: start;
+		scroll-snap-stop: always;
+	}
+}
+
+@layer utilities {
+	html[data-density='compact'] .post-card.p-5 {
+		padding: 1rem;
+	}
+	html[data-density='compact'] .post-card.p-4 {
+		padding: 0.875rem;
+	}
+	html[data-density='compact'] .surface-card {
+		padding: 1rem;
+	}
+	html[data-density='compact'] .settings-nav-item {
+		gap: 0.625rem;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.8125rem;
+	}
+	html[data-density='compact'] .pill-tab {
+		padding: 0.3125rem 0.6875rem;
+		font-size: 0.75rem;
+	}
+	html[data-density='compact'] :is([class~='h-9.5'], [class~='size-9.5']) {
+		height: 2.125rem;
+	}
+	html[data-density='compact'] [class~='h-9.5'] {
+		min-height: 2.125rem;
+	}
+	html[data-density='compact'] [class~='size-9.5'] {
+		width: 2.125rem;
+	}
+	html[data-density='compact'] :is(input, select, textarea) {
+		font-size: 0.8125rem;
+	}
+	html[data-density='compact'] .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+		margin-top: 0.75rem;
+	}
+	html[data-density='compact'] .space-y-3 > :not([hidden]) ~ :not([hidden]) {
+		margin-top: 0.625rem;
+	}
+
+	html[data-rounded] .rounded-md {
+		border-radius: var(--ui-radius-sm);
+	}
+	html[data-rounded] .rounded-lg {
+		border-radius: var(--ui-radius-md);
+	}
+	html[data-rounded] .rounded-xl {
+		border-radius: var(--ui-radius-lg);
+	}
+	html[data-rounded] .rounded-2xl {
+		border-radius: var(--ui-radius-xl);
+	}
+	html[data-rounded] .rounded-3xl {
+		border-radius: calc(var(--ui-radius-xl) + 0.375rem);
+	}
+
+	.animate-rise {
+		animation: bitos-rise 0.35s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+	}
+	.animate-fade {
+		animation: bitos-fade 0.25s ease both;
+	}
+	.animate-slide-up {
+		animation: bitos-slide-up 0.3s cubic-bezier(0.22, 0.7, 0.3, 1) both;
+	}
+	@keyframes bitos-rise {
+		from {
+			opacity: 0;
+			transform: translateY(10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+	@keyframes bitos-fade {
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
+	}
+	@keyframes bitos-slide-up {
+		from {
+			opacity: 0;
+			transform: translateY(100%);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	/* Relay / presence pulse ring (shared by .online-dot and .live-dot). */
+	.live-dot {
+		position: relative;
+		display: inline-block;
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: var(--tone-success-text);
+	}
+	.live-dot::after {
+		content: '';
+		position: absolute;
+		inset: -3px;
+		border-radius: 999px;
+		border: 1px solid var(--tone-success-text);
+		animation: bitos-ping 1.8s ease-out infinite;
+	}
+	@keyframes bitos-ping {
+		0% {
+			transform: scale(0.6);
+			opacity: 0.9;
+		}
+		100% {
+			transform: scale(1.8);
+			opacity: 0;
+		}
+	}
+
+	/* Pulse motion utilities (from ex-ui) */
+	.fade-up {
+		animation: pulse-fade-up 0.5s ease-out backwards;
+	}
+	@keyframes pulse-fade-up {
+		from {
+			opacity: 0;
+			transform: translateY(20px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+	.msg-in {
+		animation: pulse-msg-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	@keyframes pulse-msg-in {
+		from {
+			opacity: 0;
+			transform: translateY(10px) scale(0.98);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+	.wave-bar {
+		animation: pulse-wave 1.2s ease-in-out infinite;
+		transform-origin: center;
+	}
+	@keyframes pulse-wave {
+		0%,
+		100% {
+			transform: scaleY(0.3);
+		}
+		50% {
+			transform: scaleY(1);
+		}
+	}
+	.typing-dot {
+		animation: pulse-typing 1.4s ease-in-out infinite;
+	}
+	@keyframes pulse-typing {
+		0%,
+		60%,
+		100% {
+			transform: translateY(0);
+			opacity: 0.4;
+		}
+		30% {
+			transform: translateY(-4px);
+			opacity: 1;
+		}
+	}
+	.spin-slow {
+		animation: pulse-spin 8s linear infinite;
+	}
+	@keyframes pulse-spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.heart-burst {
+		animation: pulse-heart-burst 0.6s ease-out forwards;
+	}
+	@keyframes pulse-heart-burst {
+		0% {
+			transform: scale(0);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(2.5);
+			opacity: 0;
+		}
+	}
+	.live-pulse {
+		animation: pulse-live 1.5s ease-in-out infinite;
+	}
+	@keyframes pulse-live {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+	}
+}
