@@ -7,6 +7,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 
@@ -22,13 +23,14 @@
 	];
 
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
+	const filterMenuId = 'feed-filter';
 
 	$effect(() => {
 		if (feed.notes.length) profiles.ensure(feed.notes.map((n) => n.pubkey));
 	});
 
 	let feedScroller: HTMLDivElement | undefined = $state();
-	let filterOpen = $state(false);
+	const filterOpen = $derived(popovers.isOpen(filterMenuId));
 	let activeFilter = $state<FeedFilter>('all');
 	const activeFilterLabel = $derived(
 		filterOptions.find((option) => option.key === activeFilter)?.label ?? 'All'
@@ -50,7 +52,7 @@
 
 	function setFilter(next: FeedFilter) {
 		activeFilter = next;
-		filterOpen = false;
+		popovers.close();
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
@@ -62,7 +64,6 @@
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
-		toasts.success(`${count} new ${count === 1 ? 'note' : 'notes'}`);
 	}
 
 	function loadMoreNotes() {
@@ -76,6 +77,8 @@
 		if (remaining < 900) loadMoreNotes();
 	}
 </script>
+
+<svelte:window onclick={() => popovers.close()} />
 
 <div class="flex h-full">
 	<!-- Center feed -->
@@ -109,7 +112,10 @@
 					</button>
 					<button
 						type="button"
-						onclick={() => (filterOpen = !filterOpen)}
+						onclick={(e) => {
+							e.stopPropagation();
+							popovers.toggle(filterMenuId);
+						}}
 						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {activeFilter !==
 						'all'
 							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'

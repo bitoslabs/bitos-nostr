@@ -207,6 +207,38 @@ class FeedStore {
 		this.pendingNotes.forEach((n, i) => this.pendingById.set(n.id, i));
 	}
 
+	hideNote(id: string) {
+		this.notes = this.notes.filter((note) => note.id !== id);
+		this.pendingNotes = this.pendingNotes.filter((note) => note.id !== id);
+		this.rebuildIndex();
+		this.rebuildPendingIndex();
+	}
+
+	muteAuthor(pubkey: string) {
+		this.notes = this.notes.filter((note) => note.pubkey !== pubkey);
+		this.pendingNotes = this.pendingNotes.filter((note) => note.pubkey !== pubkey);
+		this.rebuildIndex();
+		this.rebuildPendingIndex();
+	}
+
+	async deleteNote(note: FeedNote) {
+		if (!browser) return;
+		const id = identity.current;
+		if (!id) throw new Error('No identity');
+		if (id.pk !== note.pubkey) throw new Error('You can only delete your own notes');
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.DELETE,
+				content: 'Deleted from BitOS',
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [['e', note.id]]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		this.hideNote(note.id);
+	}
+
 	/** Move live subscription notes into the visible feed, newest-first. */
 	revealPending() {
 		if (!this.pendingNotes.length) return 0;

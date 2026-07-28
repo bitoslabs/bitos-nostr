@@ -54,6 +54,7 @@ export interface RelayRecord {
 	write: boolean;
 	status: 'unknown' | 'connecting' | 'ok' | 'fail';
 	latency: number | null;
+	checkedAt?: number;
 }
 
 /** Identity material held in memory + localStorage. */
@@ -70,6 +71,7 @@ export interface Identity {
 export const NOSTR_KINDS = {
 	METADATA: 0,
 	TEXT_NOTE: 1,
+	DELETE: 5,
 	REACTION: 7,
 	DIRECT_MESSAGE: 4,
 	REPOST: 6,
