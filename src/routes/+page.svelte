@@ -37,6 +37,7 @@
 	);
 	const filteredNotes = $derived(
 		feed.notes.filter((note) => {
+			if (activeFilter === 'all') return !note.replyTo;
 			if (activeFilter === 'originals') return !note.replyTo;
 			if (activeFilter === 'replies') return !!note.replyTo;
 			if (activeFilter === 'media') return hasMedia(note);

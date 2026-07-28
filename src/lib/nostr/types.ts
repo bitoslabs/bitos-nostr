@@ -25,7 +25,7 @@ export interface FeedNote {
 	tags: string[][];
 	replyTo?: string;
 	/** Reactions aggregated by emoji. */
-	reactions: { emoji: string; count: number; byMe: boolean }[];
+	reactions: { emoji: string; count: number; byMe: boolean; myEventId?: string }[];
 	repostCount: number;
 }
 

@@ -12,7 +12,31 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 
+	type ContentToken =
+		| { type: 'text'; value: string }
+		| { type: 'url'; value: string; host: string }
+		| { type: 'nostr'; value: string }
+		| { type: 'hashtag'; value: string; tag: string };
+	type MediaAttachment = {
+		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
+		url: string;
+		host: string;
+		embedUrl?: string;
+		provider?: string;
+	};
+
 	let { note, index = 0 }: { note: FeedNote; index?: number } = $props();
+
+	const contentPattern =
+		/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
+	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
+	const videoPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
+	const audioPattern = /\.(?:aac|flac|m4a|mp3|ogg|opus|wav)$/i;
+	const imageFormatPattern = /(?:[?&](?:ext|fm|format)=)(?:apng|avif|gif|jpe?g|png|webp)\b/i;
+	const imagePathPattern =
+		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
+	const urlPattern = /https?:\/\/[^\s<>()]+/giu;
+	const longTextLimit = 420;
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
@@ -40,9 +64,32 @@
 			2
 		)
 	);
+	let expanded = $state(false);
+	const isLong = $derived(
+		note.content.length > longTextLimit || note.content.split('\n').length > 8
+	);
+	const visibleContent = $derived(
+		isLong && !expanded ? `${note.content.slice(0, longTextLimit).trimEnd()}…` : note.content
+	);
+	const contentTokens = $derived(parseContent(visibleContent));
+	const mediaAttachments = $derived(extractMedia(note.content));
+	const firstAttachment = $derived(mediaAttachments[0]);
 	let burst = $state(false);
 	let rawOpen = $state(false);
 	let saved = $state(isSaved());
+	let replyOpen = $state(false);
+	let replyText = $state('');
+	let replying = $state(false);
+	let replyInput: HTMLInputElement | undefined;
+	let showAllReplies = $state(false);
+	let failedMedia = $state<Record<string, boolean>>({});
+	const directReplies = $derived(
+		feed.notes
+			.filter((reply) => reply.replyTo === note.id && reply.id !== note.id)
+			.sort((a, b) => a.createdAt - b.createdAt)
+	);
+	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(0, 2));
+	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
 
 	function savedIds() {
 		if (!browser) return [];
@@ -72,6 +119,141 @@
 		} finally {
 			popovers.close();
 		}
+	}
+
+	function openAttachment() {
+		if (!browser || !firstAttachment) return;
+		window.open(firstAttachment.url, '_blank', 'noopener,noreferrer');
+		popovers.close();
+	}
+
+	function startReply() {
+		if (!identity.current) {
+			toasts.error('Create or import a key first');
+			return;
+		}
+		replyOpen = true;
+		setTimeout(() => replyInput?.focus(), 0);
+	}
+
+	function splitTrailingPunctuation(value: string) {
+		const match = value.match(/^(.+?)([.,!?;:]+)?$/);
+		return {
+			core: match?.[1] ?? value,
+			suffix: match?.[2] ?? ''
+		};
+	}
+
+	function hostFromUrl(url: string) {
+		try {
+			return new URL(url).hostname.replace(/^www\./, '');
+		} catch {
+			return url;
+		}
+	}
+
+	function parseContent(content: string): ContentToken[] {
+		const tokens: ContentToken[] = [];
+		let lastIndex = 0;
+
+		for (const match of content.matchAll(contentPattern)) {
+			const value = match[0];
+			const index = match.index ?? 0;
+			if (index > lastIndex) tokens.push({ type: 'text', value: content.slice(lastIndex, index) });
+
+			if (value.startsWith('#')) {
+				tokens.push({ type: 'hashtag', value, tag: value.slice(1).toLowerCase() });
+			} else if (value.toLowerCase().startsWith('nostr:')) {
+				const { core, suffix } = splitTrailingPunctuation(value);
+				tokens.push({ type: 'nostr', value: core });
+				if (suffix) tokens.push({ type: 'text', value: suffix });
+			} else {
+				const { core, suffix } = splitTrailingPunctuation(value);
+				tokens.push({ type: 'url', value: core, host: hostFromUrl(core) });
+				if (suffix) tokens.push({ type: 'text', value: suffix });
+			}
+
+			lastIndex = index + value.length;
+		}
+
+		if (lastIndex < content.length) tokens.push({ type: 'text', value: content.slice(lastIndex) });
+		return tokens;
+	}
+
+	function embedForUrl(url: string): Pick<MediaAttachment, 'embedUrl' | 'provider'> | null {
+		try {
+			const parsed = new URL(url);
+			const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+			if (host === 'youtu.be') {
+				const id = parsed.pathname.split('/').filter(Boolean)[0];
+				return id
+					? { embedUrl: `https://www.youtube-nocookie.com/embed/${id}`, provider: 'YouTube' }
+					: null;
+			}
+			if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+				const id =
+					parsed.searchParams.get('v') ||
+					(parsed.pathname.startsWith('/shorts/')
+						? parsed.pathname.split('/').filter(Boolean)[1]
+						: '') ||
+					(parsed.pathname.startsWith('/embed/')
+						? parsed.pathname.split('/').filter(Boolean)[1]
+						: '');
+				return id
+					? { embedUrl: `https://www.youtube-nocookie.com/embed/${id}`, provider: 'YouTube' }
+					: null;
+			}
+			if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) {
+				const id = parsed.pathname
+					.split('/')
+					.filter(Boolean)
+					.find((part) => /^\d+$/.test(part));
+				return id ? { embedUrl: `https://player.vimeo.com/video/${id}`, provider: 'Vimeo' } : null;
+			}
+		} catch {
+			return null;
+		}
+		return null;
+	}
+
+	function mediaType(url: string): MediaAttachment['type'] {
+		if (embedForUrl(url)) return 'embed';
+		try {
+			const parsed = new URL(url);
+			const pathname = decodeURIComponent(parsed.pathname);
+			if (
+				imagePattern.test(pathname) ||
+				imageFormatPattern.test(parsed.search) ||
+				imagePathPattern.test(pathname)
+			)
+				return 'image';
+			if (videoPattern.test(pathname)) return 'video';
+			if (audioPattern.test(pathname)) return 'audio';
+		} catch {
+			if (/\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url)) return 'image';
+			if (/\.(?:m3u8|m4v|mov|mp4|webm)(?:[?#].*)?$/i.test(url)) return 'video';
+			if (/\.(?:aac|flac|m4a|mp3|ogg|opus|wav)(?:[?#].*)?$/i.test(url)) return 'audio';
+		}
+		return 'link';
+	}
+
+	function markMediaFailed(url: string) {
+		failedMedia = { ...failedMedia, [url]: true };
+	}
+
+	function extractMedia(content: string) {
+		const seen: string[] = [];
+		const attachments: MediaAttachment[] = [];
+		for (const match of content.matchAll(urlPattern)) {
+			const { core } = splitTrailingPunctuation(match[0]);
+			if (seen.includes(core)) continue;
+			seen.push(core);
+			const type = mediaType(core);
+			const embed = type === 'embed' ? embedForUrl(core) : null;
+			if (type === 'link' && attachments.some((item) => item.type !== 'link')) continue;
+			attachments.push({ type, url: core, host: hostFromUrl(core), ...embed });
+		}
+		return attachments.slice(0, 4);
 	}
 
 	function toggleSaved() {
@@ -118,13 +300,29 @@
 
 	async function react() {
 		try {
+			const wasLiked = liked;
 			await feed.react(note, '❤️');
-			if (!liked) {
+			if (!wasLiked) {
 				burst = true;
 				setTimeout(() => (burst = false), 600);
 			}
 		} catch (e) {
 			toasts.error((e as Error).message);
+		}
+	}
+
+	async function submitReply() {
+		if (!replyText.trim() || replying) return;
+		replying = true;
+		try {
+			await feed.reply(note, replyText);
+			replyText = '';
+			replyOpen = false;
+			toasts.success('Reply posted to Nostr');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			replying = false;
 		}
 	}
 </script>
@@ -214,6 +412,32 @@
 					</button>
 					<button
 						type="button"
+						onclick={() => copyText(note.content, 'Note text')}
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+					>
+						<Icon name="i-lucide-text" class="size-4 shrink-0" />
+						Copy note text
+					</button>
+					{#if firstAttachment}
+						<button
+							type="button"
+							onclick={openAttachment}
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+						>
+							<Icon name="i-lucide-external-link" class="size-4 shrink-0" />
+							Open attachment
+						</button>
+						<button
+							type="button"
+							onclick={() => copyText(firstAttachment.url, 'Attachment URL')}
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+						>
+							<Icon name="i-lucide-image" class="size-4 shrink-0" />
+							Copy attachment URL
+						</button>
+					{/if}
+					<button
+						type="button"
 						onclick={() => copyText(authorNpub, 'Author npub')}
 						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 					>
@@ -262,9 +486,158 @@
 	</header>
 
 	<!-- Body -->
-	<p class="px-4 pb-3 text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
-		{note.content}
-	</p>
+	<div class="px-4 pb-3">
+		<p class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
+			{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
+				{#if token.type === 'text'}
+					{token.value}
+				{:else if token.type === 'hashtag'}
+					<a
+						href={`/discover?tag=${encodeURIComponent(token.tag)}`}
+						class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
+					>
+						{token.value}
+					</a>
+				{:else if token.type === 'nostr'}
+					<a
+						href={token.value}
+						class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+					>
+						{token.value.slice(0, 28)}{token.value.length > 28 ? '…' : ''}
+					</a>
+				{:else}
+					<a
+						href={token.value}
+						target="_blank"
+						rel="noreferrer"
+						class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+					>
+						{token.host}
+					</a>
+				{/if}
+			{/each}
+		</p>
+		{#if isLong}
+			<button
+				type="button"
+				onclick={() => (expanded = !expanded)}
+				class="mt-2 text-[13px] font-bold text-primary-500 transition hover:text-primary-600"
+			>
+				{expanded ? 'Show less' : 'Show more'}
+			</button>
+		{/if}
+	</div>
+
+	{#if mediaAttachments.length}
+		<div
+			class="mx-4 mb-3 grid overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaAttachments.length ===
+			1
+				? 'grid-cols-1'
+				: 'grid-cols-2'}"
+		>
+			{#each mediaAttachments as media (media.url)}
+				{#if media.type === 'image'}
+					{#if failedMedia[media.url]}
+						<a
+							href={media.url}
+							target="_blank"
+							rel="noreferrer"
+							class="flex min-h-32 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+						>
+							<span
+								class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
+							>
+								<Icon name="i-lucide-image-off" class="size-5" />
+							</span>
+							<span class="min-w-0">
+								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
+									Open image
+								</span>
+								<span class="block truncate text-[12px] text-[var(--ui-text-muted)]"
+									>{media.url}</span
+								>
+							</span>
+						</a>
+					{:else}
+						<a
+							href={media.url}
+							target="_blank"
+							rel="noreferrer"
+							class="group relative block bg-black"
+						>
+							<img
+								src={media.url}
+								alt="Note attachment"
+								loading="lazy"
+								referrerpolicy="no-referrer"
+								onerror={() => markMediaFailed(media.url)}
+								class="aspect-video size-full object-cover transition group-hover:scale-[1.02]"
+							/>
+						</a>
+					{/if}
+				{:else if media.type === 'video'}
+					<div class="relative bg-black">
+						<!-- svelte-ignore a11y_media_has_caption -->
+						<video
+							src={media.url}
+							controls
+							preload="metadata"
+							playsinline
+							class="aspect-video size-full object-cover"
+						></video>
+					</div>
+				{:else if media.type === 'embed' && media.embedUrl}
+					<div class="overflow-hidden bg-black">
+						<iframe
+							src={media.embedUrl}
+							title={`${media.provider ?? 'Video'} embed`}
+							class="aspect-video size-full"
+							loading="lazy"
+							allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+							allowfullscreen
+						></iframe>
+						<a
+							href={media.url}
+							target="_blank"
+							rel="noreferrer"
+							class="flex items-center justify-between gap-3 bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:text-primary-500"
+						>
+							<span class="truncate">{media.provider ?? media.host}</span>
+							<Icon name="i-lucide-external-link" class="size-4 shrink-0" />
+						</a>
+					</div>
+				{:else if media.type === 'audio'}
+					<div class="flex min-h-28 flex-col justify-center gap-3 p-4">
+						<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
+							<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
+							<span class="truncate">{media.host}</span>
+						</div>
+						<audio src={media.url} controls class="w-full"></audio>
+					</div>
+				{:else}
+					<a
+						href={media.url}
+						target="_blank"
+						rel="noreferrer"
+						class="flex min-h-28 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+					>
+						<span
+							class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
+						>
+							<Icon name="i-lucide-external-link" class="size-5" />
+						</span>
+						<span class="min-w-0">
+							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
+								{media.host}
+							</span>
+							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span
+							>
+						</span>
+					</a>
+				{/if}
+			{/each}
+		</div>
+	{/if}
 
 	<!-- Reactions summary -->
 	{#if reactionCount > 0}
@@ -301,15 +674,20 @@
 					</span>
 				{/if}
 			</span>
-			<span>Like</span>
+			<span>{liked ? 'Unlike' : 'Like'}</span>
 		</button>
-		<a
-			href={`/messages?to=${note.pubkey}`}
+		<button
+			type="button"
+			onclick={startReply}
 			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 		>
 			<Icon name="i-lucide-message-circle" class="size-[16px]" />
-			<span>Comment</span>
-		</a>
+			<span>
+				{directReplies.length
+					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
+					: 'Comment'}
+			</span>
+		</button>
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
@@ -327,8 +705,89 @@
 		</button>
 	</div>
 
-	<!-- Comment input -->
-	<div class="px-4 pt-1 pb-4">
+	{#if directReplies.length}
+		<div class="mx-4 mb-3 space-y-3 rounded-xl bg-[var(--ui-bg-muted)] p-3">
+			{#each visibleReplies as reply (reply.id)}
+				{@const replyProfile = profiles.get(reply.pubkey)}
+				{@const replyName =
+					replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
+				<div class="flex gap-2.5">
+					<a href={`/profile/${reply.pubkey}`} class="shrink-0">
+						<Avatar
+							pubkey={reply.pubkey}
+							name={replyName}
+							picture={replyProfile?.picture}
+							size={28}
+						/>
+					</a>
+					<div class="min-w-0 flex-1">
+						<div class="flex min-w-0 items-center gap-1.5">
+							<a
+								href={`/profile/${reply.pubkey}`}
+								class="truncate text-[12.5px] font-bold hover:text-primary-500"
+							>
+								{replyName}
+							</a>
+							<time
+								class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
+								title={timeFull(reply.createdAt)}>{timeAgo(reply.createdAt)}</time
+							>
+						</div>
+						<p class="mt-0.5 text-[13px] leading-relaxed break-words whitespace-pre-wrap">
+							{#each parseContent(reply.content) as token, tokenIndex (`${reply.id}:${token.type}:${tokenIndex}:${token.value}`)}
+								{#if token.type === 'text'}
+									{token.value}
+								{:else if token.type === 'hashtag'}
+									<a
+										href={`/discover?tag=${encodeURIComponent(token.tag)}`}
+										class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
+									>
+										{token.value}
+									</a>
+								{:else if token.type === 'nostr'}
+									<a
+										href={token.value}
+										class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+									>
+										{token.value.slice(0, 24)}{token.value.length > 24 ? '…' : ''}
+									</a>
+								{:else}
+									<a
+										href={token.value}
+										target="_blank"
+										rel="noreferrer"
+										class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+									>
+										{token.host}
+									</a>
+								{/if}
+							{/each}
+						</p>
+					</div>
+				</div>
+			{/each}
+			{#if hiddenReplyCount}
+				<button
+					type="button"
+					onclick={() => (showAllReplies = true)}
+					class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
+				>
+					View {hiddenReplyCount} more {hiddenReplyCount === 1 ? 'comment' : 'comments'}
+				</button>
+			{:else if showAllReplies && directReplies.length > 2}
+				<button
+					type="button"
+					onclick={() => (showAllReplies = false)}
+					class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
+				>
+					Show fewer comments
+				</button>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- Reply input -->
+	<div class="px-4 pt-1 pb-4 {replyOpen || replyText ? '' : 'hidden sm:block'}">
 		<div class="flex items-center gap-2">
 			{#if identity.current}
 				{@const mk = profiles.get(identity.current.pk)}
@@ -339,16 +798,34 @@
 				</div>
 			{/if}
 			<input
+				bind:this={replyInput}
+				bind:value={replyText}
 				type="text"
-				placeholder="Add a comment…"
+				placeholder={identity.current ? 'Reply to this note…' : 'Create or import a key to reply'}
+				disabled={!identity.current || replying}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') {
-						(e.currentTarget as HTMLInputElement).value = '';
-						toasts.success('Comment posted');
+						e.preventDefault();
+						void submitReply();
 					}
 				}}
-				class="flex-1 rounded-full bg-[var(--ui-bg-muted)] px-4 py-2 text-[13px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/30"
+				onfocus={() => (replyOpen = true)}
+				class="flex-1 rounded-full bg-[var(--ui-bg-muted)] px-4 py-2 text-[13px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-60"
 			/>
+			{#if replyOpen || replyText}
+				<button
+					type="button"
+					onclick={submitReply}
+					disabled={!replyText.trim() || replying}
+					class="grid size-9 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
+					aria-label="Post reply"
+				>
+					<Icon
+						name={replying ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
+						class="size-4 {replying ? 'animate-spin' : ''}"
+					/>
+				</button>
+			{/if}
 		</div>
 	</div>
 </article>

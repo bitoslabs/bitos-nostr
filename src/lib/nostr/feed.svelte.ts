@@ -149,6 +149,7 @@ class FeedStore {
 	}
 
 	private ingestReaction(ev: {
+		id: string;
 		pubkey: string;
 		content: string;
 		tags: string[][];
@@ -178,6 +179,7 @@ class FeedStore {
 	private nextReactions(
 		note: FeedNote,
 		ev: {
+			id: string;
 			pubkey: string;
 			content: string;
 		}
@@ -189,12 +191,37 @@ class FeedStore {
 		const next = note.reactions.map((r) => ({ ...r }));
 		const existing = next.find((r) => r.emoji === emoji);
 		if (existing) {
+			if (byMe && existing.byMe) {
+				existing.myEventId = ev.id;
+				return next;
+			}
 			existing.count += 1;
-			if (byMe) existing.byMe = true;
+			if (byMe) {
+				existing.byMe = true;
+				existing.myEventId = ev.id;
+			}
 		} else {
-			next.push({ emoji, count: 1, byMe });
+			next.push({ emoji, count: 1, byMe, myEventId: byMe ? ev.id : undefined });
 		}
 		return next;
+	}
+
+	private removeMyReaction(noteId: string, emoji: string) {
+		const idx = this.byId.get(noteId);
+		if (idx === undefined) return;
+		const note = this.notes[idx];
+		const reactions = note.reactions
+			.map((reaction) => {
+				if (reaction.emoji !== emoji || !reaction.byMe) return reaction;
+				return {
+					...reaction,
+					count: Math.max(0, reaction.count - 1),
+					byMe: false,
+					myEventId: undefined
+				};
+			})
+			.filter((reaction) => reaction.count > 0);
+		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions } : n));
 	}
 
 	private rebuildIndex() {
@@ -279,11 +306,66 @@ class FeedStore {
 		return event.id;
 	}
 
+	/** Publish a kind-1 reply to an existing note using NIP-10 style tags. */
+	async reply(note: FeedNote, content: string): Promise<string> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		const text = content.trim();
+		if (!text) throw new Error('Nothing to reply');
+
+		const rootId =
+			note.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? note.replyTo ?? note.id;
+		const taggedPubkeys = [
+			note.pubkey,
+			...note.tags.filter((tag) => tag[0] === 'p' && tag[1]).map((tag) => tag[1])
+		].filter((pubkey, index, all) => all.indexOf(pubkey) === index);
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.TEXT_NOTE,
+				content: text,
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [
+					['e', rootId, '', 'root'],
+					['e', note.id, '', 'reply'],
+					...taggedPubkeys.map((pubkey) => ['p', pubkey])
+				]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		this.ingestNote(event, { queueIfLive: false });
+		return event.id;
+	}
+
 	/** React to a note with a ❤️ (kind 7). */
 	async react(note: FeedNote, emoji = '❤️') {
 		if (!browser) return;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
+		const existing = note.reactions.find((reaction) => reaction.emoji === emoji && reaction.byMe);
+		if (existing?.myEventId) {
+			const deleteEvent = finalizeEvent(
+				{
+					kind: NOSTR_KINDS.DELETE,
+					content: 'Deleted reaction from BitOS',
+					created_at: Math.floor(Date.now() / 1000),
+					tags: [
+						['e', existing.myEventId],
+						['e', note.id],
+						['p', note.pubkey]
+					]
+				},
+				hexToBytes(id.sk)
+			);
+			await publish(deleteEvent);
+			this.removeMyReaction(note.id, emoji);
+			return;
+		}
+		if (existing) {
+			this.removeMyReaction(note.id, emoji);
+			return;
+		}
 		const event = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.REACTION,
