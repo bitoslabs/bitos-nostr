@@ -158,7 +158,7 @@
 					class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
 				/>
 			</StoryRing>
-			<div class="min-w-0 flex-1 pb-2">
+			<div class="min-w-0 flex-1 pb-4">
 				<div class="flex min-w-0 items-center gap-2">
 					<h1
 						class="truncate font-display text-[28px] leading-tight font-extrabold tracking-tight sm:text-[30px]"

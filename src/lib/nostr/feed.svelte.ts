@@ -372,6 +372,24 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
+	upsertNote(note: FeedNote) {
+		const existing = this.byId.get(note.id);
+		if (existing !== undefined) {
+			this.notes = this.notes.map((item, index) => (index === existing ? { ...item, ...note } : item));
+			this.rebuildIndex();
+			return;
+		}
+		const pending = this.pendingById.get(note.id);
+		if (pending !== undefined) {
+			this.pendingNotes = this.pendingNotes.map((item, index) =>
+				index === pending ? { ...item, ...note } : item
+			);
+			this.rebuildPendingIndex();
+			return;
+		}
+		this.insertVisible(note);
+	}
+
 	async deleteNote(note: FeedNote) {
 		if (!browser) return;
 		const id = identity.current;

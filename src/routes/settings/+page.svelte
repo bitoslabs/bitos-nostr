@@ -287,7 +287,7 @@
 
 <svelte:head><title>{sectionTitle} · Settings · BitOS</title></svelte:head>
 
-<div class="flex h-full">
+<div class="flex h-full flex-col sm:flex-row">
 	<!-- Settings sidebar -->
 	<aside
 		class="hidden w-[260px] shrink-0 flex-col overflow-y-auto border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] sm:flex"
@@ -336,21 +336,41 @@
 		{/if}
 	</aside>
 
-	<!-- Mobile section picker -->
-	<div
-		class="flex [scrollbar-width:none] gap-1 overflow-x-auto border-b border-[var(--ui-border-muted)] p-2 sm:hidden [&::-webkit-scrollbar]:hidden"
-	>
-		{#each sections as s (s.key)}
+	<!-- Mobile header + section picker (stacks above content on small screens) -->
+	<div class="shrink-0 border-b border-[var(--ui-border-muted)] bg-[var(--surface-bg)] sm:hidden">
+		<div class="flex items-center gap-2 px-4 pt-3 pb-1">
 			<a
-				href={s.key === 'account' ? '/settings' : `/settings/${s.key}`}
-				class="pill-tab shrink-0 {section === s.key ? 'active' : ''}">{s.label}</a
+				href="/"
+				class="-ml-1 grid size-8 shrink-0 place-items-center rounded-lg text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+				aria-label="Back to home"
 			>
-		{/each}
+				<Icon name="i-lucide-arrow-left" class="size-5" />
+			</a>
+			<div class="min-w-0 flex-1">
+				<h1 class="font-display text-[18px] leading-tight font-extrabold tracking-tight">
+					Settings
+				</h1>
+				<p class="truncate text-[11px] text-[var(--ui-text-muted)]">{sectionTitle}</p>
+			</div>
+		</div>
+		<div
+			class="flex [scrollbar-width:none] gap-1.5 overflow-x-auto px-3 pt-1 pb-2.5 [&::-webkit-scrollbar]:hidden"
+		>
+			{#each sections as s (s.key)}
+				<a
+					href={s.key === 'account' ? '/settings' : `/settings/${s.key}`}
+					class="pill-tab flex shrink-0 items-center gap-1.5 {section === s.key ? 'active' : ''}"
+				>
+					<Icon name={s.icon} class="size-3.5" />
+					<span>{s.label}</span>
+				</a>
+			{/each}
+		</div>
 	</div>
 
 	<!-- Content -->
-	<div class="min-w-0 flex-1 overflow-y-auto">
-		<div class="mx-auto max-w-[680px] px-5 py-6 sm:px-8">
+	<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
+		<div class="mx-auto max-w-[680px] px-4 py-5 sm:px-8 sm:py-6">
 			<!-- ACCOUNT -->
 			{#if section === 'account'}
 				<input
@@ -378,7 +398,7 @@
 							<img src={editingBanner} alt="banner preview" class="h-24 w-full object-cover" />
 						</div>
 					{/if}
-					<div class="mb-5 flex items-center gap-4">
+					<div class="mb-5 flex flex-wrap items-center gap-4">
 						<div class="size-16 shrink-0 overflow-hidden rounded-2xl">
 							{#if editingPicture}
 								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
@@ -390,13 +410,14 @@
 								</div>
 							{/if}
 						</div>
-						<div class="flex-1">
+						<div class="min-w-0 flex-1">
 							<p class="text-[15px] font-bold">{editingDisplayName || editingUsername || 'You'}</p>
 							<p class="text-[12px] text-[var(--ui-text-muted)]">{me ? shortKey(me.npub) : ''}</p>
 						</div>
 						<Button
 							color="neutral"
 							variant="subtle"
+							class="w-full sm:w-auto"
 							icon={uploadingMedia === 'avatar' ? 'i-lucide-loader-circle' : 'i-lucide-camera'}
 							onclick={() => avatarInput?.click()}
 							disabled={uploadingMedia !== null}
@@ -1479,7 +1500,7 @@
 			{#if section === 'help'}
 				<h2 class="mb-1 font-display text-[24px] font-extrabold">Help & Support</h2>
 				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Find answers and get support</p>
-				<div class="mb-5 grid grid-cols-2 gap-3">
+				<div class="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
 					{#each [{ i: 'i-lucide-circle-help', c: 'text-primary-500', t: 'Help Center', d: 'Browse guides and FAQs' }, { i: 'i-lucide-headset', c: 'text-accent-500', t: 'Contact Support', d: 'Chat with our team 24/7' }, { i: 'i-lucide-flag', c: 'text-warm-500', t: 'Report a Problem', d: "Tell us what's wrong" }, { i: 'i-lucide-lightbulb', c: 'text-ink', t: 'Feature Request', d: 'Suggest new features' }] as h (h.t)}
 						<button
 							type="button"

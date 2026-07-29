@@ -921,10 +921,10 @@
 				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
 		>
 			<span class="relative">
-				<Icon name="i-lucide-heart" class="size-[16px] {liked ? 'fill-primary-500' : ''}" />
+				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
 				{#if burst}
 					<span class="heart-burst pointer-events-none absolute inset-0 text-primary-500">
-						<Icon name="i-lucide-heart" class="size-[16px]" />
+						<Icon name="i-solar-heart-bold" class="size-[16px]" />
 					</span>
 				{/if}
 			</span>
@@ -1031,10 +1031,14 @@
 							<button
 								type="button"
 								onclick={() => reactToComment(reply)}
-								class={commentLiked(reply)
+								class="inline-flex items-center gap-1 {commentLiked(reply)
 									? 'text-primary-500'
-									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}
+									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}"
 							>
+								<Icon
+									name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+									class="size-3.5"
+								/>
 								{commentLiked(reply) ? 'Unlike' : 'Like'}
 								{#if commentReactionCount(reply)}
 									<span class="font-semibold"> · {commentReactionCount(reply)}</span>
@@ -1058,7 +1062,7 @@
 								<button
 									type="button"
 									onclick={() => deleteComment(reply)}
-									class="text-[var(--tone-error-text)] hover:underline"
+									class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 								>
 									Delete
 								</button>
@@ -1110,7 +1114,7 @@
 													<button
 														type="button"
 														onclick={() => deleteComment(child)}
-														class="text-[var(--tone-error-text)] hover:underline"
+														class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 													>
 														Delete
 													</button>
