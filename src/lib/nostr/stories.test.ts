@@ -53,6 +53,15 @@ describe('stories.parseSlide', () => {
 	it('falls back to the first image URL found in content', () => {
 		const slide = parseSlide(fakeEvent({ content: 'see https://cdn.example.com/a.jpg and more' }));
 		expect(slide?.imageUrl).toBe('https://cdn.example.com/a.jpg');
+		expect(slide?.content).toBe('see and more');
+	});
+
+	it('uses a Cloudinary image URL wrapped in markdown as the story media', () => {
+		const url =
+			'https://res.cloudinary.com/doqyvdhvo/image/upload/v1785303517/bitos/ab7pjrxvsbz1otowtfhq.png';
+		const slide = parseSlide(fakeEvent({ content: `**${url}**` }));
+		expect(slide?.imageUrl).toBe(url);
+		expect(slide?.content).toBe('');
 	});
 
 	it('preserves the chosen background gradient via the `background` tag', () => {

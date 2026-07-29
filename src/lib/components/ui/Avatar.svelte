@@ -11,12 +11,14 @@
 		name,
 		picture,
 		size = 40,
+		frame = false,
 		class: cls
 	}: {
 		pubkey: string;
 		name?: string | null;
 		picture?: string | null;
 		size?: number;
+		frame?: boolean;
 		class?: string;
 	} = $props();
 
@@ -30,6 +32,7 @@
 <div
 	class={cn(
 		'relative grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold',
+		frame && 'border border-[var(--ui-border-muted)]',
 		cls
 	)}
 	style="width:{size}px;height:{size}px;font-size:{Math.round(

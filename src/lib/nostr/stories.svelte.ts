@@ -23,7 +23,7 @@ import { NOSTR_KINDS } from './types';
 const STORY_TTL = 24 * 60 * 60; // seconds
 const MAX_PER_AUTHOR = 12;
 const SEEN_KEY = 'bitos:seen-stories';
-const IMG_RE = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
+const IMG_RE = /https?:\/\/[^\s<>"')]+?\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#][^\s<>"')]*)?/i;
 
 export interface StorySlide {
 	id: string;
@@ -64,14 +64,25 @@ function extractImage(ev: Pick<Event, 'content' | 'tags'>): string | undefined {
 	return ev.content.match(IMG_RE)?.[0];
 }
 
+function cleanStoryContent(content: string, imageUrl?: string): string {
+	if (!imageUrl) return content.trim();
+	return content
+		.split(imageUrl)
+		.join(' ')
+		.replace(/\*{2,}/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
 function parseSlide(ev: Event): StorySlide | null {
 	const expiration = ev.tags.find((t) => t[0] === 'expiration')?.[1];
 	const expiresAt = expiration ? Number(expiration) : ev.created_at + STORY_TTL;
+	const imageUrl = extractImage(ev);
 	const slide: StorySlide = {
 		id: ev.id,
 		pubkey: ev.pubkey.toLowerCase(),
-		content: ev.content,
-		imageUrl: extractImage(ev),
+		content: cleanStoryContent(ev.content, imageUrl),
+		imageUrl,
 		bg: ev.tags.find((t) => t[0] === 'background')?.[1] || undefined,
 		createdAt: ev.created_at,
 		expiresAt
