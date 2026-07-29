@@ -103,6 +103,9 @@
 	);
 	let burst = $state(false);
 	let rawOpen = $state(false);
+	let deleteOpen = $state(false);
+	let pendingDelete = $state<FeedNote | null>(null);
+	let deleting = $state(false);
 	let previewOpen = $state(false);
 	let previewImageUrl = $state('');
 	let replyOpen = $state(false);
@@ -125,6 +128,7 @@
 	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(0, 2));
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
 	const saved = $derived(bookmarks.has(note.id));
+	const deleteTargetLabel = $derived(pendingDelete?.id === note.id ? 'note' : 'comment');
 
 	function sensitiveMediaReason() {
 		const contentWarning = note.tags.find(
@@ -365,14 +369,31 @@
 		popovers.close();
 	}
 
-	async function deleteNote() {
+	function askDeleteNote() {
 		popovers.close();
-		if (!confirm('Request deletion for this note?')) return;
+		pendingDelete = note;
+		deleteOpen = true;
+	}
+
+	function cancelDelete() {
+		if (deleting) return;
+		pendingDelete = null;
+		deleteOpen = false;
+	}
+
+	async function confirmDelete() {
+		const target = pendingDelete;
+		if (!target || deleting) return;
+		deleting = true;
 		try {
-			await feed.deleteNote(note);
+			await feed.deleteNote(target);
+			pendingDelete = null;
+			deleteOpen = false;
 			toasts.success('Deletion request published');
 		} catch (e) {
-			toasts.error((e as Error).message);
+			toasts.error((e as Error).message || 'Could not publish deletion request');
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -477,14 +498,9 @@
 		toasts.info('Comment hidden');
 	}
 
-	async function deleteComment(reply: FeedNote) {
-		if (!confirm('Request deletion for this comment?')) return;
-		try {
-			await feed.deleteNote(reply);
-			toasts.success('Deletion request published');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
+	function askDeleteComment(reply: FeedNote) {
+		pendingDelete = reply;
+		deleteOpen = true;
 	}
 
 	$effect(() => {
@@ -644,7 +660,7 @@
 					{:else}
 						<button
 							type="button"
-							onclick={deleteNote}
+							onclick={askDeleteNote}
 							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
 						>
 							<Icon name="i-lucide-trash-2" class="size-4 shrink-0" />
@@ -1061,7 +1077,7 @@
 							{#if identity.current?.pk === reply.pubkey}
 								<button
 									type="button"
-									onclick={() => deleteComment(reply)}
+									onclick={() => askDeleteComment(reply)}
 									class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 								>
 									Delete
@@ -1113,7 +1129,7 @@
 												{#if identity.current?.pk === child.pubkey}
 													<button
 														type="button"
-														onclick={() => deleteComment(child)}
+														onclick={() => askDeleteComment(child)}
 														class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 													>
 														Delete
@@ -1233,6 +1249,47 @@
 		</div>
 	</div>
 </article>
+
+<Dialog bind:open={deleteOpen} title={`Delete ${deleteTargetLabel}`}>
+	<div class="space-y-4">
+		<div
+			class="flex size-10 items-center justify-center rounded-full bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]"
+		>
+			<Icon name="i-lucide-triangle-alert" class="size-5" />
+		</div>
+		<div class="space-y-1.5">
+			<p class="text-[15px] font-bold text-[var(--ui-text)]">
+				Delete this {deleteTargetLabel}?
+			</p>
+			<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+				This publishes a deletion request to your relays and removes it from your feed. Other
+				clients may take time to reflect the change.
+			</p>
+		</div>
+	</div>
+	{#snippet footer()}
+		<button
+			type="button"
+			onclick={cancelDelete}
+			disabled={deleting}
+			class="inline-flex h-9 items-center justify-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			Cancel
+		</button>
+		<button
+			type="button"
+			onclick={confirmDelete}
+			disabled={deleting || !pendingDelete}
+			class="inline-flex h-9 items-center gap-2 rounded-full bg-[var(--tone-error-text)] px-4 text-[13px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			<Icon
+				name={deleting ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
+				class="size-4 {deleting ? 'animate-spin' : ''}"
+			/>
+			{deleting ? 'Deleting…' : `Delete ${deleteTargetLabel}`}
+		</button>
+	{/snippet}
+</Dialog>
 
 <Dialog bind:open={rawOpen} title="Raw note">
 	<div class="space-y-3">
