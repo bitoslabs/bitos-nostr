@@ -403,7 +403,7 @@
 																name={actorName(g.pubkey)}
 																picture={profiles.get(g.pubkey)?.picture}
 																size={40}
-																class="ring-2 ring-[var(--surface-bg)]"
+																class="border border-[var(--ui-border-muted)] ring-2 ring-[var(--surface-bg)]"
 															/>
 														</div>
 													{/each}
@@ -420,6 +420,7 @@
 													name={actorName(item.pubkey)}
 													picture={profile?.picture}
 													size={44}
+													class="border border-[var(--ui-border-muted)]"
 												/>
 												<span
 													class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
