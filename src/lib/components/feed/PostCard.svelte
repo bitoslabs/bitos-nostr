@@ -46,6 +46,10 @@
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
+	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
+	const currentDisplayName = $derived(
+		currentProfile?.display_name || currentProfile?.name || 'You'
+	);
 	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(identity.current?.pk === note.pubkey);
 	const liked = $derived(note.reactions.some((r) => r.byMe));
@@ -320,18 +324,18 @@
 		try {
 			const parsed = new URL(url);
 			const pathname = decodeURIComponent(parsed.pathname);
+			if (videoPattern.test(pathname)) return 'video';
+			if (audioPattern.test(pathname)) return 'audio';
 			if (
 				imagePattern.test(pathname) ||
 				imageFormatPattern.test(parsed.search) ||
 				imagePathPattern.test(pathname)
 			)
 				return 'image';
-			if (videoPattern.test(pathname)) return 'video';
-			if (audioPattern.test(pathname)) return 'audio';
 		} catch {
-			if (/\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url)) return 'image';
 			if (/\.(?:m3u8|m4v|mov|mp4|webm)(?:[?#].*)?$/i.test(url)) return 'video';
 			if (/\.(?:aac|flac|m4a|mp3|ogg|opus|wav)(?:[?#].*)?$/i.test(url)) return 'audio';
+			if (/\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url)) return 'image';
 		}
 		return 'link';
 	}
@@ -505,6 +509,10 @@
 
 	$effect(() => {
 		if (!previewOpen) previewImageUrl = '';
+	});
+
+	$effect(() => {
+		if (identity.current) profiles.ensure([identity.current.pk]);
 	});
 </script>
 
@@ -1130,6 +1138,14 @@
 
 						{#if replyingToCommentId === reply.id}
 							<div class="mt-2 flex items-center gap-2">
+								{#if identity.current}
+									<Avatar
+										pubkey={identity.current.pk}
+										name={currentDisplayName}
+										picture={currentProfile?.picture}
+										size={28}
+									/>
+								{/if}
 								<input
 									bind:value={commentReplyText}
 									type="text"
@@ -1188,12 +1204,12 @@
 	<div class="px-4 pt-1 pb-4 {replyOpen || replyText ? '' : 'hidden sm:block'}">
 		<div class="flex items-center gap-2">
 			{#if identity.current}
-				{@const mk = profiles.get(identity.current.pk)}
-				<div
-					class="grid size-7 shrink-0 place-items-center rounded-lg bg-warm-500 text-[10px] font-bold text-white"
-				>
-					{(mk?.display_name || 'Y').slice(0, 2).toUpperCase()}
-				</div>
+				<Avatar
+					pubkey={identity.current.pk}
+					name={currentDisplayName}
+					picture={currentProfile?.picture}
+					size={28}
+				/>
 			{/if}
 			<input
 				bind:this={replyInput}

@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
+	import { media } from '$lib/stores/media.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
@@ -155,6 +156,7 @@
 		preferences.load();
 		preferences.apply();
 		preferences.startSystemWatcher();
+		media.load();
 		identity.load();
 		relays.load();
 	});

@@ -8,6 +8,8 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import { preferences, accentOptions, neutralOptions } from '$lib/theme/preferences.svelte';
 	import type { DensityMode, RoundedMode } from '$lib/theme/preferences.svelte';
+	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
+	import type { MediaProviderId } from '$lib/media/uploaders';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -25,6 +27,7 @@
 		{ key: 'notifications', label: 'Notifications', icon: 'i-lucide-bell' },
 		{ key: 'appearance', label: 'Appearance', icon: 'i-lucide-palette' },
 		{ key: 'security', label: 'Security', icon: 'i-lucide-shield-check' },
+		{ key: 'media', label: 'Media & Uploads', icon: 'i-lucide-cloud-upload' },
 		{ key: 'language', label: 'Language & Region', icon: 'i-lucide-languages' },
 		{ key: 'help', label: 'Help & Support', icon: 'i-lucide-circle-help' },
 		{ key: 'about', label: 'About', icon: 'i-lucide-info' }
@@ -71,6 +74,43 @@
 	let editingNip05 = $state('');
 	let editingLightning = $state('');
 	let savingProfile = $state(false);
+
+	// avatar / banner upload via the configured media provider
+	let avatarInput = $state<HTMLInputElement | null>(null);
+	let bannerInput = $state<HTMLInputElement | null>(null);
+	let uploadingMedia = $state<'avatar' | 'banner' | null>(null);
+
+	function activeUploadProvider(): MediaProviderId | 'none' {
+		const def = media.state.defaultProvider;
+		if (def !== 'none' && media.isConfigured(def)) return def;
+		return media.configured[0]?.id ?? 'none';
+	}
+
+	async function uploadProfileImage(file: File, target: 'avatar' | 'banner') {
+		const provider = activeUploadProvider();
+		if (provider === 'none') {
+			toasts.error('No media provider configured. Add one in Settings → Media & Uploads.');
+			return;
+		}
+		uploadingMedia = target;
+		try {
+			const result = await media.upload(file, provider);
+			if (target === 'avatar') editingPicture = result.url;
+			else editingBanner = result.url;
+			toasts.success(`Uploaded via ${providerLabel(provider)}`);
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			uploadingMedia = null;
+		}
+	}
+
+	function onProfileImageInput(e: Event, target: 'avatar' | 'banner') {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (file) void uploadProfileImage(file, target);
+		input.value = '';
+	}
 
 	function clean(value: string) {
 		return value.trim() || undefined;
@@ -202,6 +242,31 @@
 		}
 	}
 
+	// --- media providers (Cloudinary / S3) ---
+	let revealS3Secret = $state(false);
+	let revealCldSecret = $state(false);
+	let testingProvider = $state<MediaProviderId | null>(null);
+
+	async function testUpload(id: MediaProviderId) {
+		if (testingProvider) return;
+		if (!media.isConfigured(id)) {
+			toasts.error('Fill in the required fields first');
+			return;
+		}
+		testingProvider = id;
+		try {
+			const blob = new Blob(['BitOS upload test\n'], { type: 'text/plain' });
+			const file = new File([blob], 'bitos-test.txt', { type: 'text/plain' });
+			const result = await media.upload(file, id);
+			toasts.success(`Test upload OK via ${providerLabel(id)}`);
+			void result;
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			testingProvider = null;
+		}
+	}
+
 	// generic toggles for the decorative sections
 	let t = $state<Record<string, boolean>>({
 		privateAcc: false,
@@ -288,17 +353,42 @@
 		<div class="mx-auto max-w-[680px] px-5 py-6 sm:px-8">
 			<!-- ACCOUNT -->
 			{#if section === 'account'}
+				<input
+					bind:this={avatarInput}
+					type="file"
+					accept="image/*"
+					class="hidden"
+					onchange={(e) => onProfileImageInput(e, 'avatar')}
+				/>
+				<input
+					bind:this={bannerInput}
+					type="file"
+					accept="image/*"
+					class="hidden"
+					onchange={(e) => onProfileImageInput(e, 'banner')}
+				/>
 				<h2 class="mb-1 font-display text-[24px] font-extrabold">Account</h2>
 				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
 					Update your Nostr profile — changes are published to relays.
 				</p>
 
 				<div class="post-card mb-5 p-5">
+					{#if editingBanner}
+						<div class="-mx-5 -mt-5 mb-5 overflow-hidden rounded-t-2xl">
+							<img src={editingBanner} alt="banner preview" class="h-24 w-full object-cover" />
+						</div>
+					{/if}
 					<div class="mb-5 flex items-center gap-4">
-						<div
-							class="grid size-16 shrink-0 place-items-center rounded-2xl bg-warm-500 font-bold text-white"
-						>
-							{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
+						<div class="size-16 shrink-0 overflow-hidden rounded-2xl">
+							{#if editingPicture}
+								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
+							{:else}
+								<div
+									class="grid size-16 place-items-center rounded-2xl bg-warm-500 font-bold text-white"
+								>
+									{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
+								</div>
+							{/if}
 						</div>
 						<div class="flex-1">
 							<p class="text-[15px] font-bold">{editingDisplayName || editingUsername || 'You'}</p>
@@ -307,7 +397,10 @@
 						<Button
 							color="neutral"
 							variant="subtle"
-							onclick={() => toasts.info('Paste an image URL in Avatar URL')}>Change photo</Button
+							icon={uploadingMedia === 'avatar' ? 'i-lucide-loader-circle' : 'i-lucide-camera'}
+							onclick={() => avatarInput?.click()}
+							disabled={uploadingMedia !== null}
+							>{uploadingMedia === 'avatar' ? 'Uploading…' : 'Change photo'}</Button
 						>
 					</div>
 					<div class="grid gap-4 sm:grid-cols-2">
@@ -369,7 +462,24 @@
 								placeholder="https://..."
 								type="url"
 								class="w-full"
-							/>
+							>
+								{#snippet trailing()}
+									<button
+										type="button"
+										title="Upload via {providerLabel(activeUploadProvider())}"
+										onclick={() => avatarInput?.click()}
+										disabled={uploadingMedia !== null}
+										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"
+									>
+										<Icon
+											name={uploadingMedia === 'avatar'
+												? 'i-lucide-loader-circle'
+												: 'i-lucide-upload'}
+											class="size-3.5 {uploadingMedia === 'avatar' ? 'animate-spin' : ''}"
+										/>
+									</button>
+								{/snippet}
+							</Input>
 						</div>
 						<div>
 							<label
@@ -384,7 +494,24 @@
 								placeholder="https://..."
 								type="url"
 								class="w-full"
-							/>
+							>
+								{#snippet trailing()}
+									<button
+										type="button"
+										title="Upload via {providerLabel(activeUploadProvider())}"
+										onclick={() => bannerInput?.click()}
+										disabled={uploadingMedia !== null}
+										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"
+									>
+										<Icon
+											name={uploadingMedia === 'banner'
+												? 'i-lucide-loader-circle'
+												: 'i-lucide-upload'}
+											class="size-3.5 {uploadingMedia === 'banner' ? 'animate-spin' : ''}"
+										/>
+									</button>
+								{/snippet}
+							</Input>
 						</div>
 						<div>
 							<label
@@ -438,20 +565,6 @@
 						>
 						<Button color="neutral" variant="ghost" onclick={resetProfileForm}>Cancel</Button>
 					</div>
-				</div>
-
-				<div class="mb-5 grid grid-cols-3 gap-3">
-					{#each [{ l: 'Notes', v: '348', d: '+12 this month', c: 'text-accent-500' }, { l: 'Followers', v: '12.4K', d: '+248 this week', c: 'text-accent-500' }, { l: 'Reactions', v: '1.2M', d: '+89% growth', c: 'text-primary-500' }] as s (s.l)}
-						<div class="post-card p-4">
-							<p
-								class="text-[11px] font-semibold tracking-wide text-[var(--ui-text-muted)] uppercase"
-							>
-								{s.l}
-							</p>
-							<p class="mt-1 font-display text-[24px] font-extrabold">{s.v}</p>
-							<p class="mt-1 text-[11px] font-semibold {s.c}">{s.d}</p>
-						</div>
-					{/each}
 				</div>
 
 				<div class="post-card p-5">
@@ -939,6 +1052,374 @@
 							</li>
 						{/each}
 					</ul>
+				</div>
+			{/if}
+
+			<!-- MEDIA & UPLOADS -->
+			{#if section === 'media'}
+				<h2 class="mb-1 font-display text-[24px] font-extrabold">Media & Uploads</h2>
+				<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
+					Choose where photos and videos are hosted when you attach them to a note.
+				</p>
+
+				<!-- Default provider -->
+				<div class="post-card mb-5 p-5">
+					<div class="mb-4 flex items-center gap-2">
+						<Icon name="i-lucide-cloud-upload" class="size-[18px] text-primary-500" />
+						<h3 class="text-[15px] font-bold">Default provider</h3>
+					</div>
+					<p class="mb-3 text-[12px] text-[var(--ui-text-muted)]">
+						Used by the composer unless you pick another one while posting.
+					</p>
+					<div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+						<button
+							type="button"
+							onclick={() => media.setDefaultProvider('none')}
+							class="rounded-xl border p-3 text-left transition {media.state.defaultProvider ===
+							'none'
+								? 'border-primary-500 bg-primary-500/10 text-primary-500'
+								: 'border-[var(--ui-border)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]'}"
+						>
+							<p class="text-[13px] font-bold text-[var(--ui-text)]">None</p>
+							<p class="mt-0.5 text-[11px]">Disable uploads</p>
+						</button>
+						{#each MEDIA_PROVIDERS as p (p.id)}
+							<button
+								type="button"
+								onclick={() => media.setDefaultProvider(p.id)}
+								class="rounded-xl border p-3 text-left transition {media.state.defaultProvider ===
+								p.id
+									? 'border-primary-500 bg-primary-500/10 text-primary-500'
+									: 'border-[var(--ui-border)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]'}"
+							>
+								<div class="flex items-center gap-2">
+									<Icon name={p.icon} class="size-4" />
+									<p class="text-[13px] font-bold text-[var(--ui-text)]">{p.label}</p>
+									{#if media.isConfigured(p.id)}
+										<Badge tone="success" class="ml-auto">ready</Badge>
+									{:else}
+										<Badge tone="warning" class="ml-auto">setup</Badge>
+									{/if}
+								</div>
+								<p class="mt-1 text-[11px]">{p.description}</p>
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Cloudinary -->
+				<div class="post-card mb-5 p-5">
+					<div class="mb-4 flex items-center gap-2">
+						<Icon name="i-lucide-cloud-sun" class="size-[18px] text-accent-500" />
+						<h3 class="text-[15px] font-bold">Cloudinary</h3>
+						{#if media.isConfigured('cloudinary')}
+							{#if media.state.cloudinary.apiKey?.trim() && media.state.cloudinary.apiSecret?.trim()}
+								<Badge tone="primary" class="ml-auto">signed</Badge>
+							{:else}<Badge tone="success" class="ml-auto">connected</Badge>{/if}
+						{/if}
+					</div>
+					<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
+						Two options: (1) an <strong>unsigned upload preset</strong> (safest — no secret in the
+						browser), or (2) your <strong>API key + API secret</strong> for signed uploads with full control.
+						Since BitOS keeps everything on this device, the secret never leaves it.
+					</p>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="cld-cloud-name"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Cloud name</label
+							>
+							<Input
+								id="cld-cloud-name"
+								value={media.state.cloudinary.cloudName}
+								oninput={(e) => media.updateCloudinary({ cloudName: e.currentTarget.value })}
+								icon="i-lucide-cloud"
+								placeholder="my-cloud"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="cld-preset"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Upload preset (optional)</label
+							>
+							<Input
+								id="cld-preset"
+								value={media.state.cloudinary.uploadPreset ?? ''}
+								oninput={(e) => media.updateCloudinary({ uploadPreset: e.currentTarget.value })}
+								icon="i-lucide-shield"
+								placeholder="unsigned_preset"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="cld-api-key"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>API key (optional)</label
+							>
+							<Input
+								id="cld-api-key"
+								value={media.state.cloudinary.apiKey ?? ''}
+								oninput={(e) => media.updateCloudinary({ apiKey: e.currentTarget.value })}
+								icon="i-lucide-key-round"
+								placeholder="123456789012345"
+								autocomplete="off"
+								class="w-full font-mono text-[11.5px]"
+							/>
+						</div>
+						<div>
+							<label
+								for="cld-api-secret"
+								class="mb-1.5 flex items-center justify-between text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+							>
+								<span>API secret (optional)</span>
+								<button
+									type="button"
+									onclick={() => (revealCldSecret = !revealCldSecret)}
+									class="flex items-center gap-1 text-[11px] font-medium text-primary-500"
+									><Icon
+										name={revealCldSecret ? 'i-lucide-eye-off' : 'i-lucide-eye'}
+										class="size-3.5"
+									/>{revealCldSecret ? 'Hide' : 'Reveal'}</button
+								>
+							</label>
+							<Input
+								id="cld-api-secret"
+								value={media.state.cloudinary.apiSecret ?? ''}
+								oninput={(e) => media.updateCloudinary({ apiSecret: e.currentTarget.value })}
+								icon="i-lucide-lock"
+								type={revealCldSecret ? 'text' : 'password'}
+								placeholder="••••••••"
+								autocomplete="off"
+								class="w-full font-mono text-[11.5px]"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="cld-folder"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Folder (optional)</label
+							>
+							<Input
+								id="cld-folder"
+								value={media.state.cloudinary.folder ?? ''}
+								oninput={(e) => media.updateCloudinary({ folder: e.currentTarget.value })}
+								icon="i-lucide-folder"
+								placeholder="bitos"
+								class="w-full"
+							/>
+						</div>
+					</div>
+					<div class="mt-5 flex gap-2 border-t border-[var(--ui-border-muted)] pt-5">
+						<Button
+							color="primary"
+							variant="subtle"
+							icon={testingProvider === 'cloudinary'
+								? 'i-lucide-loader-circle'
+								: 'i-lucide-upload-cloud'}
+							onclick={() => testUpload('cloudinary')}
+							disabled={!!testingProvider}>Test upload</Button
+						>
+						<Button
+							color="neutral"
+							variant="ghost"
+							onclick={() =>
+								media.updateCloudinary({
+									cloudName: '',
+									uploadPreset: '',
+									apiKey: '',
+									apiSecret: '',
+									folder: ''
+								})}>Clear</Button
+						>
+					</div>
+				</div>
+
+				<!-- S3 / R2 -->
+				<div class="post-card mb-5 p-5">
+					<div class="mb-4 flex items-center gap-2">
+						<Icon name="i-lucide-database" class="size-[18px] text-warm-500" />
+						<h3 class="text-[15px] font-bold">S3 / R2 / B2</h3>
+						{#if media.isConfigured('s3')}<Badge tone="success" class="ml-auto">connected</Badge
+							>{/if}
+					</div>
+					<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
+						Works with AWS S3 and S3-compatible storage. Enable CORS on the bucket to allow PUT
+						requests from this site. The secret key is stored locally on this device.
+					</p>
+					<div class="grid gap-4 sm:grid-cols-2">
+						<div>
+							<label
+								for="s3-bucket"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Bucket</label
+							>
+							<Input
+								id="s3-bucket"
+								value={media.state.s3.bucket}
+								oninput={(e) => media.updateS3({ bucket: e.currentTarget.value })}
+								icon="i-lucide-bucket"
+								placeholder="my-bucket"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="s3-region"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Region</label
+							>
+							<Input
+								id="s3-region"
+								value={media.state.s3.region}
+								oninput={(e) => media.updateS3({ region: e.currentTarget.value })}
+								icon="i-lucide-globe"
+								placeholder="us-east-1 / auto"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="s3-endpoint"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Endpoint (optional — R2 / MinIO)</label
+							>
+							<Input
+								id="s3-endpoint"
+								value={media.state.s3.endpoint ?? ''}
+								oninput={(e) => media.updateS3({ endpoint: e.currentTarget.value })}
+								icon="i-lucide-link"
+								placeholder="https://<acct>.r2.cloudflarestorage.com"
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div>
+							<label
+								for="s3-access-key"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Access key</label
+							>
+							<Input
+								id="s3-access-key"
+								value={media.state.s3.accessKey}
+								oninput={(e) => media.updateS3({ accessKey: e.currentTarget.value })}
+								icon="i-lucide-key-round"
+								placeholder="AKIA…"
+								autocomplete="off"
+								class="w-full font-mono text-[11.5px]"
+							/>
+						</div>
+						<div>
+							<label
+								for="s3-secret"
+								class="mb-1.5 flex items-center justify-between text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+							>
+								<span>Secret key</span>
+								<button
+									type="button"
+									onclick={() => (revealS3Secret = !revealS3Secret)}
+									class="flex items-center gap-1 text-[11px] font-medium text-primary-500"
+									><Icon
+										name={revealS3Secret ? 'i-lucide-eye-off' : 'i-lucide-eye'}
+										class="size-3.5"
+									/>{revealS3Secret ? 'Hide' : 'Reveal'}</button
+								>
+							</label>
+							<Input
+								id="s3-secret"
+								value={media.state.s3.secretKey}
+								oninput={(e) => media.updateS3({ secretKey: e.currentTarget.value })}
+								icon="i-lucide-lock"
+								type={revealS3Secret ? 'text' : 'password'}
+								placeholder="••••••••"
+								autocomplete="off"
+								class="w-full font-mono text-[11.5px]"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="s3-public"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Public URL base (optional — CDN)</label
+							>
+							<Input
+								id="s3-public"
+								value={media.state.s3.publicUrlBase ?? ''}
+								oninput={(e) => media.updateS3({ publicUrlBase: e.currentTarget.value })}
+								icon="i-lucide-globe"
+								placeholder="https://cdn.example.com"
+								type="url"
+								class="w-full"
+							/>
+						</div>
+						<div class="sm:col-span-2">
+							<label
+								for="s3-folder"
+								class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+								>Folder prefix (optional)</label
+							>
+							<Input
+								id="s3-folder"
+								value={media.state.s3.folder ?? ''}
+								oninput={(e) => media.updateS3({ folder: e.currentTarget.value })}
+								icon="i-lucide-folder"
+								placeholder="bitos"
+								class="w-full"
+							/>
+						</div>
+					</div>
+					<div class="mt-5 flex gap-2 border-t border-[var(--ui-border-muted)] pt-5">
+						<Button
+							color="primary"
+							variant="subtle"
+							icon={testingProvider === 's3' ? 'i-lucide-loader-circle' : 'i-lucide-upload-cloud'}
+							onclick={() => testUpload('s3')}
+							disabled={!!testingProvider}>Test upload</Button
+						>
+						<Button
+							color="neutral"
+							variant="ghost"
+							onclick={() =>
+								media.updateS3({
+									bucket: '',
+									region: 'us-east-1',
+									endpoint: '',
+									accessKey: '',
+									secretKey: '',
+									publicUrlBase: '',
+									folder: ''
+								})}>Clear</Button
+						>
+					</div>
+				</div>
+
+				<div class="post-card p-5">
+					<div class="flex items-start gap-2.5">
+						<Icon
+							name="i-lucide-shield-alert"
+							class="mt-px size-4 shrink-0 text-[var(--tone-warning-text)]"
+						/>
+						<div class="text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
+							<p>
+								Credentials are stored only in this browser (localStorage), exactly like your Nostr
+								private key. For S3, restrict the IAM key to a single bucket with write-only (or
+								read+write) permissions.
+							</p>
+							<button
+								type="button"
+								onclick={() => {
+									media.reset();
+									toasts.success('Media settings cleared');
+								}}
+								class="mt-2 font-semibold text-[var(--tone-error-text)] hover:underline"
+								>Erase all media credentials</button
+							>
+						</div>
+					</div>
 				</div>
 			{/if}
 
