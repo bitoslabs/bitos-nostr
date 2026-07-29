@@ -98,5 +98,7 @@ export const NOSTR_KINDS = {
 	DIRECT_MESSAGE: 4,
 	REPOST: 6,
 	CONTACT_LIST: 3,
-	ZAP: 9735
+	ZAP: 9735,
+	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
+	STORY_STATUS: 30315
 } as const;

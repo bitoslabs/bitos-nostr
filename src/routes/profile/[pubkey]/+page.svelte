@@ -5,6 +5,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
+	import StoryRing from '$lib/components/feed/StoryRing.svelte';
 	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
@@ -167,13 +168,15 @@
 
 	<div class="mx-auto max-w-[900px] px-6">
 		<div class="relative -mt-16 mb-5 flex flex-col gap-4 sm:flex-row sm:items-end">
-			<Avatar
-				{pubkey}
-				name={displayName}
-				picture={profile?.picture}
-				size={128}
-				class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
-			/>
+			<StoryRing {pubkey} rounded="rounded-3xl">
+				<Avatar
+					{pubkey}
+					name={displayName}
+					picture={profile?.picture}
+					size={128}
+					class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
+				/>
+			</StoryRing>
 			<div class="min-w-0 flex-1 pb-2">
 				<div class="flex min-w-0 items-center gap-2">
 					<h1

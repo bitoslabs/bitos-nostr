@@ -9,6 +9,8 @@
 	import { humanBytes } from '$lib/media/uploaders';
 	import Textarea from '$lib/components/ui/Textarea.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import StoryRing from './StoryRing.svelte';
 
 	let text = $state('');
 	let posting = $state(false);
@@ -23,6 +25,8 @@
 	let videoInput = $state<HTMLInputElement | null>(null);
 
 	const me = $derived(identity.current);
+	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
+	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const SOFT_LIMIT = 4_000;
 	const HARD_LIMIT = 16_000;
 	const remaining = $derived(HARD_LIMIT - text.length);
@@ -60,6 +64,10 @@
 			return;
 		}
 		selectedProvider = configuredProviders[0]?.id ?? 'none';
+	});
+
+	$effect(() => {
+		if (me) profiles.ensure([me.pk]);
 	});
 
 	const attachActions = [
@@ -155,14 +163,11 @@
 </script>
 
 {#if me}
-	{@const displayName = profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You'}
 	<div class="post-card p-4">
 		<div class="flex items-start gap-3">
-			<div
-				class="grid size-10 shrink-0 place-items-center rounded-xl bg-warm-500 text-sm font-bold text-white"
-			>
-				{displayName.slice(0, 2).toUpperCase()}
-			</div>
+			<StoryRing pubkey={me.pk} interactive={false}>
+				<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={40} />
+			</StoryRing>
 			<div class="min-w-0 flex-1">
 				<Textarea
 					id="composer-input"

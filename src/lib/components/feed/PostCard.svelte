@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import StoryRing from './StoryRing.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -523,7 +524,9 @@
 	<!-- Author header -->
 	<header class="flex items-center justify-between gap-2 p-4 pb-3">
 		<a href={`/profile/${note.pubkey}`} class="flex min-w-0 flex-1 items-center gap-3">
-			<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			<StoryRing pubkey={note.pubkey} interactive={false}>
+				<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			</StoryRing>
 			<div class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
