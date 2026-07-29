@@ -114,12 +114,18 @@ class StoriesStore {
 		this.loading = true;
 		const authors = this.authorList(me);
 		void this.fetch(authors);
-		this.unsub = subscribe([{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 }], {
-			oneose: () => {
-				this.loading = false;
-			},
-			onevent: (ev) => this.ingest(ev)
-		});
+		this.unsub = subscribe(
+			[
+				{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 },
+				{ kinds: [NOSTR_KINDS.DELETE], authors, limit: 200 }
+			],
+			{
+				oneose: () => {
+					this.loading = false;
+				},
+				onevent: (ev) => this.ingest(ev)
+			}
+		);
 	};
 
 	stop = () => {
@@ -136,7 +142,10 @@ class StoriesStore {
 
 	private async fetch(authors: string[]) {
 		try {
-			const events = await queryOnce([{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 }]);
+			const events = await queryOnce([
+				{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 },
+				{ kinds: [NOSTR_KINDS.DELETE], authors, limit: 200 }
+			]);
 			for (const ev of events) this.ingest(ev);
 			// opportunistically load author profiles
 			profiles.ensure(events.map((e) => e.pubkey));
@@ -146,6 +155,10 @@ class StoriesStore {
 	}
 
 	private ingest(ev: Event) {
+		if (ev.kind === NOSTR_KINDS.DELETE) {
+			this.ingestDelete(ev);
+			return;
+		}
 		const slide = parseSlide(ev);
 		if (!slide) return;
 		let map = this.slidesByAuthor.get(slide.pubkey);
@@ -158,6 +171,17 @@ class StoriesStore {
 		map.set(slide.id, slide);
 		this.rebuild();
 		profiles.ensure([slide.pubkey]);
+	}
+
+	private ingestDelete(ev: Event) {
+		const author = ev.pubkey.toLowerCase();
+		const map = this.slidesByAuthor.get(author);
+		if (!map) return;
+		for (const id of ev.tags.filter((tag) => tag[0] === 'e').map((tag) => tag[1])) {
+			if (!id) continue;
+			map.delete(id);
+		}
+		this.rebuild();
 	}
 
 	private rebuild() {
@@ -217,6 +241,24 @@ class StoriesStore {
 		await publish(event);
 		this.ingest(event);
 		return event.id;
+	}
+
+	async deleteSlide(slide: StorySlide) {
+		if (!browser) return;
+		const me = identity.current;
+		if (!me) throw new Error('No identity');
+		if (slide.pubkey !== me.pk) throw new Error('You can only delete your own stories');
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.DELETE,
+				content: 'Deleted story from BitOS',
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [['e', slide.id]]
+			},
+			hexToBytes(me.sk)
+		);
+		await publish(event);
+		this.ingestDelete(event);
 	}
 
 	/** Mark an author's stories as seen (drives the "read" ring). */

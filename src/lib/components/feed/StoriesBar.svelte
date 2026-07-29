@@ -32,12 +32,12 @@
 		return p?.display_name || p?.name || pubkey.slice(0, 8);
 	}
 
-	function noteFor(author: StoryAuthor) {
-		return author.slides.find((slide) => slide.content.trim())?.content.trim() ?? '';
-	}
-
 	function latestSlide(author?: StoryAuthor) {
 		return author?.slides[0];
+	}
+
+	function noteFor(author: StoryAuthor) {
+		return author.slides.find((slide) => slide.content.trim())?.content.trim() ?? '';
 	}
 
 	function previewStyle(author?: StoryAuthor) {
@@ -45,33 +45,72 @@
 		if (slide?.imageUrl) return '';
 		return slide?.bg ?? 'linear-gradient(135deg, var(--ui-color-primary-500), var(--color-accent-500))';
 	}
+
+	// Signature FB/IG gradient ring for unseen, muted ring for seen.
+	// Your own story always reads as "unseen" to you.
+	function ringClass(author: StoryAuthor) {
+		const mine = author.pubkey === me?.pk?.toLowerCase();
+		return mine || author.hasUnseen
+			? 'bg-gradient-to-tr from-primary-500 via-accent-500 to-warm-500'
+			: 'bg-[var(--ui-border-accented)]';
+	}
+
+	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
+	const myPicture = $derived(myProfile?.picture);
 </script>
 
-<div class="overflow-hidden border-y border-[var(--ui-border-muted)] bg-[var(--ui-bg)] py-3">
+<div class="overflow-hidden border-[var(--ui-border-muted)] bg-[var(--ui-bg)] py-4 px-0.5">
 	<div
-		class="flex [scrollbar-width:none] gap-3 overflow-x-auto px-4 pb-0.5 [&::-webkit-scrollbar]:hidden"
+		class="flex [scrollbar-width:none] gap-2.5 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden"
 	>
 		<!-- Create story -->
 		<div
-			class="relative h-[150px] w-[112px] shrink-0 overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] shadow-sm"
+			class="relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-elevated)] shadow-sm transition hover:shadow-md"
 		>
 			<button
 				type="button"
 				onclick={() => (composing = true)}
 				class="group absolute inset-0 text-left"
-				aria-label="Add story"
+				aria-label="Create story"
 			>
-				<div class="absolute inset-x-0 top-0 h-[66%] bg-[var(--ui-text-highlighted)]"></div>
-				<div class="absolute inset-x-0 bottom-0 h-[42%] bg-[var(--ui-bg-elevated)]"></div>
+				<!-- Cover: your own avatar / picture as cover -->
+				<div class="absolute inset-x-0 top-0 h-[68%] overflow-hidden">
+					{#if myPicture}
+						<img
+							src={myPicture}
+							alt=""
+							class="size-full object-cover transition duration-300 group-hover:scale-105"
+						/>
+					{:else}
+						<div
+							class="size-full bg-gradient-to-br from-primary-500/80 to-accent-500/80"
+						></div>
+						{#if me}
+							<div class="absolute inset-0 grid place-items-center">
+								<Avatar
+									pubkey={me.pk}
+									name={myProfile?.display_name || myProfile?.name || 'You'}
+									picture={myPicture}
+									size={56}
+								/>
+							</div>
+						{/if}
+					{/if}
+					<div class="absolute inset-0 bg-gradient-to-t from-black/35 to-transparent"></div>
+				</div>
+
+				<!-- Create button overlapping the boundary -->
 				<span
-					class="absolute inset-x-2 bottom-4 text-center text-[14px] leading-tight font-extrabold text-[var(--ui-text)]"
+					class="absolute right-0 bottom-[36%] left-0 mx-auto grid size-9 place-items-center rounded-full bg-primary-500 text-white ring-4 ring-[var(--ui-bg-elevated)] shadow-[var(--glow-primary)] transition group-hover:scale-105 group-hover:bg-primary-600"
 				>
-					Your story
+					<Icon name="i-lucide-plus" class="size-5" />
 				</span>
+
+				<!-- Label -->
 				<span
-					class="absolute right-0 bottom-[52px] left-0 mx-auto grid size-12 place-items-center rounded-full bg-primary-500 text-white ring-4 ring-[var(--ui-bg-elevated)] shadow-[var(--glow-primary)] transition group-hover:bg-primary-600"
+					class="absolute inset-x-2 bottom-3 text-center text-[13px] leading-tight font-bold text-[var(--ui-text)]"
 				>
-					<Icon name="i-lucide-plus" class="size-7" />
+					Create story
 				</span>
 			</button>
 		</div>
@@ -81,42 +120,38 @@
 			<button
 				type="button"
 				onclick={() => openAuthor(author)}
-				class="group relative h-[150px] w-[112px] shrink-0 overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary-500/30"
+				class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
 			>
 				{#if latestSlide(author)?.imageUrl}
 					<img
 						src={latestSlide(author)?.imageUrl}
 						alt=""
 						class="absolute inset-0 size-full object-cover object-center transition duration-300 group-hover:scale-105"
+						loading="lazy"
 					/>
 				{:else}
-					<div class="absolute inset-0" style="background:{previewStyle(author)}"></div>
+					<div class="absolute inset-0 transition duration-300 group-hover:scale-[1.03]" style="background:{previewStyle(author)}"><div class="flex h-full items-center justify-center p-3 pb-7"><p class="line-clamp-4 text-center text-[14px] leading-snug font-bold break-words text-white [text-shadow:0_1px_4px_rgba(0,0,0,0.45)]">{noteFor(author) || nameFor(author.pubkey)}</p></div></div>
 				{/if}
-				<div class="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/75"></div>
-				<div
-					class="absolute top-4 left-1/2 -translate-x-1/2 rounded-full p-[3px] {author.hasUnseen
-						? 'bg-primary-500'
-						: 'bg-white/35'}"
-				>
-					<Avatar
-						pubkey={author.pubkey}
-						name={nameFor(author.pubkey)}
-						picture={profiles.get(author.pubkey)?.picture}
-						size={42}
-						frame
-					/>
+
+				<!-- Legibility gradient -->
+				<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
+
+				<!-- Avatar with gradient ring (top-left) -->
+				<div class="absolute top-3 left-3 rounded-full p-[2.5px] {ringClass(author)}">
+					<div class="rounded-full bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
+						<Avatar
+							pubkey={author.pubkey}
+							name={nameFor(author.pubkey)}
+							picture={profiles.get(author.pubkey)?.picture}
+							size={34}
+						/>
+					</div>
 				</div>
-				<p
-					class="absolute inset-x-3 top-[62px] line-clamp-2 text-center text-[14px] leading-tight font-extrabold text-white"
+
+				<!-- Name (bottom-left) -->
+				<span
+					class="absolute inset-x-3 bottom-3 truncate text-left text-[13px] font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
 				>
-					{noteFor(author) || nameFor(author.pubkey)}
-				</p>
-				{#if author.hasUnseen}
-					<span
-						class="absolute top-3 right-3 size-2.5 rounded-full bg-primary-500 ring-2 ring-white/80"
-					></span>
-				{/if}
-				<span class="absolute inset-x-3 bottom-4 truncate text-[14px] leading-tight font-extrabold text-white">
 					{nameFor(author.pubkey)}
 				</span>
 			</button>
@@ -126,7 +161,7 @@
 			<button
 				type="button"
 				onclick={() => (composing = true)}
-				class="flex h-[150px] w-[112px] shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--ui-border)] bg-[var(--surface-bg)] px-3 text-center text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500/40 hover:text-primary-500"
+				class="flex h-[200px] w-[112px] shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--ui-border)] bg-[var(--surface-bg)] px-3 text-center text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500/40 hover:text-primary-500"
 			>
 				<Icon name="i-lucide-sparkles" class="size-5 text-accent-500" />
 				Be the first to post a story

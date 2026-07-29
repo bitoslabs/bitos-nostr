@@ -13,6 +13,7 @@
 		{ to: '/notifications', label: 'Notifications', icon: 'i-lucide-bell', notifications: true },
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
+		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark' },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' },
 		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2' }
 	];

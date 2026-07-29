@@ -1,8 +1,11 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import { stories, type StoryAuthor } from '$lib/nostr/stories.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
 	import { timeAgo } from '$lib/utils/format';
 
 	let {
@@ -13,16 +16,19 @@
 
 	let slideIndex = $state(0);
 	let paused = $state(false);
+	let deleting = $state(false);
+	let confirmDeleteOpen = $state(false);
 
 	const profile = $derived(profiles.get(author.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
 	const slides = $derived(author.slides);
 	const slide = $derived(slides[slideIndex]);
 	const durationMs = $derived(slide?.imageUrl ? 5000 : 7000);
+	const isMine = $derived(author.pubkey === identity.current?.pk);
 
 	// Auto-advance: restart the timer whenever the slide / pause state changes.
 	$effect(() => {
-		if (paused || !slide) return;
+		if (paused || confirmDeleteOpen || !slide) return;
 		const ms = durationMs;
 		const t = setTimeout(() => advance(), ms);
 		return () => clearTimeout(t);
@@ -31,6 +37,11 @@
 	// Mark seen as soon as the viewer opens.
 	$effect(() => {
 		stories.markSeen(author.pubkey);
+	});
+
+	$effect(() => {
+		if (slideIndex > 0 && slideIndex >= slides.length) slideIndex = slides.length - 1;
+		if (!slides.length) onclose();
 	});
 
 	function advance() {
@@ -61,6 +72,27 @@
 		else if (e.key === ' ') {
 			e.preventDefault();
 			paused = !paused;
+		}
+	}
+
+	function askDeleteCurrentSlide() {
+		if (!slide || deleting || !isMine) return;
+		paused = true;
+		confirmDeleteOpen = true;
+	}
+
+	async function deleteCurrentSlide() {
+		if (!slide || deleting || !isMine) return;
+		deleting = true;
+		try {
+			await stories.deleteSlide(slide);
+			toasts.success('Story deleted');
+			confirmDeleteOpen = false;
+			onclose();
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not delete story');
+		} finally {
+			deleting = false;
 		}
 	}
 </script>
@@ -117,6 +149,20 @@
 			>
 				<Icon name={paused ? 'i-lucide-play' : 'i-lucide-pause'} class="size-4" />
 			</button>
+			{#if isMine}
+				<button
+					type="button"
+					onclick={askDeleteCurrentSlide}
+					disabled={deleting}
+					class="grid size-8 place-items-center rounded-full text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+					aria-label="Delete story"
+				>
+					<Icon
+						name={deleting ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
+						class="size-4 {deleting ? 'animate-spin' : ''}"
+					/>
+				</button>
+			{/if}
 			<button
 				type="button"
 				onclick={onclose}
@@ -181,6 +227,40 @@
 		{/if}
 	</div>
 </div>
+
+<Dialog bind:open={confirmDeleteOpen} title="Delete story">
+	<div class="space-y-2">
+		<p class="text-[14px] font-semibold text-[var(--ui-text)]">
+			Delete this story from your profile?
+		</p>
+		<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+			BitOS will publish a delete event to your relays and remove this story from your device.
+		</p>
+	</div>
+
+	{#snippet footer()}
+		<button
+			type="button"
+			onclick={() => (confirmDeleteOpen = false)}
+			disabled={deleting}
+			class="inline-flex h-9 items-center justify-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			Cancel
+		</button>
+		<button
+			type="button"
+			onclick={deleteCurrentSlide}
+			disabled={deleting}
+			class="inline-flex h-9 items-center gap-2 rounded-full bg-[var(--tone-error-text)] px-4 text-[13px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			<Icon
+				name={deleting ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
+				class="size-4 {deleting ? 'animate-spin' : ''}"
+			/>
+			{deleting ? 'Deleting' : 'Delete'}
+		</button>
+	{/snippet}
+</Dialog>
 
 <style>
 	@keyframes story-progress {

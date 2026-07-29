@@ -11,6 +11,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import StoryRing from './StoryRing.svelte';
+	import PollComposer from './PollComposer.svelte';
 
 	let text = $state('');
 	let posting = $state(false);
@@ -23,6 +24,7 @@
 
 	let imageInput = $state<HTMLInputElement | null>(null);
 	let videoInput = $state<HTMLInputElement | null>(null);
+	let pollOpen = $state(false);
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
@@ -91,7 +93,12 @@
 
 	const stubActions = [
 		{ icon: 'i-lucide-clapperboard', label: 'Reel', color: 'text-warm-500', toast: 'Reel creator' },
-		{ icon: 'i-lucide-bar-chart-3', label: 'Poll', color: 'text-ink', toast: 'Poll creator' }
+		{
+			icon: 'i-lucide-bar-chart-3',
+			label: 'Poll',
+			color: 'text-ink',
+			onClick: () => (pollOpen = true)
+		}
 	];
 
 	async function handleFiles(files: FileList | null) {
@@ -285,7 +292,7 @@
 				{#each stubActions as a (a.label)}
 					<button
 						type="button"
-						onclick={() => toasts.info(a.toast)}
+						onclick={a.onClick ?? (() => toasts.info(a.toast))}
 						class="flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-primary-500/5"
 					>
 						<Icon name={a.icon} class="size-4 {a.color}" />
@@ -339,3 +346,5 @@
 		</div>
 	</div>
 {/if}
+
+<PollComposer bind:open={pollOpen} />

@@ -10,8 +10,10 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
 	import { popovers } from '$lib/stores/popovers.svelte';
+	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
+	import Poll from './Poll.svelte';
 
 	type ContentToken =
 		| { type: 'text'; value: string }
@@ -103,7 +105,6 @@
 	let rawOpen = $state(false);
 	let previewOpen = $state(false);
 	let previewImageUrl = $state('');
-	let saved = $state(isSaved());
 	let replyOpen = $state(false);
 	let replyText = $state('');
 	let replying = $state(false);
@@ -123,25 +124,7 @@
 	);
 	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(0, 2));
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
-
-	function savedIds() {
-		if (!browser) return [];
-		try {
-			const value = localStorage.getItem('bitos:saved-notes');
-			return value ? (JSON.parse(value) as string[]) : [];
-		} catch {
-			return [];
-		}
-	}
-
-	function isSaved() {
-		return savedIds().includes(note.id);
-	}
-
-	function persistSaved(ids: string[]) {
-		if (!browser) return;
-		localStorage.setItem('bitos:saved-notes', JSON.stringify(ids));
-	}
+	const saved = $derived(bookmarks.has(note.id));
 
 	function sensitiveMediaReason() {
 		const contentWarning = note.tags.find(
@@ -361,15 +344,11 @@
 	}
 
 	function toggleSaved() {
-		const ids = savedIds();
-		if (ids.includes(note.id)) {
-			persistSaved(ids.filter((id) => id !== note.id));
-			saved = false;
-			toasts.info('Removed from saved');
-		} else {
-			persistSaved([note.id, ...ids]);
-			saved = true;
+		const nextSaved = bookmarks.toggle(note);
+		if (nextSaved) {
 			toasts.success('Saved');
+		} else {
+			toasts.info('Removed from saved');
 		}
 		popovers.close();
 	}
@@ -717,6 +696,10 @@
 			>
 				{expanded ? 'Show less' : 'Show more'}
 			</button>
+		{/if}
+
+		{#if note.poll}
+			<Poll {note} />
 		{/if}
 	</div>
 
