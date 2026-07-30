@@ -245,6 +245,14 @@ class NotificationsStore {
 		this.persistMuted();
 	}
 
+	setMuted(type: NotificationItem['type'], muted: boolean) {
+		const next = new SvelteSet(this.muted);
+		if (muted) next.add(type);
+		else next.delete(type);
+		this.muted = next;
+		this.persistMuted();
+	}
+
 	private loadRead() {
 		this.readIds.clear();
 		if (!browser) return;

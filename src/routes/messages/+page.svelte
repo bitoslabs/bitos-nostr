@@ -2,12 +2,47 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { decode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
+	import {
+		GROUPS_KEY_PREFIX,
+		GROUP_CONTROL_PROCESSED_KEY_PREFIX,
+		GROUP_PERSIST_DEBOUNCE_MS,
+		MAX_CACHED_GROUP_MESSAGES_PER_GROUP,
+		MAX_CACHED_GROUPS,
+		MAX_PROCESSED_GROUP_CONTROLS,
+		callSignalText,
+		formatDuration,
+		groupControlText,
+		groupInviteText,
+		groupMessageText,
+		initialsFor,
+		isExpiredCallOffer,
+		mediaFromMessage,
+		messagePreview,
+		parseCallSignal,
+		parseGroupControl,
+		parseGroupInvite,
+		parseGroupMessage,
+		parsePubkey
+	} from '$lib/messages/protocol';
+	import type {
+		CallKind,
+		CallSignal,
+		ChatFilter,
+		ChatKind,
+		ChatRow,
+		GroupControlPayload,
+		GroupControlType,
+		GroupInvite,
+		GroupMember,
+		GroupMessage,
+		GroupMessagePayload,
+		GroupThread
+	} from '$lib/messages/protocol';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -17,113 +52,17 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
-	type ChatKind = 'dm' | 'group';
-	type ChatFilter = 'all' | 'unread' | 'groups';
-	type CallKind = 'voice' | 'video';
-
-	type ChatRow = {
-		key: string;
-		id: string;
-		kind: ChatKind;
-		name: string;
-		preview: string;
-		previewPrefix: string;
-		time: string;
-		unread: number;
-		initials?: string;
-		memberCount?: number;
-		onlineCount?: number;
-	};
-
-	type GroupMember = {
-		name: string;
-		initials: string;
-		status: string;
-		pubkey?: string;
-		admin?: boolean;
-	};
-
-	type GroupMessage = {
-		id: string;
-		author: string;
-		initials: string;
-		pubkey?: string;
-		content: string;
-		createdAt: number;
-		mine?: boolean;
-		type?: 'text' | 'voice' | 'file' | 'image' | 'call';
-		meta?: string;
-		reaction?: string;
-	};
-
-	type GroupThread = {
-		id: string;
-		name: string;
-		initials: string;
-		description: string;
-		pinned: string;
-		unread: number;
-		members: GroupMember[];
-		messages: GroupMessage[];
-		files: { name: string; meta: string; icon: string }[];
-	};
-
-	type GroupInvite = {
-		id: string;
-		name: string;
-		from: string;
-	};
-
-	type GroupMessagePayload = GroupInvite & {
-		body: string;
-	};
-
 	type MessageAttachment = UploadedMedia & {
 		name: string;
 	};
 
-	type MessageMedia = {
-		url: string;
-		text: string;
-		kind: 'image' | 'video' | 'file';
-	};
-
-	type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
-	type GroupControlPayload = GroupInvite & {
-		type: GroupControlType;
-		member: string;
-		members?: string[];
-	};
-
-	type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
 	type CallState = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'connected';
-	type CallSignal = {
-		callId: string;
-		type: CallSignalType;
-		kind: CallKind;
-		from: string;
-		groupId?: string;
-		sdp?: string;
-		candidate?: string;
-		duration?: number;
-	};
 
 	type RemoteParticipant = {
 		peer: string;
 		name: string;
 		stream: MediaStream;
 	};
-
-	const GROUPS_KEY_PREFIX = 'bitos:message-groups';
-	const GROUP_INVITE_PREFIX = 'bitos://group-invite?';
-	const GROUP_MESSAGE_PREFIX = 'bitos://group-message?';
-	const GROUP_CONTROL_PREFIX = 'bitos://group-control?';
-	const GROUP_CONTROL_PROCESSED_KEY_PREFIX = 'bitos:processed-group-controls';
-	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
-	const MAX_CACHED_GROUPS = 60;
-	const MAX_CACHED_GROUP_MESSAGES_PER_GROUP = 150;
-	const MAX_PROCESSED_GROUP_CONTROLS = 1200;
-	const GROUP_PERSIST_DEBOUNCE_MS = 250;
 
 	let selected = $state('');
 	let draft = $state('');
@@ -278,21 +217,8 @@
 		`${GROUP_CONTROL_PROCESSED_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`
 	);
 
-	function isExpiredCallOffer(createdAt: number) {
-		return Math.floor(Date.now() / 1000) - createdAt > 90;
-	}
-
 	function markCallClosed(id?: string) {
 		if (id) closedCallIds.add(id);
-	}
-
-	function initialsFor(name: string) {
-		return name
-			.split(/[\s_-]+/)
-			.filter(Boolean)
-			.slice(0, 2)
-			.map((part) => part[0]?.toUpperCase())
-			.join('');
 	}
 
 	function displayNameForPubkey(pubkey: string) {
@@ -304,30 +230,6 @@
 		return pubkey ? `/profile/${pubkey}` : '';
 	}
 
-	function formatDuration(seconds = 0) {
-		const safe = Math.max(0, Math.floor(seconds));
-		const hours = Math.floor(safe / 3600);
-		const minutes = Math.floor((safe % 3600) / 60);
-		const secs = safe % 60;
-		if (hours)
-			return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-		return `${minutes}:${String(secs).padStart(2, '0')}`;
-	}
-
-	function parsePubkey(value: string): string | null {
-		const trimmed = value.trim();
-		if (!trimmed) return null;
-		if (trimmed.startsWith('npub1')) {
-			try {
-				const decoded = decode(trimmed);
-				return decoded.type === 'npub' ? (decoded.data as string).toLowerCase() : null;
-			} catch {
-				return null;
-			}
-		}
-		return /^[0-9a-fA-F]{64}$/.test(trimmed) ? trimmed.toLowerCase() : null;
-	}
-
 	function memberForPubkey(pubkey: string): GroupMember {
 		const name = displayNameForPubkey(pubkey);
 		profiles.ensure([pubkey]);
@@ -337,141 +239,6 @@
 			status: 'Invited',
 			pubkey
 		};
-	}
-
-	function groupInviteText(group: GroupThread) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? ''
-		});
-		return [
-			`You were invited to "${group.name}" on BitOS.`,
-			'Open BitOS Messages to accept this local group invite.',
-			`${GROUP_INVITE_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupInvite(content: string): GroupInvite | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_INVITE_PREFIX) || part.startsWith(`nostr:${GROUP_INVITE_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_INVITE_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			if (!id || !name || !from || !/^[0-9a-fA-F]{64}$/.test(from)) return null;
-			return { id, name, from: from.toLowerCase() };
-		} catch {
-			return null;
-		}
-	}
-
-	function groupMessageText(group: GroupThread, body: string) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? '',
-			body
-		});
-		return [
-			`New message in "${group.name}" on BitOS.`,
-			'Open BitOS Messages to sync this local group message.',
-			`${GROUP_MESSAGE_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupMessage(content: string): GroupMessagePayload | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_MESSAGE_PREFIX) || part.startsWith(`nostr:${GROUP_MESSAGE_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_MESSAGE_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			const body = params.get('body')?.trim();
-			if (!id || !name || !from || !body || !/^[0-9a-fA-F]{64}$/.test(from)) return null;
-			return { id, name, from: from.toLowerCase(), body };
-		} catch {
-			return null;
-		}
-	}
-
-	function groupControlText(group: GroupThread, type: GroupControlType, member: string) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? '',
-			type,
-			member
-		});
-		const memberPubkeys = group.members
-			.map((item) => item.pubkey)
-			.filter((pubkey): pubkey is string => !!pubkey);
-		if (memberPubkeys.length) params.set('members', memberPubkeys.join(','));
-		const label =
-			type === 'add-member'
-				? `A member was added to "${group.name}" on BitOS.`
-				: type === 'remove-member'
-					? `A member was removed from "${group.name}" on BitOS.`
-					: `A member left "${group.name}" on BitOS.`;
-		return [
-			label,
-			'Open BitOS Messages to sync this local group membership update.',
-			`${GROUP_CONTROL_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupControl(content: string): GroupControlPayload | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_CONTROL_PREFIX) || part.startsWith(`nostr:${GROUP_CONTROL_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_CONTROL_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			const type = params.get('type')?.trim() as GroupControlType | undefined;
-			const member = params.get('member')?.trim();
-			const members =
-				params
-					.get('members')
-					?.split(',')
-					.map((item) => item.trim().toLowerCase())
-					.filter((item) => /^[0-9a-fA-F]{64}$/.test(item)) ?? [];
-			if (
-				!id ||
-				!name ||
-				!from ||
-				!/^[0-9a-fA-F]{64}$/.test(from) ||
-				!type ||
-				!['add-member', 'remove-member', 'leave-group'].includes(type) ||
-				!member ||
-				!/^[0-9a-fA-F]{64}$/.test(member)
-			) {
-				return null;
-			}
-			return { id, name, from: from.toLowerCase(), type, member: member.toLowerCase(), members };
-		} catch {
-			return null;
-		}
 	}
 
 	function isVisibleDmMessage(message: DirectMessage) {
@@ -495,41 +262,6 @@
 		const def = media.state.defaultProvider;
 		if (def !== 'none' && media.isConfigured(def)) return def;
 		return media.configured[0]?.id ?? 'none';
-	}
-
-	function firstUrl(content: string) {
-		return content.match(/https?:\/\/[^\s<>)"']+/i)?.[0] ?? '';
-	}
-
-	function mediaKindFromUrl(url: string): MessageMedia['kind'] {
-		const clean = url.split(/[?#]/)[0]?.toLowerCase() ?? url.toLowerCase();
-		if (/\.(apng|avif|gif|jpe?g|png|svg|webp)$/.test(clean)) return 'image';
-		if (/\.(m4v|mov|mp4|ogg|ogv|webm)$/.test(clean)) return 'video';
-		return 'file';
-	}
-
-	function mediaFromMessage(content: string): MessageMedia | null {
-		const markdownImage = content.match(/!\[[^\]]*]\((https?:\/\/[^)\s]+)\)/i);
-		const url = markdownImage?.[1] ?? firstUrl(content);
-		if (!url) return null;
-		return {
-			url,
-			text: content.replace(markdownImage?.[0] ?? url, '').trim(),
-			kind: markdownImage ? 'image' : mediaKindFromUrl(url)
-		};
-	}
-
-	function messagePreview(content?: string) {
-		if (!content) return 'No messages yet';
-		const msgMedia = mediaFromMessage(content);
-		if (!msgMedia) return content;
-		const label =
-			msgMedia.kind === 'image'
-				? 'Photo attachment'
-				: msgMedia.kind === 'video'
-					? 'Video attachment'
-					: 'File attachment';
-		return msgMedia.text ? `${label}: ${msgMedia.text}` : label;
 	}
 
 	function attachmentLinks() {
@@ -583,65 +315,6 @@
 		const input = e.currentTarget as HTMLInputElement;
 		void handleMessageFiles(input.files);
 		input.value = '';
-	}
-
-	function callSignalText(signal: CallSignal) {
-		const params = new URLSearchParams({
-			callId: signal.callId,
-			type: signal.type,
-			kind: signal.kind,
-			from: signal.from
-		});
-		if (signal.groupId) params.set('groupId', signal.groupId);
-		if (signal.sdp) params.set('sdp', signal.sdp);
-		if (signal.candidate) params.set('candidate', signal.candidate);
-		if (typeof signal.duration === 'number') params.set('duration', String(signal.duration));
-		return [
-			`${signal.kind === 'video' ? 'Video' : 'Voice'} call signal on BitOS.`,
-			'Open BitOS Messages to continue the call.',
-			`${CALL_SIGNAL_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseCallSignal(content: string): CallSignal | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(CALL_SIGNAL_PREFIX) || part.startsWith(`nostr:${CALL_SIGNAL_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(CALL_SIGNAL_PREFIX.length));
-			const callIdValue = params.get('callId')?.trim();
-			const type = params.get('type')?.trim() as CallSignalType | undefined;
-			const kind = params.get('kind')?.trim() as CallKind | undefined;
-			const from = params.get('from')?.trim();
-			if (
-				!callIdValue ||
-				!type ||
-				!['offer', 'answer', 'ice', 'end', 'log'].includes(type) ||
-				!kind ||
-				!['voice', 'video'].includes(kind) ||
-				!from ||
-				!/^[0-9a-fA-F]{64}$/.test(from)
-			) {
-				return null;
-			}
-			return {
-				callId: callIdValue,
-				type,
-				kind,
-				from: from.toLowerCase(),
-				groupId: params.get('groupId')?.trim() || undefined,
-				sdp: params.get('sdp') ?? undefined,
-				candidate: params.get('candidate') ?? undefined,
-				duration: Number(params.get('duration') ?? 0) || undefined
-			};
-		} catch {
-			return null;
-		}
 	}
 
 	function attachCallMedia() {
@@ -994,25 +667,12 @@
 	}
 
 	function resolveTo(param: string | null) {
-		const raw = param?.trim() ?? '';
-		if (!raw) return;
-		let peer = raw;
-		if (peer.startsWith('npub1')) {
-			try {
-				const decoded = decode(peer);
-				if (decoded.type === 'npub') peer = decoded.data as string;
-			} catch {
-				return;
-			}
-		}
-		if (/^[0-9a-fA-F]{64}$/.test(peer)) {
-			peer = peer.toLowerCase();
-			if (peer === lastResolvedTo) return;
-			lastResolvedTo = peer;
-			dms.forPeer(peer);
-			profiles.ensure([peer]);
-			if (selected !== peer) selectChat(peer);
-		}
+		const peer = parsePubkey(param ?? '');
+		if (!peer || peer === lastResolvedTo) return;
+		lastResolvedTo = peer;
+		dms.forPeer(peer);
+		profiles.ensure([peer]);
+		if (selected !== peer) selectChat(peer);
 	}
 
 	function resolveAutoAnswer(answerId: string | null) {
@@ -1172,7 +832,7 @@
 
 	async function sendGroupInvite(group: GroupThread, member: GroupMember) {
 		if (!member.pubkey || member.pubkey === identity.current?.pk) return;
-		await dms.send(member.pubkey, groupInviteText(group));
+		await dms.send(member.pubkey, groupInviteText(group, identity.current?.pk ?? ''));
 	}
 
 	async function notifyMembers(group: GroupThread, members: GroupMember[]) {
@@ -1196,7 +856,7 @@
 			.map((member) => member.pubkey)
 			.filter((pubkey): pubkey is string => !!pubkey && pubkey !== identity.current?.pk);
 		if (!recipients.length) return;
-		const content = groupMessageText(group, body);
+		const content = groupMessageText(group, identity.current?.pk ?? '', body);
 		const results = await Promise.allSettled(recipients.map((pubkey) => dms.send(pubkey, content)));
 		const failed = results.filter((result) => result.status === 'rejected').length;
 		if (failed) {
@@ -1219,7 +879,7 @@
 			])
 		];
 		if (!recipients.length) return;
-		const content = groupControlText(group, type, member);
+		const content = groupControlText(group, identity.current?.pk ?? '', type, member);
 		const results = await Promise.allSettled(recipients.map((pubkey) => dms.send(pubkey, content)));
 		const failed = results.filter((result) => result.status === 'rejected').length;
 		if (failed) {
@@ -1929,23 +1589,12 @@
 			return;
 		}
 
-		const input = newPeerInput.trim();
-		if (!input) return;
-		let peer = input;
-		if (peer.startsWith('npub1')) {
-			try {
-				const decoded = decode(peer);
-				if (decoded.type === 'npub') peer = decoded.data as string;
-			} catch {
-				toasts.error('Invalid npub');
-				return;
-			}
-		}
-		if (!/^[0-9a-fA-F]{64}$/.test(peer)) {
+		const peer = parsePubkey(newPeerInput);
+		if (!newPeerInput.trim()) return;
+		if (!peer) {
 			toasts.error('Enter a valid npub or 64-char hex pubkey');
 			return;
 		}
-		peer = peer.toLowerCase();
 		if (peer === identity.current?.pk) {
 			toasts.warning("You can't message yourself");
 			return;

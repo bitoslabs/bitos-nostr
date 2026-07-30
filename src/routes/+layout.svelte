@@ -7,6 +7,7 @@
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
 	import { media } from '$lib/stores/media.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
@@ -158,6 +159,7 @@
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
+		privacyNotificationSettings.load();
 		identity.load();
 		relays.load();
 	});
