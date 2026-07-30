@@ -1623,6 +1623,22 @@
 		resolveTo(page.url.searchParams.get('to'));
 		resolveAutoAnswer(page.url.searchParams.get('answer'));
 	});
+	let loadedMessageAccount = $state(identity.current?.pk ?? '');
+	$effect(() => {
+		const pk = identity.current?.pk ?? '';
+		if (pk === loadedMessageAccount) return;
+		loadedMessageAccount = pk;
+		selected = '';
+		groupThreads = [];
+		processedGroupMessageIds.clear();
+		processedGroupControlIds.clear();
+		processedCallSignalIds.clear();
+		processedGroupCallLogIds.clear();
+		closedCallIds.clear();
+		removedGroupIds.clear();
+		loadGroups();
+		resolveTo(page.url.searchParams.get('to'));
+	});
 	$effect(() => resolveTo(page.url.searchParams.get('to')));
 	$effect(() => resolveAutoAnswer(page.url.searchParams.get('answer')));
 	$effect(() => {

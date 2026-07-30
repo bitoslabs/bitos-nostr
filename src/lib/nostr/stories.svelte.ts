@@ -110,6 +110,8 @@ class StoriesStore {
 		const me = identity.current?.pk;
 		if (!me) return;
 		this.stop();
+		this.authors = [];
+		this.slidesByAuthor.clear();
 		this.loadSeen();
 		this.loading = true;
 		const authors = this.authorList(me);
@@ -133,6 +135,12 @@ class StoriesStore {
 			this.unsub();
 			this.unsub = null;
 		}
+	};
+
+	clear = () => {
+		this.authors = [];
+		this.loading = false;
+		this.slidesByAuthor.clear();
 	};
 
 	private authorList(me: string): string[] {

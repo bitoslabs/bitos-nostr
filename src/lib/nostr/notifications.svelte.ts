@@ -109,6 +109,16 @@ class NotificationsStore {
 		this.connected = false;
 	};
 
+	clear = () => {
+		this.items = [];
+		this.loading = false;
+		this.loadingMore = false;
+		this.hasMore = true;
+		this.connected = false;
+		this.error = null;
+		this.readIds.clear();
+	};
+
 	private notificationFilter(me: string, until?: number) {
 		return {
 			kinds: [

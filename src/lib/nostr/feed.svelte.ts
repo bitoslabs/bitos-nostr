@@ -87,6 +87,19 @@ class FeedStore {
 		}
 	};
 
+	clear = () => {
+		this.notes = [];
+		this.pendingNotes = [];
+		this.loading = false;
+		this.loadingMore = false;
+		this.hasMore = true;
+		this.connected = false;
+		this.byId.clear();
+		this.pendingById.clear();
+		this.seenZapIds.clear();
+		this.pollVotes.clear();
+	};
+
 	/** Query the next older page without changing the live "new notes" queue. */
 	async loadMore() {
 		if (!browser || this.loadingMore || !this.hasMore) return 0;

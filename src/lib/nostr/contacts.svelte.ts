@@ -23,6 +23,7 @@ class ContactsStore {
 		const me = identity.current?.pk;
 		if (!me) return;
 		this.stop();
+		this.following = [];
 		this.loading = true;
 		void this.load(me);
 		this.unsub = subscribe([{ kinds: [NOSTR_KINDS.CONTACT_LIST], authors: [me], limit: 1 }], {

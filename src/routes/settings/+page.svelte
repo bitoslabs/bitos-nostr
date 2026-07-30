@@ -23,6 +23,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey } from '$lib/utils/format';
 	import { hexToBytes } from '$lib/nostr/hex';
+	import type { AccountSummary } from '$lib/nostr/identity.svelte';
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
@@ -51,6 +52,9 @@
 	let editingNip05 = $state('');
 	let editingLightning = $state('');
 	let savingProfile = $state(false);
+	let accountSecret = $state('');
+	let accountBusy = $state(false);
+	let createdAccountNsec = $state('');
 
 	// avatar / banner upload via the configured media provider
 	let avatarInput = $state<HTMLInputElement | null>(null);
@@ -154,6 +158,62 @@
 			toasts.info('Logged out');
 		}
 	}
+
+	function accountDisplayName(account: AccountSummary) {
+		return account.profile?.display_name || account.profile?.name || shortKey(account.npub);
+	}
+
+	async function copyAccountSecret() {
+		if (!createdAccountNsec) return;
+		await navigator.clipboard.writeText(createdAccountNsec);
+		toasts.success('nsec copied');
+	}
+
+	function switchAccount(pubkey: string) {
+		if (identity.current?.pk === pubkey) return;
+		try {
+			identity.switchTo(pubkey);
+			toasts.info('Switched account');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		}
+	}
+
+	function createAccount() {
+		accountBusy = true;
+		try {
+			const id = identity.create();
+			createdAccountNsec = id.nsec;
+			accountSecret = '';
+			toasts.success('New account created');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			accountBusy = false;
+		}
+	}
+
+	function importAccount() {
+		if (!accountSecret.trim()) return;
+		accountBusy = true;
+		try {
+			identity.importSecret(accountSecret);
+			accountSecret = '';
+			createdAccountNsec = '';
+			toasts.success('Account imported');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		} finally {
+			accountBusy = false;
+		}
+	}
+
+	function removeAccount(pubkey: string) {
+		if (!confirm('Remove this saved account from this device? Make sure its nsec is backed up.'))
+			return;
+		identity.removeAccount(pubkey);
+		toasts.info('Account removed from this device');
+	}
 </script>
 
 <svelte:head><title>{sectionTitle} · Settings · BitOS</title></svelte:head>
@@ -224,7 +284,7 @@
 				class="flex-1 overflow-y-auto bg-[var(--ui-bg-muted)] pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
 			>
 				<h1
-					class="px-4 pb-1 pt-3 text-[32px] font-bold leading-none tracking-[-0.03em] text-[var(--ui-text)]"
+					class="px-4 pt-3 pb-1 text-[32px] leading-none font-bold tracking-[-0.03em] text-[var(--ui-text)]"
 				>
 					Settings
 				</h1>
@@ -232,7 +292,7 @@
 				{#if me}
 					<a
 						href="/settings/account"
-						class="mx-4 mb-[18px] mt-2 flex items-center gap-3.5 rounded-[14px] bg-[var(--surface-bg)] p-2.5 transition active:bg-[var(--interactive-hover-bg)]"
+						class="mx-4 mt-2 mb-[18px] flex items-center gap-3.5 rounded-[14px] bg-[var(--surface-bg)] p-2.5 transition active:bg-[var(--interactive-hover-bg)]"
 					>
 						<Avatar
 							pubkey={me.pk}
@@ -260,14 +320,12 @@
 						<section>
 							{#if group.label}
 								<p
-									class="mb-2 ml-8 mr-8 text-[13px] font-semibold tracking-[-0.01em] text-[var(--ui-text-muted)]"
+									class="mr-8 mb-2 ml-8 text-[13px] font-semibold tracking-[-0.01em] text-[var(--ui-text-muted)]"
 								>
 									{group.label}
 								</p>
 							{/if}
-							<div
-								class="mx-4 overflow-hidden rounded-[14px] bg-[var(--surface-bg)]"
-							>
+							<div class="mx-4 overflow-hidden rounded-[14px] bg-[var(--surface-bg)]">
 								{#each group.items as s (s.key)}
 									<a
 										href={`/settings/${s.key}`}
@@ -312,11 +370,7 @@
 	{/if}
 
 	<!-- Content pane: hidden on mobile while the iOS index is open -->
-	<div
-		class="min-h-0 min-w-0 flex-1 overflow-y-auto {mobileIndex
-			? 'hidden sm:block'
-			: 'block'}"
-	>
+	<div class="min-h-0 min-w-0 flex-1 overflow-y-auto {mobileIndex ? 'hidden sm:block' : 'block'}">
 		<!-- Mobile detail header (iOS-style) shown only inside a section -->
 		<div class="{iosNavBar} sm:hidden">
 			<a
@@ -327,8 +381,8 @@
 				<Icon name="i-lucide-chevron-left" class="size-6" />
 				<span class="text-[17px]">Settings</span>
 			</a>
-			<span
-				class="text-[17px] font-bold tracking-[-0.02em] text-[var(--ui-text)]">{sectionTitle}</span
+			<span class="text-[17px] font-bold tracking-[-0.02em] text-[var(--ui-text)]"
+				>{sectionTitle}</span
 			>
 			<span class="w-8 shrink-0"></span>
 		</div>
@@ -547,6 +601,105 @@
 							disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save changes'}</Button
 						>
 						<Button color="neutral" variant="ghost" onclick={resetProfileForm}>Cancel</Button>
+					</div>
+				</div>
+
+				<div class="post-card mb-5 p-5">
+					<div class="mb-4 flex items-center gap-2">
+						<Icon name="i-lucide-users-round" class="size-[18px] text-primary-500" />
+						<h3 class="text-[15px] font-bold">Accounts</h3>
+						<span class="ml-auto text-[11px] text-[var(--ui-text-dimmed)]">
+							{identity.accounts.length} saved
+						</span>
+					</div>
+					<div class="space-y-2">
+						{#each identity.accounts as account (account.pk)}
+							<div
+								class="flex items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3"
+							>
+								<Avatar
+									pubkey={account.pk}
+									name={accountDisplayName(account)}
+									picture={account.profile?.picture}
+									size={40}
+								/>
+								<div class="min-w-0 flex-1">
+									<p class="truncate text-[13.5px] font-bold">
+										{accountDisplayName(account)}
+									</p>
+									<p class="truncate font-mono text-[11px] text-[var(--ui-text-muted)]">
+										{shortKey(account.npub, 10, 8)}
+									</p>
+								</div>
+								{#if account.active}
+									<span
+										class="rounded-full bg-primary-500/10 px-2 py-1 text-[11px] font-bold text-primary-600"
+									>
+										Active
+									</span>
+								{:else}
+									<Button
+										color="neutral"
+										variant="subtle"
+										size="sm"
+										onclick={() => switchAccount(account.pk)}>Switch</Button
+									>
+									<Button
+										square
+										color="error"
+										variant="ghost"
+										size="sm"
+										icon="i-lucide-trash-2"
+										onclick={() => removeAccount(account.pk)}
+									/>
+								{/if}
+							</div>
+						{/each}
+					</div>
+					<div class="mt-4 grid gap-3 border-t border-[var(--ui-border-muted)] pt-4">
+						<div class="grid gap-2 sm:grid-cols-[1fr_auto]">
+							<Input
+								bind:value={accountSecret}
+								icon="i-lucide-key-round"
+								placeholder="Import nsec1… or 64-char hex"
+								class="w-full font-mono text-[12.5px]"
+							/>
+							<Button
+								color="primary"
+								variant="subtle"
+								icon="i-lucide-log-in"
+								onclick={importAccount}
+								disabled={accountBusy || !accountSecret.trim()}>Import</Button
+							>
+						</div>
+						<Button
+							color="neutral"
+							variant="subtle"
+							icon="i-lucide-sparkles"
+							onclick={createAccount}
+							disabled={accountBusy}
+						>
+							Create and switch to new account
+						</Button>
+						{#if createdAccountNsec}
+							<div
+								class="rounded-xl border border-[var(--tone-warning-text)]/25 bg-[var(--tone-warning-bg)] p-3"
+							>
+								<p class="mb-2 text-[12px] font-bold text-[var(--tone-warning-text)]">
+									Back up this new account nsec before leaving.
+								</p>
+								<div class="flex gap-2">
+									<Input value={createdAccountNsec} readonly class="flex-1 font-mono text-[11px]" />
+									<Button
+										square
+										color="neutral"
+										variant="subtle"
+										icon="i-lucide-copy"
+										onclick={copyAccountSecret}
+									/>
+								</div>
+							</div>
+						{/if}
 					</div>
 				</div>
 

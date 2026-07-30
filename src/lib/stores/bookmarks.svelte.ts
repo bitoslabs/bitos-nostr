@@ -36,6 +36,13 @@ class BookmarksStore {
 		this.persist();
 	}
 
+	clear() {
+		this.items = [];
+		if (!browser) return;
+		localStorage.removeItem(BOOKMARKS_KEY);
+		localStorage.removeItem(LEGACY_SAVED_IDS_KEY);
+	}
+
 	toggle(note: FeedNote) {
 		if (this.has(note.id)) {
 			this.remove(note.id);
@@ -75,7 +82,8 @@ class BookmarksStore {
 					note: {
 						id,
 						pubkey: '',
-						content: 'This saved note needs to appear in your feed once before it can be shown here.',
+						content:
+							'This saved note needs to appear in your feed once before it can be shown here.',
 						createdAt: 0,
 						tags: [],
 						reactions: [],

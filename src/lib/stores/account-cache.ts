@@ -1,0 +1,26 @@
+import { browser } from '$app/environment';
+
+const EXACT_KEYS = [
+	'bitos:bookmarked-notes',
+	'bitos:saved-notes',
+	'bitos:discover-cache:v1',
+	'bitos:reels-cache:v1',
+	'bitos:trending-rail-cache',
+	'bitos:seen-stories'
+];
+
+const PREFIXES = [
+	'bitos:dm-conversations:',
+	'bitos:message-groups:',
+	'bitos:groups:',
+	'bitos:group-controls:',
+	'bitos:processed-group-controls:'
+];
+
+export function clearAccountCaches() {
+	if (!browser) return;
+	for (const key of EXACT_KEYS) localStorage.removeItem(key);
+	for (const key of Object.keys(localStorage)) {
+		if (PREFIXES.some((prefix) => key.startsWith(prefix))) localStorage.removeItem(key);
+	}
+}

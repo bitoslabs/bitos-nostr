@@ -611,8 +611,3 @@
 			class="max-h-[52vh] overflow-auto rounded-xl bg-[var(--ui-bg-muted)] p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text-muted)]">{rawEvent}</pre>
 	</div>
 </Dialog>
-
-<svelte:window
-	onclick={() => popovers.close()}
-	onkeydown={(e) => e.key === 'Escape' && popovers.close()}
-/>

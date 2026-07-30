@@ -6,7 +6,10 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
+	import { shortKey } from '$lib/utils/format';
 
 	const nav = [
 		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
@@ -30,6 +33,28 @@
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const logo = '/icons/icon-96-96.png';
+	const accountMenuId = 'nav-account-switcher';
+	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
+
+	function accountName(account: (typeof identity.accounts)[number]) {
+		const profile = profiles.get(account.pk) ?? account.profile;
+		return profile?.display_name || profile?.name || shortKey(account.npub, 8, 6);
+	}
+
+	function accountPicture(account: (typeof identity.accounts)[number]) {
+		return (profiles.get(account.pk) ?? account.profile)?.picture;
+	}
+
+	function switchAccount(pubkey: string) {
+		if (identity.current?.pk === pubkey) return;
+		try {
+			identity.switchTo(pubkey);
+			popovers.close();
+			toasts.info('Switched account');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		}
+	}
 </script>
 
 <nav class="flex h-full flex-col items-center py-5">
@@ -77,13 +102,82 @@
 
 	<div class="flex flex-col items-center gap-2">
 		{#if me}
-			<a
-				href="/profile"
-				class="relative size-11 overflow-hidden mask-squircle ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
-				aria-label="Your profile"
-			>
-				<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
-			</a>
+			<div class="relative">
+				<button
+					type="button"
+					onclick={(event) => {
+						event.stopPropagation();
+						popovers.toggle(accountMenuId);
+					}}
+					class="relative size-11 overflow-hidden mask-squircle ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
+					aria-label="Account menu"
+					aria-expanded={accountMenuOpen}
+				>
+					<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+				</button>
+				{#if accountMenuOpen}
+					<div
+						class="absolute bottom-0 left-[calc(100%+12px)] z-50 w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+					>
+						<a
+							href="/profile"
+							onclick={() => popovers.close()}
+							class="mb-1 flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
+						>
+							<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={34} />
+							<span class="min-w-0">
+								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
+									{displayName}
+								</span>
+								<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
+							</span>
+						</a>
+						{#if identity.accounts.length > 1}
+							<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
+							<p class="px-2 py-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)] uppercase">
+								Switch account
+							</p>
+							{#each identity.accounts as account (account.pk)}
+								<button
+									type="button"
+									onclick={() => switchAccount(account.pk)}
+									disabled={account.active}
+									class="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-default disabled:opacity-70 disabled:hover:bg-transparent"
+								>
+									<Avatar
+										pubkey={account.pk}
+										name={accountName(account)}
+										picture={accountPicture(account)}
+										size={30}
+									/>
+									<span class="min-w-0 flex-1">
+										<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
+											{accountName(account)}
+										</span>
+										<span
+											class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]"
+										>
+											{shortKey(account.npub, 8, 5)}
+										</span>
+									</span>
+									{#if account.active}
+										<Icon name="i-lucide-check" class="size-4 shrink-0 text-primary-500" />
+									{/if}
+								</button>
+							{/each}
+						{/if}
+						<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
+						<a
+							href="/settings/account"
+							onclick={() => popovers.close()}
+							class="flex items-center gap-2 rounded-xl px-2 py-2 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+						>
+							<Icon name="i-lucide-user-plus" class="size-4" />
+							Manage accounts
+						</a>
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 </nav>

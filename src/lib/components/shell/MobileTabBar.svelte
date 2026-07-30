@@ -7,6 +7,8 @@
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
+	import { shortKey } from '$lib/utils/format';
 
 	/** iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is). */
 
@@ -38,6 +40,26 @@
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const moreActive = $derived(moreItems.some((item) => isActive(item.to)));
+
+	function accountName(account: (typeof identity.accounts)[number]) {
+		const profile = profiles.get(account.pk) ?? account.profile;
+		return profile?.display_name || profile?.name || shortKey(account.npub, 8, 6);
+	}
+
+	function accountPicture(account: (typeof identity.accounts)[number]) {
+		return (profiles.get(account.pk) ?? account.profile)?.picture;
+	}
+
+	function switchAccount(pubkey: string) {
+		if (identity.current?.pk === pubkey) return;
+		try {
+			identity.switchTo(pubkey);
+			moreOpen = false;
+			toasts.info('Switched account');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		}
+	}
 </script>
 
 <svelte:window onclick={() => (moreOpen = false)} />
@@ -115,6 +137,42 @@
 						</span>
 					</a>
 					<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
+					{#if identity.accounts.length > 1}
+						<p class="px-3 py-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)] uppercase">
+							Switch account
+						</p>
+						{#each identity.accounts as account (account.pk)}
+							<button
+								type="button"
+								onclick={(event) => {
+									event.stopPropagation();
+									switchAccount(account.pk);
+								}}
+								disabled={account.active}
+								class="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-default disabled:opacity-70 disabled:hover:bg-transparent"
+							>
+								<Avatar
+									pubkey={account.pk}
+									name={accountName(account)}
+									picture={accountPicture(account)}
+									size={30}
+									frame
+								/>
+								<span class="min-w-0 flex-1">
+									<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
+										{accountName(account)}
+									</span>
+									<span class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]">
+										{shortKey(account.npub, 8, 5)}
+									</span>
+								</span>
+								{#if account.active}
+									<Icon name="i-lucide-check" class="size-4 shrink-0 text-primary-500" />
+								{/if}
+							</button>
+						{/each}
+						<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
+					{/if}
 				{/if}
 
 				{#each moreItems as item (item.to)}
