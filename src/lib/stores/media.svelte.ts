@@ -15,7 +15,7 @@ import {
 	type UploadedMedia
 } from '$lib/media/uploaders';
 
-const STORAGE_KEY = 'bitos:media';
+export const STORAGE_KEY = 'bitos:media';
 
 export const DEFAULTS: MediaSettings = {
 	defaultProvider: 'none',

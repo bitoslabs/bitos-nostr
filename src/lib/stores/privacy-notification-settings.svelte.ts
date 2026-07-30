@@ -24,7 +24,7 @@ type BooleanSettingKey = {
 		: never;
 }[keyof PrivacyNotificationSettingsState];
 
-const STORAGE_KEY = 'bitos:privacy-notification-settings';
+export const STORAGE_KEY = 'bitos:privacy-notification-settings';
 
 export const DEFAULTS: PrivacyNotificationSettingsState = {
 	privateAcc: false,

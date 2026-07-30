@@ -6,6 +6,7 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import type { Identity } from '$lib/nostr/types';
+	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 
 	type Props = {
@@ -77,6 +78,45 @@
 		await navigator.clipboard.writeText(text);
 		toasts.success(`${label} copied`);
 	}
+
+	function formatSyncTime(unixSeconds: number | null) {
+		if (!unixSeconds) return 'Never';
+		return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	async function syncSettings() {
+		try {
+			await settingsSync.publishBackup();
+			toasts.success('Encrypted settings synced to Nostr');
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not sync settings');
+		}
+	}
+
+	async function restoreSettings() {
+		if (
+			!confirm(
+				'Restore encrypted BitOS settings from Nostr? This will overwrite local appearance, privacy, notification, media, relay and block settings.'
+			)
+		) {
+			return;
+		}
+		try {
+			const backup = await settingsSync.restoreLatestBackup();
+			if (!backup) {
+				toasts.info('No synced settings found');
+				return;
+			}
+			toasts.success('Settings restored from Nostr');
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not restore settings');
+		}
+	}
 </script>
 
 <h2 class="mb-1 font-display text-[24px] font-extrabold">Security</h2>
@@ -136,6 +176,44 @@
 				nsec. Anyone with it controls your identity.
 			</p>
 		</div>
+	</div>
+</div>
+
+<div class="post-card mb-5 p-5">
+	<div class="mb-4 flex items-center gap-2">
+		<Icon name="i-lucide-cloud-lock" class="size-[18px] text-primary-500" />
+		<h3 class="text-[15px] font-bold">Encrypted settings sync</h3>
+		<Badge tone="primary" class="ml-auto">NIP-04</Badge>
+	</div>
+	<p class="mb-4 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">
+		Syncs BitOS preferences, privacy, notifications, blocked users, relays, and media provider
+		settings as an encrypted app-data event. Your identity key is never included.
+	</p>
+	<div class="grid gap-2 sm:grid-cols-2">
+		<Button
+			color="primary"
+			variant="solid"
+			icon={settingsSync.syncing ? 'i-lucide-loader-circle' : 'i-lucide-upload-cloud'}
+			onclick={syncSettings}
+			disabled={settingsSync.syncing || settingsSync.restoring}
+			class={settingsSync.syncing ? '[&_.iconify]:animate-spin' : ''}
+		>
+			{settingsSync.syncing ? 'Syncing' : 'Sync encrypted backup'}
+		</Button>
+		<Button
+			color="neutral"
+			variant="subtle"
+			icon={settingsSync.restoring ? 'i-lucide-loader-circle' : 'i-lucide-download-cloud'}
+			onclick={restoreSettings}
+			disabled={settingsSync.syncing || settingsSync.restoring}
+			class={settingsSync.restoring ? '[&_.iconify]:animate-spin' : ''}
+		>
+			{settingsSync.restoring ? 'Restoring' : 'Restore from Nostr'}
+		</Button>
+	</div>
+	<div class="mt-3 grid gap-1 text-[11px] text-[var(--ui-text-dimmed)] sm:grid-cols-2">
+		<p>Last synced: {formatSyncTime(settingsSync.lastSyncedAt)}</p>
+		<p>Last remote: {formatSyncTime(settingsSync.lastRemoteAt)}</p>
 	</div>
 </div>
 

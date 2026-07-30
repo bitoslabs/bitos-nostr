@@ -2,7 +2,7 @@ import { browser } from '$app/environment';
 import { SvelteSet } from 'svelte/reactivity';
 import { identity } from '$lib/nostr/identity.svelte';
 
-const STORAGE_KEY = 'bitos:blocked-pubkeys';
+export const STORAGE_KEY = 'bitos:blocked-pubkeys';
 
 function normalized(pubkey: string) {
 	return pubkey.trim().toLowerCase();
