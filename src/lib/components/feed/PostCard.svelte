@@ -927,14 +927,15 @@
 
 	<!-- Action bar -->
 	<div
-		class="mx-4 my-2 flex items-center justify-around border-y border-[var(--ui-border-muted)] py-1.5"
+		class="mx-4 my-2 flex items-center justify-between gap-1 border-y border-[var(--ui-border-muted)] py-1.5 md:justify-around"
 	>
 		<button
 			type="button"
 			onclick={react}
-			class="relative flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 {liked
+			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-primary-500/10 {liked
 				? 'text-primary-500'
 				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
+			aria-label={liked ? 'Unlike' : 'Like'}
 		>
 			<span class="relative">
 				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
@@ -944,15 +945,24 @@
 					</span>
 				{/if}
 			</span>
-			<span>{liked ? 'Unlike' : 'Like'}</span>
+			{#if reactionCount > 0}
+				<span class="text-[12px] md:hidden">{reactionCount}</span>
+			{/if}
+			<span class="hidden md:inline">{liked ? 'Unlike' : 'Like'}</span>
 		</button>
 		<button
 			type="button"
 			onclick={startReply}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			aria-label={directReplies.length
+				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
+				: 'Comment'}
 		>
 			<Icon name="i-lucide-message-circle" class="size-[16px]" />
-			<span>
+			{#if directReplies.length > 0}
+				<span class="text-[12px] md:hidden">{directReplies.length}</span>
+			{/if}
+			<span class="hidden md:inline">
 				{directReplies.length
 					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 					: 'Comment'}
@@ -961,24 +971,27 @@
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			aria-label="Share"
 		>
 			<Icon name="i-lucide-share" class="size-[16px]" />
-			<span>Share</span>
+			<span class="hidden md:inline">Share</span>
 		</button>
 		<button
 			type="button"
 			onclick={zapNote}
 			disabled={!lightningAddress}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
+			aria-label={zapLabel}
 		>
 			<Icon name="i-lucide-zap" class="size-[16px]" />
-			<span>{zapLabel}</span>
+			<span class="hidden md:inline">{zapLabel}</span>
 		</button>
 		<button
 			type="button"
 			onclick={toggleSaved}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
 			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[16px]" />
 		</button>

@@ -4,12 +4,17 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import AppearanceSettings from '$lib/components/settings/AppearanceSettings.svelte';
 	import MediaSettings from '$lib/components/settings/MediaSettings.svelte';
 	import PrivacyNotificationSettings from '$lib/components/settings/PrivacyNotificationSettings.svelte';
 	import SecuritySettings from '$lib/components/settings/SecuritySettings.svelte';
 	import SupportSettings from '$lib/components/settings/SupportSettings.svelte';
-	import { isSettingsSectionKey, settingsSections } from '$lib/settings/sections';
+	import {
+		isSettingsSectionKey,
+		settingsSections,
+		mobileSettingsGroups
+	} from '$lib/settings/sections';
 	import { media, providerLabel } from '$lib/stores/media.svelte';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -26,6 +31,12 @@
 		isSettingsSectionKey(page.params.section) ? page.params.section : 'account'
 	);
 	const sections = settingsSections;
+	const mobileGroups = mobileSettingsGroups();
+	/** On mobile, the root `/settings` route shows the iOS index instead of content. */
+	const mobileIndex = $derived(!page.params.section);
+	/** Shared Tailwind class string for the sticky iOS-style nav bar (used twice). */
+	const iosNavBar =
+		'sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_88%,transparent)] px-3 pt-[calc(0.625rem+env(safe-area-inset-top))] pb-2.5 backdrop-blur-xl backdrop-saturate-150';
 	const sectionTitle = $derived(
 		settingsSections.find((item) => item.key === section)?.label ?? 'Settings'
 	);
@@ -161,7 +172,7 @@
 		<div class="flex-1 p-3">
 			{#each sections as s (s.key)}
 				<a
-					href={s.key === 'account' ? '/settings' : `/settings/${s.key}`}
+					href={`/settings/${s.key}`}
 					class="settings-nav-item w-full {section === s.key ? 'active' : ''}"
 				>
 					<Icon name={s.icon} class="size-[18px] shrink-0" />
@@ -196,40 +207,131 @@
 		{/if}
 	</aside>
 
-	<!-- Mobile header + section picker (stacks above content on small screens) -->
-	<div class="shrink-0 border-b border-[var(--ui-border-muted)] bg-[var(--surface-bg)] sm:hidden">
-		<div class="flex items-center gap-2 px-4 pt-3 pb-1">
-			<a
-				href="/"
-				class="-ml-1 grid size-8 shrink-0 place-items-center rounded-lg text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-				aria-label="Back to home"
+	<!-- MOBILE: iOS-style settings index (shown only at the `/settings` root) -->
+	{#if mobileIndex}
+		<div class="flex h-full flex-col sm:hidden">
+			<div class={iosNavBar}>
+				<a
+					href="/"
+					class="-ml-1 grid size-8 shrink-0 place-items-center text-primary-500 transition hover:opacity-70"
+					aria-label="Back to home"
+				>
+					<Icon name="i-lucide-chevron-left" class="size-6" />
+				</a>
+			</div>
+
+			<div
+				class="flex-1 overflow-y-auto bg-[var(--ui-bg-muted)] pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
 			>
-				<Icon name="i-lucide-arrow-left" class="size-5" />
-			</a>
-			<div class="min-w-0 flex-1">
-				<h1 class="font-display text-[18px] leading-tight font-extrabold tracking-tight">
+				<h1
+					class="px-4 pb-1 pt-3 text-[32px] font-bold leading-none tracking-[-0.03em] text-[var(--ui-text)]"
+				>
 					Settings
 				</h1>
-				<p class="truncate text-[11px] text-[var(--ui-text-muted)]">{sectionTitle}</p>
+				<!-- Profile hero row = Account entry (Apple-Account style) -->
+				{#if me}
+					<a
+						href="/settings/account"
+						class="mx-4 mb-[18px] mt-2 flex items-center gap-3.5 rounded-[14px] bg-[var(--surface-bg)] p-2.5 transition active:bg-[var(--interactive-hover-bg)]"
+					>
+						<Avatar
+							pubkey={me.pk}
+							name={myProfile?.display_name || myProfile?.name}
+							picture={myProfile?.picture}
+							size={44}
+						/>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-[17px] font-bold tracking-tight">
+								{myProfile?.display_name || myProfile?.name || 'You'}
+							</p>
+							<p class="truncate font-mono text-[12px] text-[var(--ui-text-muted)]">
+								{shortKey(me.npub)}
+							</p>
+						</div>
+						<Icon
+							name="i-lucide-chevron-right"
+							class="ml-auto size-5 shrink-0 text-[var(--ui-text-dimmed)] opacity-60"
+						/>
+					</a>
+				{/if}
+
+				<div class="space-y-[18px]">
+					{#each mobileGroups as group (group.id)}
+						<section>
+							{#if group.label}
+								<p
+									class="mb-2 ml-8 mr-8 text-[13px] font-semibold tracking-[-0.01em] text-[var(--ui-text-muted)]"
+								>
+									{group.label}
+								</p>
+							{/if}
+							<div
+								class="mx-4 overflow-hidden rounded-[14px] bg-[var(--surface-bg)]"
+							>
+								{#each group.items as s (s.key)}
+									<a
+										href={`/settings/${s.key}`}
+										class="ios-row relative flex min-h-[44px] items-center gap-3.5 py-2 pr-3 pl-[11px] transition active:bg-[var(--interactive-hover-bg)]"
+									>
+										<span
+											class="grid size-[30px] shrink-0 place-items-center rounded-[10px]"
+											style="background-color:color-mix(in oklab,{s.tint} 14%, transparent);color:{s.tint}"
+										>
+											<Icon name={s.icon} class="size-[18px]" />
+										</span>
+										<span
+											class="min-w-0 flex-1 text-[16px] tracking-[-0.01em] text-[var(--ui-text)]"
+											>{s.label}</span
+										>
+										<Icon
+											name="i-lucide-chevron-right"
+											class="size-[18px] shrink-0 text-[var(--ui-text-dimmed)] opacity-60"
+										/>
+									</a>
+								{/each}
+							</div>
+						</section>
+					{/each}
+
+					<section>
+						<div
+							class="mx-4 flex min-h-[44px] items-center justify-center overflow-hidden rounded-[14px] bg-[var(--surface-bg)]"
+						>
+							<button
+								type="button"
+								class="w-full py-2 text-[16px] font-medium text-[#FF3B30] transition active:bg-[var(--interactive-hover-bg)]"
+								onclick={logout}
+							>
+								Log Out
+							</button>
+						</div>
+					</section>
+				</div>
 			</div>
 		</div>
-		<div
-			class="flex [scrollbar-width:none] gap-1.5 overflow-x-auto px-3 pt-1 pb-2.5 [&::-webkit-scrollbar]:hidden"
-		>
-			{#each sections as s (s.key)}
-				<a
-					href={s.key === 'account' ? '/settings' : `/settings/${s.key}`}
-					class="pill-tab flex shrink-0 items-center gap-1.5 {section === s.key ? 'active' : ''}"
-				>
-					<Icon name={s.icon} class="size-3.5" />
-					<span>{s.label}</span>
-				</a>
-			{/each}
-		</div>
-	</div>
+	{/if}
 
-	<!-- Content -->
-	<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
+	<!-- Content pane: hidden on mobile while the iOS index is open -->
+	<div
+		class="min-h-0 min-w-0 flex-1 overflow-y-auto {mobileIndex
+			? 'hidden sm:block'
+			: 'block'}"
+	>
+		<!-- Mobile detail header (iOS-style) shown only inside a section -->
+		<div class="{iosNavBar} sm:hidden">
+			<a
+				href="/settings"
+				class="flex items-center gap-0.5 text-primary-500 transition hover:opacity-70"
+				aria-label="Back to settings"
+			>
+				<Icon name="i-lucide-chevron-left" class="size-6" />
+				<span class="text-[17px]">Settings</span>
+			</a>
+			<span
+				class="text-[17px] font-bold tracking-[-0.02em] text-[var(--ui-text)]">{sectionTitle}</span
+			>
+			<span class="w-8 shrink-0"></span>
+		</div>
 		<div class="mx-auto max-w-[680px] px-4 py-5 sm:px-8 sm:py-6">
 			<!-- ACCOUNT -->
 			{#if section === 'account'}

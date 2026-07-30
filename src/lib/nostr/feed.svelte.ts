@@ -11,7 +11,7 @@ import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
-import { zapSats, zapTarget } from './zaps';
+import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
@@ -62,6 +62,7 @@ class FeedStore {
 				oneose: () => {
 					this.loading = false;
 					this.connected = true;
+					void this.hydrateActivity(this.notes.map((note) => note.id));
 				},
 				onevent: (ev) => {
 					if (ev.kind === NOSTR_KINDS.TEXT_NOTE)
@@ -98,10 +99,12 @@ class FeedStore {
 				}
 			]);
 			const before = this.notes.length;
+			const fetchedIds = events.map((ev) => ev.id);
 			for (const ev of events.sort((a, b) => b.created_at - a.created_at)) {
 				this.ingestNote(ev, { queueIfLive: false });
 				profiles.ensure([ev.pubkey]);
 			}
+			if (fetchedIds.length) void this.hydrateActivity(fetchedIds);
 			const added = this.notes.length - before;
 			if (!events.length || added === 0 || this.notes.length >= MAX_NOTES) this.hasMore = false;
 			return added;
@@ -356,6 +359,35 @@ class FeedStore {
 	private rebuildPendingIndex() {
 		this.pendingById.clear();
 		this.pendingNotes.forEach((n, i) => this.pendingById.set(n.id, i));
+	}
+
+	private async hydrateActivity(noteIds: string[]) {
+		const uniqueIds = [...new Set(noteIds)].filter(Boolean);
+		if (!uniqueIds.length) return;
+		try {
+			const activity = await queryOnce([
+				{
+					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					'#e': uniqueIds,
+					limit: 1000
+				}
+			]);
+			if (!activity.length) return;
+			const visible = this.notes.filter((note) => uniqueIds.includes(note.id));
+			if (visible.length) {
+				const hydrated = applyActivityToNotes(visible, activity, identity.current?.pk);
+				const byId = new Map(hydrated.map((note) => [note.id, note]));
+				this.notes = this.notes.map((note) => byId.get(note.id) ?? note);
+			}
+			const pending = this.pendingNotes.filter((note) => uniqueIds.includes(note.id));
+			if (pending.length) {
+				const hydrated = applyActivityToNotes(pending, activity, identity.current?.pk);
+				const byId = new Map(hydrated.map((note) => [note.id, note]));
+				this.pendingNotes = this.pendingNotes.map((note) => byId.get(note.id) ?? note);
+			}
+		} catch {
+			// Activity hydration is best-effort; leave notes visible even if relays do not answer.
+		}
 	}
 
 	hideNote(id: string) {

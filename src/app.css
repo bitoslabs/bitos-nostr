@@ -546,6 +546,19 @@
 		color: var(--ui-color-primary-500);
 	}
 
+	/* iOS settings list: hairline divider between consecutive rows.
+	   (The sibling selector + left inset can't be expressed with Tailwind
+	   utilities, so this one rule stays. Everything else is inline.) */
+	.ios-row + .ios-row::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		left: 56px;
+		right: 0;
+		height: 1px;
+		background: var(--ui-border-muted);
+	}
+
 	/* Trending tag chip */
 	.trend-tag {
 		display: inline-flex;
