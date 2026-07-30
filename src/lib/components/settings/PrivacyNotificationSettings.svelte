@@ -1,7 +1,10 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { SettingsSectionKey } from '$lib/settings/sections';
+	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { shortKey } from '$lib/utils/format';
 
 	type Props = {
 		section: Extract<SettingsSectionKey, 'privacy' | 'notifications'>;
@@ -40,6 +43,12 @@
 		['dms', 'i-lucide-send', 'text-primary-500', 'Direct messages', 'When you receive a message'],
 		['mentions', 'i-lucide-at-sign', 'text-accent-500', 'Mentions', 'When someone mentions you']
 	] as const;
+
+	const blockedPubkeys = $derived([...blocks.blocked]);
+
+	$effect(() => {
+		if (blockedPubkeys.length) profiles.ensure(blockedPubkeys);
+	});
 </script>
 
 {#if section === 'privacy'}
@@ -81,7 +90,13 @@
 				</div>
 				<select
 					class="rounded-lg bg-[var(--ui-bg-muted)] px-3 py-1.5 text-[12px] font-semibold outline-none"
-					><option>Followers</option><option>Everyone</option><option>No one</option></select
+					value={privacyNotificationSettings.state.messagePermission}
+					onchange={(e) =>
+						privacyNotificationSettings.setMessagePermission(
+							(e.currentTarget as HTMLSelectElement).value as 'followers' | 'everyone' | 'none'
+						)}
+					><option value="followers">Followers</option><option value="everyone">Everyone</option
+					><option value="none">No one</option></select
 				>
 			</div>
 			<div class="flex items-center justify-between border-t border-[var(--ui-border-muted)] pt-3">
@@ -91,7 +106,13 @@
 				</div>
 				<select
 					class="rounded-lg bg-[var(--ui-bg-muted)] px-3 py-1.5 text-[12px] font-semibold outline-none"
-					><option>Everyone</option><option>Followers</option><option>Friends</option></select
+					value={privacyNotificationSettings.state.commentPermission}
+					onchange={(e) =>
+						privacyNotificationSettings.setCommentPermission(
+							(e.currentTarget as HTMLSelectElement).value as 'everyone' | 'followers' | 'friends'
+						)}
+					><option value="everyone">Everyone</option><option value="followers">Followers</option
+					><option value="friends">Friends</option></select
 				>
 			</div>
 			<div class="flex items-center justify-between border-t border-[var(--ui-border-muted)] pt-3">
@@ -108,6 +129,39 @@
 				></button>
 			</div>
 		</div>
+	</div>
+	<div class="post-card mt-5 p-5">
+		<h3 class="mb-4 text-[15px] font-bold">Blocked users</h3>
+		{#if blockedPubkeys.length}
+			<div class="space-y-3">
+				{#each blockedPubkeys as pubkey (pubkey)}
+					{@const profile = profiles.get(pubkey)}
+					<div
+						class="flex items-center justify-between gap-3 {pubkey !== blockedPubkeys[0]
+							? 'border-t border-[var(--ui-border-muted)] pt-3'
+							: ''}"
+					>
+						<div class="min-w-0">
+							<p class="truncate text-[13.5px] font-semibold">
+								{profile?.display_name || profile?.name || shortKey(pubkey)}
+							</p>
+							<p class="truncate font-mono text-[11px] text-[var(--ui-text-muted)]">
+								{shortKey(pubkey, 10, 8)}
+							</p>
+						</div>
+						<button
+							type="button"
+							onclick={() => blocks.unblock(pubkey)}
+							class="shrink-0 rounded-lg border border-[var(--ui-border-muted)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500 hover:text-primary-500"
+						>
+							Unblock
+						</button>
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<p class="text-[13px] text-[var(--ui-text-muted)]">No blocked users.</p>
+		{/if}
 	</div>
 {/if}
 

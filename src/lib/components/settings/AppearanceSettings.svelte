@@ -24,10 +24,10 @@
 		{ key: 'compact', label: 'Compact', description: 'More content on screen' }
 	];
 	const sizeLabels = ['Extra Small', 'Small', 'Medium', 'Large', 'Extra Large'];
-
-	let textSize = $state(2);
-	let reducedMotion = $state(false);
-	let highContrast = $state(false);
+	const textSizeIndex = $derived(
+		fontSizes.findIndex((item) => item.key === preferences.state.fontSize)
+	);
+	const activeSizeLabel = $derived(sizeLabels[Math.max(0, textSizeIndex) + 1] ?? 'Default');
 </script>
 
 <h2 class="mb-1 font-display text-[24px] font-extrabold">Appearance</h2>
@@ -164,7 +164,7 @@
 <div class="post-card p-5">
 	<h3 class="mb-4 text-[15px] font-bold">Text size</h3>
 	<div class="mb-3 flex items-center justify-between text-[12px] text-[var(--ui-text-muted)]">
-		<span>A</span><span class="font-bold text-[var(--ui-text)]">{sizeLabels[textSize]}</span><span
+		<span>A</span><span class="font-bold text-[var(--ui-text)]">{activeSizeLabel}</span><span
 			class="text-base">A</span
 		>
 	</div>
@@ -189,10 +189,10 @@
 			</div>
 			<button
 				type="button"
-				class="toggle {reducedMotion ? 'on' : ''}"
+				class="toggle {preferences.state.reducedMotion ? 'on' : ''}"
 				aria-label="Reduced motion"
-				aria-pressed={reducedMotion}
-				onclick={() => (reducedMotion = !reducedMotion)}
+				aria-pressed={preferences.state.reducedMotion}
+				onclick={() => preferences.setReducedMotion(!preferences.state.reducedMotion)}
 			></button>
 		</div>
 		<div class="flex items-center justify-between border-t border-[var(--ui-border-muted)] pt-3">
@@ -202,10 +202,10 @@
 			</div>
 			<button
 				type="button"
-				class="toggle {highContrast ? 'on' : ''}"
+				class="toggle {preferences.state.highContrast ? 'on' : ''}"
 				aria-label="High contrast"
-				aria-pressed={highContrast}
-				onclick={() => (highContrast = !highContrast)}
+				aria-pressed={preferences.state.highContrast}
+				onclick={() => preferences.setHighContrast(!preferences.state.highContrast)}
 			></button>
 		</div>
 	</div>

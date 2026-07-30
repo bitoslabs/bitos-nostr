@@ -13,6 +13,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
 
@@ -29,6 +30,7 @@
 	const lightning = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(!!pubkey && identity.current?.pk === pubkey);
 	const isFollowing = $derived(!!pubkey && contacts.isFollowing(pubkey));
+	const isBlocked = $derived(!!pubkey && blocks.has(pubkey));
 
 	let loading = $state(true);
 	let loadingMore = $state(false);
@@ -283,7 +285,9 @@
 				<p class="mt-1 truncate font-mono text-[13px] text-[var(--ui-text-muted)]">
 					{shortKey(npub)}
 				</p>
-				<div class="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[13px] sm:justify-start">
+				<div
+					class="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[13px] sm:justify-start"
+				>
 					<span
 						><strong class="font-bold">{posts.length}</strong>
 						<span class="text-[var(--ui-text-muted)]">posts</span></span
@@ -326,13 +330,22 @@
 						/>
 						{followPending ? 'Updating' : isFollowing ? 'Unfollow' : 'Follow'}
 					</button>
-					<a
-						href={`/messages?to=${pubkey}`}
-						class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
-					>
-						<Icon name="i-lucide-message-circle" class="size-4" />
-						Message
-					</a>
+					{#if isBlocked}
+						<span
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--tone-error-text)]/20 bg-[var(--tone-error-bg)] px-4 text-[13px] font-bold text-[var(--tone-error-text)]"
+						>
+							<Icon name="i-lucide-ban" class="size-4" />
+							Blocked
+						</span>
+					{:else}
+						<a
+							href={`/messages?to=${pubkey}`}
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
+						>
+							<Icon name="i-lucide-message-circle" class="size-4" />
+							Message
+						</a>
+					{/if}
 				{/if}
 				<ProfileActionMenu {pubkey} {npub} {lightning} />
 			</div>

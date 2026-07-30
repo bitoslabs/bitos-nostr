@@ -11,6 +11,7 @@
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 	import Poll from './Poll.svelte';
@@ -129,6 +130,7 @@
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
 	const saved = $derived(bookmarks.has(note.id));
 	const deleteTargetLabel = $derived(pendingDelete?.id === note.id ? 'note' : 'comment');
+	const canCommentOnNote = $derived(privacyNotificationSettings.canCommentOn(note.pubkey));
 
 	function sensitiveMediaReason() {
 		const contentWarning = note.tags.find(
@@ -214,6 +216,10 @@
 			toasts.error('Create or import a key first');
 			return;
 		}
+		if (!canCommentOnNote) {
+			toasts.info('Commenting is limited by your privacy settings');
+			return;
+		}
 		replyOpen = true;
 		setTimeout(() => replyInput?.focus(), 0);
 	}
@@ -221,6 +227,10 @@
 	function startCommentReply(reply: FeedNote) {
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
+			return;
+		}
+		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
+			toasts.info('Commenting is limited by your privacy settings');
 			return;
 		}
 		replyingToCommentId = reply.id;
@@ -369,6 +379,12 @@
 		popovers.close();
 	}
 
+	function blockAuthor() {
+		if (feed.blockAuthor(note.pubkey)) toasts.success(`Blocked ${displayName}`);
+		else toasts.info(`${displayName} is already blocked`);
+		popovers.close();
+	}
+
 	function askDeleteNote() {
 		popovers.close();
 		pendingDelete = note;
@@ -457,6 +473,10 @@
 
 	async function submitReply() {
 		if (!replyText.trim() || replying) return;
+		if (!canCommentOnNote) {
+			toasts.info('Commenting is limited by your privacy settings');
+			return;
+		}
 		replying = true;
 		try {
 			await feed.reply(note, replyText);
@@ -480,6 +500,10 @@
 
 	async function submitCommentReply(reply: FeedNote) {
 		if (!commentReplyText.trim() || commentReplying) return;
+		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
+			toasts.info('Commenting is limited by your privacy settings');
+			return;
+		}
 		commentReplying = true;
 		try {
 			await feed.reply(reply, commentReplyText);
@@ -656,6 +680,14 @@
 						>
 							<Icon name="i-lucide-volume-x" class="size-4 shrink-0" />
 							Mute author
+						</button>
+						<button
+							type="button"
+							onclick={blockAuthor}
+							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
+						>
+							<Icon name="i-lucide-ban" class="size-4 shrink-0" />
+							Block author
 						</button>
 					{:else}
 						<button
@@ -932,7 +964,7 @@
 		<button
 			type="button"
 			onclick={react}
-			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-primary-500/10 {liked
+			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 md:flex-none md:px-3 md:py-1.5 {liked
 				? 'text-primary-500'
 				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
 			aria-label={liked ? 'Unlike' : 'Like'}
@@ -953,7 +985,8 @@
 		<button
 			type="button"
 			onclick={startReply}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			disabled={!canCommentOnNote}
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
 			aria-label={directReplies.length
 				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 				: 'Comment'}
@@ -971,7 +1004,7 @@
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
 			aria-label="Share"
 		>
 			<Icon name="i-lucide-share" class="size-[16px]" />
@@ -981,7 +1014,7 @@
 			type="button"
 			onclick={zapNote}
 			disabled={!lightningAddress}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
 			aria-label={zapLabel}
 		>
 			<Icon name="i-lucide-zap" class="size-[16px]" />
@@ -990,7 +1023,7 @@
 		<button
 			type="button"
 			onclick={toggleSaved}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors md:flex-none md:px-3 md:py-1.5 hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
 			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
 			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[16px]" />
@@ -1076,7 +1109,8 @@
 							<button
 								type="button"
 								onclick={() => startCommentReply(reply)}
-								class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+								disabled={!privacyNotificationSettings.canCommentOn(reply.pubkey)}
+								class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
 							>
 								Reply
 							</button>
@@ -1185,7 +1219,9 @@
 								<button
 									type="button"
 									onclick={() => submitCommentReply(reply)}
-									disabled={!commentReplyText.trim() || commentReplying}
+									disabled={!commentReplyText.trim() ||
+										commentReplying ||
+										!privacyNotificationSettings.canCommentOn(reply.pubkey)}
 									class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
 									aria-label="Post comment reply"
 								>

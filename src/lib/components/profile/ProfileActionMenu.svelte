@@ -4,10 +4,9 @@
 	import QrCode from '$lib/components/ui/QrCode.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
-
-	const BLOCKED_KEY = 'bitos:blocked-pubkeys';
 
 	let {
 		pubkey,
@@ -19,19 +18,11 @@
 	const menuOpen = $derived(popovers.isOpen(menuId));
 	const profileLink = $derived(`nostr:${npub}`);
 	const lightningValue = $derived(lightning ? `lightning:${lightning}` : '');
+	const isBlocked = $derived(blocks.has(pubkey));
 	let qrOpen = $state(false);
 	let qrTitle = $state('');
 	let qrValue = $state('');
 	let qrCopyLabel = $state('');
-
-	function blockedPubkeys() {
-		try {
-			const value = localStorage.getItem(BLOCKED_KEY);
-			return value ? (JSON.parse(value) as string[]) : [];
-		} catch {
-			return [];
-		}
-	}
 
 	async function copy(value: string, label: string) {
 		try {
@@ -58,10 +49,14 @@
 			popovers.close();
 			return;
 		}
-		const next = [pubkey, ...blockedPubkeys().filter((item) => item !== pubkey)];
-		localStorage.setItem(BLOCKED_KEY, JSON.stringify(next));
-		feed.muteAuthor(pubkey);
-		toasts.success('User blocked locally');
+		if (feed.blockAuthor(pubkey)) toasts.success('User blocked locally');
+		else toasts.info('User already blocked');
+		popovers.close();
+	}
+
+	function unblockUser() {
+		if (blocks.unblock(pubkey)) toasts.success('User unblocked');
+		else toasts.info('User is not blocked');
 		popovers.close();
 	}
 </script>
@@ -129,14 +124,25 @@
 			{/if}
 			{#if pubkey !== identity.current?.pk}
 				<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
-				<button
-					type="button"
-					onclick={blockUser}
-					class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
-				>
-					<Icon name="i-lucide-ban" class="size-4 shrink-0" />
-					Block user
-				</button>
+				{#if isBlocked}
+					<button
+						type="button"
+						onclick={unblockUser}
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+					>
+						<Icon name="i-lucide-circle-off" class="size-4 shrink-0" />
+						Unblock user
+					</button>
+				{:else}
+					<button
+						type="button"
+						onclick={blockUser}
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
+					>
+						<Icon name="i-lucide-ban" class="size-4 shrink-0" />
+						Block user
+					</button>
+				{/if}
 			{/if}
 		</div>
 	{/if}

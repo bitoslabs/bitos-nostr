@@ -7,6 +7,7 @@
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
 	import { media } from '$lib/stores/media.svelte';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
@@ -112,14 +113,17 @@
 	}
 
 	function alertIncomingCalls() {
+		if (!privacyNotificationSettings.state.dms) return;
 		if (!browser || page.url.pathname === '/messages') return;
 		for (const conversation of dms.conversations) {
+			if (blocks.has(conversation.peer)) continue;
 			for (const message of conversation.messages) {
 				const signal = parseCallSignal(message.content);
 				if (signal?.type === 'end' || signal?.type === 'log') closedCallIds.add(signal.callId);
 			}
 		}
 		for (const conversation of dms.conversations) {
+			if (blocks.has(conversation.peer)) continue;
 			for (const message of conversation.messages) {
 				if (message.mine) continue;
 				const signal = parseCallSignal(message.content);
@@ -159,6 +163,7 @@
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
+		blocks.load();
 		privacyNotificationSettings.load();
 		identity.load();
 		relays.load();

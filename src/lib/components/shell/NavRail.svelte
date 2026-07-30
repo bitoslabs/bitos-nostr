@@ -6,6 +6,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 	const nav = [
 		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
@@ -26,7 +27,7 @@
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
-	const unread = $derived(dms.unreadCount);
+	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const logo = '/icons/icon-96-96.png';
 </script>
@@ -81,12 +82,7 @@
 				class="relative size-11 overflow-hidden mask-squircle ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
 				aria-label="Your profile"
 			>
-				<Avatar
-					pubkey={me.pk}
-					name={displayName}
-					picture={myProfile?.picture}
-					size={44}
-				/>
+				<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
 			</a>
 		{/if}
 	</div>

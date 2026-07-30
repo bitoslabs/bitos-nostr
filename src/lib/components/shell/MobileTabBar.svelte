@@ -6,6 +6,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 	/** iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is). */
 
@@ -34,7 +35,7 @@
 	const displayName = $derived(
 		me?.pk ? profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You' : ''
 	);
-	const unread = $derived(dms.unreadCount);
+	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const moreActive = $derived(moreItems.some((item) => isActive(item.to)));
 </script>
@@ -78,7 +79,8 @@
 				event.stopPropagation();
 				moreOpen = !moreOpen;
 			}}
-			class="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {moreActive || moreOpen
+			class="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {moreActive ||
+			moreOpen
 				? 'text-primary-500'
 				: 'text-[var(--ui-text-dimmed)]'}"
 			aria-label="More navigation"
@@ -106,7 +108,9 @@
 							frame
 						/>
 						<span class="min-w-0">
-							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">{displayName}</span>
+							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]"
+								>{displayName}</span
+							>
 							<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
 						</span>
 					</a>

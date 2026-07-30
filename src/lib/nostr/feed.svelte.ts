@@ -9,6 +9,7 @@ import { finalizeEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryOnce } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { blocks } from '$lib/stores/blocks.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
@@ -35,7 +36,10 @@ class FeedStore {
 	private pendingById = new Map<string, number>();
 	private seenZapIds = new Set<string>();
 	/** pollNoteId → (pubkey → latest vote) for one-vote-per-user aggregation. */
-	private pollVotes = new Map<string, Map<string, { optionId: string; evId: string; at: number }>>();
+	private pollVotes = new Map<
+		string,
+		Map<string, { optionId: string; evId: string; at: number }>
+	>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -123,6 +127,7 @@ class FeedStore {
 		},
 		options: { queueIfLive?: boolean } = {}
 	) {
+		if (blocks.has(ev.pubkey)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
 		const pollOptions = parsePoll(ev.tags);
@@ -262,19 +267,17 @@ class FeedStore {
 		}
 		const pendingIdx = this.pendingById.get(id);
 		if (pendingIdx !== undefined) {
-			this.pendingNotes = this.pendingNotes.map((n, i) =>
-				i === pendingIdx ? updater(n) : n
-			);
+			this.pendingNotes = this.pendingNotes.map((n, i) => (i === pendingIdx ? updater(n) : n));
 		}
 	}
 
 	/** Record a poll vote (one per pubkey, latest wins) and recompute counts. */
-	private applyPollVote(pollId: string, ev: { id: string; pubkey: string; content: string; created_at: number }) {
+	private applyPollVote(
+		pollId: string,
+		ev: { id: string; pubkey: string; content: string; created_at: number }
+	) {
 		if (!this.pollVotes.has(pollId))
-			this.pollVotes.set(
-				pollId,
-				new Map<string, { optionId: string; evId: string; at: number }>()
-			);
+			this.pollVotes.set(pollId, new Map<string, { optionId: string; evId: string; at: number }>());
 		const byPubkey = this.pollVotes.get(pollId)!;
 		const prev = byPubkey.get(ev.pubkey);
 		if (prev && prev.at > ev.created_at) return; // keep the latest vote
@@ -297,9 +300,7 @@ class FeedStore {
 			if (pubkey === me) myVote = v.optionId;
 		}
 		this.updateNote(pollId, (n) =>
-			n.poll
-				? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } }
-				: n
+			n.poll ? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } } : n
 		);
 	}
 
@@ -404,10 +405,18 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
+	blockAuthor(pubkey: string) {
+		if (!blocks.block(pubkey)) return false;
+		this.muteAuthor(pubkey);
+		return true;
+	}
+
 	upsertNote(note: FeedNote) {
 		const existing = this.byId.get(note.id);
 		if (existing !== undefined) {
-			this.notes = this.notes.map((item, index) => (index === existing ? { ...item, ...note } : item));
+			this.notes = this.notes.map((item, index) =>
+				index === existing ? { ...item, ...note } : item
+			);
 			this.rebuildIndex();
 			return;
 		}
@@ -500,7 +509,9 @@ class FeedStore {
 		if (cleanOptions.length < 2) throw new Error('A poll needs at least 2 options');
 		if (cleanOptions.length > 12) throw new Error('A poll can have at most 12 options');
 		if (prompt.length > MAX_TEXT_NOTE_CHARS) {
-			throw new Error(`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+			throw new Error(
+				`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
+			);
 		}
 		const event = finalizeEvent(
 			{

@@ -9,6 +9,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { queryOnce, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { blocks } from '$lib/stores/blocks.svelte';
 import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
@@ -60,7 +61,9 @@ class NotificationsStore {
 	private unsub: (() => void) | null = null;
 
 	/** Visible items after per-type mute filtering (drives UI + badge). */
-	visible = $derived(this.items.filter((item) => !this.muted.has(item.type)));
+	visible = $derived(
+		this.items.filter((item) => !this.muted.has(item.type) && !blocks.has(item.pubkey))
+	);
 
 	/** Unread badge uses the visible (un-muted) set so muted types don't ping. */
 	unreadCount = $derived(this.visible.filter((item) => !item.read).length);
@@ -144,6 +147,7 @@ class NotificationsStore {
 	private ingest(ev: Event) {
 		const me = identity.current?.pk;
 		if (!me || ev.pubkey === me || this.items.some((item) => item.id === ev.id)) return;
+		if (blocks.has(ev.pubkey)) return;
 
 		const item = this.toNotification(ev);
 		if (!item) return;

@@ -48,7 +48,9 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import type { Conversation, DirectMessage } from '$lib/nostr/types';
 	import { humanBytes, type MediaProviderId, type UploadedMedia } from '$lib/media/uploaders';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { media, providerLabel } from '$lib/stores/media.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
@@ -149,9 +151,13 @@
 
 	const dmRows = $derived<ChatRow[]>(
 		dms.conversations
+			.filter((conversation) => !blocks.has(conversation.peer))
 			.map((conversation) => {
 				const profile = profiles.get(conversation.peer);
-				const name = profile?.display_name || profile?.name || shortKey(conversation.peer);
+				const selfChat = conversation.peer === identity.current?.pk;
+				const name = selfChat
+					? 'Saved notes'
+					: profile?.display_name || profile?.name || shortKey(conversation.peer);
 				const visibleLastMessage = [...conversation.messages].reverse().find(isVisibleDmMessage);
 				const invite = visibleLastMessage ? parseGroupInvite(visibleLastMessage.content) : null;
 				const callSignal = visibleLastMessage ? parseCallSignal(visibleLastMessage.content) : null;
@@ -165,7 +171,7 @@
 						: callSignal
 							? `${callSignal.kind === 'video' ? 'Video' : 'Voice'} call`
 							: messagePreview(visibleLastMessage?.content),
-					previewPrefix: visibleLastMessage?.mine ? 'You:' : '',
+					previewPrefix: selfChat ? '' : visibleLastMessage?.mine ? 'You:' : '',
 					time: visibleLastMessage ? timeAgo(visibleLastMessage.createdAt) : '',
 					unread: visibleDmUnread(conversation)
 				};
@@ -208,8 +214,14 @@
 		!!selected && !uploadingMessage && (!!draft.trim() || messageAttachments.length > 0)
 	);
 	const unreadTotal = $derived(
-		dms.conversations.reduce((total, conversation) => total + visibleDmUnread(conversation), 0) +
-			groupThreads.reduce((total, group) => total + group.unread, 0)
+		(privacyNotificationSettings.state.dms
+			? dms.conversations
+					.filter((conversation) => !blocks.has(conversation.peer))
+					.reduce((total, conversation) => total + visibleDmUnread(conversation), 0)
+			: 0) + groupThreads.reduce((total, group) => total + group.unread, 0)
+	);
+	const ownActivityStatus = $derived(
+		privacyNotificationSettings.state.activity ? 'Online' : 'Offline'
 	);
 
 	const groupsStorageKey = $derived(`${GROUPS_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`);
@@ -997,11 +1009,11 @@
 			) {
 				const members: GroupMember[] = membersFromControlSnapshot(payload).map((member) =>
 					member.pubkey === me
-						? { ...member, name: 'You', initials: 'YO', status: 'Online' }
+						? { ...member, name: 'You', initials: 'YO', status: ownActivityStatus }
 						: member
 				);
 				if (!members.some((member) => member.pubkey === me)) {
-					members.unshift({ name: 'You', initials: 'YO', status: 'Online' });
+					members.unshift({ name: 'You', initials: 'YO', status: ownActivityStatus });
 				}
 				const restoredGroup: GroupThread = {
 					id: payload.id,
@@ -1573,7 +1585,10 @@
 				description: 'A local group thread ready for a Nostr group protocol integration.',
 				pinned: 'No pinned message yet',
 				unread: 0,
-				members: [{ name: 'You', initials: 'YO', status: 'Online', admin: true }, ...members],
+				members: [
+					{ name: 'You', initials: 'YO', status: ownActivityStatus, admin: true },
+					...members
+				],
 				messages: [],
 				files: []
 			};
@@ -1593,10 +1608,6 @@
 		if (!newPeerInput.trim()) return;
 		if (!peer) {
 			toasts.error('Enter a valid npub or 64-char hex pubkey');
-			return;
-		}
-		if (peer === identity.current?.pk) {
-			toasts.warning("You can't message yourself");
 			return;
 		}
 		dms.forPeer(peer);
