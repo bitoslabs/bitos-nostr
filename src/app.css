@@ -587,6 +587,10 @@
 		align-items: center;
 		justify-content: center;
 	}
+	.reel-action .icon-circle.is-active {
+		background: var(--color-primary-500);
+		box-shadow: 0 10px 28px rgba(47, 149, 246, 0.35);
+	}
 
 	/* Discover / profile masonry + grids */
 	.masonry {

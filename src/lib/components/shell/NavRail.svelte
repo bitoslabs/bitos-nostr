@@ -13,6 +13,7 @@
 		{ to: '/notifications', label: 'Notifications', icon: 'i-lucide-bell', notifications: true },
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
+		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark' },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' },
 		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2' }
 	];
@@ -27,6 +28,7 @@
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(dms.unreadCount);
 	const notificationUnread = $derived(notifications.unreadCount);
+	const logo = '/icons/icon-96-96.png';
 </script>
 
 <nav class="flex h-full flex-col items-center py-5">
@@ -34,9 +36,9 @@
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="mb-6 grid size-11 place-items-center rounded-2xl bg-primary-500 shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
+		class="mb-6 grid size-11 place-items-center overflow-hidden rounded-2xl shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
 	>
-		<span class="font-display text-[20px] leading-none font-black text-white">B</span>
+		<img src={logo} alt="" class="size-full" />
 	</a>
 
 	<div class="flex flex-1 flex-col gap-2">

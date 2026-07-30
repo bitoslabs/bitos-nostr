@@ -5,8 +5,10 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
+	import StoryRing from '$lib/components/feed/StoryRing.svelte';
 	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
@@ -14,7 +16,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
 
-	const NOTE_LIMIT = 60;
+	const NOTE_PAGE_LIMIT = 30;
 	const mediaUrlPattern = /https?:\/\/\S+\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#]\S*)?/i;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
@@ -26,8 +28,12 @@
 	const npub = $derived(pubkey ? npubEncode(pubkey) : '');
 	const lightning = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(!!pubkey && identity.current?.pk === pubkey);
+	const isFollowing = $derived(!!pubkey && contacts.isFollowing(pubkey));
 
 	let loading = $state(true);
+	let loadingMore = $state(false);
+	let hasMoreNotes = $state(false);
+	let followPending = $state(false);
 	let loadedFor = $state('');
 	let notes = $state<FeedNote[]>([]);
 	let activeTab = $state<'posts' | 'replies' | 'media'>('posts');
@@ -83,6 +89,57 @@
 		};
 	}
 
+	function uniqueNoteEvents(
+		events: Array<{
+			id: string;
+			pubkey: string;
+			content: string;
+			created_at: number;
+			tags: string[][];
+			kind: number;
+		}>
+	) {
+		const seen = new Set<string>();
+		return events
+			.filter((event) => {
+				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen.has(event.id)) return false;
+				seen.add(event.id);
+				return true;
+			})
+			.sort((a, b) => b.created_at - a.created_at);
+	}
+
+	async function fetchNotePage(nextPubkey: string, until?: number) {
+		const events = await queryOnce([
+			{
+				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				authors: [nextPubkey],
+				limit: NOTE_PAGE_LIMIT,
+				...(until ? { until } : {})
+			}
+		]);
+		const noteEvents = uniqueNoteEvents(events);
+		const nextNotes = noteEvents.map(toFeedNote);
+		const noteIds = nextNotes.map((note) => note.id);
+		const activity = noteIds.length
+			? await queryOnce([
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+				])
+			: [];
+		return {
+			notes: applyActivityToNotes(nextNotes, activity, identity.current?.pk),
+			mayHaveMore:
+				events.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE).length >= NOTE_PAGE_LIMIT
+		};
+	}
+
+	function mergeNotes(current: FeedNote[], next: FeedNote[]) {
+		const seen = new Set(current.map((note) => note.id));
+		return [...current, ...next.filter((note) => !seen.has(note.id))].sort(
+			(a, b) => b.createdAt - a.createdAt
+		);
+	}
+
 	function buildHighlights(items: FeedNote[]) {
 		const counts: Record<string, number> = {};
 		for (const item of items) {
@@ -105,24 +162,15 @@
 	async function loadProfile(nextPubkey: string) {
 		if (!nextPubkey || loadedFor === nextPubkey) return;
 		loading = true;
+		hasMoreNotes = false;
+		notes = [];
 		loadedFor = nextPubkey;
 		profiles.ensure([nextPubkey]);
 		try {
-			const events = await queryOnce([
-				{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_LIMIT }
-			]);
-			const noteEvents = events
-				.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)
-				.sort((a, b) => b.created_at - a.created_at);
-			const nextNotes = noteEvents.map(toFeedNote);
-			const noteIds = nextNotes.map((note) => note.id);
-			const activity = noteIds.length
-				? await queryOnce([
-						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
-					])
-				: [];
-			notes = applyActivityToNotes(nextNotes, activity, identity.current?.pk);
+			await queryOnce([{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 }]);
+			const page = await fetchNotePage(nextPubkey);
+			notes = page.notes;
+			hasMoreNotes = page.mayHaveMore;
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load profile');
 		} finally {
@@ -130,8 +178,43 @@
 		}
 	}
 
+	async function loadMoreNotes() {
+		if (!pubkey || loadingMore || !hasMoreNotes || !notes.length) return;
+		const oldest = notes.at(-1);
+		if (!oldest) return;
+		loadingMore = true;
+		try {
+			const page = await fetchNotePage(pubkey, oldest.createdAt - 1);
+			notes = mergeNotes(notes, page.notes);
+			hasMoreNotes = page.mayHaveMore;
+			if (!page.notes.length) toasts.info('No older notes found');
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not load older notes');
+		} finally {
+			loadingMore = false;
+		}
+	}
+
 	function updateNote(next: FeedNote) {
 		notes = notes.map((note) => (note.id === next.id ? next : note));
+	}
+
+	async function toggleFollow() {
+		if (!pubkey || isMe || followPending) return;
+		followPending = true;
+		try {
+			if (isFollowing) {
+				await contacts.unfollow(pubkey);
+				toasts.info(`Unfollowed ${displayName}`);
+			} else {
+				await contacts.follow(pubkey);
+				toasts.success(`Following ${displayName}`);
+			}
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not update follow status');
+		} finally {
+			followPending = false;
+		}
 	}
 
 	onMount(() => {
@@ -167,13 +250,15 @@
 
 	<div class="mx-auto max-w-[900px] px-6">
 		<div class="relative -mt-16 mb-5 flex flex-col gap-4 sm:flex-row sm:items-end">
-			<Avatar
-				{pubkey}
-				name={displayName}
-				picture={profile?.picture}
-				size={128}
-				class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
-			/>
+			<StoryRing {pubkey} rounded="rounded-3xl">
+				<Avatar
+					{pubkey}
+					name={displayName}
+					picture={profile?.picture}
+					size={128}
+					class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
+				/>
+			</StoryRing>
 			<div class="min-w-0 flex-1 pb-2">
 				<div class="flex min-w-0 items-center gap-2">
 					<h1
@@ -183,6 +268,14 @@
 					</h1>
 					{#if profile?.nip05}
 						<Icon name="i-lucide-badge-check" class="size-5 shrink-0 text-primary-500" />
+					{/if}
+					{#if !isMe && isFollowing}
+						<span
+							class="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary-500/10 px-2 py-1 text-[11px] font-bold text-primary-600"
+						>
+							<Icon name="i-lucide-check" class="size-3" />
+							Following
+						</span>
 					{/if}
 				</div>
 				<p class="mt-1 truncate font-mono text-[13px] text-[var(--ui-text-muted)]">
@@ -203,19 +296,41 @@
 					>
 				</div>
 			</div>
-			<div class="flex gap-2 pb-2">
+			<div class="flex flex-wrap gap-2 pb-2 sm:justify-end">
 				{#if isMe}
 					<a
 						href="/settings"
-						class="rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
-						>Edit profile</a
+						class="inline-flex h-10 items-center gap-2 rounded-full bg-primary-500 px-4 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
 					>
+						<Icon name="i-lucide-pencil" class="size-4" />
+						Edit profile
+					</a>
 				{:else}
+					<button
+						type="button"
+						onclick={toggleFollow}
+						disabled={followPending || contacts.loading}
+						class="inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-bold shadow-[var(--glow-primary)] transition disabled:cursor-not-allowed disabled:opacity-60 {isFollowing
+							? 'border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text)] shadow-none hover:border-primary-500 hover:text-primary-500'
+							: 'bg-primary-500 text-white hover:bg-primary-600'}"
+					>
+						<Icon
+							name={followPending
+								? 'i-lucide-loader-circle'
+								: isFollowing
+									? 'i-lucide-user-check'
+									: 'i-lucide-user-plus'}
+							class="size-4 {followPending ? 'animate-spin' : ''}"
+						/>
+						{followPending ? 'Updating' : isFollowing ? 'Unfollow' : 'Follow'}
+					</button>
 					<a
 						href={`/messages?to=${pubkey}`}
-						class="rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
-						>Message</a
+						class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
 					>
+						<Icon name="i-lucide-message-circle" class="size-4" />
+						Message
+					</a>
 				{/if}
 				<ProfileActionMenu {pubkey} {npub} {lightning} />
 			</div>
@@ -342,6 +457,26 @@
 				{#each visibleNotes as note, i (note.id)}
 					<PostCard {note} index={i} onNoteChange={updateNote} />
 				{/each}
+				{#if hasMoreNotes}
+					<div class="flex justify-center pt-1">
+						<button
+							type="button"
+							onclick={loadMoreNotes}
+							disabled={loadingMore}
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+						>
+							<Icon
+								name={loadingMore ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'}
+								class="size-4 {loadingMore ? 'animate-spin' : ''}"
+							/>
+							{loadingMore ? 'Loading older notes' : 'Load more'}
+						</button>
+					</div>
+				{:else if notes.length >= NOTE_PAGE_LIMIT}
+					<p class="pt-1 text-center text-[12px] text-[var(--ui-text-muted)]">
+						No older notes returned from this relay set.
+					</p>
+				{/if}
 			</div>
 		{:else}
 			<div class="post-card py-16 text-center">
@@ -349,6 +484,20 @@
 				<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
 					This relay set did not return matching notes.
 				</p>
+				{#if hasMoreNotes}
+					<button
+						type="button"
+						onclick={loadMoreNotes}
+						disabled={loadingMore}
+						class="mt-5 inline-flex h-10 items-center gap-2 rounded-full bg-primary-500 px-4 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+					>
+						<Icon
+							name={loadingMore ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'}
+							class="size-4 {loadingMore ? 'animate-spin' : ''}"
+						/>
+						{loadingMore ? 'Loading older notes' : 'Load older notes'}
+					</button>
+				{/if}
 			</div>
 		{/if}
 	</div>

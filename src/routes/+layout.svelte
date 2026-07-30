@@ -6,12 +6,14 @@
 	import { page } from '$app/state';
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
+	import { media } from '$lib/stores/media.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { groupSync } from '$lib/nostr/group-sync.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
+	import { stories } from '$lib/nostr/stories.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { ensureConnected } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -22,9 +24,9 @@
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
 	import Onboarding from '$lib/components/Onboarding.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
-	import favicon from '$lib/assets/favicon.svg';
 
 	let { children } = $props();
+	const favicon = '/favicon.ico';
 
 	type CallKind = 'voice' | 'video';
 	type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
@@ -155,6 +157,7 @@
 		preferences.load();
 		preferences.apply();
 		preferences.startSystemWatcher();
+		media.load();
 		identity.load();
 		relays.load();
 	});
@@ -168,11 +171,13 @@
 		if (pk) {
 			ensureConnected();
 			contacts.start();
+			stories.start();
 			feed.start();
 			dms.start();
 			notifications.start();
 		} else {
 			contacts.stop();
+			stories.stop();
 			feed.stop();
 			dms.stop();
 			notifications.stop();
@@ -187,9 +192,25 @@
 		lastRelays = sig;
 		ensureConnected();
 		contacts.start();
+		stories.start();
 		feed.start();
 		dms.start();
 		notifications.start();
+	});
+
+	// Stories are scoped to me + my follow list, and contacts load asynchronously.
+	// Refresh the story subscription when the follow list changes.
+	let lastStoryAuthors = $state('');
+	$effect(() => {
+		const pk = identity.current?.pk ?? '';
+		if (!pk) {
+			lastStoryAuthors = '';
+			return;
+		}
+		const sig = `${pk}:${contacts.following.join(',')}`;
+		if (sig === lastStoryAuthors) return;
+		lastStoryAuthors = sig;
+		stories.start();
 	});
 
 	$effect(() => {

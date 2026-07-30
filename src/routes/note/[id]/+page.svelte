@@ -3,6 +3,7 @@
 	import { decode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
+	import { feed } from '$lib/nostr/feed.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
@@ -16,6 +17,13 @@
 	let loadedFor = $state('');
 
 	const noteId = $derived(resolveNoteId(page.params.id));
+	const noteSource = $derived(page.url.searchParams.get('from'));
+	const backHref = $derived(
+		noteSource === 'reels' ? '/reels' : noteSource === 'discover' ? '/discover' : '/notifications'
+	);
+	const backLabel = $derived(
+		noteSource === 'reels' ? 'Reels' : noteSource === 'discover' ? 'Discover' : 'Notifications'
+	);
 
 	function resolveNoteId(value: string | undefined) {
 		if (!value) return '';
@@ -72,11 +80,30 @@
 				identity.current?.pk
 			);
 			note = hydrated;
+			feed.upsertNote(hydrated);
+			await loadReplies(id);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load note');
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function loadReplies(id: string) {
+		const replyEvents = (
+			await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [id], limit: 200 }])
+		)
+			.map(toFeedNote)
+			.filter((item) => item.replyTo === id);
+		if (!replyEvents.length) return;
+		const replyIds = replyEvents.map((reply) => reply.id);
+		const hydratedReplies = applyActivityToNotes(
+			replyEvents,
+			await queryOnce([{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }]),
+			identity.current?.pk
+		);
+		profiles.ensure(hydratedReplies.map((reply) => reply.pubkey));
+		for (const reply of hydratedReplies) feed.upsertNote(reply);
 	}
 
 	$effect(() => {
@@ -90,11 +117,11 @@
 	<div class="mx-auto max-w-[640px] px-5 py-6">
 		<header class="mb-5">
 			<a
-				href="/notifications"
+				href={backHref}
 				class="mb-4 inline-flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500"
 			>
 				<Icon name="i-lucide-arrow-left" class="size-4" />
-				Notifications
+				{backLabel}
 			</a>
 			<h1 class="font-display text-[30px] leading-none font-extrabold tracking-tight">Note</h1>
 			{#if noteId}

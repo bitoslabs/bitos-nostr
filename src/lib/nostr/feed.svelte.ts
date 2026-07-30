@@ -10,7 +10,7 @@ import { subscribe, publish, queryOnce } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
-import { NOSTR_KINDS, type FeedNote } from './types';
+import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
 import { zapSats, zapTarget } from './zaps';
 
 const INITIAL_LIMIT = 150;
@@ -34,6 +34,8 @@ class FeedStore {
 	private byId = new Map<string, number>();
 	private pendingById = new Map<string, number>();
 	private seenZapIds = new Set<string>();
+	/** pollNoteId → (pubkey → latest vote) for one-vote-per-user aggregation. */
+	private pollVotes = new Map<string, Map<string, { optionId: string; evId: string; at: number }>>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -120,6 +122,7 @@ class FeedStore {
 	) {
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
+		const pollOptions = parsePoll(ev.tags);
 		const note: FeedNote = {
 			id: ev.id,
 			pubkey: ev.pubkey,
@@ -130,13 +133,23 @@ class FeedStore {
 			reactions: [],
 			repostCount: 0,
 			zapCount: 0,
-			zapTotalSats: 0
+			zapTotalSats: 0,
+			poll: pollOptions
+				? {
+						options: pollOptions,
+						votes: {},
+						totalVotes: 0,
+						closedAt: pollClosedAt(ev.tags)
+					}
+				: undefined
 		};
 		if (options.queueIfLive && this.notes.length > 0 && note.createdAt >= this.notes[0].createdAt) {
 			this.insertPending(note);
-			return;
+		} else {
+			this.insertVisible(note);
 		}
-		this.insertVisible(note);
+		// If votes arrived before the poll note was ingested, replay them now.
+		if (note.poll) this.rebuildPoll(note.id);
 	}
 
 	private insertVisible(note: FeedNote) {
@@ -170,6 +183,14 @@ class FeedStore {
 		// NIP-25: reaction tags the target note/event with `e` (and usually `p`).
 		const target = ev.tags.find((t) => t[0] === 'e')?.[1];
 		if (!target) return;
+
+		// Poll vote? A kind 7 reaction whose content is one of the poll's option ids.
+		const targetNote = this.noteById(target);
+		if (targetNote?.poll && targetNote.poll.options.some((o) => o.id === ev.content)) {
+			this.applyPollVote(target, ev);
+			return;
+		}
+
 		const idx = this.byId.get(target);
 		if (idx === undefined) {
 			const pendingIdx = this.pendingById.get(target);
@@ -219,6 +240,64 @@ class FeedStore {
 					: note
 			);
 		}
+	}
+
+	/** Look up a note in either the visible or pending list. */
+	private noteById(id: string): FeedNote | undefined {
+		const idx = this.byId.get(id);
+		if (idx !== undefined) return this.notes[idx];
+		const pendingIdx = this.pendingById.get(id);
+		if (pendingIdx !== undefined) return this.pendingNotes[pendingIdx];
+		return undefined;
+	}
+
+	/** Apply a note update to whichever list holds it (visible + pending). */
+	private updateNote(id: string, updater: (n: FeedNote) => FeedNote) {
+		const idx = this.byId.get(id);
+		if (idx !== undefined) {
+			this.notes = this.notes.map((n, i) => (i === idx ? updater(n) : n));
+		}
+		const pendingIdx = this.pendingById.get(id);
+		if (pendingIdx !== undefined) {
+			this.pendingNotes = this.pendingNotes.map((n, i) =>
+				i === pendingIdx ? updater(n) : n
+			);
+		}
+	}
+
+	/** Record a poll vote (one per pubkey, latest wins) and recompute counts. */
+	private applyPollVote(pollId: string, ev: { id: string; pubkey: string; content: string; created_at: number }) {
+		if (!this.pollVotes.has(pollId))
+			this.pollVotes.set(
+				pollId,
+				new Map<string, { optionId: string; evId: string; at: number }>()
+			);
+		const byPubkey = this.pollVotes.get(pollId)!;
+		const prev = byPubkey.get(ev.pubkey);
+		if (prev && prev.at > ev.created_at) return; // keep the latest vote
+		byPubkey.set(ev.pubkey, { optionId: ev.content, evId: ev.id, at: ev.created_at });
+		this.rebuildPoll(pollId);
+	}
+
+	/** Recompute a poll's vote tally from the per-pubkey vote map. */
+	private rebuildPoll(pollId: string) {
+		const note = this.noteById(pollId);
+		if (!note?.poll) return;
+		const byPubkey = this.pollVotes.get(pollId) ?? new Map<string, { optionId: string }>();
+		const votes: Record<string, number> = {};
+		let total = 0;
+		const me = identity.current?.pk?.toLowerCase();
+		let myVote: string | undefined;
+		for (const [pubkey, v] of byPubkey) {
+			votes[v.optionId] = (votes[v.optionId] ?? 0) + 1;
+			total += 1;
+			if (pubkey === me) myVote = v.optionId;
+		}
+		this.updateNote(pollId, (n) =>
+			n.poll
+				? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } }
+				: n
+		);
 	}
 
 	private nextReactions(
@@ -293,6 +372,24 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
+	upsertNote(note: FeedNote) {
+		const existing = this.byId.get(note.id);
+		if (existing !== undefined) {
+			this.notes = this.notes.map((item, index) => (index === existing ? { ...item, ...note } : item));
+			this.rebuildIndex();
+			return;
+		}
+		const pending = this.pendingById.get(note.id);
+		if (pending !== undefined) {
+			this.pendingNotes = this.pendingNotes.map((item, index) =>
+				index === pending ? { ...item, ...note } : item
+			);
+			this.rebuildPendingIndex();
+			return;
+		}
+		this.insertVisible(note);
+	}
+
 	async deleteNote(note: FeedNote) {
 		if (!browser) return;
 		const id = identity.current;
@@ -354,6 +451,70 @@ class FeedStore {
 		// show immediately (the subscription will also re-deliver it, dedup by id)
 		this.ingestNote(event, { queueIfLive: false });
 		return event.id;
+	}
+
+	/**
+	 * Publish a kind-1 poll note. The question is the note content; each option
+	 * becomes a `["poll_option", "<id>", "<label>"]` tag. Votes arrive later as
+	 * kind-7 reactions whose content is the option id.
+	 */
+	async postPoll(question: string, options: string[]): Promise<string> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		const prompt = question.trim();
+		if (!prompt) throw new Error('Add a poll question');
+		const cleanOptions = options.map((o) => o.trim()).filter(Boolean);
+		if (cleanOptions.length < 2) throw new Error('A poll needs at least 2 options');
+		if (cleanOptions.length > 12) throw new Error('A poll can have at most 12 options');
+		if (prompt.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+		}
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.TEXT_NOTE,
+				content: prompt,
+				created_at: Math.floor(Date.now() / 1000),
+				tags: cleanOptions.map((label, i) => ['poll_option', String(i), label])
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		this.ingestNote(event, { queueIfLive: false });
+		return event.id;
+	}
+
+	/**
+	 * Cast a vote on a poll by publishing a kind-7 reaction whose content is the
+	 * option id and which references the poll note via an `e` tag. Re-voting is
+	 * allowed; the latest vote per pubkey wins.
+	 */
+	async votePoll(note: FeedNote, optionId: string): Promise<void> {
+		if (!browser) return;
+		const id = identity.current;
+		if (!id) throw new Error('No identity');
+		if (!note.poll?.options.some((o) => o.id === optionId)) throw new Error('Invalid option');
+		if (note.poll.myVote === optionId) return; // already voted this option
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.REACTION,
+				content: optionId,
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [
+					['e', note.id],
+					['p', note.pubkey]
+				]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		// Optimistic local application (subscription will also confirm, idempotent).
+		this.applyPollVote(note.id, {
+			id: event.id,
+			pubkey: id.pk.toLowerCase(),
+			content: optionId,
+			created_at: event.created_at
+		});
 	}
 
 	/** Publish a kind-1 reply to an existing note using NIP-10 style tags. */

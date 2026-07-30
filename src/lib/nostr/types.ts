@@ -17,6 +17,25 @@ export interface Profile {
 	lud06?: string;
 }
 
+/** A single option in a NIP-style poll. */
+export interface PollOption {
+	/** Stable id used by votes (e.g. "0", "1"). */
+	id: string;
+	label: string;
+}
+
+/** Aggregated poll data attached to a kind-1 note. */
+export interface PollData {
+	options: PollOption[];
+	/** optionId → vote count. */
+	votes: Record<string, number>;
+	totalVotes: number;
+	/** The option id the current user voted for, if any. */
+	myVote?: string;
+	/** Unix seconds at which the poll closed (optional). */
+	closedAt?: number;
+}
+
 /** A kind 1 text note ready for the feed UI. */
 export interface FeedNote {
 	id: string;
@@ -30,6 +49,32 @@ export interface FeedNote {
 	repostCount: number;
 	zapCount: number;
 	zapTotalSats: number;
+	/** Present when this note is a poll (kind 1 with `poll_option` tags). */
+	poll?: PollData;
+}
+
+/**
+ * Parse NIP-style poll options from a note's tags. Returns the option list or
+ * `null` when the note is not a poll. Format: `["poll_option", "<id>", "<label>"]`.
+ */
+export function parsePoll(tags: string[][]): PollOption[] | null {
+	const options: PollOption[] = [];
+	for (const tag of tags) {
+		if (tag[0] !== 'poll_option') continue;
+		const id = tag[1];
+		const label = tag.slice(2).join(' ').trim();
+		if (!id) continue;
+		options.push({ id, label: label || `Option ${options.length + 1}` });
+	}
+	return options.length >= 2 ? options : null;
+}
+
+/** Extract a poll's optional close timestamp from a `closed` tag, if any. */
+export function pollClosedAt(tags: string[][]): number | undefined {
+	const closed = tags.find((t) => t[0] === 'closed');
+	if (!closed?.[1]) return undefined;
+	const ts = Number(closed[1]);
+	return Number.isFinite(ts) && ts > 0 ? ts : undefined;
 }
 
 /** Activity addressed to the current user's pubkey. */
@@ -98,5 +143,7 @@ export const NOSTR_KINDS = {
 	DIRECT_MESSAGE: 4,
 	REPOST: 6,
 	CONTACT_LIST: 3,
-	ZAP: 9735
+	ZAP: 9735,
+	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
+	STORY_STATUS: 30315
 } as const;

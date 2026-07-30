@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import StoryRing from './StoryRing.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -9,8 +10,10 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
 	import { popovers } from '$lib/stores/popovers.svelte';
+	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
+	import Poll from './Poll.svelte';
 
 	type ContentToken =
 		| { type: 'text'; value: string }
@@ -46,6 +49,10 @@
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
+	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
+	const currentDisplayName = $derived(
+		currentProfile?.display_name || currentProfile?.name || 'You'
+	);
 	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(identity.current?.pk === note.pubkey);
 	const liked = $derived(note.reactions.some((r) => r.byMe));
@@ -96,9 +103,11 @@
 	);
 	let burst = $state(false);
 	let rawOpen = $state(false);
+	let deleteOpen = $state(false);
+	let pendingDelete = $state<FeedNote | null>(null);
+	let deleting = $state(false);
 	let previewOpen = $state(false);
 	let previewImageUrl = $state('');
-	let saved = $state(isSaved());
 	let replyOpen = $state(false);
 	let replyText = $state('');
 	let replying = $state(false);
@@ -118,25 +127,8 @@
 	);
 	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(0, 2));
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
-
-	function savedIds() {
-		if (!browser) return [];
-		try {
-			const value = localStorage.getItem('bitos:saved-notes');
-			return value ? (JSON.parse(value) as string[]) : [];
-		} catch {
-			return [];
-		}
-	}
-
-	function isSaved() {
-		return savedIds().includes(note.id);
-	}
-
-	function persistSaved(ids: string[]) {
-		if (!browser) return;
-		localStorage.setItem('bitos:saved-notes', JSON.stringify(ids));
-	}
+	const saved = $derived(bookmarks.has(note.id));
+	const deleteTargetLabel = $derived(pendingDelete?.id === note.id ? 'note' : 'comment');
 
 	function sensitiveMediaReason() {
 		const contentWarning = note.tags.find(
@@ -320,18 +312,18 @@
 		try {
 			const parsed = new URL(url);
 			const pathname = decodeURIComponent(parsed.pathname);
+			if (videoPattern.test(pathname)) return 'video';
+			if (audioPattern.test(pathname)) return 'audio';
 			if (
 				imagePattern.test(pathname) ||
 				imageFormatPattern.test(parsed.search) ||
 				imagePathPattern.test(pathname)
 			)
 				return 'image';
-			if (videoPattern.test(pathname)) return 'video';
-			if (audioPattern.test(pathname)) return 'audio';
 		} catch {
-			if (/\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url)) return 'image';
 			if (/\.(?:m3u8|m4v|mov|mp4|webm)(?:[?#].*)?$/i.test(url)) return 'video';
 			if (/\.(?:aac|flac|m4a|mp3|ogg|opus|wav)(?:[?#].*)?$/i.test(url)) return 'audio';
+			if (/\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#].*)?$/i.test(url)) return 'image';
 		}
 		return 'link';
 	}
@@ -356,15 +348,11 @@
 	}
 
 	function toggleSaved() {
-		const ids = savedIds();
-		if (ids.includes(note.id)) {
-			persistSaved(ids.filter((id) => id !== note.id));
-			saved = false;
-			toasts.info('Removed from saved');
-		} else {
-			persistSaved([note.id, ...ids]);
-			saved = true;
+		const nextSaved = bookmarks.toggle(note);
+		if (nextSaved) {
 			toasts.success('Saved');
+		} else {
+			toasts.info('Removed from saved');
 		}
 		popovers.close();
 	}
@@ -381,14 +369,31 @@
 		popovers.close();
 	}
 
-	async function deleteNote() {
+	function askDeleteNote() {
 		popovers.close();
-		if (!confirm('Request deletion for this note?')) return;
+		pendingDelete = note;
+		deleteOpen = true;
+	}
+
+	function cancelDelete() {
+		if (deleting) return;
+		pendingDelete = null;
+		deleteOpen = false;
+	}
+
+	async function confirmDelete() {
+		const target = pendingDelete;
+		if (!target || deleting) return;
+		deleting = true;
 		try {
-			await feed.deleteNote(note);
+			await feed.deleteNote(target);
+			pendingDelete = null;
+			deleteOpen = false;
 			toasts.success('Deletion request published');
 		} catch (e) {
-			toasts.error((e as Error).message);
+			toasts.error((e as Error).message || 'Could not publish deletion request');
+		} finally {
+			deleting = false;
 		}
 	}
 
@@ -493,18 +498,17 @@
 		toasts.info('Comment hidden');
 	}
 
-	async function deleteComment(reply: FeedNote) {
-		if (!confirm('Request deletion for this comment?')) return;
-		try {
-			await feed.deleteNote(reply);
-			toasts.success('Deletion request published');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
+	function askDeleteComment(reply: FeedNote) {
+		pendingDelete = reply;
+		deleteOpen = true;
 	}
 
 	$effect(() => {
 		if (!previewOpen) previewImageUrl = '';
+	});
+
+	$effect(() => {
+		if (identity.current) profiles.ensure([identity.current.pk]);
 	});
 </script>
 
@@ -515,7 +519,9 @@
 	<!-- Author header -->
 	<header class="flex items-center justify-between gap-2 p-4 pb-3">
 		<a href={`/profile/${note.pubkey}`} class="flex min-w-0 flex-1 items-center gap-3">
-			<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			<StoryRing pubkey={note.pubkey} interactive={false}>
+				<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			</StoryRing>
 			<div class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
@@ -654,7 +660,7 @@
 					{:else}
 						<button
 							type="button"
-							onclick={deleteNote}
+							onclick={askDeleteNote}
 							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
 						>
 							<Icon name="i-lucide-trash-2" class="size-4 shrink-0" />
@@ -706,6 +712,10 @@
 			>
 				{expanded ? 'Show less' : 'Show more'}
 			</button>
+		{/if}
+
+		{#if note.poll}
+			<Poll {note} />
 		{/if}
 	</div>
 
@@ -927,10 +937,10 @@
 				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
 		>
 			<span class="relative">
-				<Icon name="i-lucide-heart" class="size-[16px] {liked ? 'fill-primary-500' : ''}" />
+				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
 				{#if burst}
 					<span class="heart-burst pointer-events-none absolute inset-0 text-primary-500">
-						<Icon name="i-lucide-heart" class="size-[16px]" />
+						<Icon name="i-solar-heart-bold" class="size-[16px]" />
 					</span>
 				{/if}
 			</span>
@@ -1037,10 +1047,14 @@
 							<button
 								type="button"
 								onclick={() => reactToComment(reply)}
-								class={commentLiked(reply)
+								class="inline-flex items-center gap-1 {commentLiked(reply)
 									? 'text-primary-500'
-									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}
+									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}"
 							>
+								<Icon
+									name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+									class="size-3.5"
+								/>
 								{commentLiked(reply) ? 'Unlike' : 'Like'}
 								{#if commentReactionCount(reply)}
 									<span class="font-semibold"> · {commentReactionCount(reply)}</span>
@@ -1063,8 +1077,8 @@
 							{#if identity.current?.pk === reply.pubkey}
 								<button
 									type="button"
-									onclick={() => deleteComment(reply)}
-									class="text-[var(--tone-error-text)] hover:underline"
+									onclick={() => askDeleteComment(reply)}
+									class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 								>
 									Delete
 								</button>
@@ -1115,8 +1129,8 @@
 												{#if identity.current?.pk === child.pubkey}
 													<button
 														type="button"
-														onclick={() => deleteComment(child)}
-														class="text-[var(--tone-error-text)] hover:underline"
+														onclick={() => askDeleteComment(child)}
+														class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
 													>
 														Delete
 													</button>
@@ -1130,6 +1144,14 @@
 
 						{#if replyingToCommentId === reply.id}
 							<div class="mt-2 flex items-center gap-2">
+								{#if identity.current}
+									<Avatar
+										pubkey={identity.current.pk}
+										name={currentDisplayName}
+										picture={currentProfile?.picture}
+										size={28}
+									/>
+								{/if}
 								<input
 									bind:value={commentReplyText}
 									type="text"
@@ -1188,12 +1210,12 @@
 	<div class="px-4 pt-1 pb-4 {replyOpen || replyText ? '' : 'hidden sm:block'}">
 		<div class="flex items-center gap-2">
 			{#if identity.current}
-				{@const mk = profiles.get(identity.current.pk)}
-				<div
-					class="grid size-7 shrink-0 place-items-center rounded-lg bg-warm-500 text-[10px] font-bold text-white"
-				>
-					{(mk?.display_name || 'Y').slice(0, 2).toUpperCase()}
-				</div>
+				<Avatar
+					pubkey={identity.current.pk}
+					name={currentDisplayName}
+					picture={currentProfile?.picture}
+					size={28}
+				/>
 			{/if}
 			<input
 				bind:this={replyInput}
@@ -1227,6 +1249,47 @@
 		</div>
 	</div>
 </article>
+
+<Dialog bind:open={deleteOpen} title={`Delete ${deleteTargetLabel}`}>
+	<div class="space-y-4">
+		<div
+			class="flex size-10 items-center justify-center rounded-full bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]"
+		>
+			<Icon name="i-lucide-triangle-alert" class="size-5" />
+		</div>
+		<div class="space-y-1.5">
+			<p class="text-[15px] font-bold text-[var(--ui-text)]">
+				Delete this {deleteTargetLabel}?
+			</p>
+			<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+				This publishes a deletion request to your relays and removes it from your feed. Other
+				clients may take time to reflect the change.
+			</p>
+		</div>
+	</div>
+	{#snippet footer()}
+		<button
+			type="button"
+			onclick={cancelDelete}
+			disabled={deleting}
+			class="inline-flex h-9 items-center justify-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			Cancel
+		</button>
+		<button
+			type="button"
+			onclick={confirmDelete}
+			disabled={deleting || !pendingDelete}
+			class="inline-flex h-9 items-center gap-2 rounded-full bg-[var(--tone-error-text)] px-4 text-[13px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+		>
+			<Icon
+				name={deleting ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
+				class="size-4 {deleting ? 'animate-spin' : ''}"
+			/>
+			{deleting ? 'Deleting…' : `Delete ${deleteTargetLabel}`}
+		</button>
+	{/snippet}
+</Dialog>
 
 <Dialog bind:open={rawOpen} title="Raw note">
 	<div class="space-y-3">
