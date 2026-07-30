@@ -12,6 +12,8 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import type { Conversation, DirectMessage } from '$lib/nostr/types';
+	import { humanBytes, type MediaProviderId, type UploadedMedia } from '$lib/media/uploaders';
+	import { media, providerLabel } from '$lib/stores/media.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
@@ -74,6 +76,16 @@
 
 	type GroupMessagePayload = GroupInvite & {
 		body: string;
+	};
+
+	type MessageAttachment = UploadedMedia & {
+		name: string;
+	};
+
+	type MessageMedia = {
+		url: string;
+		text: string;
+		kind: 'image' | 'video' | 'file';
 	};
 
 	type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
@@ -139,6 +151,10 @@
 	let processedGroupControlsLoaded = false;
 	let lastResolvedTo = $state('');
 	let lastAutoAnswerCallId = $state('');
+	let uploadingMessage = $state(false);
+	let messageAttachments = $state<MessageAttachment[]>([]);
+	let messageFileInput = $state<HTMLInputElement | null>(null);
+	let messageImageInput = $state<HTMLInputElement | null>(null);
 	let callStartedAt = 0;
 	let groupPersistTimer: ReturnType<typeof setTimeout> | null = null;
 	let threadEl: HTMLDivElement | undefined = $state();
@@ -178,7 +194,7 @@
 							: last.content
 						: last?.type === 'voice'
 							? 'Voice - 0:24'
-							: (last?.content ?? 'No messages yet'),
+							: messagePreview(last?.content),
 				previewPrefix: last?.mine ? 'You:' : last ? `${last.author.split(' ')[0]}:` : '',
 				time: last ? timeAgo(last.createdAt) : '',
 				unread: group.unread,
@@ -209,7 +225,7 @@
 						? `Group invite: ${invite.name}`
 						: callSignal
 							? `${callSignal.kind === 'video' ? 'Video' : 'Voice'} call`
-							: (visibleLastMessage?.content ?? 'No messages yet'),
+							: messagePreview(visibleLastMessage?.content),
 					previewPrefix: visibleLastMessage?.mine ? 'You:' : '',
 					time: visibleLastMessage ? timeAgo(visibleLastMessage.createdAt) : '',
 					unread: visibleDmUnread(conversation)
@@ -248,6 +264,10 @@
 			: []
 	);
 	const visibleActiveMessages = $derived(activeMessages.filter(isVisibleDmMessage));
+	const activeUploadProvider = $derived<MediaProviderId | 'none'>(resolveUploadProvider());
+	const canSend = $derived(
+		!!selected && !uploadingMessage && (!!draft.trim() || messageAttachments.length > 0)
+	);
 	const unreadTotal = $derived(
 		dms.conversations.reduce((total, conversation) => total + visibleDmUnread(conversation), 0) +
 			groupThreads.reduce((total, group) => total + group.unread, 0)
@@ -469,6 +489,100 @@
 			.filter((message) => !message.mine)
 			.slice(-conversation.unread)
 			.filter(isVisibleDmMessage).length;
+	}
+
+	function resolveUploadProvider(): MediaProviderId | 'none' {
+		const def = media.state.defaultProvider;
+		if (def !== 'none' && media.isConfigured(def)) return def;
+		return media.configured[0]?.id ?? 'none';
+	}
+
+	function firstUrl(content: string) {
+		return content.match(/https?:\/\/[^\s<>)"']+/i)?.[0] ?? '';
+	}
+
+	function mediaKindFromUrl(url: string): MessageMedia['kind'] {
+		const clean = url.split(/[?#]/)[0]?.toLowerCase() ?? url.toLowerCase();
+		if (/\.(apng|avif|gif|jpe?g|png|svg|webp)$/.test(clean)) return 'image';
+		if (/\.(m4v|mov|mp4|ogg|ogv|webm)$/.test(clean)) return 'video';
+		return 'file';
+	}
+
+	function mediaFromMessage(content: string): MessageMedia | null {
+		const markdownImage = content.match(/!\[[^\]]*]\((https?:\/\/[^)\s]+)\)/i);
+		const url = markdownImage?.[1] ?? firstUrl(content);
+		if (!url) return null;
+		return {
+			url,
+			text: content.replace(markdownImage?.[0] ?? url, '').trim(),
+			kind: markdownImage ? 'image' : mediaKindFromUrl(url)
+		};
+	}
+
+	function messagePreview(content?: string) {
+		if (!content) return 'No messages yet';
+		const msgMedia = mediaFromMessage(content);
+		if (!msgMedia) return content;
+		const label =
+			msgMedia.kind === 'image'
+				? 'Photo attachment'
+				: msgMedia.kind === 'video'
+					? 'Video attachment'
+					: 'File attachment';
+		return msgMedia.text ? `${label}: ${msgMedia.text}` : label;
+	}
+
+	function attachmentLinks() {
+		return messageAttachments
+			.map((attachment) =>
+				attachment.kind === 'image' ? `![${attachment.name}](${attachment.url})` : attachment.url
+			)
+			.join('\n');
+	}
+
+	function composedMessageBody() {
+		const body = draft.trim();
+		const links = attachmentLinks();
+		return body && links ? `${body}\n\n${links}` : body || links;
+	}
+
+	function removeMessageAttachment(index: number) {
+		messageAttachments = messageAttachments.filter((_, i) => i !== index);
+	}
+
+	async function handleMessageFiles(files: FileList | null) {
+		if (!files?.length) return;
+		const provider = activeUploadProvider;
+		if (provider === 'none') {
+			toasts.error('No upload provider. Add Cloudinary or S3 in Settings → Media & Uploads.');
+			return;
+		}
+		uploadingMessage = true;
+		let ok = 0;
+		try {
+			for (const file of Array.from(files)) {
+				try {
+					const uploaded = await media.upload(file, provider);
+					messageAttachments = [...messageAttachments, { ...uploaded, name: file.name }];
+					ok++;
+				} catch (e) {
+					toasts.error(`${file.name}: ${(e as Error).message}`);
+				}
+			}
+			if (ok) {
+				toasts.success(
+					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider)}`
+				);
+			}
+		} finally {
+			uploadingMessage = false;
+		}
+	}
+
+	function onMessageFileInput(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		void handleMessageFiles(input.files);
+		input.value = '';
 	}
 
 	function callSignalText(signal: CallSignal) {
@@ -1354,9 +1468,10 @@
 	}
 
 	async function send() {
-		const body = draft.trim();
-		if (!body || !selected) return;
+		const body = composedMessageBody();
+		if (!body || !selected || uploadingMessage) return;
 		draft = '';
+		messageAttachments = [];
 		if (selected.startsWith('group:')) {
 			const groupId = selected.slice('group:'.length);
 			const group = groupThreads.find((thread) => thread.id === groupId);
@@ -1763,13 +1878,16 @@
 	}
 
 	function attachFile(type: 'file' | 'image') {
-		if (active?.kind === 'group' && activeGroup) {
-			toasts.info(
-				`${type === 'image' ? 'Image sharing' : 'File sharing'} needs upload storage before it can be sent to a group.`
-			);
+		if (!selected) {
+			toasts.info('Select a chat before attaching a file.');
 			return;
 		}
-		toasts.info('File sharing needs an upload service before it can be sent in an encrypted DM.');
+		if (activeUploadProvider === 'none') {
+			toasts.info('Add Cloudinary or S3 in Settings → Media & Uploads before attaching files.');
+			return;
+		}
+		if (type === 'image') messageImageInput?.click();
+		else messageFileInput?.click();
 	}
 
 	function addEmoji() {
@@ -2178,6 +2296,7 @@
 							</div>
 							<div class="space-y-4">
 								{#each activeGroup.messages as msg (msg.id)}
+									{@const msgMedia = mediaFromMessage(msg.content)}
 									<div class="msg-in flex gap-2.5 {msg.mine ? 'justify-end' : 'justify-start'}">
 										{#if !msg.mine}
 											{#if msg.pubkey}
@@ -2292,13 +2411,57 @@
 															{msg.meta}
 														</span>
 													</div>
-												{:else if msg.type === 'image'}
-													<div
-														class="mb-2 grid aspect-video w-full min-w-[220px] place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+												{:else if msgMedia?.kind === 'image' || msg.type === 'image'}
+													{#if msgMedia}
+														<a href={msgMedia.url} target="_blank" rel="noreferrer">
+															<img
+																src={msgMedia.url}
+																alt="Message attachment"
+																class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
+															/>
+														</a>
+														{#if msgMedia.text}
+															<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+														{/if}
+													{:else}
+														<div
+															class="mb-2 grid aspect-video w-full min-w-[220px] place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+														>
+															<Icon name="i-lucide-image" class="size-8" />
+														</div>
+														<p class="break-words whitespace-pre-wrap">{msg.content}</p>
+													{/if}
+												{:else if msgMedia?.kind === 'video'}
+													<video
+														src={msgMedia.url}
+														controls
+														class="mb-2 max-h-72 min-w-[220px] rounded-xl"
 													>
-														<Icon name="i-lucide-image" class="size-8" />
-													</div>
-													<p class="break-words whitespace-pre-wrap">{msg.content}</p>
+														<track kind="captions" />
+													</video>
+													{#if msgMedia.text}
+														<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+													{/if}
+												{:else if msgMedia}
+													<a
+														href={msgMedia.url}
+														target="_blank"
+														rel="noreferrer"
+														class="flex min-w-[220px] items-center gap-3 rounded-xl bg-primary-500/10 p-2 transition hover:bg-primary-500/15"
+													>
+														<div
+															class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+														>
+															<Icon name="i-lucide-file-text" class="size-5" />
+														</div>
+														<div class="min-w-0 flex-1">
+															<p class="truncate text-[13px] font-semibold">Open attachment</p>
+															<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
+														</div>
+													</a>
+													{#if msgMedia.text}
+														<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
+													{/if}
 												{:else if msg.type === 'file'}
 													<div class="flex min-w-[220px] items-center gap-3">
 														<div
@@ -2344,6 +2507,7 @@
 								{@const invite = parseGroupInvite(msg.content)}
 								{@const groupMessage = parseGroupMessage(msg.content)}
 								{@const callSignal = parseCallSignal(msg.content)}
+								{@const msgMedia = mediaFromMessage(msg.content)}
 								<div class="flex {msg.mine ? 'justify-end' : 'justify-start'}">
 									<div
 										class="max-w-[78%] {msg.mine
@@ -2507,6 +2671,52 @@
 													</Button>
 												{/if}
 											</div>
+										{:else if msgMedia?.kind === 'image'}
+											<a href={msgMedia.url} target="_blank" rel="noreferrer">
+												<img
+													src={msgMedia.url}
+													alt="Message attachment"
+													class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
+												/>
+											</a>
+											{#if msgMedia.text}
+												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
+										{:else if msgMedia?.kind === 'video'}
+											<video
+												src={msgMedia.url}
+												controls
+												class="mb-2 max-h-72 min-w-[220px] rounded-xl"
+											>
+												<track kind="captions" />
+											</video>
+											{#if msgMedia.text}
+												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
+										{:else if msgMedia}
+											<a
+												href={msgMedia.url}
+												target="_blank"
+												rel="noreferrer"
+												class="flex min-w-[220px] items-center gap-3 rounded-xl {msg.mine
+													? 'bg-white/15 hover:bg-white/20'
+													: 'bg-primary-500/10 hover:bg-primary-500/15'} p-2 transition"
+											>
+												<div
+													class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+														? 'bg-white/20 text-white'
+														: 'bg-primary-500/10 text-primary-600 dark:text-primary-300'}"
+												>
+													<Icon name="i-lucide-file-text" class="size-5" />
+												</div>
+												<div class="min-w-0 flex-1">
+													<p class="truncate text-[13px] font-semibold">Open attachment</p>
+													<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
+												</div>
+											</a>
+											{#if msgMedia.text}
+												<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
 										{:else}
 											<p class="break-words whitespace-pre-wrap">{msg.content}</p>
 										{/if}
@@ -2537,22 +2747,97 @@
 				<footer
 					class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-5 py-3"
 				>
+					<input
+						bind:this={messageFileInput}
+						type="file"
+						multiple
+						class="hidden"
+						onchange={onMessageFileInput}
+					/>
+					<input
+						bind:this={messageImageInput}
+						type="file"
+						accept="image/*"
+						multiple
+						class="hidden"
+						onchange={onMessageFileInput}
+					/>
+					{#if messageAttachments.length}
+						<div class="mb-3 flex flex-wrap gap-2">
+							{#each messageAttachments as attachment, i (attachment.url)}
+								<div
+									class="group relative flex max-w-[220px] items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-2"
+								>
+									{#if attachment.kind === 'image'}
+										<img
+											src={attachment.url}
+											alt=""
+											class="size-10 shrink-0 rounded-lg object-cover"
+										/>
+									{:else}
+										<div
+											class="grid size-10 shrink-0 place-items-center rounded-lg bg-primary-500/10 text-primary-600 dark:text-primary-300"
+										>
+											<Icon
+												name={attachment.kind === 'video' ? 'i-lucide-video' : 'i-lucide-file-text'}
+												class="size-5"
+											/>
+										</div>
+									{/if}
+									<div class="min-w-0 flex-1">
+										<p class="truncate text-[12px] font-semibold">{attachment.name}</p>
+										<p class="text-[10px] text-[var(--ui-text-muted)]">
+											{humanBytes(attachment.bytes)} · {providerLabel(attachment.provider)}
+										</p>
+									</div>
+									<button
+										type="button"
+										onclick={() => removeMessageAttachment(i)}
+										class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+										aria-label="Remove attachment"
+									>
+										<Icon name="i-lucide-x" class="size-3.5" />
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+					{#if uploadingMessage}
+						<p class="mb-2 flex items-center gap-1.5 text-[11.5px] text-primary-500">
+							<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+							Uploading via {providerLabel(activeUploadProvider)}…
+						</p>
+					{/if}
 					<div class="flex items-end gap-2">
 						<button
 							type="button"
 							onclick={() => attachFile('file')}
+							disabled={uploadingMessage || activeUploadProvider === 'none'}
+							title={activeUploadProvider === 'none'
+								? 'No upload provider configured'
+								: `Upload via ${providerLabel(activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach file"
 						>
-							<Icon name="i-lucide-paperclip" class="size-4" />
+							<Icon
+								name={uploadingMessage ? 'i-lucide-loader-circle' : 'i-lucide-paperclip'}
+								class="size-4 {uploadingMessage ? 'animate-spin' : ''}"
+							/>
 						</button>
 						<button
 							type="button"
 							onclick={() => attachFile('image')}
+							disabled={uploadingMessage || activeUploadProvider === 'none'}
+							title={activeUploadProvider === 'none'
+								? 'No upload provider configured'
+								: `Upload via ${providerLabel(activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach image"
 						>
-							<Icon name="i-lucide-image" class="size-4" />
+							<Icon
+								name={uploadingMessage ? 'i-lucide-loader-circle' : 'i-lucide-image'}
+								class="size-4 {uploadingMessage ? 'animate-spin' : ''}"
+							/>
 						</button>
 						<div
 							class="flex flex-1 items-center gap-2 rounded-2xl bg-[var(--ui-bg-muted)] px-4 py-2.5"
@@ -2576,7 +2861,7 @@
 						<button
 							type="button"
 							onclick={send}
-							disabled={!draft.trim()}
+							disabled={!canSend}
 							class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500 text-white shadow-[var(--glow-primary)] transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
 							aria-label="Send"
 						>

@@ -11,6 +11,12 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
+/* A soft, superellipse-inspired avatar shape. It keeps the playful rounded
+   silhouette of a squircle without relying on browser-specific SVG masking. */
+@utility mask-squircle {
+	border-radius: 32%;
+}
+
 /* ---------------------------------------------------------------------------
    Color scales. `--color-primary-*` is the accent the user picks (rewritten
    at runtime by theme/preferences). `--color-accent-*` (mint) and

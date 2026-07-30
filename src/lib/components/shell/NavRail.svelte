@@ -78,7 +78,7 @@
 		{#if me}
 			<a
 				href="/profile"
-				class="relative size-11 overflow-hidden rounded-2xl ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
+				class="relative size-11 overflow-hidden mask-squircle ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
 				aria-label="Your profile"
 			>
 				<Avatar
@@ -86,7 +86,6 @@
 					name={displayName}
 					picture={myProfile?.picture}
 					size={44}
-					class="!rounded-2xl"
 				/>
 			</a>
 		{/if}

@@ -399,12 +399,12 @@
 						</div>
 					{/if}
 					<div class="mb-5 flex flex-wrap items-center gap-4">
-						<div class="size-16 shrink-0 overflow-hidden rounded-2xl">
+						<div class="size-16 shrink-0 overflow-hidden mask-squircle">
 							{#if editingPicture}
 								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
 							{:else}
 								<div
-									class="grid size-16 place-items-center rounded-2xl bg-warm-500 font-bold text-white"
+									class="grid size-16 place-items-center mask-squircle bg-warm-500 font-bold text-white"
 								>
 									{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
 								</div>
