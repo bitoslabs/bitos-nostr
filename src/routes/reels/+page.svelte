@@ -37,11 +37,18 @@
 	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
+	let activeReelId = $state('');
+	let activeReelMuted = $state(true);
+	let reelProgress = $state<Record<string, number>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
 	let commentsLoadedFor = $state('');
 	let commentText = $state('');
+	let reelVideos = new Map<string, HTMLVideoElement>();
+	let reelCards = new Map<string, HTMLDivElement>();
+	let reelVisibility = new Map<string, number>();
+	let visibilityObserver: IntersectionObserver | null = null;
 	const renderedReels = $derived(reels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
@@ -229,10 +236,139 @@
 	}
 
 	function activeReelIndex() {
-		if (!reelScroller || !renderedReels.length) return 0;
+		if (!renderedReels.length) return 0;
+		if (activeReelId) {
+			const index = renderedReels.findIndex((reel) => reel.id === activeReelId);
+			if (index >= 0) return index;
+		}
+		if (!reelScroller) return 0;
 		return Math.max(
 			0,
 			Math.min(renderedReels.length - 1, Math.round(reelScroller.scrollTop / reelScroller.clientHeight))
+		);
+	}
+
+	function registerReelVideo(reelId: string, node: HTMLVideoElement | null) {
+		const previous = reelVideos.get(reelId);
+		if (previous) previous.ontimeupdate = null;
+
+		if (node) {
+			reelVideos.set(reelId, node);
+			node.muted = reelId === activeReelId ? activeReelMuted : true;
+			node.ontimeupdate = () => {
+				const progress = node.duration ? node.currentTime / node.duration : 0;
+				reelProgress = { ...reelProgress, [reelId]: Math.max(0, Math.min(1, progress)) };
+			};
+			void syncActivePlayback();
+			return;
+		}
+		reelVideos.delete(reelId);
+		const { [reelId]: _removed, ...nextProgress } = reelProgress;
+		reelProgress = nextProgress;
+	}
+
+	function registerReelCard(reelId: string, node: HTMLDivElement | null) {
+		const previous = reelCards.get(reelId);
+		if (previous && visibilityObserver) visibilityObserver.unobserve(previous);
+
+		if (!node) {
+			reelCards.delete(reelId);
+			reelVisibility.delete(reelId);
+			if (activeReelId === reelId) updateActiveReel();
+			return;
+		}
+
+		reelCards.set(reelId, node);
+		if (visibilityObserver) visibilityObserver.observe(node);
+	}
+
+	function trackReelCard(node: HTMLDivElement, reelId: string) {
+		registerReelCard(reelId, node);
+		return {
+			destroy() {
+				registerReelCard(reelId, null);
+			}
+		};
+	}
+
+	function updateActiveReel() {
+		let nextId = '';
+		let bestVisibility = 0;
+
+		for (const reel of renderedReels) {
+			const visibility = reelVisibility.get(reel.id) ?? 0;
+			if (visibility > bestVisibility) {
+				bestVisibility = visibility;
+				nextId = reel.id;
+			}
+		}
+
+		if (!nextId && renderedReels.length) nextId = renderedReels[0].id;
+		if (nextId === activeReelId) return;
+		activeReelId = nextId;
+		void syncActivePlayback();
+	}
+
+	async function syncActivePlayback() {
+		for (const [reelId, video] of reelVideos) {
+			if (reelId !== activeReelId) {
+				video.muted = true;
+				video.pause();
+				continue;
+			}
+			video.muted = activeReelMuted;
+			try {
+				await video.play();
+			} catch {
+				/* Autoplay can be blocked until the browser allows playback. */
+			}
+		}
+	}
+
+	function toggleActiveReelMuted() {
+		if (!activeReelId) return;
+		activeReelMuted = !activeReelMuted;
+		void syncActivePlayback();
+	}
+
+	async function openActiveReelFullscreen() {
+		const activeVideo = reelVideos.get(activeReelId);
+		if (!activeVideo) return;
+		try {
+			if (document.fullscreenElement) {
+				await document.exitFullscreen();
+				return;
+			}
+			await activeVideo.requestFullscreen();
+		} catch {
+			toasts.error('Fullscreen is not available for this video');
+		}
+	}
+
+	function trackReelVideo(node: HTMLVideoElement, reelId: string) {
+		registerReelVideo(reelId, node);
+		return {
+			destroy() {
+				registerReelVideo(reelId, null);
+			}
+		};
+	}
+
+	function createVisibilityObserver() {
+		if (typeof IntersectionObserver === 'undefined') return null;
+		return new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const reelId = (entry.target as HTMLElement).dataset.reelId;
+					if (!reelId) continue;
+					reelVisibility.set(reelId, entry.isIntersecting ? entry.intersectionRatio : 0);
+				}
+				updateActiveReel();
+			},
+			{
+				root: reelScroller,
+				threshold: [0.25, 0.5, 0.6, 0.75, 0.9]
+			}
 		);
 	}
 
@@ -362,6 +498,15 @@
 	}
 
 	onMount(() => {
+		visibilityObserver = createVisibilityObserver();
+		for (const node of reelCards.values()) visibilityObserver?.observe(node);
+
+		const handleFullscreenChange = () => {
+			if (document.fullscreenElement) return;
+			void syncActivePlayback();
+		};
+		document.addEventListener('fullscreenchange', handleFullscreenChange);
+
 		const hasCache = loadCachedReels();
 		if (hasCache) {
 			loading = false;
@@ -369,6 +514,15 @@
 		} else {
 			void loadReels();
 		}
+
+		return () => {
+			document.removeEventListener('fullscreenchange', handleFullscreenChange);
+			visibilityObserver?.disconnect();
+			visibilityObserver = null;
+			reelVideos.clear();
+			reelCards.clear();
+			reelVisibility.clear();
+		};
 	});
 </script>
 
@@ -393,14 +547,25 @@
 				{@const profile = profiles.get(reel.pubkey)}
 				{@const name = profile?.display_name || profile?.name || shortKey(reel.pubkey)}
 				<div
+					use:trackReelCard={reel.id}
+					data-reel-id={reel.id}
 					class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 				>
+					<div class="absolute inset-x-0 top-0 z-10 px-4 pt-3">
+						<div class="h-1.5 overflow-hidden rounded-full bg-white/20">
+							<div
+								class="h-full rounded-full bg-white transition-[width] duration-150"
+								style={`width: ${(reelProgress[reel.id] ?? 0) * 100}%`}
+							></div>
+						</div>
+					</div>
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
+						use:trackReelVideo={reel.id}
 						src={reel.videoUrl}
 						class="absolute inset-0 size-full object-cover"
 						aria-label="Relay video note"
-						controls
+						autoplay={reel.id === activeReelId}
 						loop
 						playsinline
 						preload="metadata"
@@ -411,14 +576,35 @@
 
 					<div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-5">
 						<h2 class="font-display text-[26px] font-extrabold text-white">Reels</h2>
-						<button
-							type="button"
-							onclick={() => loadReels()}
-							class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-							aria-label="Refresh reels"
-						>
-							<Icon name="i-lucide-rotate-cw" class="size-5" />
-						</button>
+						<div class="flex items-center gap-2">
+							<button
+								type="button"
+								onclick={toggleActiveReelMuted}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label={activeReelMuted ? 'Turn sound on' : 'Turn sound off'}
+							>
+								<Icon
+									name={activeReelMuted ? 'i-lucide-volume-x' : 'i-lucide-volume-2'}
+									class="size-5"
+								/>
+							</button>
+							<button
+								type="button"
+								onclick={openActiveReelFullscreen}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label="Toggle fullscreen"
+							>
+								<Icon name="i-lucide-expand" class="size-5" />
+							</button>
+							<button
+								type="button"
+								onclick={() => loadReels()}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label="Refresh reels"
+							>
+								<Icon name="i-lucide-rotate-cw" class="size-5" />
+							</button>
+						</div>
 					</div>
 
 					<div
