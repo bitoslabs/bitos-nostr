@@ -45,6 +45,7 @@
 	};
 
 	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
+	const SETTINGS_AUTO_RESTORE_ACCOUNT_KEY = 'bitos:settings-auto-restore-account';
 	const alertedCallOffers = new Set<string>();
 	const closedCallIds = new Set<string>();
 
@@ -178,12 +179,30 @@
 		callAlerts.clear();
 	}
 
+	function shouldAutoRestoreSettings(pubkey: string, previousPubkey: string | null) {
+		if (!browser) return false;
+		if (previousPubkey && previousPubkey !== pubkey) return true;
+		return localStorage.getItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY) !== pubkey;
+	}
+
+	function markSettingsAutoRestoreAttempted(pubkey: string) {
+		if (!browser) return;
+		localStorage.setItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY, pubkey);
+	}
+
+	function clearSettingsAutoRestoreAttempt() {
+		if (!browser) return;
+		localStorage.removeItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY);
+	}
+
 	async function restoreSyncedSettingsFor(pubkey: string) {
 		try {
 			const restored = await settingsSync.restoreLatestBackup();
 			if (identity.current?.pk !== pubkey) return;
+			markSettingsAutoRestoreAttempted(pubkey);
 			if (restored) toasts.success('Synced settings restored');
 		} catch {
+			if (identity.current?.pk === pubkey) markSettingsAutoRestoreAttempted(pubkey);
 			/* Settings sync is best-effort on account switch. */
 		}
 	}
@@ -218,8 +237,11 @@
 			feed.start();
 			dms.start();
 			notifications.start();
-			void restoreSyncedSettingsFor(pk);
+			if (shouldAutoRestoreSettings(pk, previousPk)) {
+				void restoreSyncedSettingsFor(pk);
+			}
 		} else {
+			if (previousPk) clearSettingsAutoRestoreAttempt();
 			clearRuntimeAccountState();
 		}
 	});

@@ -18,6 +18,15 @@ const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
 const MAX_TEXT_NOTE_CHARS = 16_000;
+const MAX_BUFFERED_REACTIONS = 2_000;
+
+type ReactionEvent = {
+	id: string;
+	pubkey: string;
+	content: string;
+	tags: string[][];
+	created_at: number;
+};
 
 function isReaction(content: string): boolean {
 	// kind 7 reactions are either a + / - or an emoji shortcode
@@ -40,6 +49,8 @@ class FeedStore {
 		string,
 		Map<string, { optionId: string; evId: string; at: number }>
 	>();
+	/** Reactions can arrive before the note they target during relay replay. */
+	private bufferedReactions = new Map<string, ReactionEvent[]>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -55,6 +66,7 @@ class FeedStore {
 		this.pendingNotes = [];
 		this.pendingById.clear();
 		this.seenZapIds.clear();
+		this.bufferedReactions.clear();
 		this.unsub = subscribe(
 			[
 				{
@@ -98,6 +110,7 @@ class FeedStore {
 		this.pendingById.clear();
 		this.seenZapIds.clear();
 		this.pollVotes.clear();
+		this.bufferedReactions.clear();
 	};
 
 	/** Query the next older page without changing the live "new notes" queue. */
@@ -169,7 +182,13 @@ class FeedStore {
 		} else {
 			this.insertVisible(note);
 		}
-		// If votes arrived before the poll note was ingested, replay them now.
+		// Relay replay is not ordered: process reactions received before this note.
+		const buffered = this.bufferedReactions.get(note.id);
+		if (buffered) {
+			this.bufferedReactions.delete(note.id);
+			for (const reaction of buffered) this.ingestReaction(reaction);
+		}
+		// If votes were already collected for this poll, apply their tally now.
 		if (note.poll) this.rebuildPoll(note.id);
 	}
 
@@ -194,19 +213,18 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
-	private ingestReaction(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		tags: string[][];
-		created_at: number;
-	}) {
+	private ingestReaction(ev: ReactionEvent) {
 		// NIP-25: reaction tags the target note/event with `e` (and usually `p`).
 		const target = ev.tags.find((t) => t[0] === 'e')?.[1];
 		if (!target) return;
 
-		// Poll vote? A kind 7 reaction whose content is one of the poll's option ids.
 		const targetNote = this.noteById(target);
+		if (!targetNote) {
+			this.bufferReaction(target, ev);
+			return;
+		}
+
+		// Poll vote? A kind 7 reaction whose content is one of the poll's option ids.
 		if (targetNote?.poll && targetNote.poll.options.some((o) => o.id === ev.content)) {
 			this.applyPollVote(target, ev);
 			return;
@@ -228,6 +246,15 @@ class FeedStore {
 		const next = this.nextReactions(note, ev);
 		if (!next) return;
 		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions: next } : n));
+	}
+
+	private bufferReaction(target: string, ev: ReactionEvent) {
+		if (this.bufferedReactions.size >= MAX_BUFFERED_REACTIONS && !this.bufferedReactions.has(target)) {
+			this.bufferedReactions.delete(this.bufferedReactions.keys().next().value!);
+		}
+		const buffered = this.bufferedReactions.get(target) ?? [];
+		if (!buffered.some((reaction) => reaction.id === ev.id)) buffered.push(ev);
+		this.bufferedReactions.set(target, buffered);
 	}
 
 	private ingestZap(ev: { id: string; content: string; tags: string[][] }) {
@@ -387,15 +414,26 @@ class FeedStore {
 				}
 			]);
 			if (!activity.length) return;
+			const notesById = new Map(
+				[...this.notes, ...this.pendingNotes].map((note) => [note.id, note])
+			);
+			const nonPollActivity = activity.filter((event) => {
+				if (event.kind !== NOSTR_KINDS.REACTION) return true;
+				const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+				const poll = target ? notesById.get(target)?.poll : undefined;
+				if (!poll?.options.some((option) => option.id === event.content)) return true;
+				this.applyPollVote(target!, event);
+				return false;
+			});
 			const visible = this.notes.filter((note) => uniqueIds.includes(note.id));
 			if (visible.length) {
-				const hydrated = applyActivityToNotes(visible, activity, identity.current?.pk);
+				const hydrated = applyActivityToNotes(visible, nonPollActivity, identity.current?.pk);
 				const byId = new Map(hydrated.map((note) => [note.id, note]));
 				this.notes = this.notes.map((note) => byId.get(note.id) ?? note);
 			}
 			const pending = this.pendingNotes.filter((note) => uniqueIds.includes(note.id));
 			if (pending.length) {
-				const hydrated = applyActivityToNotes(pending, activity, identity.current?.pk);
+				const hydrated = applyActivityToNotes(pending, nonPollActivity, identity.current?.pk);
 				const byId = new Map(hydrated.map((note) => [note.id, note]));
 				this.pendingNotes = this.pendingNotes.map((note) => byId.get(note.id) ?? note);
 			}
