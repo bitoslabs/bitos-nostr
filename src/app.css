@@ -11,10 +11,18 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
-/* A soft, superellipse-inspired avatar shape. It keeps the playful rounded
-   silhouette of a squircle without relying on browser-specific SVG masking. */
+/* DaisyUI-style avatar mask backed by the shared SVG asset, with a
+   border-radius fallback for environments where CSS masking is unavailable. */
 @utility mask-squircle {
 	border-radius: 32%;
+	-webkit-mask-image: url('/mask.svg');
+	mask-image: url('/mask.svg');
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	mask-position: center;
+	-webkit-mask-size: 100% 100%;
+	mask-size: 100% 100%;
 }
 
 /* ---------------------------------------------------------------------------

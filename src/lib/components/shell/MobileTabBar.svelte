@@ -72,26 +72,39 @@
 		{@const active = isActive(tab.to)}
 		<a
 			href={tab.to}
-			class="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {active
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-dimmed)]'}"
+			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
 		>
-			<span class="relative">
-				<Icon name={tab.icon} class="size-[22px]" />
-				{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
+			<span
+				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {active
+					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				{#if active}
 					<span
-						class="absolute -top-1 -right-2 grid size-4 place-items-center rounded-full bg-warm-500 text-[9px] font-bold text-white"
-						>{tab.notifications
-							? notificationUnread > 9
-								? '9+'
-								: notificationUnread
-							: unread > 9
-								? '9+'
-								: unread}</span
-					>
+						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
+						aria-hidden="true"
+					></span>
 				{/if}
+				<span class="relative">
+					<Icon
+						name={tab.icon}
+						class="size-[22px] transition-transform {active ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+					/>
+					{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
+						<span
+							class="absolute -top-1 -right-2 z-20 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
+							>{tab.notifications
+								? notificationUnread > 9
+									? '9+'
+									: notificationUnread
+								: unread > 9
+									? '9+'
+									: unread}</span
+						>
+					{/if}
+				</span>
+				<span>{tab.label}</span>
 			</span>
-			<span>{tab.label}</span>
 		</a>
 	{/each}
 	<Popover
@@ -100,14 +113,27 @@
 		width="md"
 		rootClass="flex-1"
 		label="More navigation"
-		triggerClass="relative flex w-full flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {moreActive
-			? 'text-primary-500'
-			: 'text-[var(--ui-text-dimmed)]'}"
-		triggerActiveClass="text-primary-500"
+		triggerClass="relative flex w-full items-center justify-center px-1.5 py-2"
+		triggerActiveClass=""
 	>
 		{#snippet trigger()}
-			<Icon name="i-lucide-menu" class="size-[22px]" />
-			<span>More</span>
+			<span
+				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {moreActive
+					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				{#if moreActive}
+					<span
+						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
+						aria-hidden="true"
+					></span>
+				{/if}
+				<Icon
+					name="i-lucide-menu"
+					class="size-[22px] transition-transform {moreActive ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+				/>
+				<span>More</span>
+			</span>
 		{/snippet}
 
 		{#if me}

@@ -1778,7 +1778,7 @@
 					{#if conversation.kind === 'group'}
 						<div class="relative shrink-0">
 							<div
-								class="grid size-12 place-items-center rounded-2xl bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
+								class="mask-squircle grid size-12 place-items-center bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
 							>
 								{conversation.initials}
 							</div>
@@ -1786,15 +1786,15 @@
 								class="online-dot absolute -right-0.5 -bottom-0.5 border-2 border-[var(--surface-bg)]"
 							></span>
 						</div>
-					{:else}
-						<Avatar
-							pubkey={conversation.id}
-							name={conversation.name}
-							picture={profiles.get(conversation.id)?.picture}
-							size={48}
-							class="rounded-2xl"
-						/>
-					{/if}
+						{:else}
+							<Avatar
+								pubkey={conversation.id}
+								name={conversation.name}
+								picture={profiles.get(conversation.id)?.picture}
+								size={48}
+								class="mask-squircle"
+							/>
+						{/if}
 					<div class="min-w-0 flex-1">
 						<div class="mb-0.5 flex items-center justify-between">
 							<h3 class="flex min-w-0 items-center gap-1.5 truncate text-[14.5px] font-bold">
@@ -1856,7 +1856,7 @@
 						{#if active.kind === 'group'}
 							<div class="relative shrink-0">
 								<div
-									class="grid size-11 place-items-center rounded-2xl bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
+									class="mask-squircle grid size-11 place-items-center bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
 								>
 									{active.initials}
 								</div>
@@ -1867,7 +1867,7 @@
 						{:else}
 							<a
 								href={profileHref(active.id)}
-								class="shrink-0 rounded-2xl transition hover:ring-2 hover:ring-primary-500/30"
+								class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 								aria-label={`Open ${active.name} profile`}
 							>
 								<Avatar
@@ -1875,7 +1875,7 @@
 									name={active.name}
 									picture={profiles.get(active.id)?.picture}
 									size={44}
-									class="rounded-2xl"
+									class="mask-squircle"
 								/>
 							</a>
 						{/if}
@@ -2564,7 +2564,7 @@
 					{:else}
 						<a
 							href={profileHref(active.id)}
-							class="mx-auto mb-3 block w-fit rounded-3xl transition hover:ring-2 hover:ring-primary-500/30"
+							class="mask-squircle mx-auto mb-3 block w-fit transition hover:ring-2 hover:ring-primary-500/30"
 							aria-label={`Open ${active.name} profile`}
 						>
 							<Avatar
@@ -2572,7 +2572,7 @@
 								name={active.name}
 								picture={profiles.get(active.id)?.picture}
 								size={80}
-								class="rounded-3xl"
+								class="mask-squircle"
 							/>
 						</a>
 						<h2 class="truncate font-display text-[22px] font-extrabold tracking-tight">
@@ -2659,7 +2659,7 @@
 												name={row.name}
 												picture={profiles.get(row.id)?.picture}
 												size={28}
-												class="rounded-lg"
+												class="mask-squircle"
 											/>
 											<span class="max-w-24 truncate text-[12px] font-semibold">{row.name}</span>
 										</button>
@@ -2674,7 +2674,7 @@
 										{#if member.pubkey}
 											<a
 												href={profileHref(member.pubkey)}
-												class="block rounded-xl transition hover:ring-2 hover:ring-primary-500/30"
+												class="mask-squircle block transition hover:ring-2 hover:ring-primary-500/30"
 												aria-label={`Open ${member.name} profile`}
 											>
 												<Avatar
@@ -2682,12 +2682,12 @@
 													name={member.name}
 													picture={profiles.get(member.pubkey)?.picture}
 													size={36}
-													class="rounded-xl"
+													class="mask-squircle"
 												/>
 											</a>
 										{:else}
 											<div
-												class="grid size-9 place-items-center rounded-xl bg-primary-500 text-xs font-bold text-white"
+												class="mask-squircle grid size-9 place-items-center bg-primary-500 text-xs font-bold text-white"
 											>
 												{member.initials}
 											</div>
@@ -2866,14 +2866,14 @@
 		<div class="flex items-center gap-3">
 			{#if active.kind === 'group'}
 				<div
-					class="grid size-[52px] place-items-center rounded-2xl bg-primary-500 font-bold text-white"
+					class="mask-squircle grid size-[52px] place-items-center bg-primary-500 font-bold text-white"
 				>
 					{active.initials}
 				</div>
 			{:else}
 				<a
 					href={profileHref(active.id)}
-					class="shrink-0 rounded-2xl transition hover:ring-2 hover:ring-primary-500/30"
+					class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 					aria-label={`Open ${active.name} profile`}
 				>
 					<Avatar
@@ -2881,7 +2881,7 @@
 						name={active.name}
 						picture={profiles.get(active.id)?.picture}
 						size={52}
-						class="rounded-2xl"
+						class="mask-squircle"
 					/>
 				</a>
 			{/if}
@@ -2953,7 +2953,7 @@
 										name={row.name}
 										picture={profiles.get(row.id)?.picture}
 										size={28}
-										class="rounded-lg"
+										class="mask-squircle"
 									/>
 									<span class="max-w-24 truncate text-[12px] font-semibold">{row.name}</span>
 								</button>
@@ -2967,7 +2967,7 @@
 							{#if member.pubkey}
 								<a
 									href={profileHref(member.pubkey)}
-									class="shrink-0 rounded-lg transition hover:ring-2 hover:ring-primary-500/30"
+									class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 									aria-label={`Open ${member.name} profile`}
 								>
 									<Avatar
@@ -2975,12 +2975,12 @@
 										name={member.name}
 										picture={profiles.get(member.pubkey)?.picture}
 										size={32}
-										class="rounded-lg"
+										class="mask-squircle"
 									/>
 								</a>
 							{:else}
 								<div
-									class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary-500 text-[11px] font-bold text-white"
+									class="mask-squircle grid size-8 shrink-0 place-items-center bg-primary-500 text-[11px] font-bold text-white"
 								>
 									{member.initials}
 								</div>

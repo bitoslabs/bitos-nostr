@@ -62,7 +62,7 @@
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="mb-6 grid size-11 place-items-center overflow-hidden rounded-2xl shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
+		class="mask-squircle mb-6 grid size-11 place-items-center overflow-hidden shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
 	>
 		<img src={logo} alt="" class="size-full" />
 	</a>
@@ -72,16 +72,31 @@
 			{@const active = isActive(item.to)}
 			<a
 				href={item.to}
-				class="group relative grid size-11 place-items-center rounded-2xl transition-all {active
-					? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
-					: 'text-[var(--ui-text-muted)] hover:bg-primary-500/10 hover:text-primary-500'}"
+				class="group relative grid size-12 place-items-center transition-all"
 				aria-label={item.label}
 				aria-current={active ? 'page' : undefined}
 			>
-				<Icon name={item.icon} class="size-[18px]" />
+				<span
+					class="mask-squircle absolute inset-0 transition-all {active
+						? 'bg-primary-500/12 ring-1 ring-primary-500/20 shadow-[var(--glow-primary)]'
+						: 'bg-transparent group-hover:bg-primary-500/10'}"
+					aria-hidden="true"
+				></span>
+				{#if active}
+					<span
+						class="absolute left-0 z-10 h-7 w-1 rounded-r-full bg-primary-500 shadow-[var(--glow-primary)]"
+						aria-hidden="true"
+					></span>
+				{/if}
+				<Icon
+					name={item.icon}
+					class="relative z-10 size-[18px] transition-transform {active
+						? 'scale-105 text-primary-500 dark:text-primary-300'
+						: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
+				/>
 				{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
 					<span
-						class="absolute -top-1 -right-1 grid size-4 place-items-center rounded-full bg-primary-500 text-[9px] font-bold text-white ring-2 ring-[var(--surface-bg)]"
+						class="absolute -top-1.5 -right-1.5 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
 						>{item.notifications
 							? notificationUnread > 9
 								? '9+'
@@ -109,11 +124,13 @@
 						event.stopPropagation();
 						popovers.toggle(accountMenuId);
 					}}
-					class="relative size-11 overflow-hidden mask-squircle ring-2 ring-primary-500/30 transition-all hover:ring-primary-500"
+					class="relative size-12 overflow-hidden mask-squircle bg-primary-500/10 p-[2px] ring-1 ring-primary-500/20 shadow-[var(--glow-primary)] transition-all hover:bg-primary-500/12 hover:ring-primary-500/35"
 					aria-label="Account menu"
 					aria-expanded={accountMenuOpen}
 				>
-					<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+					<div class="mask-squircle size-full bg-[var(--surface-bg)]">
+						<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+					</div>
 				</button>
 				{#if accountMenuOpen}
 					<div

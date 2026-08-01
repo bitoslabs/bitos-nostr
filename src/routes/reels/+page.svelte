@@ -662,7 +662,7 @@
 						</button>
 						<a
 							href={`/profile/${reel.pubkey}`}
-							class="spin-slow mt-2 size-10 overflow-hidden rounded-full border-2 border-white"
+							class="mask-squircle spin-slow mt-2 size-10 overflow-hidden border-2 border-white"
 							aria-label="Open profile"
 						>
 							<Avatar pubkey={reel.pubkey} {name} picture={profile?.picture} size={40} />

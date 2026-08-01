@@ -397,14 +397,15 @@
 												{@const actors = row.items.slice(0, 3)}
 												<div class="flex -space-x-3">
 													{#each actors as g, i (g.id)}
-														<div class="relative z-{10 - i}">
+														<div
+															class="relative z-{10 - i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+														>
 															<Avatar
 																pubkey={g.pubkey}
 																name={actorName(g.pubkey)}
 																picture={profiles.get(g.pubkey)?.picture}
 																size={40}
-																frame
-																class="ring-2 ring-[var(--surface-bg)]"
+																class="mask-squircle"
 															/>
 														</div>
 													{/each}
@@ -416,13 +417,17 @@
 													<Icon name={meta.icon} class="size-3" />
 												</span>
 											{:else}
-												<Avatar
-													pubkey={item.pubkey}
-													name={actorName(item.pubkey)}
-													picture={profile?.picture}
-													size={44}
-													frame
-												/>
+												<div
+													class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+												>
+													<Avatar
+														pubkey={item.pubkey}
+														name={actorName(item.pubkey)}
+														picture={profile?.picture}
+														size={44}
+														class="mask-squircle"
+													/>
+												</div>
 												<span
 													class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
 													style="background:{meta.color}"

@@ -248,23 +248,6 @@
 				<Icon name="i-lucide-log-out" class="size-[18px] shrink-0" /><span>Log out</span>
 			</button>
 		</div>
-		{#if me}
-			<div class="border-t border-[var(--ui-border-muted)] p-5">
-				<div class="flex items-center gap-3">
-					<div
-						class="grid size-10 shrink-0 place-items-center rounded-xl bg-warm-500 text-xs font-bold text-white"
-					>
-						{(myProfile?.display_name || 'Y').slice(0, 2).toUpperCase()}
-					</div>
-					<div class="min-w-0 flex-1">
-						<p class="truncate text-[13px] font-bold">{myProfile?.display_name || 'You'}</p>
-						<p class="truncate font-mono text-[11px] text-[var(--ui-text-muted)]">
-							{shortKey(me.npub)}
-						</p>
-					</div>
-				</div>
-			</div>
-		{/if}
 	</aside>
 
 	<!-- MOBILE: iOS-style settings index (shown only at the `/settings` root) -->
@@ -415,7 +398,9 @@
 						</div>
 					{/if}
 					<div class="mb-5 flex flex-wrap items-center gap-4">
-						<div class="size-16 shrink-0 overflow-hidden mask-squircle">
+						<div
+							class="size-16 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 ring-1 ring-primary-500/20 shadow-[var(--glow-primary)]"
+						>
 							{#if editingPicture}
 								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
 							{:else}
