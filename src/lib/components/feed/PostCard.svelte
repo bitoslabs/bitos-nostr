@@ -109,6 +109,7 @@
 	);
 	const contentTokens = $derived(parseContent(visibleContent));
 	const mediaAttachments = $derived(extractMedia(note.content));
+	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
 	const hiddenMediaCount = $derived(
@@ -120,6 +121,7 @@
 	let pendingDelete = $state<FeedNote | null>(null);
 	let deleting = $state(false);
 	let previewOpen = $state(false);
+	let previewImageIndex = $state(0);
 	let previewImageUrl = $state('');
 	let replyOpen = $state(false);
 	let replyText = $state('');
@@ -219,8 +221,26 @@
 	}
 
 	function previewImage(url: string) {
+		const index = previewableImages.findIndex((media) => media.url === url);
+		previewImageIndex = index >= 0 ? index : 0;
 		previewImageUrl = url;
 		previewOpen = true;
+	}
+
+	function syncPreviewImage() {
+		previewImageUrl = previewableImages[previewImageIndex]?.url ?? '';
+	}
+
+	function showPreviousPreviewImage() {
+		if (previewImageIndex <= 0) return;
+		previewImageIndex -= 1;
+		syncPreviewImage();
+	}
+
+	function showNextPreviewImage() {
+		if (previewImageIndex >= previewableImages.length - 1) return;
+		previewImageIndex += 1;
+		syncPreviewImage();
 	}
 
 	function trackFeedVideo(node: HTMLVideoElement) {
@@ -557,7 +577,10 @@
 	}
 
 	$effect(() => {
-		if (!previewOpen) previewImageUrl = '';
+		if (!previewOpen) {
+			previewImageUrl = '';
+			previewImageIndex = 0;
+		}
 	});
 
 	$effect(() => {
@@ -1321,18 +1344,69 @@
 <Dialog bind:open={previewOpen} title="Image preview">
 	{#if previewImageUrl}
 		<div class="space-y-3">
-			<div class="overflow-hidden rounded-2xl bg-black">
+			<div class="relative overflow-hidden rounded-2xl bg-black">
 				<img
 					src={previewImageUrl}
 					alt="Preview"
 					referrerpolicy="no-referrer"
 					class="max-h-[70vh] w-full object-contain"
 				/>
+				{#if previewableImages.length > 1}
+					<div class="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-between p-3">
+						<button
+							type="button"
+							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+							onclick={showPreviousPreviewImage}
+							disabled={previewImageIndex === 0}
+							aria-label="Previous image"
+						>
+							<Icon name="i-lucide-chevron-left" class="size-5" />
+						</button>
+						<button
+							type="button"
+							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+							onclick={showNextPreviewImage}
+							disabled={previewImageIndex === previewableImages.length - 1}
+							aria-label="Next image"
+						>
+							<Icon name="i-lucide-chevron-right" class="size-5" />
+						</button>
+					</div>
+				{/if}
 			</div>
-			<p class="truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">{previewImageUrl}</p>
+			<div class="flex items-center justify-between gap-3">
+				<p class="min-w-0 truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">
+					{previewImageUrl}
+				</p>
+				{#if previewableImages.length > 1}
+					<p class="shrink-0 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+						{previewImageIndex + 1} / {previewableImages.length}
+					</p>
+				{/if}
+			</div>
 		</div>
 	{/if}
 	{#snippet footer()}
+		{#if previewableImages.length > 1}
+			<button
+				type="button"
+				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+				onclick={showPreviousPreviewImage}
+				disabled={previewImageIndex === 0}
+			>
+				<Icon name="i-lucide-chevron-left" class="size-4" />
+				Previous
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+				onclick={showNextPreviewImage}
+				disabled={previewImageIndex === previewableImages.length - 1}
+			>
+				Next
+				<Icon name="i-lucide-chevron-right" class="size-4" />
+			</button>
+		{/if}
 		<button
 			type="button"
 			class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"

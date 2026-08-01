@@ -26,14 +26,19 @@
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
 	const REELS_CACHE_KEY = 'bitos:reels-cache:v1';
 	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
-	const MAX_CACHED_REELS = 40;
+	const MAX_CACHED_REELS = 120;
+	const REELS_INITIAL_EVENT_LIMIT = 400;
+	const REELS_PAGE_EVENT_LIMIT = 220;
 	const INITIAL_RENDERED_REELS = 5;
 	const REEL_RENDER_BATCH = 5;
+	const REEL_PREFETCH_THRESHOLD = 6;
 
 	let loading = $state(true);
 	let loadingComments = $state(false);
 	let postingComment = $state(false);
 	let deletingCommentId = $state('');
+	let loadingMoreReels = $state(false);
+	let hasMoreReels = $state(true);
 	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
@@ -49,6 +54,7 @@
 	let reelCards = new Map<string, HTMLDivElement>();
 	let reelVisibility = new Map<string, number>();
 	let visibilityObserver: IntersectionObserver | null = null;
+	let oldestReelEventCreatedAt = $state(0);
 	const renderedReels = $derived(reels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
@@ -128,12 +134,23 @@
 		};
 	}
 
-	function applyReels(next: ReelNote[]) {
-		reels = next.slice(0, MAX_CACHED_REELS);
-		renderedReelCount = Math.min(INITIAL_RENDERED_REELS, reels.length);
-		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
+		const merged = new Map<string, ReelNote>();
+		for (const reel of existing) merged.set(reel.id, reel);
+		for (const reel of incoming) merged.set(reel.id, reel);
+		return [...merged.values()]
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.slice(0, MAX_CACHED_REELS);
+	}
+
+	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
+		reels = options.append ? mergeReelLists(reels, next) : next.slice(0, MAX_CACHED_REELS);
+		renderedReelCount = options.append
+			? Math.min(reels.length, Math.max(renderedReelCount, INITIAL_RENDERED_REELS))
+			: Math.min(INITIAL_RENDERED_REELS, reels.length);
 		if (identity.current) profiles.ensure([identity.current.pk]);
-		for (const reel of reels) feed.upsertNote(reel);
+		profiles.ensure(reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey));
+		for (const reel of next) feed.upsertNote(reel);
 	}
 
 	function loadCachedReels() {
@@ -161,42 +178,49 @@
 		}
 	}
 
+	async function buildReelsFromEvents(events: Awaited<ReturnType<typeof queryOnce>>) {
+		const seen: Record<string, true> = {};
+		const baseReels = events
+			.sort((a, b) => b.created_at - a.created_at)
+			.map((event) => ({ event, videoUrl: extractVideo(event) }))
+			.filter(({ event, videoUrl }) => {
+				if (!videoUrl || seen[event.id]) return false;
+				seen[event.id] = true;
+				return true;
+			})
+			.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
+		const reelIds = baseReels.map((reel) => reel.id);
+		const activity = reelIds.length
+			? await queryOnce([
+					{
+						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
+						'#e': reelIds,
+						limit: 500
+					}
+				])
+			: [];
+		const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map((note) => ({
+			...note,
+			videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
+		}));
+		for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
+			const reply = toFeedNote(event);
+			if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
+		}
+		return nextReels;
+	}
+
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 400 }]);
-			const seen: Record<string, true> = {};
-			const baseReels = events
-				.sort((a, b) => b.created_at - a.created_at)
-				.map((event) => ({ event, videoUrl: extractVideo(event) }))
-				.filter(({ event, videoUrl }) => {
-					if (!videoUrl || seen[event.id]) return false;
-					seen[event.id] = true;
-					return true;
-				})
-				.slice(0, 40)
-				.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
-			const reelIds = baseReels.map((reel) => reel.id);
-			const activity = reelIds.length
-				? await queryOnce([
-						{
-							kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
-							'#e': reelIds,
-							limit: 500
-						}
-					])
-				: [];
-			const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map(
-				(note) => ({
-					...note,
-					videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
-				})
-			);
-			for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
-				const reply = toFeedNote(event);
-				if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
-			}
+			const events = await queryOnce([
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }
+			]);
+			const nextReels = await buildReelsFromEvents(events);
 			applyReels(nextReels);
+			oldestReelEventCreatedAt =
+				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+			hasMoreReels = events.length >= REELS_INITIAL_EVENT_LIMIT && !!oldestReelEventCreatedAt;
 			saveReelsCache(nextReels);
 		} catch (e) {
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
@@ -205,10 +229,45 @@
 		}
 	}
 
+	async function loadMoreReels() {
+		if (loading || loadingMoreReels || !hasMoreReels || !oldestReelEventCreatedAt) return;
+		loadingMoreReels = true;
+		try {
+			const events = await queryOnce([
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: REELS_PAGE_EVENT_LIMIT,
+					until: oldestReelEventCreatedAt - 1
+				}
+			]);
+			if (!events.length) {
+				hasMoreReels = false;
+				return;
+			}
+			const nextReels = await buildReelsFromEvents(events);
+			applyReels(nextReels, { append: true });
+			oldestReelEventCreatedAt =
+				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+			hasMoreReels = events.length >= REELS_PAGE_EVENT_LIMIT && !!oldestReelEventCreatedAt;
+			saveReelsCache(reels);
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not load more reels');
+		} finally {
+			loadingMoreReels = false;
+		}
+	}
+
 	function renderMoreReels() {
 		if (!hasMoreRenderedReels) return;
 		renderedReelCount = Math.min(reels.length, renderedReelCount + REEL_RENDER_BATCH);
 		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+		void ensureMoreReelsBuffered();
+	}
+
+	async function ensureMoreReelsBuffered() {
+		if (loading || loadingMoreReels || !hasMoreReels) return;
+		if (reels.length - renderedReelCount > REEL_PREFETCH_THRESHOLD) return;
+		await loadMoreReels();
 	}
 
 	function handleReelScroll() {
@@ -216,6 +275,7 @@
 		const remaining =
 			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
 		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
+		if (remaining < reelScroller.clientHeight * 3) void ensureMoreReelsBuffered();
 		if (commentReel) {
 			const activeReel = reelAtScrollPosition();
 			if (activeReel && activeReel.id !== commentReel.id) {
@@ -378,7 +438,10 @@
 		const target = current + delta;
 		if (target < 0) return;
 		if (target >= renderedReels.length) {
-			if (!hasMoreRenderedReels) return;
+			if (!hasMoreRenderedReels) {
+				void ensureMoreReelsBuffered();
+				return;
+			}
 			renderMoreReels();
 			requestAnimationFrame(() => scrollToReel(delta));
 			return;
@@ -511,6 +574,7 @@
 		if (hasCache) {
 			loading = false;
 			void loadReels({ background: true });
+			void ensureMoreReelsBuffered();
 		} else {
 			void loadReels();
 		}
@@ -687,6 +751,12 @@
 						</div>
 						{#if captionFor(reel)}
 							<p class="line-clamp-4 text-[13.5px] leading-relaxed">{captionFor(reel)}</p>
+						{/if}
+						{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
+							<div class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur">
+								<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+								Loading older reels
+							</div>
 						{/if}
 					</div>
 				</div>

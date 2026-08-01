@@ -1,22 +1,38 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryOnce } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { shortKey } from '$lib/utils/format';
+	import { shortKey, timeAgo } from '$lib/utils/format';
 
 	type TrendTag = { tag: string; count: number };
 	type Creator = { pubkey: string; count: number; latest: number };
-	type MediaItem = { id: string; url: string; kind: 'image' | 'video'; pubkey: string; content: string };
+	type MediaItem = {
+		id: string;
+		url: string;
+		kind: 'image' | 'video';
+		pubkey: string;
+		content: string;
+		createdAt: number;
+	};
 	type DiscoverCache = {
 		savedAt: number;
 		trendTags: TrendTag[];
 		creators: Creator[];
 		mediaItems: MediaItem[];
+	};
+	type DiscoverSearchCache = {
+		savedAt: number;
+		queries: Array<{
+			query: string;
+			savedAt: number;
+			data: Omit<DiscoverCache, 'savedAt'>;
+		}>;
 	};
 
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
@@ -29,11 +45,20 @@
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
 	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v1';
+	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v1';
 	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
+	const DISCOVER_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+	const MAX_CACHED_SEARCHES = 5;
 	const MAX_CACHED_TAGS = 18;
 	const MAX_CACHED_CREATORS = 8;
-	const MAX_CACHED_MEDIA = 60;
+	const MAX_CACHED_MEDIA = 180;
+	const DISCOVER_INITIAL_EVENT_LIMIT = 300;
+	const DISCOVER_PAGE_EVENT_LIMIT = 180;
+	const DISCOVER_SEARCH_EVENT_LIMIT = 180;
 	const INITIAL_MEDIA_VISIBLE = 24;
+	const MEDIA_PAGE_SIZE = 18;
+	const MEDIA_PREFETCH_THRESHOLD = 12;
+	const SEARCH_DEBOUNCE_MS = 350;
 
 	let loading = $state(true);
 	let query = $state('');
@@ -41,8 +66,20 @@
 	let creators = $state<Creator[]>([]);
 	let mediaItems = $state<MediaItem[]>([]);
 	let mediaVisibleCount = $state(INITIAL_MEDIA_VISIBLE);
+	let loadingMoreMedia = $state(false);
+	let searchingRelays = $state(false);
+	let hasMoreMedia = $state(true);
+	let discoverScroller: HTMLDivElement | undefined = $state();
+	let oldestMediaEventCreatedAt = $state(0);
+	let mediaDialogOpen = $state(false);
+	let selectedMediaItem = $state<MediaItem | null>(null);
+	let relaySearchData = $state<Omit<DiscoverCache, 'savedAt'> | null>(null);
+	let relaySearchToken = 0;
 	const me = $derived(identity.current?.pk ?? '');
+	const queryTrimmed = $derived(query.trim());
 	const queryText = $derived(query.trim().toLowerCase());
+	const queryTag = $derived(queryTrimmed.replace(/^#/, '').trim().toLowerCase());
+	const hasActiveRelaySearch = $derived(queryTrimmed.length >= 2);
 
 	const filteredTags = $derived(
 		trendTags.filter((item) => !queryText || item.tag.toLowerCase().includes(queryText))
@@ -63,6 +100,18 @@
 		})
 	);
 	const visibleMedia = $derived(filteredMedia.slice(0, mediaVisibleCount));
+	const activeTrendTags = $derived(
+		hasActiveRelaySearch ? (relaySearchData?.trendTags ?? []) : filteredTags
+	);
+	const activeCreators = $derived(
+		hasActiveRelaySearch ? (relaySearchData?.creators ?? []) : filteredCreators
+	);
+	const activeMedia = $derived(
+		hasActiveRelaySearch ? relaySearchData?.mediaItems.slice(0, mediaVisibleCount) ?? [] : visibleMedia
+	);
+	const activeMediaCount = $derived(
+		hasActiveRelaySearch ? relaySearchData?.mediaItems.length ?? 0 : filteredMedia.length
+	);
 
 	function splitTrailingPunctuation(raw: string) {
 		let core = raw;
@@ -124,15 +173,99 @@
 		return null;
 	}
 
+	function mergeMediaLists(existing: MediaItem[], incoming: MediaItem[]) {
+		const seen = new Set(existing.map((item) => item.id));
+		const merged = [...existing];
+		for (const item of incoming) {
+			if (seen.has(item.id)) continue;
+			seen.add(item.id);
+			merged.push(item);
+		}
+		return merged.slice(0, MAX_CACHED_MEDIA);
+	}
+
+	function buildDiscoverData(
+		events: Array<{ id: string; pubkey: string; content: string; created_at: number; tags: string[][] }>,
+		options: { mediaLimit?: number } = {}
+	) {
+		const seen: Record<string, true> = {};
+		const tags: Record<string, number> = {};
+		const authors: Record<string, Creator> = {};
+		const nextMedia: MediaItem[] = [];
+		const mediaLimit = options.mediaLimit ?? MAX_CACHED_MEDIA;
+		const sortedEvents = [...events].sort((a, b) => b.created_at - a.created_at);
+
+		for (const event of sortedEvents) {
+			if (seen[event.id]) continue;
+			seen[event.id] = true;
+
+			const noteTags = event.tags
+				.filter((tag) => tag[0] === 't' && tag[1])
+				.map((tag) => tag[1].toLowerCase());
+			const inlineTags = [...event.content.matchAll(hashtagPattern)].map((match) =>
+				match[1].toLowerCase()
+			);
+			for (const tag of [...noteTags, ...inlineTags].filter(
+				(tag, index, all) => all.indexOf(tag) === index
+			)) {
+				tags[tag] = (tags[tag] ?? 0) + 1;
+			}
+
+			if (event.pubkey !== me) {
+				const author = authors[event.pubkey] ?? {
+					pubkey: event.pubkey,
+					count: 0,
+					latest: event.created_at
+				};
+				author.count += 1;
+				author.latest = Math.max(author.latest, event.created_at);
+				authors[event.pubkey] = author;
+			}
+
+			const media = mediaFromEvent(event);
+			if (media && nextMedia.length < mediaLimit) {
+				nextMedia.push({
+					id: event.id,
+					url: media.url,
+					kind: media.kind,
+					pubkey: event.pubkey,
+					content: event.content,
+					createdAt: event.created_at
+				});
+			}
+		}
+
+		return {
+			data: {
+				trendTags: Object.entries(tags)
+					.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+					.slice(0, MAX_CACHED_TAGS)
+					.map(([tag, count]) => ({ tag, count })),
+				creators: Object.values(authors)
+					.sort((a, b) => b.count - a.count || b.latest - a.latest)
+					.slice(0, MAX_CACHED_CREATORS),
+				mediaItems: nextMedia
+			},
+			sortedEvents
+		};
+	}
+
 	function applyDiscoverData(data: Omit<DiscoverCache, 'savedAt'>) {
 		trendTags = data.trendTags.slice(0, MAX_CACHED_TAGS);
 		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
 		mediaItems = data.mediaItems
 			.slice(0, MAX_CACHED_MEDIA)
-			.map((item) => ({ ...item, kind: item.kind ?? 'image' }));
+			.map((item) => ({ ...item, kind: item.kind ?? 'image', createdAt: item.createdAt ?? 0 }));
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		profiles.ensure(creators.map((creator) => creator.pubkey));
 		profiles.ensure(mediaItems.map((item) => item.pubkey));
+	}
+
+	function appendDiscoverMedia(nextItems: MediaItem[]) {
+		if (!nextItems.length) return;
+		mediaItems = mergeMediaLists(mediaItems, nextItems);
+		profiles.ensure(nextItems.map((item) => item.pubkey));
+		saveDiscoverCache({ trendTags, creators, mediaItems });
 	}
 
 	function loadCachedDiscover() {
@@ -157,67 +290,53 @@
 		}
 	}
 
+	function loadCachedDiscoverSearch(queryValue: string) {
+		try {
+			const raw = localStorage.getItem(DISCOVER_SEARCH_CACHE_KEY);
+			if (!raw) return null;
+			const cached = JSON.parse(raw) as DiscoverSearchCache;
+			if (!Array.isArray(cached?.queries)) return null;
+			const entry = cached.queries.find((item) => item.query === queryValue);
+			if (!entry?.savedAt || Date.now() - entry.savedAt > DISCOVER_SEARCH_CACHE_TTL_MS) return null;
+			return entry.data;
+		} catch {
+			return null;
+		}
+	}
+
+	function saveDiscoverSearchCache(queryValue: string, data: Omit<DiscoverCache, 'savedAt'>) {
+		try {
+			const raw = localStorage.getItem(DISCOVER_SEARCH_CACHE_KEY);
+			const cached = raw ? (JSON.parse(raw) as DiscoverSearchCache) : { savedAt: 0, queries: [] };
+			const nextQueries = [
+				{ query: queryValue, data, savedAt: Date.now() },
+				...((cached.queries ?? []).filter((item) => item.query !== queryValue) as Array<{
+					query: string;
+					data: Omit<DiscoverCache, 'savedAt'>;
+					savedAt: number;
+				}>)
+			]
+				.filter((item) => Date.now() - item.savedAt <= DISCOVER_SEARCH_CACHE_TTL_MS)
+				.slice(0, MAX_CACHED_SEARCHES);
+			localStorage.setItem(
+				DISCOVER_SEARCH_CACHE_KEY,
+				JSON.stringify({ savedAt: Date.now(), queries: nextQueries })
+			);
+		} catch {
+			/* Ignore quota/private-mode failures; cache is only a performance hint. */
+		}
+	}
+
 	async function loadDiscover(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }]);
-			const seen: Record<string, true> = {};
-			const tags: Record<string, number> = {};
-			const authors: Record<string, Creator> = {};
-			const nextMedia: MediaItem[] = [];
-
-			for (const event of events.sort((a, b) => b.created_at - a.created_at)) {
-				if (seen[event.id]) continue;
-				seen[event.id] = true;
-
-				const noteTags = event.tags
-					.filter((tag) => tag[0] === 't' && tag[1])
-					.map((tag) => tag[1].toLowerCase());
-				const inlineTags = [...event.content.matchAll(hashtagPattern)].map((match) =>
-					match[1].toLowerCase()
-				);
-				for (const tag of [...noteTags, ...inlineTags].filter(
-					(tag, index, all) => all.indexOf(tag) === index
-				)) {
-					tags[tag] = (tags[tag] ?? 0) + 1;
-				}
-
-				if (event.pubkey !== me) {
-					const author = authors[event.pubkey] ?? {
-						pubkey: event.pubkey,
-						count: 0,
-						latest: event.created_at
-					};
-					author.count += 1;
-					author.latest = Math.max(author.latest, event.created_at);
-					authors[event.pubkey] = author;
-				}
-
-				const media = mediaFromEvent(event);
-				if (media && nextMedia.length < MAX_CACHED_MEDIA) {
-					nextMedia.push({
-						id: event.id,
-						url: media.url,
-						kind: media.kind,
-						pubkey: event.pubkey,
-						content: event.content
-					});
-				}
-			}
-
-			const nextTags = Object.entries(tags)
-				.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-				.slice(0, 18)
-				.map(([tag, count]) => ({ tag, count }));
-			const nextCreators = Object.values(authors)
-				.sort((a, b) => b.count - a.count || b.latest - a.latest)
-				.slice(0, 8);
-			const data = {
-				trendTags: nextTags,
-				creators: nextCreators,
-				mediaItems: nextMedia
-			};
+			const events = await queryOnce([
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }
+			]);
+			const { data, sortedEvents } = buildDiscoverData(events);
 			applyDiscoverData(data);
+			oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
+			hasMoreMedia = events.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
 			saveDiscoverCache(data);
 		} catch (e) {
 			if (!options.background) {
@@ -227,6 +346,143 @@
 			loading = false;
 		}
 	}
+
+	async function loadMoreMedia() {
+		if (loadingMoreMedia || !hasMoreMedia || !oldestMediaEventCreatedAt) return;
+		loadingMoreMedia = true;
+		try {
+			const nextMedia: MediaItem[] = [];
+			let nextCursor = oldestMediaEventCreatedAt;
+			let attempts = 0;
+
+			while (nextMedia.length < MEDIA_PAGE_SIZE && hasMoreMedia && nextCursor > 0 && attempts < 4) {
+				const events = await queryOnce([
+					{
+						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						limit: DISCOVER_PAGE_EVENT_LIMIT,
+						until: nextCursor - 1
+					}
+				]);
+				attempts += 1;
+				if (!events.length) {
+					hasMoreMedia = false;
+					break;
+				}
+
+				const sortedEvents = events.sort((a, b) => b.created_at - a.created_at);
+				nextCursor = sortedEvents.at(-1)?.created_at ?? 0;
+				oldestMediaEventCreatedAt = nextCursor;
+				hasMoreMedia = events.length >= DISCOVER_PAGE_EVENT_LIMIT && nextCursor > 0;
+
+				const existingIds = new Set([...mediaItems, ...nextMedia].map((item) => item.id));
+				for (const event of sortedEvents) {
+					if (existingIds.has(event.id)) continue;
+					const media = mediaFromEvent(event);
+					if (!media) continue;
+					existingIds.add(event.id);
+					nextMedia.push({
+						id: event.id,
+						url: media.url,
+						kind: media.kind,
+						pubkey: event.pubkey,
+						content: event.content,
+						createdAt: event.created_at
+					});
+					if (nextMedia.length >= MEDIA_PAGE_SIZE) break;
+				}
+			}
+
+			appendDiscoverMedia(nextMedia);
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not load more media');
+		} finally {
+			loadingMoreMedia = false;
+		}
+	}
+
+	async function ensureMediaBuffered() {
+		if (hasActiveRelaySearch || loading || loadingMoreMedia || !hasMoreMedia) return;
+		if (filteredMedia.length - mediaVisibleCount > MEDIA_PREFETCH_THRESHOLD) return;
+		await loadMoreMedia();
+	}
+
+	function revealMoreMedia() {
+		if (filteredMedia.length > mediaVisibleCount) {
+			mediaVisibleCount = Math.min(filteredMedia.length, mediaVisibleCount + MEDIA_PAGE_SIZE);
+		}
+		void ensureMediaBuffered();
+	}
+
+	function handleDiscoverScroll() {
+		if (hasActiveRelaySearch) return;
+		if (!discoverScroller) return;
+		const remaining =
+			discoverScroller.scrollHeight - discoverScroller.scrollTop - discoverScroller.clientHeight;
+		if (remaining < discoverScroller.clientHeight * 1.5) revealMoreMedia();
+	}
+
+	function openMediaDialog(item: MediaItem) {
+		selectedMediaItem = item;
+		mediaDialogOpen = true;
+	}
+
+	async function searchDiscoverRelays(term: string) {
+		const searchToken = ++relaySearchToken;
+		searchingRelays = true;
+		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
+		try {
+			const cached = loadCachedDiscoverSearch(term);
+			if (cached) {
+				if (searchToken !== relaySearchToken) return;
+				relaySearchData = cached;
+				profiles.ensure(cached.creators.map((creator) => creator.pubkey));
+				profiles.ensure(cached.mediaItems.map((item) => item.pubkey));
+				searchingRelays = false;
+				return;
+			}
+
+			const filters = [
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: DISCOVER_SEARCH_EVENT_LIMIT,
+					search: term
+				} as Parameters<typeof queryOnce>[0][number],
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: DISCOVER_SEARCH_EVENT_LIMIT,
+					'#t': [queryTag || term.toLowerCase()]
+				} as Parameters<typeof queryOnce>[0][number]
+			];
+			const events = await queryOnce(filters);
+			if (searchToken !== relaySearchToken) return;
+			relaySearchData = buildDiscoverData(events, { mediaLimit: MAX_CACHED_MEDIA }).data;
+			saveDiscoverSearchCache(term, relaySearchData);
+			profiles.ensure(relaySearchData.creators.map((creator) => creator.pubkey));
+			profiles.ensure(relaySearchData.mediaItems.map((item) => item.pubkey));
+		} catch (e) {
+			if (searchToken !== relaySearchToken) return;
+			relaySearchData = { trendTags: [], creators: [], mediaItems: [] };
+			toasts.error((e as Error).message || 'Could not search relays');
+		} finally {
+			if (searchToken === relaySearchToken) searchingRelays = false;
+		}
+	}
+
+	$effect(() => {
+		if (!hasActiveRelaySearch) {
+			relaySearchToken += 1;
+			searchingRelays = false;
+			relaySearchData = null;
+			return;
+		}
+
+		const term = queryTrimmed;
+		const handle = window.setTimeout(() => {
+			void searchDiscoverRelays(term);
+		}, SEARCH_DEBOUNCE_MS);
+
+		return () => window.clearTimeout(handle);
+	});
 
 	onMount(() => {
 		const hasCache = loadCachedDiscover();
@@ -241,7 +497,7 @@
 
 <svelte:head><title>Discover · BitOS</title></svelte:head>
 
-<div class="h-full overflow-y-auto">
+<div bind:this={discoverScroller} class="h-full overflow-y-auto" onscroll={handleDiscoverScroll}>
 	<div class="mx-auto max-w-[1100px] px-6 py-6">
 		<div class="mb-6 flex items-start justify-between gap-4">
 			<div>
@@ -273,6 +529,13 @@
 				placeholder="Search creators, hashtags, images, or videos..."
 				class="w-full rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-3.5 pr-12 pl-12 text-[14px] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/30"
 			/>
+			{#if searchingRelays}
+				<div
+					class="absolute top-1/2 right-12 grid size-6 -translate-y-1/2 place-items-center text-[var(--ui-text-dimmed)]"
+				>
+					<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+				</div>
+			{/if}
 			{#if query}
 				<button
 					type="button"
@@ -284,12 +547,17 @@
 				</button>
 			{/if}
 		</div>
+		{#if hasActiveRelaySearch}
+			<p class="mb-6 text-[12px] font-semibold text-[var(--ui-text-muted)]">
+				{searchingRelays ? 'Searching relays...' : `Relay results for "${queryTrimmed}"`}
+			</p>
+		{/if}
 
 		<div class="mb-6">
 			<h3 class="mb-3 font-display text-[18px] font-extrabold">Trending tags</h3>
-			{#if filteredTags.length}
+			{#if activeTrendTags.length}
 				<div class="flex flex-wrap gap-2">
-					{#each filteredTags as item (item.tag)}
+					{#each activeTrendTags as item (item.tag)}
 						<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
 							<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
 							#{item.tag}
@@ -299,16 +567,22 @@
 				</div>
 			{:else}
 				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
-					{loading ? 'Loading tags from relays...' : 'No tags found from your relays.'}
+					{searchingRelays
+						? 'Searching tags from relays...'
+						: hasActiveRelaySearch
+							? 'No relay tags matched your search.'
+							: loading
+								? 'Loading tags from relays...'
+								: 'No tags found from your relays.'}
 				</div>
 			{/if}
 		</div>
 
 		<div class="mb-8">
 			<h3 class="mb-3 font-display text-[18px] font-extrabold">Active creators</h3>
-			{#if filteredCreators.length}
+			{#if activeCreators.length}
 				<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{#each filteredCreators as creator (creator.pubkey)}
+					{#each activeCreators as creator (creator.pubkey)}
 						{@const profile = profiles.get(creator.pubkey)}
 						{@const name = profile?.display_name || profile?.name || shortKey(creator.pubkey)}
 						<a href={`/profile/${creator.pubkey}`} class="post-card p-4 text-center">
@@ -328,7 +602,13 @@
 				</div>
 			{:else}
 				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
-					{loading ? 'Loading creators from relays...' : 'No creators found.'}
+					{searchingRelays
+						? 'Searching creators from relays...'
+						: hasActiveRelaySearch
+							? 'No relay creators matched your search.'
+							: loading
+								? 'Loading creators from relays...'
+								: 'No creators found.'}
 				</div>
 			{/if}
 		</div>
@@ -336,20 +616,21 @@
 		<div class="mb-6">
 			<div class="mb-3 flex items-center justify-between gap-3">
 				<h3 class="font-display text-[18px] font-extrabold">Media</h3>
-				{#if mediaItems.length}
+				{#if activeMediaCount}
 					<p class="text-[12px] font-semibold text-[var(--ui-text-muted)]">
-						{filteredMedia.length} result{filteredMedia.length === 1 ? '' : 's'}
+						{activeMediaCount} result{activeMediaCount === 1 ? '' : 's'}
 					</p>
 				{/if}
 			</div>
-			{#if visibleMedia.length}
+			{#if activeMedia.length}
 				<div class="masonry">
-					{#each visibleMedia as item (item.id)}
+					{#each activeMedia as item (item.id)}
 						{@const profile = profiles.get(item.pubkey)}
 						{@const name = profile?.display_name || profile?.name || shortKey(item.pubkey)}
-						<a
-							href={`/note/${item.id}?from=discover`}
-							class="group relative block cursor-pointer overflow-hidden rounded-xl transition-transform hover:scale-[0.97]"
+						<button
+							type="button"
+							onclick={() => openMediaDialog(item)}
+							class="group relative block w-full cursor-pointer overflow-hidden rounded-xl text-left transition-transform hover:scale-[0.97]"
 						>
 							{#if item.kind === 'video'}
 								<!-- svelte-ignore a11y_media_has_caption -->
@@ -382,30 +663,103 @@
 									<p class="line-clamp-3 text-[12px] font-semibold">{item.content}</p>
 								</div>
 							</div>
-						</a>
+						</button>
 					{/each}
 				</div>
-				{#if filteredMedia.length > mediaVisibleCount}
+				{#if !hasActiveRelaySearch && (filteredMedia.length > mediaVisibleCount || hasMoreMedia)}
 					<div class="mt-5 flex justify-center">
 						<button
 							type="button"
-							onclick={() => (mediaVisibleCount += 18)}
+							onclick={revealMoreMedia}
+							disabled={loadingMoreMedia && filteredMedia.length <= mediaVisibleCount}
 							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
 						>
-							<Icon name="i-lucide-plus" class="size-4" />
-							Load more media
+							<Icon
+								name={loadingMoreMedia && filteredMedia.length <= mediaVisibleCount
+									? 'i-lucide-loader-circle'
+									: 'i-lucide-plus'}
+								class="size-4 {loadingMoreMedia && filteredMedia.length <= mediaVisibleCount
+									? 'animate-spin'
+									: ''}"
+							/>
+							{filteredMedia.length > mediaVisibleCount ? 'Load more media' : 'Loading older media'}
 						</button>
 					</div>
 				{/if}
 			{:else}
 				<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
-					{loading
-						? 'Loading media from relays...'
-						: queryText
-							? 'No media matched your search.'
-							: 'No image or video media links found.'}
+					{searchingRelays
+						? 'Searching media from relays...'
+						: hasActiveRelaySearch
+							? 'No relay media matched your search.'
+							: loading
+								? 'Loading media from relays...'
+								: queryText
+									? 'No media matched your search.'
+									: 'No image or video media links found.'}
 				</div>
 			{/if}
 		</div>
 	</div>
 </div>
+
+<Dialog bind:open={mediaDialogOpen} title="Media note">
+	{#if selectedMediaItem}
+		{@const profile = profiles.get(selectedMediaItem.pubkey)}
+		{@const name = profile?.display_name || profile?.name || shortKey(selectedMediaItem.pubkey)}
+		<div class="space-y-4">
+			<div class="overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)]">
+				{#if selectedMediaItem.kind === 'video'}
+					<!-- svelte-ignore a11y_media_has_caption -->
+					<video
+						src={selectedMediaItem.url}
+						class="max-h-[55vh] w-full bg-black object-contain"
+						controls
+						autoplay
+						playsinline
+					></video>
+				{:else}
+					<img
+						src={selectedMediaItem.url}
+						alt="Discover media"
+						class="max-h-[55vh] w-full object-contain"
+					/>
+				{/if}
+			</div>
+			<div class="space-y-3 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-4">
+				<div class="flex items-center gap-3">
+					<a href={`/profile/${selectedMediaItem.pubkey}`} class="shrink-0">
+						<Avatar
+							pubkey={selectedMediaItem.pubkey}
+							name={name}
+							picture={profile?.picture}
+							size={40}
+						/>
+					</a>
+					<div class="min-w-0 flex-1">
+						<a
+							href={`/profile/${selectedMediaItem.pubkey}`}
+							class="block truncate text-[14px] font-bold text-[var(--ui-text-highlighted)] hover:text-primary-500"
+						>
+							{name}
+						</a>
+						<p class="text-[12px] text-[var(--ui-text-muted)]">
+							{selectedMediaItem.createdAt ? timeAgo(selectedMediaItem.createdAt) : 'Recent post'}
+						</p>
+					</div>
+					<a
+						href={`/note/${selectedMediaItem.id}?from=discover`}
+						class="inline-flex h-9 items-center rounded-full border border-[var(--ui-border-muted)] px-3 text-[12px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
+					>
+						Open note
+					</a>
+				</div>
+				{#if selectedMediaItem.content}
+					<p class="max-h-32 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]">
+						{selectedMediaItem.content}
+					</p>
+				{/if}
+			</div>
+		</div>
+	{/if}
+</Dialog>
