@@ -17,6 +17,7 @@
 	let posting = $state(false);
 	let uploading = $state(false);
 	let attachments = $state<UploadedMedia[]>([]);
+	let sensitive = $state(false);
 
 	// Per-post provider selection. Defaults to the configured default and stays
 	// valid as the user toggles providers in Settings.
@@ -150,9 +151,10 @@
 					.join('\n');
 				content = content ? `${content}\n\n${links}` : links;
 			}
-			await feed.post(content);
+			await feed.post(content, { sensitive });
 			text = '';
 			attachments = [];
+			sensitive = false;
 			toasts.success('Posted to Nostr');
 		} catch (e) {
 			toasts.error((e as Error).message);
@@ -301,7 +303,17 @@
 				{/each}
 			</div>
 
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				<label
+					class="flex items-center gap-2 rounded-lg px-2.5 py-2 text-[12px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-primary-500/5"
+				>
+					<input
+						bind:checked={sensitive}
+						type="checkbox"
+						class="size-4 rounded border border-[var(--ui-border)] accent-primary-500"
+					/>
+					<span>Sensitive content</span>
+				</label>
 				<!-- Provider selector -->
 				<label class="flex items-center gap-1.5 text-[11.5px] text-[var(--ui-text-muted)]">
 					<Icon name="i-lucide-cloud-upload" class="size-3.5" />

@@ -521,7 +521,7 @@ class FeedStore {
 	}
 
 	/** Compose + sign + publish a text note. Returns the published event id. */
-	async post(content: string): Promise<string> {
+	async post(content: string, options: { sensitive?: boolean } = {}): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
@@ -536,7 +536,7 @@ class FeedStore {
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: text,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: []
+			tags: options.sensitive ? [['content-warning', 'Sensitive content']] : []
 		};
 		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
