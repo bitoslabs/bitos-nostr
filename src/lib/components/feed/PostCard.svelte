@@ -1,3 +1,13 @@
+<script module lang="ts">
+	const activeFeedVideos = new Set<HTMLVideoElement>();
+
+	function pauseOtherFeedVideos(activeVideo: HTMLVideoElement) {
+		for (const video of activeFeedVideos) {
+			if (video !== activeVideo) video.pause();
+		}
+	}
+</script>
+
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
@@ -5,12 +15,16 @@
 	import StoryRing from './StoryRing.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Popover from '$lib/components/ui/Popover.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 	import Poll from './Poll.svelte';
@@ -65,7 +79,6 @@
 				: 'Zap'
 	);
 	const menuId = $derived(`post-menu:${note.id}`);
-	const menuOpen = $derived(popovers.isOpen(menuId));
 	const noteLink = $derived(`nostr:${noteEncode(note.id)}`);
 	const authorNpub = $derived(npubEncode(note.pubkey));
 	const rawNote = $derived(
@@ -96,6 +109,7 @@
 	);
 	const contentTokens = $derived(parseContent(visibleContent));
 	const mediaAttachments = $derived(extractMedia(note.content));
+	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
 	const hiddenMediaCount = $derived(
@@ -107,6 +121,7 @@
 	let pendingDelete = $state<FeedNote | null>(null);
 	let deleting = $state(false);
 	let previewOpen = $state(false);
+	let previewImageIndex = $state(0);
 	let previewImageUrl = $state('');
 	let replyOpen = $state(false);
 	let replyText = $state('');
@@ -129,6 +144,7 @@
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
 	const saved = $derived(bookmarks.has(note.id));
 	const deleteTargetLabel = $derived(pendingDelete?.id === note.id ? 'note' : 'comment');
+	const canCommentOnNote = $derived(privacyNotificationSettings.canCommentOn(note.pubkey));
 
 	function sensitiveMediaReason() {
 		const contentWarning = note.tags.find(
@@ -205,13 +221,52 @@
 	}
 
 	function previewImage(url: string) {
+		const index = previewableImages.findIndex((media) => media.url === url);
+		previewImageIndex = index >= 0 ? index : 0;
 		previewImageUrl = url;
 		previewOpen = true;
+	}
+
+	function syncPreviewImage() {
+		previewImageUrl = previewableImages[previewImageIndex]?.url ?? '';
+	}
+
+	function showPreviousPreviewImage() {
+		if (previewImageIndex <= 0) return;
+		previewImageIndex -= 1;
+		syncPreviewImage();
+	}
+
+	function showNextPreviewImage() {
+		if (previewImageIndex >= previewableImages.length - 1) return;
+		previewImageIndex += 1;
+		syncPreviewImage();
+	}
+
+	function trackFeedVideo(node: HTMLVideoElement) {
+		activeFeedVideos.add(node);
+
+		const handlePlay = () => {
+			pauseOtherFeedVideos(node);
+		};
+
+		node.addEventListener('play', handlePlay);
+
+		return {
+			destroy() {
+				node.removeEventListener('play', handlePlay);
+				activeFeedVideos.delete(node);
+			}
+		};
 	}
 
 	function startReply() {
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
+			return;
+		}
+		if (!canCommentOnNote) {
+			toasts.info('Commenting is limited by your privacy settings');
 			return;
 		}
 		replyOpen = true;
@@ -221,6 +276,10 @@
 	function startCommentReply(reply: FeedNote) {
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
+			return;
+		}
+		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
+			toasts.info('Commenting is limited by your privacy settings');
 			return;
 		}
 		replyingToCommentId = reply.id;
@@ -369,6 +428,12 @@
 		popovers.close();
 	}
 
+	function blockAuthor() {
+		if (feed.blockAuthor(note.pubkey)) toasts.success(`Blocked ${displayName}`);
+		else toasts.info(`${displayName} is already blocked`);
+		popovers.close();
+	}
+
 	function askDeleteNote() {
 		popovers.close();
 		pendingDelete = note;
@@ -457,6 +522,10 @@
 
 	async function submitReply() {
 		if (!replyText.trim() || replying) return;
+		if (!canCommentOnNote) {
+			toasts.info('Commenting is limited by your privacy settings');
+			return;
+		}
 		replying = true;
 		try {
 			await feed.reply(note, replyText);
@@ -480,6 +549,10 @@
 
 	async function submitCommentReply(reply: FeedNote) {
 		if (!commentReplyText.trim() || commentReplying) return;
+		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
+			toasts.info('Commenting is limited by your privacy settings');
+			return;
+		}
 		commentReplying = true;
 		try {
 			await feed.reply(reply, commentReplyText);
@@ -504,7 +577,10 @@
 	}
 
 	$effect(() => {
-		if (!previewOpen) previewImageUrl = '';
+		if (!previewOpen) {
+			previewImageUrl = '';
+			previewImageIndex = 0;
+		}
 	});
 
 	$effect(() => {
@@ -543,132 +619,71 @@
 				</p>
 			</div>
 		</a>
-		<div class="relative shrink-0">
-			<button
-				type="button"
-				onclick={(e) => {
-					e.stopPropagation();
-					popovers.toggle(menuId);
-				}}
-				class="grid size-9 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
-					? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
-					: ''}"
-				aria-label="Post actions"
-				aria-expanded={menuOpen}
+		<div class="shrink-0">
+			<Popover
+				id={menuId}
+				placement="bottom-end"
+				width="auto"
+				class="w-60"
+				label="Post actions"
+				triggerClass="grid size-9 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)]"
+				triggerActiveClass="bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]"
 			>
-				<Icon name="i-lucide-ellipsis" class="size-5" />
-			</button>
+				{#snippet trigger()}
+					<Icon name="i-lucide-ellipsis" class="size-5" />
+				{/snippet}
 
-			{#if menuOpen}
-				<div
-					class="absolute top-10 right-0 z-30 w-60 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+				<MenuItem href={`/messages?to=${note.pubkey}`} icon="i-lucide-message-circle">
+					Message author
+				</MenuItem>
+				<MenuItem
+					icon={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
+					onclick={toggleSaved}
 				>
-					<a
-						href={`/messages?to=${note.pubkey}`}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+					{saved ? 'Unsave note' : 'Save note'}
+				</MenuItem>
+				<MenuItem icon="i-lucide-link" onclick={() => copyText(noteLink, 'Note link')}>
+					Copy note link
+				</MenuItem>
+				<MenuItem icon="i-lucide-fingerprint" onclick={() => copyText(note.id, 'Note ID')}>
+					Copy note ID
+				</MenuItem>
+				<MenuItem icon="i-lucide-text" onclick={() => copyText(note.content, 'Note text')}>
+					Copy note text
+				</MenuItem>
+				{#if firstAttachment}
+					<MenuItem icon="i-lucide-external-link" onclick={openAttachment}>
+						Open attachment
+					</MenuItem>
+					<MenuItem
+						icon="i-lucide-image"
+						onclick={() => copyText(firstAttachment.url, 'Attachment URL')}
 					>
-						<Icon name="i-lucide-message-circle" class="size-4 shrink-0" />
-						Message author
-					</a>
-					<button
-						type="button"
-						onclick={toggleSaved}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon
-							name={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
-							class="size-4 shrink-0"
-						/>
-						{saved ? 'Unsave note' : 'Save note'}
-					</button>
-					<button
-						type="button"
-						onclick={() => copyText(noteLink, 'Note link')}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-link" class="size-4 shrink-0" />
-						Copy note link
-					</button>
-					<button
-						type="button"
-						onclick={() => copyText(note.id, 'Note ID')}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
-						Copy note ID
-					</button>
-					<button
-						type="button"
-						onclick={() => copyText(note.content, 'Note text')}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-text" class="size-4 shrink-0" />
-						Copy note text
-					</button>
-					{#if firstAttachment}
-						<button
-							type="button"
-							onclick={openAttachment}
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-						>
-							<Icon name="i-lucide-external-link" class="size-4 shrink-0" />
-							Open attachment
-						</button>
-						<button
-							type="button"
-							onclick={() => copyText(firstAttachment.url, 'Attachment URL')}
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-						>
-							<Icon name="i-lucide-image" class="size-4 shrink-0" />
-							Copy attachment URL
-						</button>
-					{/if}
-					<button
-						type="button"
-						onclick={() => copyText(authorNpub, 'Author npub')}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-user-round" class="size-4 shrink-0" />
-						Copy author npub
-					</button>
-					<button
-						type="button"
-						onclick={showRaw}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-braces" class="size-4 shrink-0" />
-						View raw note
-					</button>
-					<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
-					<button
-						type="button"
-						onclick={hideNote}
-						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-eye-off" class="size-4 shrink-0" />
-						Hide note
-					</button>
-					{#if !isMe}
-						<button
-							type="button"
-							onclick={muteAuthor}
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-						>
-							<Icon name="i-lucide-volume-x" class="size-4 shrink-0" />
-							Mute author
-						</button>
-					{:else}
-						<button
-							type="button"
-							onclick={askDeleteNote}
-							class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--tone-error-text)] transition-colors hover:bg-[var(--tone-error-bg)]"
-						>
-							<Icon name="i-lucide-trash-2" class="size-4 shrink-0" />
-							Delete note
-						</button>
-					{/if}
-				</div>
-			{/if}
+						Copy attachment URL
+					</MenuItem>
+				{/if}
+				<MenuItem
+					icon="i-lucide-user-round"
+					onclick={() => copyText(authorNpub, 'Author npub')}
+				>
+					Copy author npub
+				</MenuItem>
+				<MenuItem icon="i-lucide-braces" onclick={showRaw}>View raw note</MenuItem>
+
+				<MenuDivider />
+
+				<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
+				{#if !isMe}
+					<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
+					<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>
+						Block author
+					</MenuItem>
+				{:else}
+					<MenuItem tone="danger" icon="i-lucide-trash-2" onclick={askDeleteNote}>
+						Delete note
+					</MenuItem>
+				{/if}
+			</Popover>
 		</div>
 	</header>
 
@@ -812,6 +827,7 @@
 					<div class="{tileClass} relative bg-black">
 						<!-- svelte-ignore a11y_media_has_caption -->
 						<video
+							use:trackFeedVideo
 							src={media.url}
 							controls={isMediaRevealed(media.url)}
 							preload="metadata"
@@ -927,14 +943,15 @@
 
 	<!-- Action bar -->
 	<div
-		class="mx-4 my-2 flex items-center justify-around border-y border-[var(--ui-border-muted)] py-1.5"
+		class="mx-4 my-2 flex items-center justify-between gap-1 border-y border-[var(--ui-border-muted)] py-1.5 md:justify-around"
 	>
 		<button
 			type="button"
 			onclick={react}
-			class="relative flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 {liked
+			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 md:flex-none md:px-3 md:py-1.5 {liked
 				? 'text-primary-500'
 				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
+			aria-label={liked ? 'Unlike' : 'Like'}
 		>
 			<span class="relative">
 				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
@@ -944,15 +961,25 @@
 					</span>
 				{/if}
 			</span>
-			<span>{liked ? 'Unlike' : 'Like'}</span>
+			{#if reactionCount > 0}
+				<span class="text-[12px] md:hidden">{reactionCount}</span>
+			{/if}
+			<span class="hidden md:inline">{liked ? 'Unlike' : 'Like'}</span>
 		</button>
 		<button
 			type="button"
 			onclick={startReply}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			disabled={!canCommentOnNote}
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			aria-label={directReplies.length
+				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
+				: 'Comment'}
 		>
 			<Icon name="i-lucide-message-circle" class="size-[16px]" />
-			<span>
+			{#if directReplies.length > 0}
+				<span class="text-[12px] md:hidden">{directReplies.length}</span>
+			{/if}
+			<span class="hidden md:inline">
 				{directReplies.length
 					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 					: 'Comment'}
@@ -961,24 +988,27 @@
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			aria-label="Share"
 		>
 			<Icon name="i-lucide-share" class="size-[16px]" />
-			<span>Share</span>
+			<span class="hidden md:inline">Share</span>
 		</button>
 		<button
 			type="button"
 			onclick={zapNote}
 			disabled={!lightningAddress}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			aria-label={zapLabel}
 		>
 			<Icon name="i-lucide-zap" class="size-[16px]" />
-			<span>{zapLabel}</span>
+			<span class="hidden md:inline">{zapLabel}</span>
 		</button>
 		<button
 			type="button"
 			onclick={toggleSaved}
-			class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
 			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[16px]" />
 		</button>
@@ -1063,7 +1093,8 @@
 							<button
 								type="button"
 								onclick={() => startCommentReply(reply)}
-								class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+								disabled={!privacyNotificationSettings.canCommentOn(reply.pubkey)}
+								class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
 							>
 								Reply
 							</button>
@@ -1172,7 +1203,9 @@
 								<button
 									type="button"
 									onclick={() => submitCommentReply(reply)}
-									disabled={!commentReplyText.trim() || commentReplying}
+									disabled={!commentReplyText.trim() ||
+										commentReplying ||
+										!privacyNotificationSettings.canCommentOn(reply.pubkey)}
 									class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
 									aria-label="Post comment reply"
 								>
@@ -1311,18 +1344,69 @@
 <Dialog bind:open={previewOpen} title="Image preview">
 	{#if previewImageUrl}
 		<div class="space-y-3">
-			<div class="overflow-hidden rounded-2xl bg-black">
+			<div class="relative overflow-hidden rounded-2xl bg-black">
 				<img
 					src={previewImageUrl}
 					alt="Preview"
 					referrerpolicy="no-referrer"
 					class="max-h-[70vh] w-full object-contain"
 				/>
+				{#if previewableImages.length > 1}
+					<div class="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-between p-3">
+						<button
+							type="button"
+							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+							onclick={showPreviousPreviewImage}
+							disabled={previewImageIndex === 0}
+							aria-label="Previous image"
+						>
+							<Icon name="i-lucide-chevron-left" class="size-5" />
+						</button>
+						<button
+							type="button"
+							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
+							onclick={showNextPreviewImage}
+							disabled={previewImageIndex === previewableImages.length - 1}
+							aria-label="Next image"
+						>
+							<Icon name="i-lucide-chevron-right" class="size-5" />
+						</button>
+					</div>
+				{/if}
 			</div>
-			<p class="truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">{previewImageUrl}</p>
+			<div class="flex items-center justify-between gap-3">
+				<p class="min-w-0 truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">
+					{previewImageUrl}
+				</p>
+				{#if previewableImages.length > 1}
+					<p class="shrink-0 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+						{previewImageIndex + 1} / {previewableImages.length}
+					</p>
+				{/if}
+			</div>
 		</div>
 	{/if}
 	{#snippet footer()}
+		{#if previewableImages.length > 1}
+			<button
+				type="button"
+				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+				onclick={showPreviousPreviewImage}
+				disabled={previewImageIndex === 0}
+			>
+				<Icon name="i-lucide-chevron-left" class="size-4" />
+				Previous
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
+				onclick={showNextPreviewImage}
+				disabled={previewImageIndex === previewableImages.length - 1}
+			>
+				Next
+				<Icon name="i-lucide-chevron-right" class="size-4" />
+			</button>
+		{/if}
 		<button
 			type="button"
 			class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"

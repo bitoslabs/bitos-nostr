@@ -13,6 +13,8 @@ import { nip04 } from 'nostr-tools';
 import { subscribe, publish } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+import { blocks } from '$lib/stores/blocks.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type Conversation, type DirectMessage } from './types';
 
@@ -31,7 +33,9 @@ class DMStore {
 
 	/** Total unread messages across all conversations (for the nav badge). */
 	get unreadCount(): number {
-		return this.conversations.reduce((sum, c) => sum + (c.unread || 0), 0);
+		return this.conversations
+			.filter((conversation) => !blocks.has(conversation.peer))
+			.reduce((sum, c) => sum + (c.unread || 0), 0);
 	}
 
 	/** Conversation for a given peer (creates an empty placeholder if absent). */
@@ -93,6 +97,12 @@ class DMStore {
 		// Counterparty: if I'm the author, the recipient is in a p-tag; else sender.
 		const peer = mine ? (ev.tags.find((t) => t[0] === 'p')?.[1] ?? '') : ev.pubkey;
 		if (!peer) return;
+		if (!mine && blocks.has(peer)) return;
+		const existingConversation = this.conversations.some(
+			(conversation) => conversation.peer === peer
+		);
+		if (!mine && !existingConversation && !privacyNotificationSettings.canReceiveDmFrom(peer))
+			return;
 		let plaintext: string;
 		try {
 			// nip04.decrypt needs hex keys
@@ -208,6 +218,7 @@ class DMStore {
 		if (!browser) return;
 		const me = identity.current;
 		if (!me) throw new Error('No identity');
+		if (blocks.has(peer)) throw new Error('Unblock this user before messaging them');
 		const body = text.trim();
 		if (!body) return;
 		const ciphertext = await nip04.encrypt(me.sk, peer, body);

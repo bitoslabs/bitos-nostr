@@ -37,7 +37,7 @@
 		>
 			<div class="flex items-center gap-3 border-b border-[var(--ui-border-muted)] px-4 py-3">
 				<div class="relative">
-					<Avatar pubkey={alert.from} name={alert.callerName} size={48} class="rounded-2xl" />
+					<Avatar pubkey={alert.from} name={alert.callerName} size={48} />
 					<span
 						class="absolute -right-1 -bottom-1 grid size-6 place-items-center rounded-full bg-primary-500 text-white ring-2 ring-[var(--surface-bg)]"
 					>

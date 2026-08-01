@@ -9,6 +9,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { queryOnce, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { blocks } from '$lib/stores/blocks.svelte';
 import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
@@ -60,7 +61,9 @@ class NotificationsStore {
 	private unsub: (() => void) | null = null;
 
 	/** Visible items after per-type mute filtering (drives UI + badge). */
-	visible = $derived(this.items.filter((item) => !this.muted.has(item.type)));
+	visible = $derived(
+		this.items.filter((item) => !this.muted.has(item.type) && !blocks.has(item.pubkey))
+	);
 
 	/** Unread badge uses the visible (un-muted) set so muted types don't ping. */
 	unreadCount = $derived(this.visible.filter((item) => !item.read).length);
@@ -106,6 +109,16 @@ class NotificationsStore {
 		this.connected = false;
 	};
 
+	clear = () => {
+		this.items = [];
+		this.loading = false;
+		this.loadingMore = false;
+		this.hasMore = true;
+		this.connected = false;
+		this.error = null;
+		this.readIds.clear();
+	};
+
 	private notificationFilter(me: string, until?: number) {
 		return {
 			kinds: [
@@ -144,6 +157,7 @@ class NotificationsStore {
 	private ingest(ev: Event) {
 		const me = identity.current?.pk;
 		if (!me || ev.pubkey === me || this.items.some((item) => item.id === ev.id)) return;
+		if (blocks.has(ev.pubkey)) return;
 
 		const item = this.toNotification(ev);
 		if (!item) return;
@@ -241,6 +255,14 @@ class NotificationsStore {
 		const next = new SvelteSet(this.muted);
 		if (next.has(type)) next.delete(type);
 		else next.add(type);
+		this.muted = next;
+		this.persistMuted();
+	}
+
+	setMuted(type: NotificationItem['type'], muted: boolean) {
+		const next = new SvelteSet(this.muted);
+		if (muted) next.add(type);
+		else next.delete(type);
 		this.muted = next;
 		this.persistMuted();
 	}

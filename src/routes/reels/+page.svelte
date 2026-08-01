@@ -26,22 +26,35 @@
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
 	const REELS_CACHE_KEY = 'bitos:reels-cache:v1';
 	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
-	const MAX_CACHED_REELS = 40;
+	const MAX_CACHED_REELS = 120;
+	const REELS_INITIAL_EVENT_LIMIT = 400;
+	const REELS_PAGE_EVENT_LIMIT = 220;
 	const INITIAL_RENDERED_REELS = 5;
 	const REEL_RENDER_BATCH = 5;
+	const REEL_PREFETCH_THRESHOLD = 6;
 
 	let loading = $state(true);
 	let loadingComments = $state(false);
 	let postingComment = $state(false);
 	let deletingCommentId = $state('');
+	let loadingMoreReels = $state(false);
+	let hasMoreReels = $state(true);
 	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
+	let activeReelId = $state('');
+	let activeReelMuted = $state(true);
+	let reelProgress = $state<Record<string, number>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
 	let commentsLoadedFor = $state('');
 	let commentText = $state('');
+	let reelVideos = new Map<string, HTMLVideoElement>();
+	let reelCards = new Map<string, HTMLDivElement>();
+	let reelVisibility = new Map<string, number>();
+	let visibilityObserver: IntersectionObserver | null = null;
+	let oldestReelEventCreatedAt = $state(0);
 	const renderedReels = $derived(reels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
@@ -121,12 +134,23 @@
 		};
 	}
 
-	function applyReels(next: ReelNote[]) {
-		reels = next.slice(0, MAX_CACHED_REELS);
-		renderedReelCount = Math.min(INITIAL_RENDERED_REELS, reels.length);
-		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
+		const merged = new Map<string, ReelNote>();
+		for (const reel of existing) merged.set(reel.id, reel);
+		for (const reel of incoming) merged.set(reel.id, reel);
+		return [...merged.values()]
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.slice(0, MAX_CACHED_REELS);
+	}
+
+	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
+		reels = options.append ? mergeReelLists(reels, next) : next.slice(0, MAX_CACHED_REELS);
+		renderedReelCount = options.append
+			? Math.min(reels.length, Math.max(renderedReelCount, INITIAL_RENDERED_REELS))
+			: Math.min(INITIAL_RENDERED_REELS, reels.length);
 		if (identity.current) profiles.ensure([identity.current.pk]);
-		for (const reel of reels) feed.upsertNote(reel);
+		profiles.ensure(reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey));
+		for (const reel of next) feed.upsertNote(reel);
 	}
 
 	function loadCachedReels() {
@@ -154,42 +178,49 @@
 		}
 	}
 
+	async function buildReelsFromEvents(events: Awaited<ReturnType<typeof queryOnce>>) {
+		const seen: Record<string, true> = {};
+		const baseReels = events
+			.sort((a, b) => b.created_at - a.created_at)
+			.map((event) => ({ event, videoUrl: extractVideo(event) }))
+			.filter(({ event, videoUrl }) => {
+				if (!videoUrl || seen[event.id]) return false;
+				seen[event.id] = true;
+				return true;
+			})
+			.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
+		const reelIds = baseReels.map((reel) => reel.id);
+		const activity = reelIds.length
+			? await queryOnce([
+					{
+						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
+						'#e': reelIds,
+						limit: 500
+					}
+				])
+			: [];
+		const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map((note) => ({
+			...note,
+			videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
+		}));
+		for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
+			const reply = toFeedNote(event);
+			if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
+		}
+		return nextReels;
+	}
+
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 400 }]);
-			const seen: Record<string, true> = {};
-			const baseReels = events
-				.sort((a, b) => b.created_at - a.created_at)
-				.map((event) => ({ event, videoUrl: extractVideo(event) }))
-				.filter(({ event, videoUrl }) => {
-					if (!videoUrl || seen[event.id]) return false;
-					seen[event.id] = true;
-					return true;
-				})
-				.slice(0, 40)
-				.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
-			const reelIds = baseReels.map((reel) => reel.id);
-			const activity = reelIds.length
-				? await queryOnce([
-						{
-							kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
-							'#e': reelIds,
-							limit: 500
-						}
-					])
-				: [];
-			const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map(
-				(note) => ({
-					...note,
-					videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
-				})
-			);
-			for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
-				const reply = toFeedNote(event);
-				if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
-			}
+			const events = await queryOnce([
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }
+			]);
+			const nextReels = await buildReelsFromEvents(events);
 			applyReels(nextReels);
+			oldestReelEventCreatedAt =
+				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+			hasMoreReels = events.length >= REELS_INITIAL_EVENT_LIMIT && !!oldestReelEventCreatedAt;
 			saveReelsCache(nextReels);
 		} catch (e) {
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
@@ -198,10 +229,45 @@
 		}
 	}
 
+	async function loadMoreReels() {
+		if (loading || loadingMoreReels || !hasMoreReels || !oldestReelEventCreatedAt) return;
+		loadingMoreReels = true;
+		try {
+			const events = await queryOnce([
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: REELS_PAGE_EVENT_LIMIT,
+					until: oldestReelEventCreatedAt - 1
+				}
+			]);
+			if (!events.length) {
+				hasMoreReels = false;
+				return;
+			}
+			const nextReels = await buildReelsFromEvents(events);
+			applyReels(nextReels, { append: true });
+			oldestReelEventCreatedAt =
+				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+			hasMoreReels = events.length >= REELS_PAGE_EVENT_LIMIT && !!oldestReelEventCreatedAt;
+			saveReelsCache(reels);
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not load more reels');
+		} finally {
+			loadingMoreReels = false;
+		}
+	}
+
 	function renderMoreReels() {
 		if (!hasMoreRenderedReels) return;
 		renderedReelCount = Math.min(reels.length, renderedReelCount + REEL_RENDER_BATCH);
 		profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
+		void ensureMoreReelsBuffered();
+	}
+
+	async function ensureMoreReelsBuffered() {
+		if (loading || loadingMoreReels || !hasMoreReels) return;
+		if (reels.length - renderedReelCount > REEL_PREFETCH_THRESHOLD) return;
+		await loadMoreReels();
 	}
 
 	function handleReelScroll() {
@@ -209,6 +275,7 @@
 		const remaining =
 			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
 		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
+		if (remaining < reelScroller.clientHeight * 3) void ensureMoreReelsBuffered();
 		if (commentReel) {
 			const activeReel = reelAtScrollPosition();
 			if (activeReel && activeReel.id !== commentReel.id) {
@@ -229,10 +296,139 @@
 	}
 
 	function activeReelIndex() {
-		if (!reelScroller || !renderedReels.length) return 0;
+		if (!renderedReels.length) return 0;
+		if (activeReelId) {
+			const index = renderedReels.findIndex((reel) => reel.id === activeReelId);
+			if (index >= 0) return index;
+		}
+		if (!reelScroller) return 0;
 		return Math.max(
 			0,
 			Math.min(renderedReels.length - 1, Math.round(reelScroller.scrollTop / reelScroller.clientHeight))
+		);
+	}
+
+	function registerReelVideo(reelId: string, node: HTMLVideoElement | null) {
+		const previous = reelVideos.get(reelId);
+		if (previous) previous.ontimeupdate = null;
+
+		if (node) {
+			reelVideos.set(reelId, node);
+			node.muted = reelId === activeReelId ? activeReelMuted : true;
+			node.ontimeupdate = () => {
+				const progress = node.duration ? node.currentTime / node.duration : 0;
+				reelProgress = { ...reelProgress, [reelId]: Math.max(0, Math.min(1, progress)) };
+			};
+			void syncActivePlayback();
+			return;
+		}
+		reelVideos.delete(reelId);
+		const { [reelId]: _removed, ...nextProgress } = reelProgress;
+		reelProgress = nextProgress;
+	}
+
+	function registerReelCard(reelId: string, node: HTMLDivElement | null) {
+		const previous = reelCards.get(reelId);
+		if (previous && visibilityObserver) visibilityObserver.unobserve(previous);
+
+		if (!node) {
+			reelCards.delete(reelId);
+			reelVisibility.delete(reelId);
+			if (activeReelId === reelId) updateActiveReel();
+			return;
+		}
+
+		reelCards.set(reelId, node);
+		if (visibilityObserver) visibilityObserver.observe(node);
+	}
+
+	function trackReelCard(node: HTMLDivElement, reelId: string) {
+		registerReelCard(reelId, node);
+		return {
+			destroy() {
+				registerReelCard(reelId, null);
+			}
+		};
+	}
+
+	function updateActiveReel() {
+		let nextId = '';
+		let bestVisibility = 0;
+
+		for (const reel of renderedReels) {
+			const visibility = reelVisibility.get(reel.id) ?? 0;
+			if (visibility > bestVisibility) {
+				bestVisibility = visibility;
+				nextId = reel.id;
+			}
+		}
+
+		if (!nextId && renderedReels.length) nextId = renderedReels[0].id;
+		if (nextId === activeReelId) return;
+		activeReelId = nextId;
+		void syncActivePlayback();
+	}
+
+	async function syncActivePlayback() {
+		for (const [reelId, video] of reelVideos) {
+			if (reelId !== activeReelId) {
+				video.muted = true;
+				video.pause();
+				continue;
+			}
+			video.muted = activeReelMuted;
+			try {
+				await video.play();
+			} catch {
+				/* Autoplay can be blocked until the browser allows playback. */
+			}
+		}
+	}
+
+	function toggleActiveReelMuted() {
+		if (!activeReelId) return;
+		activeReelMuted = !activeReelMuted;
+		void syncActivePlayback();
+	}
+
+	async function openActiveReelFullscreen() {
+		const activeVideo = reelVideos.get(activeReelId);
+		if (!activeVideo) return;
+		try {
+			if (document.fullscreenElement) {
+				await document.exitFullscreen();
+				return;
+			}
+			await activeVideo.requestFullscreen();
+		} catch {
+			toasts.error('Fullscreen is not available for this video');
+		}
+	}
+
+	function trackReelVideo(node: HTMLVideoElement, reelId: string) {
+		registerReelVideo(reelId, node);
+		return {
+			destroy() {
+				registerReelVideo(reelId, null);
+			}
+		};
+	}
+
+	function createVisibilityObserver() {
+		if (typeof IntersectionObserver === 'undefined') return null;
+		return new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const reelId = (entry.target as HTMLElement).dataset.reelId;
+					if (!reelId) continue;
+					reelVisibility.set(reelId, entry.isIntersecting ? entry.intersectionRatio : 0);
+				}
+				updateActiveReel();
+			},
+			{
+				root: reelScroller,
+				threshold: [0.25, 0.5, 0.6, 0.75, 0.9]
+			}
 		);
 	}
 
@@ -242,7 +438,10 @@
 		const target = current + delta;
 		if (target < 0) return;
 		if (target >= renderedReels.length) {
-			if (!hasMoreRenderedReels) return;
+			if (!hasMoreRenderedReels) {
+				void ensureMoreReelsBuffered();
+				return;
+			}
 			renderMoreReels();
 			requestAnimationFrame(() => scrollToReel(delta));
 			return;
@@ -362,13 +561,32 @@
 	}
 
 	onMount(() => {
+		visibilityObserver = createVisibilityObserver();
+		for (const node of reelCards.values()) visibilityObserver?.observe(node);
+
+		const handleFullscreenChange = () => {
+			if (document.fullscreenElement) return;
+			void syncActivePlayback();
+		};
+		document.addEventListener('fullscreenchange', handleFullscreenChange);
+
 		const hasCache = loadCachedReels();
 		if (hasCache) {
 			loading = false;
 			void loadReels({ background: true });
+			void ensureMoreReelsBuffered();
 		} else {
 			void loadReels();
 		}
+
+		return () => {
+			document.removeEventListener('fullscreenchange', handleFullscreenChange);
+			visibilityObserver?.disconnect();
+			visibilityObserver = null;
+			reelVideos.clear();
+			reelCards.clear();
+			reelVisibility.clear();
+		};
 	});
 </script>
 
@@ -393,14 +611,25 @@
 				{@const profile = profiles.get(reel.pubkey)}
 				{@const name = profile?.display_name || profile?.name || shortKey(reel.pubkey)}
 				<div
+					use:trackReelCard={reel.id}
+					data-reel-id={reel.id}
 					class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 				>
+					<div class="absolute inset-x-0 top-0 z-10 px-4 pt-3">
+						<div class="h-1.5 overflow-hidden rounded-full bg-white/20">
+							<div
+								class="h-full rounded-full bg-white transition-[width] duration-150"
+								style={`width: ${(reelProgress[reel.id] ?? 0) * 100}%`}
+							></div>
+						</div>
+					</div>
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
+						use:trackReelVideo={reel.id}
 						src={reel.videoUrl}
 						class="absolute inset-0 size-full object-cover"
 						aria-label="Relay video note"
-						controls
+						autoplay={reel.id === activeReelId}
 						loop
 						playsinline
 						preload="metadata"
@@ -411,14 +640,35 @@
 
 					<div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-5">
 						<h2 class="font-display text-[26px] font-extrabold text-white">Reels</h2>
-						<button
-							type="button"
-							onclick={() => loadReels()}
-							class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-							aria-label="Refresh reels"
-						>
-							<Icon name="i-lucide-rotate-cw" class="size-5" />
-						</button>
+						<div class="flex items-center gap-2">
+							<button
+								type="button"
+								onclick={toggleActiveReelMuted}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label={activeReelMuted ? 'Turn sound on' : 'Turn sound off'}
+							>
+								<Icon
+									name={activeReelMuted ? 'i-lucide-volume-x' : 'i-lucide-volume-2'}
+									class="size-5"
+								/>
+							</button>
+							<button
+								type="button"
+								onclick={openActiveReelFullscreen}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label="Toggle fullscreen"
+							>
+								<Icon name="i-lucide-expand" class="size-5" />
+							</button>
+							<button
+								type="button"
+								onclick={() => loadReels()}
+								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+								aria-label="Refresh reels"
+							>
+								<Icon name="i-lucide-rotate-cw" class="size-5" />
+							</button>
+						</div>
 					</div>
 
 					<div
@@ -476,7 +726,7 @@
 						</button>
 						<a
 							href={`/profile/${reel.pubkey}`}
-							class="spin-slow mt-2 size-10 overflow-hidden rounded-full border-2 border-white"
+							class="mask-squircle spin-slow mt-2 size-10 overflow-hidden border-2 border-white"
 							aria-label="Open profile"
 						>
 							<Avatar pubkey={reel.pubkey} {name} picture={profile?.picture} size={40} />
@@ -501,6 +751,12 @@
 						</div>
 						{#if captionFor(reel)}
 							<p class="line-clamp-4 text-[13.5px] leading-relaxed">{captionFor(reel)}</p>
+						{/if}
+						{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
+							<div class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur">
+								<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+								Loading older reels
+							</div>
 						{/if}
 					</div>
 				</div>

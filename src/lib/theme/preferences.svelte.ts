@@ -27,6 +27,8 @@ export interface Preferences {
 	density: DensityMode;
 	/** Global font-size multiplier for accessibility. */
 	fontSize: 'sm' | 'md' | 'lg';
+	reducedMotion: boolean;
+	highContrast: boolean;
 }
 
 export const STORAGE_KEY = 'bitos:prefs';
@@ -36,7 +38,9 @@ export const DEFAULTS: Preferences = {
 	neutral: 'slate',
 	rounded: 'round',
 	density: 'normal',
-	fontSize: 'md'
+	fontSize: 'md',
+	reducedMotion: false,
+	highContrast: false
 };
 
 const FONT_PX: Record<Preferences['fontSize'], string> = { sm: '15px', md: '16px', lg: '17px' };
@@ -98,6 +102,8 @@ class PrefsStore {
 		this.resolvedDark =
 			this.state.mode === 'dark' || (this.state.mode === 'system' && prefersDark());
 		html.classList.toggle('dark', this.resolvedDark);
+		html.dataset.reducedMotion = String(this.state.reducedMotion);
+		html.dataset.highContrast = String(this.state.highContrast);
 		html.style.fontSize = FONT_PX[this.state.fontSize] ?? '16px';
 		applyAccent(this.state.accent);
 		applyNeutral(this.state.neutral);
@@ -125,6 +131,9 @@ class PrefsStore {
 		if (!knownNeutrals.includes(this.state.neutral)) this.state.neutral = DEFAULTS.neutral;
 		if (!Object.keys(RADIUS).includes(this.state.rounded)) this.state.rounded = DEFAULTS.rounded;
 		if (!['normal', 'compact'].includes(this.state.density)) this.state.density = DEFAULTS.density;
+		if (!['sm', 'md', 'lg'].includes(this.state.fontSize)) this.state.fontSize = DEFAULTS.fontSize;
+		this.state.reducedMotion = Boolean(this.state.reducedMotion);
+		this.state.highContrast = Boolean(this.state.highContrast);
 	};
 
 	/** Track OS color-scheme changes while in `system` mode. */
@@ -147,6 +156,8 @@ class PrefsStore {
 	setRounded = (v: RoundedMode) => this.set('rounded', v);
 	setDensity = (v: DensityMode) => this.set('density', v);
 	setFontSize = (v: Preferences['fontSize']) => this.set('fontSize', v);
+	setReducedMotion = (v: boolean) => this.set('reducedMotion', v);
+	setHighContrast = (v: boolean) => this.set('highContrast', v);
 }
 
 export const preferences = new PrefsStore();

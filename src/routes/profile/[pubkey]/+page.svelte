@@ -13,6 +13,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
+	import { blocks } from '$lib/stores/blocks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
 
@@ -29,6 +30,7 @@
 	const lightning = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(!!pubkey && identity.current?.pk === pubkey);
 	const isFollowing = $derived(!!pubkey && contacts.isFollowing(pubkey));
+	const isBlocked = $derived(!!pubkey && blocks.has(pubkey));
 
 	let loading = $state(true);
 	let loadingMore = $state(false);
@@ -229,12 +231,12 @@
 <svelte:head><title>{displayName} · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-	<div class="relative h-[180px] bg-primary-500 sm:h-[200px]">
+	<div class="relative h-[180px] overflow-hidden bg-primary-500 sm:h-[200px]">
 		{#if profile?.banner}
 			<img src={profile.banner} class="absolute inset-0 size-full object-cover" alt="" />
 		{:else}
 			<div
-				class="absolute inset-0 bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-accent-500))]"
+				class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--color-primary-400),transparent_38%),linear-gradient(115deg,var(--ui-color-primary-500)_0%,var(--color-accent-500)_52%,var(--color-warm-400)_100%)]"
 			></div>
 		{/if}
 		<div class="absolute inset-0 bg-black/15"></div>
@@ -249,18 +251,20 @@
 	</div>
 
 	<div class="mx-auto max-w-[900px] px-6">
-		<div class="relative -mt-16 mb-5 flex flex-col gap-4 sm:flex-row sm:items-end">
-			<StoryRing {pubkey} rounded="rounded-3xl">
+		<div
+			class="relative -mt-12 mb-5 flex flex-col items-center gap-4 text-center sm:-mt-16 sm:flex-row sm:items-end sm:text-left"
+		>
+			<StoryRing {pubkey} rounded="mask-squircle">
 				<Avatar
 					{pubkey}
 					name={displayName}
 					picture={profile?.picture}
-					size={128}
-					class="rounded-3xl shadow-xl ring-4 ring-[var(--ui-bg)]"
+					size={96}
+					class="mask-squircle shadow-xl ring-4 ring-[var(--ui-bg)]"
 				/>
 			</StoryRing>
 			<div class="min-w-0 flex-1 pb-2">
-				<div class="flex min-w-0 items-center gap-2">
+				<div class="flex min-w-0 items-center justify-center gap-2 sm:justify-start">
 					<h1
 						class="truncate font-display text-[28px] leading-tight font-extrabold tracking-tight sm:text-[30px]"
 					>
@@ -281,7 +285,9 @@
 				<p class="mt-1 truncate font-mono text-[13px] text-[var(--ui-text-muted)]">
 					{shortKey(npub)}
 				</p>
-				<div class="mt-2 flex gap-4 text-[13px]">
+				<div
+					class="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[13px] sm:justify-start"
+				>
 					<span
 						><strong class="font-bold">{posts.length}</strong>
 						<span class="text-[var(--ui-text-muted)]">posts</span></span
@@ -296,7 +302,7 @@
 					>
 				</div>
 			</div>
-			<div class="flex flex-wrap gap-2 pb-2 sm:justify-end">
+			<div class="flex w-full flex-wrap justify-center gap-2 pb-2 sm:w-auto sm:justify-end">
 				{#if isMe}
 					<a
 						href="/settings"
@@ -324,13 +330,22 @@
 						/>
 						{followPending ? 'Updating' : isFollowing ? 'Unfollow' : 'Follow'}
 					</button>
-					<a
-						href={`/messages?to=${pubkey}`}
-						class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
-					>
-						<Icon name="i-lucide-message-circle" class="size-4" />
-						Message
-					</a>
+					{#if isBlocked}
+						<span
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--tone-error-text)]/20 bg-[var(--tone-error-bg)] px-4 text-[13px] font-bold text-[var(--tone-error-text)]"
+						>
+							<Icon name="i-lucide-ban" class="size-4" />
+							Blocked
+						</span>
+					{:else}
+						<a
+							href={`/messages?to=${pubkey}`}
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
+						>
+							<Icon name="i-lucide-message-circle" class="size-4" />
+							Message
+						</a>
+					{/if}
 				{/if}
 				<ProfileActionMenu {pubkey} {npub} {lightning} />
 			</div>

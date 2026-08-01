@@ -2,116 +2,69 @@
 	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { decode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
+	import {
+		GROUPS_KEY_PREFIX,
+		GROUP_CONTROL_PROCESSED_KEY_PREFIX,
+		GROUP_PERSIST_DEBOUNCE_MS,
+		MAX_CACHED_GROUP_MESSAGES_PER_GROUP,
+		MAX_CACHED_GROUPS,
+		MAX_PROCESSED_GROUP_CONTROLS,
+		callSignalText,
+		formatDuration,
+		groupControlText,
+		groupInviteText,
+		groupMessageText,
+		initialsFor,
+		isExpiredCallOffer,
+		mediaFromMessage,
+		messagePreview,
+		parseCallSignal,
+		parseGroupControl,
+		parseGroupInvite,
+		parseGroupMessage,
+		parsePubkey
+	} from '$lib/messages/protocol';
+	import type {
+		CallKind,
+		CallSignal,
+		ChatFilter,
+		ChatKind,
+		ChatRow,
+		GroupControlPayload,
+		GroupControlType,
+		GroupInvite,
+		GroupMember,
+		GroupMessage,
+		GroupMessagePayload,
+		GroupThread
+	} from '$lib/messages/protocol';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import type { Conversation, DirectMessage } from '$lib/nostr/types';
+	import { humanBytes, type MediaProviderId, type UploadedMedia } from '$lib/media/uploaders';
+	import { blocks } from '$lib/stores/blocks.svelte';
+	import { media, providerLabel } from '$lib/stores/media.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
-	type ChatKind = 'dm' | 'group';
-	type ChatFilter = 'all' | 'unread' | 'groups';
-	type CallKind = 'voice' | 'video';
-
-	type ChatRow = {
-		key: string;
-		id: string;
-		kind: ChatKind;
+	type MessageAttachment = UploadedMedia & {
 		name: string;
-		preview: string;
-		previewPrefix: string;
-		time: string;
-		unread: number;
-		initials?: string;
-		memberCount?: number;
-		onlineCount?: number;
 	};
 
-	type GroupMember = {
-		name: string;
-		initials: string;
-		status: string;
-		pubkey?: string;
-		admin?: boolean;
-	};
-
-	type GroupMessage = {
-		id: string;
-		author: string;
-		initials: string;
-		pubkey?: string;
-		content: string;
-		createdAt: number;
-		mine?: boolean;
-		type?: 'text' | 'voice' | 'file' | 'image' | 'call';
-		meta?: string;
-		reaction?: string;
-	};
-
-	type GroupThread = {
-		id: string;
-		name: string;
-		initials: string;
-		description: string;
-		pinned: string;
-		unread: number;
-		members: GroupMember[];
-		messages: GroupMessage[];
-		files: { name: string; meta: string; icon: string }[];
-	};
-
-	type GroupInvite = {
-		id: string;
-		name: string;
-		from: string;
-	};
-
-	type GroupMessagePayload = GroupInvite & {
-		body: string;
-	};
-
-	type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
-	type GroupControlPayload = GroupInvite & {
-		type: GroupControlType;
-		member: string;
-		members?: string[];
-	};
-
-	type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
 	type CallState = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'connected';
-	type CallSignal = {
-		callId: string;
-		type: CallSignalType;
-		kind: CallKind;
-		from: string;
-		groupId?: string;
-		sdp?: string;
-		candidate?: string;
-		duration?: number;
-	};
 
 	type RemoteParticipant = {
 		peer: string;
 		name: string;
 		stream: MediaStream;
 	};
-
-	const GROUPS_KEY_PREFIX = 'bitos:message-groups';
-	const GROUP_INVITE_PREFIX = 'bitos://group-invite?';
-	const GROUP_MESSAGE_PREFIX = 'bitos://group-message?';
-	const GROUP_CONTROL_PREFIX = 'bitos://group-control?';
-	const GROUP_CONTROL_PROCESSED_KEY_PREFIX = 'bitos:processed-group-controls';
-	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
-	const MAX_CACHED_GROUPS = 60;
-	const MAX_CACHED_GROUP_MESSAGES_PER_GROUP = 150;
-	const MAX_PROCESSED_GROUP_CONTROLS = 1200;
-	const GROUP_PERSIST_DEBOUNCE_MS = 250;
 
 	let selected = $state('');
 	let draft = $state('');
@@ -139,6 +92,10 @@
 	let processedGroupControlsLoaded = false;
 	let lastResolvedTo = $state('');
 	let lastAutoAnswerCallId = $state('');
+	let uploadingMessage = $state(false);
+	let messageAttachments = $state<MessageAttachment[]>([]);
+	let messageFileInput = $state<HTMLInputElement | null>(null);
+	let messageImageInput = $state<HTMLInputElement | null>(null);
 	let callStartedAt = 0;
 	let groupPersistTimer: ReturnType<typeof setTimeout> | null = null;
 	let threadEl: HTMLDivElement | undefined = $state();
@@ -178,7 +135,7 @@
 							: last.content
 						: last?.type === 'voice'
 							? 'Voice - 0:24'
-							: (last?.content ?? 'No messages yet'),
+							: messagePreview(last?.content),
 				previewPrefix: last?.mine ? 'You:' : last ? `${last.author.split(' ')[0]}:` : '',
 				time: last ? timeAgo(last.createdAt) : '',
 				unread: group.unread,
@@ -194,9 +151,13 @@
 
 	const dmRows = $derived<ChatRow[]>(
 		dms.conversations
+			.filter((conversation) => !blocks.has(conversation.peer))
 			.map((conversation) => {
 				const profile = profiles.get(conversation.peer);
-				const name = profile?.display_name || profile?.name || shortKey(conversation.peer);
+				const selfChat = conversation.peer === identity.current?.pk;
+				const name = selfChat
+					? 'Saved notes'
+					: profile?.display_name || profile?.name || shortKey(conversation.peer);
 				const visibleLastMessage = [...conversation.messages].reverse().find(isVisibleDmMessage);
 				const invite = visibleLastMessage ? parseGroupInvite(visibleLastMessage.content) : null;
 				const callSignal = visibleLastMessage ? parseCallSignal(visibleLastMessage.content) : null;
@@ -209,8 +170,8 @@
 						? `Group invite: ${invite.name}`
 						: callSignal
 							? `${callSignal.kind === 'video' ? 'Video' : 'Voice'} call`
-							: (visibleLastMessage?.content ?? 'No messages yet'),
-					previewPrefix: visibleLastMessage?.mine ? 'You:' : '',
+							: messagePreview(visibleLastMessage?.content),
+					previewPrefix: selfChat ? '' : visibleLastMessage?.mine ? 'You:' : '',
 					time: visibleLastMessage ? timeAgo(visibleLastMessage.createdAt) : '',
 					unread: visibleDmUnread(conversation)
 				};
@@ -248,9 +209,19 @@
 			: []
 	);
 	const visibleActiveMessages = $derived(activeMessages.filter(isVisibleDmMessage));
+	const activeUploadProvider = $derived<MediaProviderId | 'none'>(resolveUploadProvider());
+	const canSend = $derived(
+		!!selected && !uploadingMessage && (!!draft.trim() || messageAttachments.length > 0)
+	);
 	const unreadTotal = $derived(
-		dms.conversations.reduce((total, conversation) => total + visibleDmUnread(conversation), 0) +
-			groupThreads.reduce((total, group) => total + group.unread, 0)
+		(privacyNotificationSettings.state.dms
+			? dms.conversations
+					.filter((conversation) => !blocks.has(conversation.peer))
+					.reduce((total, conversation) => total + visibleDmUnread(conversation), 0)
+			: 0) + groupThreads.reduce((total, group) => total + group.unread, 0)
+	);
+	const ownActivityStatus = $derived(
+		privacyNotificationSettings.state.activity ? 'Online' : 'Offline'
 	);
 
 	const groupsStorageKey = $derived(`${GROUPS_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`);
@@ -258,21 +229,8 @@
 		`${GROUP_CONTROL_PROCESSED_KEY_PREFIX}:${identity.current?.pk ?? 'anonymous'}`
 	);
 
-	function isExpiredCallOffer(createdAt: number) {
-		return Math.floor(Date.now() / 1000) - createdAt > 90;
-	}
-
 	function markCallClosed(id?: string) {
 		if (id) closedCallIds.add(id);
-	}
-
-	function initialsFor(name: string) {
-		return name
-			.split(/[\s_-]+/)
-			.filter(Boolean)
-			.slice(0, 2)
-			.map((part) => part[0]?.toUpperCase())
-			.join('');
 	}
 
 	function displayNameForPubkey(pubkey: string) {
@@ -284,30 +242,6 @@
 		return pubkey ? `/profile/${pubkey}` : '';
 	}
 
-	function formatDuration(seconds = 0) {
-		const safe = Math.max(0, Math.floor(seconds));
-		const hours = Math.floor(safe / 3600);
-		const minutes = Math.floor((safe % 3600) / 60);
-		const secs = safe % 60;
-		if (hours)
-			return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-		return `${minutes}:${String(secs).padStart(2, '0')}`;
-	}
-
-	function parsePubkey(value: string): string | null {
-		const trimmed = value.trim();
-		if (!trimmed) return null;
-		if (trimmed.startsWith('npub1')) {
-			try {
-				const decoded = decode(trimmed);
-				return decoded.type === 'npub' ? (decoded.data as string).toLowerCase() : null;
-			} catch {
-				return null;
-			}
-		}
-		return /^[0-9a-fA-F]{64}$/.test(trimmed) ? trimmed.toLowerCase() : null;
-	}
-
 	function memberForPubkey(pubkey: string): GroupMember {
 		const name = displayNameForPubkey(pubkey);
 		profiles.ensure([pubkey]);
@@ -317,141 +251,6 @@
 			status: 'Invited',
 			pubkey
 		};
-	}
-
-	function groupInviteText(group: GroupThread) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? ''
-		});
-		return [
-			`You were invited to "${group.name}" on BitOS.`,
-			'Open BitOS Messages to accept this local group invite.',
-			`${GROUP_INVITE_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupInvite(content: string): GroupInvite | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_INVITE_PREFIX) || part.startsWith(`nostr:${GROUP_INVITE_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_INVITE_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			if (!id || !name || !from || !/^[0-9a-fA-F]{64}$/.test(from)) return null;
-			return { id, name, from: from.toLowerCase() };
-		} catch {
-			return null;
-		}
-	}
-
-	function groupMessageText(group: GroupThread, body: string) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? '',
-			body
-		});
-		return [
-			`New message in "${group.name}" on BitOS.`,
-			'Open BitOS Messages to sync this local group message.',
-			`${GROUP_MESSAGE_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupMessage(content: string): GroupMessagePayload | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_MESSAGE_PREFIX) || part.startsWith(`nostr:${GROUP_MESSAGE_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_MESSAGE_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			const body = params.get('body')?.trim();
-			if (!id || !name || !from || !body || !/^[0-9a-fA-F]{64}$/.test(from)) return null;
-			return { id, name, from: from.toLowerCase(), body };
-		} catch {
-			return null;
-		}
-	}
-
-	function groupControlText(group: GroupThread, type: GroupControlType, member: string) {
-		const params = new URLSearchParams({
-			id: group.id,
-			name: group.name,
-			from: identity.current?.pk ?? '',
-			type,
-			member
-		});
-		const memberPubkeys = group.members
-			.map((item) => item.pubkey)
-			.filter((pubkey): pubkey is string => !!pubkey);
-		if (memberPubkeys.length) params.set('members', memberPubkeys.join(','));
-		const label =
-			type === 'add-member'
-				? `A member was added to "${group.name}" on BitOS.`
-				: type === 'remove-member'
-					? `A member was removed from "${group.name}" on BitOS.`
-					: `A member left "${group.name}" on BitOS.`;
-		return [
-			label,
-			'Open BitOS Messages to sync this local group membership update.',
-			`${GROUP_CONTROL_PREFIX}${params.toString()}`
-		].join('\n\n');
-	}
-
-	function parseGroupControl(content: string): GroupControlPayload | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(GROUP_CONTROL_PREFIX) || part.startsWith(`nostr:${GROUP_CONTROL_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(GROUP_CONTROL_PREFIX.length));
-			const id = params.get('id')?.trim();
-			const name = params.get('name')?.trim();
-			const from = params.get('from')?.trim();
-			const type = params.get('type')?.trim() as GroupControlType | undefined;
-			const member = params.get('member')?.trim();
-			const members =
-				params
-					.get('members')
-					?.split(',')
-					.map((item) => item.trim().toLowerCase())
-					.filter((item) => /^[0-9a-fA-F]{64}$/.test(item)) ?? [];
-			if (
-				!id ||
-				!name ||
-				!from ||
-				!/^[0-9a-fA-F]{64}$/.test(from) ||
-				!type ||
-				!['add-member', 'remove-member', 'leave-group'].includes(type) ||
-				!member ||
-				!/^[0-9a-fA-F]{64}$/.test(member)
-			) {
-				return null;
-			}
-			return { id, name, from: from.toLowerCase(), type, member: member.toLowerCase(), members };
-		} catch {
-			return null;
-		}
 	}
 
 	function isVisibleDmMessage(message: DirectMessage) {
@@ -471,63 +270,63 @@
 			.filter(isVisibleDmMessage).length;
 	}
 
-	function callSignalText(signal: CallSignal) {
-		const params = new URLSearchParams({
-			callId: signal.callId,
-			type: signal.type,
-			kind: signal.kind,
-			from: signal.from
-		});
-		if (signal.groupId) params.set('groupId', signal.groupId);
-		if (signal.sdp) params.set('sdp', signal.sdp);
-		if (signal.candidate) params.set('candidate', signal.candidate);
-		if (typeof signal.duration === 'number') params.set('duration', String(signal.duration));
-		return [
-			`${signal.kind === 'video' ? 'Video' : 'Voice'} call signal on BitOS.`,
-			'Open BitOS Messages to continue the call.',
-			`${CALL_SIGNAL_PREFIX}${params.toString()}`
-		].join('\n\n');
+	function resolveUploadProvider(): MediaProviderId | 'none' {
+		const def = media.state.defaultProvider;
+		if (def !== 'none' && media.isConfigured(def)) return def;
+		return media.configured[0]?.id ?? 'none';
 	}
 
-	function parseCallSignal(content: string): CallSignal | null {
-		const line = content
-			.split(/\s+/)
-			.find(
-				(part) =>
-					part.startsWith(CALL_SIGNAL_PREFIX) || part.startsWith(`nostr:${CALL_SIGNAL_PREFIX}`)
-			);
-		if (!line) return null;
-		const raw = line.startsWith('nostr:') ? line.slice('nostr:'.length) : line;
-		try {
-			const params = new URLSearchParams(raw.slice(CALL_SIGNAL_PREFIX.length));
-			const callIdValue = params.get('callId')?.trim();
-			const type = params.get('type')?.trim() as CallSignalType | undefined;
-			const kind = params.get('kind')?.trim() as CallKind | undefined;
-			const from = params.get('from')?.trim();
-			if (
-				!callIdValue ||
-				!type ||
-				!['offer', 'answer', 'ice', 'end', 'log'].includes(type) ||
-				!kind ||
-				!['voice', 'video'].includes(kind) ||
-				!from ||
-				!/^[0-9a-fA-F]{64}$/.test(from)
-			) {
-				return null;
-			}
-			return {
-				callId: callIdValue,
-				type,
-				kind,
-				from: from.toLowerCase(),
-				groupId: params.get('groupId')?.trim() || undefined,
-				sdp: params.get('sdp') ?? undefined,
-				candidate: params.get('candidate') ?? undefined,
-				duration: Number(params.get('duration') ?? 0) || undefined
-			};
-		} catch {
-			return null;
+	function attachmentLinks() {
+		return messageAttachments
+			.map((attachment) =>
+				attachment.kind === 'image' ? `![${attachment.name}](${attachment.url})` : attachment.url
+			)
+			.join('\n');
+	}
+
+	function composedMessageBody() {
+		const body = draft.trim();
+		const links = attachmentLinks();
+		return body && links ? `${body}\n\n${links}` : body || links;
+	}
+
+	function removeMessageAttachment(index: number) {
+		messageAttachments = messageAttachments.filter((_, i) => i !== index);
+	}
+
+	async function handleMessageFiles(files: FileList | null) {
+		if (!files?.length) return;
+		const provider = activeUploadProvider;
+		if (provider === 'none') {
+			toasts.error('No upload provider. Add Cloudinary or S3 in Settings → Media & Uploads.');
+			return;
 		}
+		uploadingMessage = true;
+		let ok = 0;
+		try {
+			for (const file of Array.from(files)) {
+				try {
+					const uploaded = await media.upload(file, provider);
+					messageAttachments = [...messageAttachments, { ...uploaded, name: file.name }];
+					ok++;
+				} catch (e) {
+					toasts.error(`${file.name}: ${(e as Error).message}`);
+				}
+			}
+			if (ok) {
+				toasts.success(
+					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider)}`
+				);
+			}
+		} finally {
+			uploadingMessage = false;
+		}
+	}
+
+	function onMessageFileInput(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		void handleMessageFiles(input.files);
+		input.value = '';
 	}
 
 	function attachCallMedia() {
@@ -880,25 +679,12 @@
 	}
 
 	function resolveTo(param: string | null) {
-		const raw = param?.trim() ?? '';
-		if (!raw) return;
-		let peer = raw;
-		if (peer.startsWith('npub1')) {
-			try {
-				const decoded = decode(peer);
-				if (decoded.type === 'npub') peer = decoded.data as string;
-			} catch {
-				return;
-			}
-		}
-		if (/^[0-9a-fA-F]{64}$/.test(peer)) {
-			peer = peer.toLowerCase();
-			if (peer === lastResolvedTo) return;
-			lastResolvedTo = peer;
-			dms.forPeer(peer);
-			profiles.ensure([peer]);
-			if (selected !== peer) selectChat(peer);
-		}
+		const peer = parsePubkey(param ?? '');
+		if (!peer || peer === lastResolvedTo) return;
+		lastResolvedTo = peer;
+		dms.forPeer(peer);
+		profiles.ensure([peer]);
+		if (selected !== peer) selectChat(peer);
 	}
 
 	function resolveAutoAnswer(answerId: string | null) {
@@ -1058,7 +844,7 @@
 
 	async function sendGroupInvite(group: GroupThread, member: GroupMember) {
 		if (!member.pubkey || member.pubkey === identity.current?.pk) return;
-		await dms.send(member.pubkey, groupInviteText(group));
+		await dms.send(member.pubkey, groupInviteText(group, identity.current?.pk ?? ''));
 	}
 
 	async function notifyMembers(group: GroupThread, members: GroupMember[]) {
@@ -1082,7 +868,7 @@
 			.map((member) => member.pubkey)
 			.filter((pubkey): pubkey is string => !!pubkey && pubkey !== identity.current?.pk);
 		if (!recipients.length) return;
-		const content = groupMessageText(group, body);
+		const content = groupMessageText(group, identity.current?.pk ?? '', body);
 		const results = await Promise.allSettled(recipients.map((pubkey) => dms.send(pubkey, content)));
 		const failed = results.filter((result) => result.status === 'rejected').length;
 		if (failed) {
@@ -1105,7 +891,7 @@
 			])
 		];
 		if (!recipients.length) return;
-		const content = groupControlText(group, type, member);
+		const content = groupControlText(group, identity.current?.pk ?? '', type, member);
 		const results = await Promise.allSettled(recipients.map((pubkey) => dms.send(pubkey, content)));
 		const failed = results.filter((result) => result.status === 'rejected').length;
 		if (failed) {
@@ -1223,11 +1009,11 @@
 			) {
 				const members: GroupMember[] = membersFromControlSnapshot(payload).map((member) =>
 					member.pubkey === me
-						? { ...member, name: 'You', initials: 'YO', status: 'Online' }
+						? { ...member, name: 'You', initials: 'YO', status: ownActivityStatus }
 						: member
 				);
 				if (!members.some((member) => member.pubkey === me)) {
-					members.unshift({ name: 'You', initials: 'YO', status: 'Online' });
+					members.unshift({ name: 'You', initials: 'YO', status: ownActivityStatus });
 				}
 				const restoredGroup: GroupThread = {
 					id: payload.id,
@@ -1354,9 +1140,10 @@
 	}
 
 	async function send() {
-		const body = draft.trim();
-		if (!body || !selected) return;
+		const body = composedMessageBody();
+		if (!body || !selected || uploadingMessage) return;
 		draft = '';
+		messageAttachments = [];
 		if (selected.startsWith('group:')) {
 			const groupId = selected.slice('group:'.length);
 			const group = groupThreads.find((thread) => thread.id === groupId);
@@ -1763,13 +1550,16 @@
 	}
 
 	function attachFile(type: 'file' | 'image') {
-		if (active?.kind === 'group' && activeGroup) {
-			toasts.info(
-				`${type === 'image' ? 'Image sharing' : 'File sharing'} needs upload storage before it can be sent to a group.`
-			);
+		if (!selected) {
+			toasts.info('Select a chat before attaching a file.');
 			return;
 		}
-		toasts.info('File sharing needs an upload service before it can be sent in an encrypted DM.');
+		if (activeUploadProvider === 'none') {
+			toasts.info('Add Cloudinary or S3 in Settings → Media & Uploads before attaching files.');
+			return;
+		}
+		if (type === 'image') messageImageInput?.click();
+		else messageFileInput?.click();
 	}
 
 	function addEmoji() {
@@ -1795,7 +1585,10 @@
 				description: 'A local group thread ready for a Nostr group protocol integration.',
 				pinned: 'No pinned message yet',
 				unread: 0,
-				members: [{ name: 'You', initials: 'YO', status: 'Online', admin: true }, ...members],
+				members: [
+					{ name: 'You', initials: 'YO', status: ownActivityStatus, admin: true },
+					...members
+				],
 				messages: [],
 				files: []
 			};
@@ -1811,25 +1604,10 @@
 			return;
 		}
 
-		const input = newPeerInput.trim();
-		if (!input) return;
-		let peer = input;
-		if (peer.startsWith('npub1')) {
-			try {
-				const decoded = decode(peer);
-				if (decoded.type === 'npub') peer = decoded.data as string;
-			} catch {
-				toasts.error('Invalid npub');
-				return;
-			}
-		}
-		if (!/^[0-9a-fA-F]{64}$/.test(peer)) {
+		const peer = parsePubkey(newPeerInput);
+		if (!newPeerInput.trim()) return;
+		if (!peer) {
 			toasts.error('Enter a valid npub or 64-char hex pubkey');
-			return;
-		}
-		peer = peer.toLowerCase();
-		if (peer === identity.current?.pk) {
-			toasts.warning("You can't message yourself");
 			return;
 		}
 		dms.forPeer(peer);
@@ -1844,6 +1622,22 @@
 		groupsLoaded = true;
 		resolveTo(page.url.searchParams.get('to'));
 		resolveAutoAnswer(page.url.searchParams.get('answer'));
+	});
+	let loadedMessageAccount = $state(identity.current?.pk ?? '');
+	$effect(() => {
+		const pk = identity.current?.pk ?? '';
+		if (pk === loadedMessageAccount) return;
+		loadedMessageAccount = pk;
+		selected = '';
+		groupThreads = [];
+		processedGroupMessageIds.clear();
+		processedGroupControlIds.clear();
+		processedCallSignalIds.clear();
+		processedGroupCallLogIds.clear();
+		closedCallIds.clear();
+		removedGroupIds.clear();
+		loadGroups();
+		resolveTo(page.url.searchParams.get('to'));
 	});
 	$effect(() => resolveTo(page.url.searchParams.get('to')));
 	$effect(() => resolveAutoAnswer(page.url.searchParams.get('answer')));
@@ -1984,7 +1778,7 @@
 					{#if conversation.kind === 'group'}
 						<div class="relative shrink-0">
 							<div
-								class="grid size-12 place-items-center rounded-2xl bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
+								class="mask-squircle grid size-12 place-items-center bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
 							>
 								{conversation.initials}
 							</div>
@@ -1992,15 +1786,15 @@
 								class="online-dot absolute -right-0.5 -bottom-0.5 border-2 border-[var(--surface-bg)]"
 							></span>
 						</div>
-					{:else}
-						<Avatar
-							pubkey={conversation.id}
-							name={conversation.name}
-							picture={profiles.get(conversation.id)?.picture}
-							size={48}
-							class="rounded-2xl"
-						/>
-					{/if}
+						{:else}
+							<Avatar
+								pubkey={conversation.id}
+								name={conversation.name}
+								picture={profiles.get(conversation.id)?.picture}
+								size={48}
+								class="mask-squircle"
+							/>
+						{/if}
 					<div class="min-w-0 flex-1">
 						<div class="mb-0.5 flex items-center justify-between">
 							<h3 class="flex min-w-0 items-center gap-1.5 truncate text-[14.5px] font-bold">
@@ -2062,7 +1856,7 @@
 						{#if active.kind === 'group'}
 							<div class="relative shrink-0">
 								<div
-									class="grid size-11 place-items-center rounded-2xl bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
+									class="mask-squircle grid size-11 place-items-center bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
 								>
 									{active.initials}
 								</div>
@@ -2073,7 +1867,7 @@
 						{:else}
 							<a
 								href={profileHref(active.id)}
-								class="shrink-0 rounded-2xl transition hover:ring-2 hover:ring-primary-500/30"
+								class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 								aria-label={`Open ${active.name} profile`}
 							>
 								<Avatar
@@ -2081,7 +1875,7 @@
 									name={active.name}
 									picture={profiles.get(active.id)?.picture}
 									size={44}
-									class="rounded-2xl"
+									class="mask-squircle"
 								/>
 							</a>
 						{/if}
@@ -2178,6 +1972,7 @@
 							</div>
 							<div class="space-y-4">
 								{#each activeGroup.messages as msg (msg.id)}
+									{@const msgMedia = mediaFromMessage(msg.content)}
 									<div class="msg-in flex gap-2.5 {msg.mine ? 'justify-end' : 'justify-start'}">
 										{#if !msg.mine}
 											{#if msg.pubkey}
@@ -2292,13 +2087,57 @@
 															{msg.meta}
 														</span>
 													</div>
-												{:else if msg.type === 'image'}
-													<div
-														class="mb-2 grid aspect-video w-full min-w-[220px] place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+												{:else if msgMedia?.kind === 'image' || msg.type === 'image'}
+													{#if msgMedia}
+														<a href={msgMedia.url} target="_blank" rel="noreferrer">
+															<img
+																src={msgMedia.url}
+																alt="Message attachment"
+																class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
+															/>
+														</a>
+														{#if msgMedia.text}
+															<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+														{/if}
+													{:else}
+														<div
+															class="mb-2 grid aspect-video w-full min-w-[220px] place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+														>
+															<Icon name="i-lucide-image" class="size-8" />
+														</div>
+														<p class="break-words whitespace-pre-wrap">{msg.content}</p>
+													{/if}
+												{:else if msgMedia?.kind === 'video'}
+													<video
+														src={msgMedia.url}
+														controls
+														class="mb-2 max-h-72 min-w-[220px] rounded-xl"
 													>
-														<Icon name="i-lucide-image" class="size-8" />
-													</div>
-													<p class="break-words whitespace-pre-wrap">{msg.content}</p>
+														<track kind="captions" />
+													</video>
+													{#if msgMedia.text}
+														<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+													{/if}
+												{:else if msgMedia}
+													<a
+														href={msgMedia.url}
+														target="_blank"
+														rel="noreferrer"
+														class="flex min-w-[220px] items-center gap-3 rounded-xl bg-primary-500/10 p-2 transition hover:bg-primary-500/15"
+													>
+														<div
+															class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/10 text-primary-600 dark:text-primary-300"
+														>
+															<Icon name="i-lucide-file-text" class="size-5" />
+														</div>
+														<div class="min-w-0 flex-1">
+															<p class="truncate text-[13px] font-semibold">Open attachment</p>
+															<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
+														</div>
+													</a>
+													{#if msgMedia.text}
+														<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
+													{/if}
 												{:else if msg.type === 'file'}
 													<div class="flex min-w-[220px] items-center gap-3">
 														<div
@@ -2344,6 +2183,7 @@
 								{@const invite = parseGroupInvite(msg.content)}
 								{@const groupMessage = parseGroupMessage(msg.content)}
 								{@const callSignal = parseCallSignal(msg.content)}
+								{@const msgMedia = mediaFromMessage(msg.content)}
 								<div class="flex {msg.mine ? 'justify-end' : 'justify-start'}">
 									<div
 										class="max-w-[78%] {msg.mine
@@ -2507,6 +2347,52 @@
 													</Button>
 												{/if}
 											</div>
+										{:else if msgMedia?.kind === 'image'}
+											<a href={msgMedia.url} target="_blank" rel="noreferrer">
+												<img
+													src={msgMedia.url}
+													alt="Message attachment"
+													class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
+												/>
+											</a>
+											{#if msgMedia.text}
+												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
+										{:else if msgMedia?.kind === 'video'}
+											<video
+												src={msgMedia.url}
+												controls
+												class="mb-2 max-h-72 min-w-[220px] rounded-xl"
+											>
+												<track kind="captions" />
+											</video>
+											{#if msgMedia.text}
+												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
+										{:else if msgMedia}
+											<a
+												href={msgMedia.url}
+												target="_blank"
+												rel="noreferrer"
+												class="flex min-w-[220px] items-center gap-3 rounded-xl {msg.mine
+													? 'bg-white/15 hover:bg-white/20'
+													: 'bg-primary-500/10 hover:bg-primary-500/15'} p-2 transition"
+											>
+												<div
+													class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+														? 'bg-white/20 text-white'
+														: 'bg-primary-500/10 text-primary-600 dark:text-primary-300'}"
+												>
+													<Icon name="i-lucide-file-text" class="size-5" />
+												</div>
+												<div class="min-w-0 flex-1">
+													<p class="truncate text-[13px] font-semibold">Open attachment</p>
+													<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
+												</div>
+											</a>
+											{#if msgMedia.text}
+												<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
+											{/if}
 										{:else}
 											<p class="break-words whitespace-pre-wrap">{msg.content}</p>
 										{/if}
@@ -2537,22 +2423,97 @@
 				<footer
 					class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-5 py-3"
 				>
+					<input
+						bind:this={messageFileInput}
+						type="file"
+						multiple
+						class="hidden"
+						onchange={onMessageFileInput}
+					/>
+					<input
+						bind:this={messageImageInput}
+						type="file"
+						accept="image/*"
+						multiple
+						class="hidden"
+						onchange={onMessageFileInput}
+					/>
+					{#if messageAttachments.length}
+						<div class="mb-3 flex flex-wrap gap-2">
+							{#each messageAttachments as attachment, i (attachment.url)}
+								<div
+									class="group relative flex max-w-[220px] items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-2"
+								>
+									{#if attachment.kind === 'image'}
+										<img
+											src={attachment.url}
+											alt=""
+											class="size-10 shrink-0 rounded-lg object-cover"
+										/>
+									{:else}
+										<div
+											class="grid size-10 shrink-0 place-items-center rounded-lg bg-primary-500/10 text-primary-600 dark:text-primary-300"
+										>
+											<Icon
+												name={attachment.kind === 'video' ? 'i-lucide-video' : 'i-lucide-file-text'}
+												class="size-5"
+											/>
+										</div>
+									{/if}
+									<div class="min-w-0 flex-1">
+										<p class="truncate text-[12px] font-semibold">{attachment.name}</p>
+										<p class="text-[10px] text-[var(--ui-text-muted)]">
+											{humanBytes(attachment.bytes)} · {providerLabel(attachment.provider)}
+										</p>
+									</div>
+									<button
+										type="button"
+										onclick={() => removeMessageAttachment(i)}
+										class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+										aria-label="Remove attachment"
+									>
+										<Icon name="i-lucide-x" class="size-3.5" />
+									</button>
+								</div>
+							{/each}
+						</div>
+					{/if}
+					{#if uploadingMessage}
+						<p class="mb-2 flex items-center gap-1.5 text-[11.5px] text-primary-500">
+							<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+							Uploading via {providerLabel(activeUploadProvider)}…
+						</p>
+					{/if}
 					<div class="flex items-end gap-2">
 						<button
 							type="button"
 							onclick={() => attachFile('file')}
+							disabled={uploadingMessage || activeUploadProvider === 'none'}
+							title={activeUploadProvider === 'none'
+								? 'No upload provider configured'
+								: `Upload via ${providerLabel(activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach file"
 						>
-							<Icon name="i-lucide-paperclip" class="size-4" />
+							<Icon
+								name={uploadingMessage ? 'i-lucide-loader-circle' : 'i-lucide-paperclip'}
+								class="size-4 {uploadingMessage ? 'animate-spin' : ''}"
+							/>
 						</button>
 						<button
 							type="button"
 							onclick={() => attachFile('image')}
+							disabled={uploadingMessage || activeUploadProvider === 'none'}
+							title={activeUploadProvider === 'none'
+								? 'No upload provider configured'
+								: `Upload via ${providerLabel(activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach image"
 						>
-							<Icon name="i-lucide-image" class="size-4" />
+							<Icon
+								name={uploadingMessage ? 'i-lucide-loader-circle' : 'i-lucide-image'}
+								class="size-4 {uploadingMessage ? 'animate-spin' : ''}"
+							/>
 						</button>
 						<div
 							class="flex flex-1 items-center gap-2 rounded-2xl bg-[var(--ui-bg-muted)] px-4 py-2.5"
@@ -2576,7 +2537,7 @@
 						<button
 							type="button"
 							onclick={send}
-							disabled={!draft.trim()}
+							disabled={!canSend}
 							class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500 text-white shadow-[var(--glow-primary)] transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
 							aria-label="Send"
 						>
@@ -2603,7 +2564,7 @@
 					{:else}
 						<a
 							href={profileHref(active.id)}
-							class="mx-auto mb-3 block w-fit rounded-3xl transition hover:ring-2 hover:ring-primary-500/30"
+							class="mask-squircle mx-auto mb-3 block w-fit transition hover:ring-2 hover:ring-primary-500/30"
 							aria-label={`Open ${active.name} profile`}
 						>
 							<Avatar
@@ -2611,7 +2572,7 @@
 								name={active.name}
 								picture={profiles.get(active.id)?.picture}
 								size={80}
-								class="rounded-3xl"
+								class="mask-squircle"
 							/>
 						</a>
 						<h2 class="truncate font-display text-[22px] font-extrabold tracking-tight">
@@ -2698,7 +2659,7 @@
 												name={row.name}
 												picture={profiles.get(row.id)?.picture}
 												size={28}
-												class="rounded-lg"
+												class="mask-squircle"
 											/>
 											<span class="max-w-24 truncate text-[12px] font-semibold">{row.name}</span>
 										</button>
@@ -2713,7 +2674,7 @@
 										{#if member.pubkey}
 											<a
 												href={profileHref(member.pubkey)}
-												class="block rounded-xl transition hover:ring-2 hover:ring-primary-500/30"
+												class="mask-squircle block transition hover:ring-2 hover:ring-primary-500/30"
 												aria-label={`Open ${member.name} profile`}
 											>
 												<Avatar
@@ -2721,12 +2682,12 @@
 													name={member.name}
 													picture={profiles.get(member.pubkey)?.picture}
 													size={36}
-													class="rounded-xl"
+													class="mask-squircle"
 												/>
 											</a>
 										{:else}
 											<div
-												class="grid size-9 place-items-center rounded-xl bg-primary-500 text-xs font-bold text-white"
+												class="mask-squircle grid size-9 place-items-center bg-primary-500 text-xs font-bold text-white"
 											>
 												{member.initials}
 											</div>
@@ -2905,14 +2866,14 @@
 		<div class="flex items-center gap-3">
 			{#if active.kind === 'group'}
 				<div
-					class="grid size-[52px] place-items-center rounded-2xl bg-primary-500 font-bold text-white"
+					class="mask-squircle grid size-[52px] place-items-center bg-primary-500 font-bold text-white"
 				>
 					{active.initials}
 				</div>
 			{:else}
 				<a
 					href={profileHref(active.id)}
-					class="shrink-0 rounded-2xl transition hover:ring-2 hover:ring-primary-500/30"
+					class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 					aria-label={`Open ${active.name} profile`}
 				>
 					<Avatar
@@ -2920,7 +2881,7 @@
 						name={active.name}
 						picture={profiles.get(active.id)?.picture}
 						size={52}
-						class="rounded-2xl"
+						class="mask-squircle"
 					/>
 				</a>
 			{/if}
@@ -2992,7 +2953,7 @@
 										name={row.name}
 										picture={profiles.get(row.id)?.picture}
 										size={28}
-										class="rounded-lg"
+										class="mask-squircle"
 									/>
 									<span class="max-w-24 truncate text-[12px] font-semibold">{row.name}</span>
 								</button>
@@ -3006,7 +2967,7 @@
 							{#if member.pubkey}
 								<a
 									href={profileHref(member.pubkey)}
-									class="shrink-0 rounded-lg transition hover:ring-2 hover:ring-primary-500/30"
+									class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
 									aria-label={`Open ${member.name} profile`}
 								>
 									<Avatar
@@ -3014,12 +2975,12 @@
 										name={member.name}
 										picture={profiles.get(member.pubkey)?.picture}
 										size={32}
-										class="rounded-lg"
+										class="mask-squircle"
 									/>
 								</a>
 							{:else}
 								<div
-									class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary-500 text-[11px] font-bold text-white"
+									class="mask-squircle grid size-8 shrink-0 place-items-center bg-primary-500 text-[11px] font-bold text-white"
 								>
 									{member.initials}
 								</div>

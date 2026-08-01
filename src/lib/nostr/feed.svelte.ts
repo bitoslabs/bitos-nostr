@@ -9,14 +9,24 @@ import { finalizeEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryOnce } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { blocks } from '$lib/stores/blocks.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
-import { zapSats, zapTarget } from './zaps';
+import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
 const MAX_TEXT_NOTE_CHARS = 16_000;
+const MAX_BUFFERED_REACTIONS = 2_000;
+
+type ReactionEvent = {
+	id: string;
+	pubkey: string;
+	content: string;
+	tags: string[][];
+	created_at: number;
+};
 
 function isReaction(content: string): boolean {
 	// kind 7 reactions are either a + / - or an emoji shortcode
@@ -35,7 +45,12 @@ class FeedStore {
 	private pendingById = new Map<string, number>();
 	private seenZapIds = new Set<string>();
 	/** pollNoteId → (pubkey → latest vote) for one-vote-per-user aggregation. */
-	private pollVotes = new Map<string, Map<string, { optionId: string; evId: string; at: number }>>();
+	private pollVotes = new Map<
+		string,
+		Map<string, { optionId: string; evId: string; at: number }>
+	>();
+	/** Reactions can arrive before the note they target during relay replay. */
+	private bufferedReactions = new Map<string, ReactionEvent[]>();
 	private unsub: (() => void) | null = null;
 
 	pendingCount = $derived(this.pendingNotes.length);
@@ -51,6 +66,7 @@ class FeedStore {
 		this.pendingNotes = [];
 		this.pendingById.clear();
 		this.seenZapIds.clear();
+		this.bufferedReactions.clear();
 		this.unsub = subscribe(
 			[
 				{
@@ -62,6 +78,7 @@ class FeedStore {
 				oneose: () => {
 					this.loading = false;
 					this.connected = true;
+					void this.hydrateActivity(this.notes.map((note) => note.id));
 				},
 				onevent: (ev) => {
 					if (ev.kind === NOSTR_KINDS.TEXT_NOTE)
@@ -82,6 +99,20 @@ class FeedStore {
 		}
 	};
 
+	clear = () => {
+		this.notes = [];
+		this.pendingNotes = [];
+		this.loading = false;
+		this.loadingMore = false;
+		this.hasMore = true;
+		this.connected = false;
+		this.byId.clear();
+		this.pendingById.clear();
+		this.seenZapIds.clear();
+		this.pollVotes.clear();
+		this.bufferedReactions.clear();
+	};
+
 	/** Query the next older page without changing the live "new notes" queue. */
 	async loadMore() {
 		if (!browser || this.loadingMore || !this.hasMore) return 0;
@@ -98,10 +129,12 @@ class FeedStore {
 				}
 			]);
 			const before = this.notes.length;
+			const fetchedIds = events.map((ev) => ev.id);
 			for (const ev of events.sort((a, b) => b.created_at - a.created_at)) {
 				this.ingestNote(ev, { queueIfLive: false });
 				profiles.ensure([ev.pubkey]);
 			}
+			if (fetchedIds.length) void this.hydrateActivity(fetchedIds);
 			const added = this.notes.length - before;
 			if (!events.length || added === 0 || this.notes.length >= MAX_NOTES) this.hasMore = false;
 			return added;
@@ -120,6 +153,7 @@ class FeedStore {
 		},
 		options: { queueIfLive?: boolean } = {}
 	) {
+		if (blocks.has(ev.pubkey)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
 		const pollOptions = parsePoll(ev.tags);
@@ -148,7 +182,13 @@ class FeedStore {
 		} else {
 			this.insertVisible(note);
 		}
-		// If votes arrived before the poll note was ingested, replay them now.
+		// Relay replay is not ordered: process reactions received before this note.
+		const buffered = this.bufferedReactions.get(note.id);
+		if (buffered) {
+			this.bufferedReactions.delete(note.id);
+			for (const reaction of buffered) this.ingestReaction(reaction);
+		}
+		// If votes were already collected for this poll, apply their tally now.
 		if (note.poll) this.rebuildPoll(note.id);
 	}
 
@@ -173,19 +213,18 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
-	private ingestReaction(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		tags: string[][];
-		created_at: number;
-	}) {
+	private ingestReaction(ev: ReactionEvent) {
 		// NIP-25: reaction tags the target note/event with `e` (and usually `p`).
 		const target = ev.tags.find((t) => t[0] === 'e')?.[1];
 		if (!target) return;
 
-		// Poll vote? A kind 7 reaction whose content is one of the poll's option ids.
 		const targetNote = this.noteById(target);
+		if (!targetNote) {
+			this.bufferReaction(target, ev);
+			return;
+		}
+
+		// Poll vote? A kind 7 reaction whose content is one of the poll's option ids.
 		if (targetNote?.poll && targetNote.poll.options.some((o) => o.id === ev.content)) {
 			this.applyPollVote(target, ev);
 			return;
@@ -207,6 +246,15 @@ class FeedStore {
 		const next = this.nextReactions(note, ev);
 		if (!next) return;
 		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions: next } : n));
+	}
+
+	private bufferReaction(target: string, ev: ReactionEvent) {
+		if (this.bufferedReactions.size >= MAX_BUFFERED_REACTIONS && !this.bufferedReactions.has(target)) {
+			this.bufferedReactions.delete(this.bufferedReactions.keys().next().value!);
+		}
+		const buffered = this.bufferedReactions.get(target) ?? [];
+		if (!buffered.some((reaction) => reaction.id === ev.id)) buffered.push(ev);
+		this.bufferedReactions.set(target, buffered);
 	}
 
 	private ingestZap(ev: { id: string; content: string; tags: string[][] }) {
@@ -259,19 +307,17 @@ class FeedStore {
 		}
 		const pendingIdx = this.pendingById.get(id);
 		if (pendingIdx !== undefined) {
-			this.pendingNotes = this.pendingNotes.map((n, i) =>
-				i === pendingIdx ? updater(n) : n
-			);
+			this.pendingNotes = this.pendingNotes.map((n, i) => (i === pendingIdx ? updater(n) : n));
 		}
 	}
 
 	/** Record a poll vote (one per pubkey, latest wins) and recompute counts. */
-	private applyPollVote(pollId: string, ev: { id: string; pubkey: string; content: string; created_at: number }) {
+	private applyPollVote(
+		pollId: string,
+		ev: { id: string; pubkey: string; content: string; created_at: number }
+	) {
 		if (!this.pollVotes.has(pollId))
-			this.pollVotes.set(
-				pollId,
-				new Map<string, { optionId: string; evId: string; at: number }>()
-			);
+			this.pollVotes.set(pollId, new Map<string, { optionId: string; evId: string; at: number }>());
 		const byPubkey = this.pollVotes.get(pollId)!;
 		const prev = byPubkey.get(ev.pubkey);
 		if (prev && prev.at > ev.created_at) return; // keep the latest vote
@@ -294,9 +340,7 @@ class FeedStore {
 			if (pubkey === me) myVote = v.optionId;
 		}
 		this.updateNote(pollId, (n) =>
-			n.poll
-				? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } }
-				: n
+			n.poll ? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } } : n
 		);
 	}
 
@@ -358,6 +402,46 @@ class FeedStore {
 		this.pendingNotes.forEach((n, i) => this.pendingById.set(n.id, i));
 	}
 
+	private async hydrateActivity(noteIds: string[]) {
+		const uniqueIds = [...new Set(noteIds)].filter(Boolean);
+		if (!uniqueIds.length) return;
+		try {
+			const activity = await queryOnce([
+				{
+					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					'#e': uniqueIds,
+					limit: 1000
+				}
+			]);
+			if (!activity.length) return;
+			const notesById = new Map(
+				[...this.notes, ...this.pendingNotes].map((note) => [note.id, note])
+			);
+			const nonPollActivity = activity.filter((event) => {
+				if (event.kind !== NOSTR_KINDS.REACTION) return true;
+				const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+				const poll = target ? notesById.get(target)?.poll : undefined;
+				if (!poll?.options.some((option) => option.id === event.content)) return true;
+				this.applyPollVote(target!, event);
+				return false;
+			});
+			const visible = this.notes.filter((note) => uniqueIds.includes(note.id));
+			if (visible.length) {
+				const hydrated = applyActivityToNotes(visible, nonPollActivity, identity.current?.pk);
+				const byId = new Map(hydrated.map((note) => [note.id, note]));
+				this.notes = this.notes.map((note) => byId.get(note.id) ?? note);
+			}
+			const pending = this.pendingNotes.filter((note) => uniqueIds.includes(note.id));
+			if (pending.length) {
+				const hydrated = applyActivityToNotes(pending, nonPollActivity, identity.current?.pk);
+				const byId = new Map(hydrated.map((note) => [note.id, note]));
+				this.pendingNotes = this.pendingNotes.map((note) => byId.get(note.id) ?? note);
+			}
+		} catch {
+			// Activity hydration is best-effort; leave notes visible even if relays do not answer.
+		}
+	}
+
 	hideNote(id: string) {
 		this.notes = this.notes.filter((note) => note.id !== id);
 		this.pendingNotes = this.pendingNotes.filter((note) => note.id !== id);
@@ -372,10 +456,18 @@ class FeedStore {
 		this.rebuildPendingIndex();
 	}
 
+	blockAuthor(pubkey: string) {
+		if (!blocks.block(pubkey)) return false;
+		this.muteAuthor(pubkey);
+		return true;
+	}
+
 	upsertNote(note: FeedNote) {
 		const existing = this.byId.get(note.id);
 		if (existing !== undefined) {
-			this.notes = this.notes.map((item, index) => (index === existing ? { ...item, ...note } : item));
+			this.notes = this.notes.map((item, index) =>
+				index === existing ? { ...item, ...note } : item
+			);
 			this.rebuildIndex();
 			return;
 		}
@@ -429,7 +521,7 @@ class FeedStore {
 	}
 
 	/** Compose + sign + publish a text note. Returns the published event id. */
-	async post(content: string): Promise<string> {
+	async post(content: string, options: { sensitive?: boolean } = {}): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
@@ -444,7 +536,7 @@ class FeedStore {
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: text,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: []
+			tags: options.sensitive ? [['content-warning', 'Sensitive content']] : []
 		};
 		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
@@ -468,7 +560,9 @@ class FeedStore {
 		if (cleanOptions.length < 2) throw new Error('A poll needs at least 2 options');
 		if (cleanOptions.length > 12) throw new Error('A poll can have at most 12 options');
 		if (prompt.length > MAX_TEXT_NOTE_CHARS) {
-			throw new Error(`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+			throw new Error(
+				`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
+			);
 		}
 		const event = finalizeEvent(
 			{

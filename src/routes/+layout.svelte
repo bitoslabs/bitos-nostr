@@ -7,6 +7,12 @@
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
 	import { media } from '$lib/stores/media.svelte';
+	import { clearAccountCaches } from '$lib/stores/account-cache';
+	import { blocks } from '$lib/stores/blocks.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { settingsSync } from '$lib/stores/settings-sync.svelte';
+	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
@@ -39,6 +45,7 @@
 	};
 
 	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
+	const SETTINGS_AUTO_RESTORE_ACCOUNT_KEY = 'bitos:settings-auto-restore-account';
 	const alertedCallOffers = new Set<string>();
 	const closedCallIds = new Set<string>();
 
@@ -111,14 +118,17 @@
 	}
 
 	function alertIncomingCalls() {
+		if (!privacyNotificationSettings.state.dms) return;
 		if (!browser || page.url.pathname === '/messages') return;
 		for (const conversation of dms.conversations) {
+			if (blocks.has(conversation.peer)) continue;
 			for (const message of conversation.messages) {
 				const signal = parseCallSignal(message.content);
 				if (signal?.type === 'end' || signal?.type === 'log') closedCallIds.add(signal.callId);
 			}
 		}
 		for (const conversation of dms.conversations) {
+			if (blocks.has(conversation.peer)) continue;
 			for (const message of conversation.messages) {
 				if (message.mine) continue;
 				const signal = parseCallSignal(message.content);
@@ -153,13 +163,59 @@
 		}
 	}
 
+	function stopAccountServices() {
+		contacts.stop();
+		stories.stop();
+		feed.stop();
+		dms.stop();
+		notifications.stop();
+	}
+
+	function clearRuntimeAccountState() {
+		feed.clear();
+		stories.clear();
+		notifications.clear();
+		bookmarks.clear();
+		callAlerts.clear();
+	}
+
+	function shouldAutoRestoreSettings(pubkey: string, previousPubkey: string | null) {
+		if (!browser) return false;
+		if (previousPubkey && previousPubkey !== pubkey) return true;
+		return localStorage.getItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY) !== pubkey;
+	}
+
+	function markSettingsAutoRestoreAttempted(pubkey: string) {
+		if (!browser) return;
+		localStorage.setItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY, pubkey);
+	}
+
+	function clearSettingsAutoRestoreAttempt() {
+		if (!browser) return;
+		localStorage.removeItem(SETTINGS_AUTO_RESTORE_ACCOUNT_KEY);
+	}
+
+	async function restoreSyncedSettingsFor(pubkey: string) {
+		try {
+			const restored = await settingsSync.restoreLatestBackup();
+			if (identity.current?.pk !== pubkey) return;
+			markSettingsAutoRestoreAttempted(pubkey);
+			if (restored) toasts.success('Synced settings restored');
+		} catch {
+			if (identity.current?.pk === pubkey) markSettingsAutoRestoreAttempted(pubkey);
+			/* Settings sync is best-effort on account switch. */
+		}
+	}
+
 	onMount(() => {
 		preferences.load();
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
-		identity.load();
+		blocks.load();
+		privacyNotificationSettings.load();
 		relays.load();
+		identity.load();
 	});
 
 	// React to login/logout (onboarding) at runtime: start/stop subscriptions.
@@ -167,7 +223,13 @@
 	$effect(() => {
 		const pk = identity.current?.pk ?? null;
 		if (pk === lastPk) return;
+		const previousPk = lastPk;
 		lastPk = pk;
+		stopAccountServices();
+		if (previousPk && previousPk !== pk) {
+			clearAccountCaches();
+			clearRuntimeAccountState();
+		}
 		if (pk) {
 			ensureConnected();
 			contacts.start();
@@ -175,12 +237,12 @@
 			feed.start();
 			dms.start();
 			notifications.start();
+			if (shouldAutoRestoreSettings(pk, previousPk)) {
+				void restoreSyncedSettingsFor(pk);
+			}
 		} else {
-			contacts.stop();
-			stories.stop();
-			feed.stop();
-			dms.stop();
-			notifications.stop();
+			if (previousPk) clearSettingsAutoRestoreAttempt();
+			clearRuntimeAccountState();
 		}
 	});
 
@@ -233,6 +295,13 @@
 	<title>BitOS</title>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+<svelte:window
+	onclick={() => popovers.close()}
+	onkeydown={(event) => {
+		if (event.key === 'Escape') popovers.close();
+	}}
+/>
 
 {#if !identity.ready}
 	<!-- brief boot state -->

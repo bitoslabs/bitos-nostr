@@ -4,7 +4,8 @@
 
 	/**
 	 * Profile avatar. Shows the Nostr picture if available, else a deterministic
-	 * flat color + initials derived from the pubkey.
+	 * flat color + initials derived from the pubkey. Avatars use the product's
+	 * soft squircle mask by default.
 	 */
 	let {
 		pubkey,
@@ -31,7 +32,7 @@
 
 <div
 	class={cn(
-		'relative grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold',
+		'relative grid shrink-0 place-items-center overflow-hidden mask-squircle font-semibold',
 		frame && 'border border-[var(--ui-border-muted)]',
 		cls
 	)}

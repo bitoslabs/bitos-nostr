@@ -137,8 +137,8 @@
 				<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
 
 				<!-- Avatar with gradient ring (top-left) -->
-				<div class="absolute top-3 left-3 rounded-full p-[2.5px] {ringClass(author)}">
-					<div class="rounded-full bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
+				<div class="absolute top-3 left-3 mask-squircle p-[2.5px] {ringClass(author)}">
+					<div class="mask-squircle bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
 						<Avatar
 							pubkey={author.pubkey}
 							name={nameFor(author.pubkey)}

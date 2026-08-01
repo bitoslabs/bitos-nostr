@@ -16,7 +16,7 @@
 
 	let {
 		pubkey,
-		rounded = 'rounded-full',
+		rounded = 'mask-squircle',
 		interactive = true,
 		children
 	}: {

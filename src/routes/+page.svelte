@@ -122,8 +122,6 @@
 
 <svelte:head><title>Feed · BitOS</title></svelte:head>
 
-<svelte:window onclick={() => popovers.close()} />
-
 <div class="flex h-full">
 	<!-- Center feed -->
 	<div bind:this={feedScroller} class="flex-1 overflow-y-auto" onscroll={handleFeedScroll}>

@@ -2,6 +2,7 @@ import { browser } from '$app/environment';
 import { dms } from './dms.svelte';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
+import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 import { shortKey } from '../utils/format';
 
 type GroupMember = {
@@ -188,6 +189,7 @@ function applyGroupControl(
 	createdAt: number
 ): { groups: GroupThread[]; changed: boolean } {
 	const me = identity.current?.pk;
+	const ownActivityStatus = privacyNotificationSettings.state.activity ? 'Online' : 'Offline';
 	const group = groups.find((thread) => thread.id === payload.id);
 	if (!group) {
 		if (
@@ -198,10 +200,12 @@ function applyGroupControl(
 			return { groups, changed: false };
 		}
 		const members: GroupMember[] = membersFromControlSnapshot(payload).map((member) =>
-			member.pubkey === me ? { ...member, name: 'You', initials: 'YO', status: 'Online' } : member
+			member.pubkey === me
+				? { ...member, name: 'You', initials: 'YO', status: ownActivityStatus }
+				: member
 		);
 		if (!members.some((member) => member.pubkey === me)) {
-			members.unshift({ name: 'You', initials: 'YO', status: 'Online' });
+			members.unshift({ name: 'You', initials: 'YO', status: ownActivityStatus });
 		}
 		const restoredGroup: GroupThread = {
 			id: payload.id,

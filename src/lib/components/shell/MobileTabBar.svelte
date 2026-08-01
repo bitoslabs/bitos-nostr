@@ -2,10 +2,17 @@
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import Popover from '$lib/components/ui/Popover.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
+	import { shortKey } from '$lib/utils/format';
 
 	/** iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is). */
 
@@ -23,8 +30,6 @@
 		{ to: '/settings', label: 'Account', icon: 'i-lucide-settings-2' }
 	];
 
-	let moreOpen = $state(false);
-
 	function isActive(to: string) {
 		const path = page.url.pathname;
 		return to === '/' ? path === '/' : path.startsWith(to);
@@ -34,12 +39,30 @@
 	const displayName = $derived(
 		me?.pk ? profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You' : ''
 	);
-	const unread = $derived(dms.unreadCount);
+	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const moreActive = $derived(moreItems.some((item) => isActive(item.to)));
-</script>
 
-<svelte:window onclick={() => (moreOpen = false)} />
+	function accountName(account: (typeof identity.accounts)[number]) {
+		const profile = profiles.get(account.pk) ?? account.profile;
+		return profile?.display_name || profile?.name || shortKey(account.npub, 8, 6);
+	}
+
+	function accountPicture(account: (typeof identity.accounts)[number]) {
+		return (profiles.get(account.pk) ?? account.profile)?.picture;
+	}
+
+	function switchAccount(pubkey: string) {
+		if (identity.current?.pk === pubkey) return;
+		try {
+			identity.switchTo(pubkey);
+			popovers.close();
+			toasts.info('Switched account');
+		} catch (e) {
+			toasts.error((e as Error).message);
+		}
+	}
+</script>
 
 <nav
 	class="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] pb-[env(safe-area-inset-bottom)] lg:hidden"
@@ -49,85 +72,138 @@
 		{@const active = isActive(tab.to)}
 		<a
 			href={tab.to}
-			class="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {active
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-dimmed)]'}"
+			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
 		>
-			<span class="relative">
-				<Icon name={tab.icon} class="size-[22px]" />
-				{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
+			<span
+				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {active
+					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				{#if active}
 					<span
-						class="absolute -top-1 -right-2 grid size-4 place-items-center rounded-full bg-warm-500 text-[9px] font-bold text-white"
-						>{tab.notifications
-							? notificationUnread > 9
-								? '9+'
-								: notificationUnread
-							: unread > 9
-								? '9+'
-								: unread}</span
-					>
+						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
+						aria-hidden="true"
+					></span>
 				{/if}
+				<span class="relative">
+					<Icon
+						name={tab.icon}
+						class="size-[22px] transition-transform {active ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+					/>
+					{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
+						<span
+							class="absolute -top-1 -right-2 z-20 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
+							>{tab.notifications
+								? notificationUnread > 9
+									? '9+'
+									: notificationUnread
+								: unread > 9
+									? '9+'
+									: unread}</span
+						>
+					{/if}
+				</span>
+				<span>{tab.label}</span>
 			</span>
-			<span>{tab.label}</span>
 		</a>
 	{/each}
-	<div class="relative flex flex-1">
-		<button
-			type="button"
-			onclick={(event) => {
-				event.stopPropagation();
-				moreOpen = !moreOpen;
-			}}
-			class="relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10.5px] font-semibold transition-colors {moreActive || moreOpen
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-dimmed)]'}"
-			aria-label="More navigation"
-			aria-expanded={moreOpen}
-		>
-			<Icon name="i-lucide-menu" class="size-[22px]" />
-			<span>More</span>
-		</button>
-
-		{#if moreOpen}
-			<div
-				class="absolute right-2 bottom-[calc(100%+10px)] z-50 w-56 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+	<Popover
+		id="mobile-more"
+		placement="top-end"
+		width="md"
+		rootClass="flex-1"
+		label="More navigation"
+		triggerClass="relative flex w-full items-center justify-center px-1.5 py-2"
+		triggerActiveClass=""
+	>
+		{#snippet trigger()}
+			<span
+				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {moreActive
+					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+					: 'text-[var(--ui-text-dimmed)]'}"
 			>
-				{#if me}
-					<a
-						href="/profile"
-						onclick={() => (moreOpen = false)}
-						class="mb-1 flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
+				{#if moreActive}
+					<span
+						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
+						aria-hidden="true"
+					></span>
+				{/if}
+				<Icon
+					name="i-lucide-menu"
+					class="size-[22px] transition-transform {moreActive ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+				/>
+				<span>More</span>
+			</span>
+		{/snippet}
+
+		{#if me}
+			<a
+				href="/profile"
+				class="mb-1 flex items-center gap-2.5 rounded-lg px-3 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
+			>
+				<Avatar
+					pubkey={me.pk}
+					name={displayName}
+					picture={profiles.get(me.pk)?.picture}
+					size={34}
+					frame
+				/>
+				<span class="min-w-0">
+					<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]"
+						>{displayName}</span
+					>
+					<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
+				</span>
+			</a>
+
+			{#if identity.accounts.length > 1}
+				<MenuDivider />
+				<p class="px-3 pb-1 pt-0.5 text-[11px] font-semibold text-[var(--ui-text-muted)]">
+					Switch account
+				</p>
+				{#each identity.accounts as account (account.pk)}
+					<button
+						type="button"
+						onclick={() => switchAccount(account.pk)}
+						class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<Avatar
-							pubkey={me.pk}
-							name={displayName}
-							picture={profiles.get(me.pk)?.picture}
-							size={34}
+							pubkey={account.pk}
+							name={accountName(account)}
+							picture={accountPicture(account)}
+							size={30}
 							frame
 						/>
-						<span class="min-w-0">
-							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">{displayName}</span>
-							<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
+						<span class="min-w-0 flex-1">
+							<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
+								{accountName(account)}
+							</span>
+							<span
+								class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]"
+							>
+								{shortKey(account.npub, 8, 5)}
+							</span>
 						</span>
-					</a>
-					<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
-				{/if}
-
-				{#each moreItems as item (item.to)}
-					<a
-						href={item.to}
-						onclick={() => (moreOpen = false)}
-						class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-bold transition {isActive(
-							item.to
-						)
-							? 'bg-primary-500/10 text-primary-600'
-							: 'text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]'}"
-					>
-						<Icon name={item.icon} class="size-4 shrink-0" />
-						{item.label}
-					</a>
+						{#if account.active}
+							<Icon name="i-lucide-check" class="size-4 shrink-0 text-primary-500" />
+						{/if}
+					</button>
 				{/each}
-			</div>
+			{/if}
+
+			<MenuDivider />
 		{/if}
-	</div>
+
+		{#each moreItems as item (item.to)}
+			<MenuItem
+				href={item.to}
+				icon={item.icon}
+				class={isActive(item.to)
+					? 'bg-primary-500/10 text-primary-600 dark:text-primary-400'
+					: ''}
+			>
+				{item.label}
+			</MenuItem>
+		{/each}
+	</Popover>
 </nav>

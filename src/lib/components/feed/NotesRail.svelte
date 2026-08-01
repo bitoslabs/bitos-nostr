@@ -59,7 +59,7 @@
 						: ''}"
 				>
 					<div
-						class="shrink-0 rounded-full p-[2px] {author.hasUnseen
+						class="shrink-0 mask-squircle p-[2px] {author.hasUnseen
 							? 'bg-gradient-to-tr from-primary-500 via-accent-500 to-warm-500'
 							: 'bg-transparent'}"
 					>

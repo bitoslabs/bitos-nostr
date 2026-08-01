@@ -5,7 +5,7 @@
 import { browser } from '$app/environment';
 import type { RelayRecord } from './types';
 
-const STORAGE_KEY = 'bitos:relays';
+export const STORAGE_KEY = 'bitos:relays';
 
 const DEFAULTS: RelayRecord[] = [
 	{ url: 'wss://relay.damus.io', read: true, write: true, status: 'unknown', latency: null },

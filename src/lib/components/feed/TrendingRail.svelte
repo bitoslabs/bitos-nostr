@@ -248,7 +248,7 @@
 					<div class="flex items-center gap-3">
 						<a
 							href={`/profile/${s.pubkey}`}
-							class="shrink-0 rounded-full transition hover:ring-2 hover:ring-primary-500/30"
+							class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 							aria-label={`Open ${name} profile`}
 						>
 							<Avatar pubkey={s.pubkey} {name} picture={profile?.picture} size={40} />
