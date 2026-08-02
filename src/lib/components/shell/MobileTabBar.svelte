@@ -75,16 +75,10 @@
 			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
 		>
 			<span
-				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {active
-					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+				class="rounded-2xl relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {active
+					? 'text-primary-600 dark:text-primary-300'
 					: 'text-[var(--ui-text-dimmed)]'}"
 			>
-				{#if active}
-					<span
-						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
-						aria-hidden="true"
-					></span>
-				{/if}
 				<span class="relative">
 					<Icon
 						name={tab.icon}
@@ -114,23 +108,17 @@
 		rootClass="flex-1"
 		label="More navigation"
 		triggerClass="relative flex w-full items-center justify-center px-1.5 py-2"
-		triggerActiveClass=""
 	>
-		{#snippet trigger()}
+		{#snippet trigger(open)}
+			{@const show = moreActive || open}
 			<span
-				class="mask-squircle relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {moreActive
-					? 'bg-primary-500/12 text-primary-600 ring-1 ring-primary-500/20 dark:text-primary-300'
+				class="rounded-2xl relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {show
+					? 'text-primary-600 dark:text-primary-300'
 					: 'text-[var(--ui-text-dimmed)]'}"
 			>
-				{#if moreActive}
-					<span
-						class="absolute top-1 left-1/2 h-1 w-8 -translate-x-1/2 rounded-full bg-primary-500"
-						aria-hidden="true"
-					></span>
-				{/if}
 				<Icon
 					name="i-lucide-menu"
-					class="size-[22px] transition-transform {moreActive ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+					class="size-[22px] transition-transform {show ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
 				/>
 				<span>More</span>
 			</span>
