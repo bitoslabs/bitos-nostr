@@ -8,6 +8,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
 	import { shortKey } from '$lib/utils/format';
 
 	type Trend = {
@@ -167,6 +168,7 @@
 	}
 
 	onMount(() => {
+		feedPreferences.load();
 		void loadRailData();
 	});
 </script>
@@ -200,22 +202,38 @@
 		{:else if trending.length}
 			<div class="space-y-2">
 				{#each trending as t (t.tag)}
-					<a
-						href={`/?tag=${encodeURIComponent(t.tag.slice(1))}`}
-						class="block w-full cursor-pointer rounded-xl p-3 text-left transition-colors hover:bg-[var(--interactive-hover-bg)]"
-					>
-						<div class="mb-1 flex items-center justify-between">
-							<span class="text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
-								>{t.rank} · {t.category}</span
+					<div class="rounded-xl transition-colors hover:bg-[var(--interactive-hover-bg)]">
+						<div class="flex items-start gap-2 p-3">
+							<a
+								href={`/?tag=${encodeURIComponent(t.tag.slice(1))}`}
+								class="min-w-0 flex-1"
 							>
-							<Icon
-								name={t.dir === 'up' ? 'i-lucide-trending-up' : 'i-lucide-flame'}
-								class={t.dir === 'up' ? 'size-3.5 text-accent-500' : 'size-3.5 text-warm-500'}
-							/>
+								<div class="mb-1 flex items-center justify-between gap-2">
+									<span class="text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
+										>{t.rank} · {t.category}</span
+									>
+									<Icon
+										name={t.dir === 'up' ? 'i-lucide-trending-up' : 'i-lucide-flame'}
+										class={t.dir === 'up' ? 'size-3.5 text-accent-500' : 'size-3.5 text-warm-500'}
+									/>
+								</div>
+								<p class="text-[14px] font-bold">{t.tag}</p>
+								<p class="text-[11px] text-[var(--ui-text-dimmed)]">{t.posts}</p>
+							</a>
+							<button
+								type="button"
+								onclick={() => feedPreferences.togglePinnedTag(t.tag)}
+								class="grid size-8 shrink-0 place-items-center rounded-lg text-[var(--ui-text-muted)] transition hover:bg-primary-500/10 hover:text-primary-600"
+								aria-label={feedPreferences.isPinned(t.tag) ? `Unpin ${t.tag}` : `Pin ${t.tag}`}
+								title={feedPreferences.isPinned(t.tag) ? `Unpin ${t.tag}` : `Pin ${t.tag}`}
+							>
+								<Icon
+									name={feedPreferences.isPinned(t.tag) ? 'i-lucide-pin-off' : 'i-lucide-pin'}
+									class="size-4"
+								/>
+							</button>
 						</div>
-						<p class="text-[14px] font-bold">{t.tag}</p>
-						<p class="text-[11px] text-[var(--ui-text-dimmed)]">{t.posts}</p>
-					</a>
+					</div>
 				{/each}
 			</div>
 		{:else}

@@ -433,14 +433,14 @@
 							aria-label={liked ? 'Unlike story' : 'Like story'}
 						>
 							<Icon
-								name={liked ? 'i-lucide-heart' : 'i-lucide-heart'}
-								class={cn('size-5 transition', liked && 'scale-110 fill-current')}
+								name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+								class={cn('size-5 transition', liked && 'scale-110')}
 							/>
 							{#if burst}
 								<span
 									class="heart-burst pointer-events-none absolute inset-0 grid place-items-center text-[var(--tone-error-text)]"
 								>
-									<Icon name="i-lucide-heart" class="size-5 fill-current" />
+									<Icon name="i-solar-heart-bold" class="size-5" />
 								</span>
 							{/if}
 						</button>

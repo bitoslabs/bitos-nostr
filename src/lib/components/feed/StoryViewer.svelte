@@ -24,6 +24,12 @@
 	let replying = $state(false);
 	let activityOpen = $state(false);
 	let replyMode = $state<'reply' | 'dm'>('reply');
+	let slideEl = $state<HTMLDivElement | undefined>(undefined);
+	let likeBursts = $state<{ id: number; x: number; y: number }[]>([]);
+	let heartPop = $state(false);
+	let burstSeq = 0;
+	let lastTap = 0;
+	let tapTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const profile = $derived(profiles.get(author.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
@@ -80,10 +86,24 @@
 	}
 
 	function onViewportClick(e: MouseEvent) {
-		const target = e.currentTarget as HTMLElement;
-		const x = e.clientX - target.getBoundingClientRect().left;
-		if (x < target.clientWidth / 2) back();
-		else advance();
+		if (!slideEl) return;
+		const rect = slideEl.getBoundingClientRect();
+		const x = e.clientX - rect.left;
+		const y = e.clientY - rect.top;
+		const now = Date.now();
+		// Double-tap anywhere on the story → like + heart burst (Facebook/IG style).
+		if (now - lastTap < 300) {
+			if (tapTimer) clearTimeout(tapTimer);
+			lastTap = 0;
+			void likeWithBurst(x, y);
+			return;
+		}
+		lastTap = now;
+		// Delay the advance slightly so a second tap can convert it into a like.
+		tapTimer = setTimeout(() => {
+			if (x < rect.width / 2) back();
+			else advance();
+		}, 260);
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -125,7 +145,30 @@
 		}
 		try {
 			if (liked) await stories.unlike(slide);
-			else await stories.like(slide);
+			else {
+				await stories.like(slide);
+				heartPop = true;
+				setTimeout(() => (heartPop = false), 450);
+			}
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not react');
+		}
+	}
+
+	function triggerLikeBurst(x: number, y: number) {
+		const id = ++burstSeq;
+		likeBursts = [...likeBursts, { id, x, y }];
+		setTimeout(() => {
+			likeBursts = likeBursts.filter((b) => b.id !== id);
+		}, 850);
+	}
+
+	async function likeWithBurst(x: number, y: number) {
+		// Always show the burst as feedback; only publish a like when not already liked.
+		triggerLikeBurst(x, y);
+		if (!slide || liked || !identity.current) return;
+		try {
+			await stories.like(slide);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not react');
 		}
@@ -196,6 +239,7 @@
 
 <div class="fixed inset-0 z-50 flex items-center justify-center bg-black">
 	<div
+		bind:this={slideEl}
 		class="relative aspect-[9/16] h-full max-h-screen w-auto overflow-hidden bg-black sm:h-[92vh] sm:rounded-xl"
 	>
 		<!-- Progress bars -->
@@ -296,7 +340,25 @@
 				</div>
 			{/if}
 
-			<!-- Story interactions: reply input + like + activity sheet -->
+			<!-- Double-tap “like” burst overlay -->
+		<div class="pointer-events-none absolute inset-0 z-[45] overflow-hidden">
+			{#each likeBursts as b (b.id)}
+				<div
+					class="absolute grid size-24 place-items-center"
+					style="left:calc({b.x}px - 48px); top:calc({b.y}px - 48px)"
+				>
+					<span
+						class="like-burst-ring absolute inset-0 rounded-full bg-white/25 ring-2 ring-white/70"
+					></span>
+					<Icon
+						name="i-solar-heart-bold"
+						class="like-burst-heart relative size-24 text-[var(--tone-error-text)] drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+					/>
+				</div>
+			{/each}
+		</div>
+
+		<!-- Story interactions: reply input + like + activity sheet -->
 		<div
 			class="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-3 pb-4"
 		>
@@ -368,7 +430,9 @@
 				>
 					<Icon
 						name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
-						class="size-5 transition {liked ? 'text-primary-500' : 'text-white'}"
+						class="size-5 transition {liked ? 'text-primary-500' : 'text-white'} {heartPop
+							? 'like-pop'
+							: ''}"
 					/>
 				</button>
 				<button
@@ -388,7 +452,7 @@
 					onclick={() => (activityOpen = true)}
 					class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
 				>
-					<Icon name="i-solar-heart-linear" class="size-3.5" />
+					<Icon name="i-lucide-heart" class="size-3.5" />
 					{interaction?.likeCount ?? 0}
 				</button>
 				{#if isMine}
@@ -416,7 +480,7 @@
 			<button
 				type="button"
 				class="absolute inset-y-0 left-0 z-30 w-1/3 focus:outline-none"
-				onclick={back}
+				onclick={onViewportClick}
 				aria-label="Previous"
 				tabindex="-1"
 			></button>

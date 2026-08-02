@@ -578,7 +578,7 @@
 			<div class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
-					{#if note.reactions.length}<Icon
+					{#if profile?.nip05}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
 						/>{/if}
@@ -901,93 +901,112 @@
 	{/if}
 
 	<!-- Reactions summary -->
-	{#if reactionCount > 0 || note.zapCount > 0}
+	{#if reactionCount > 0 || note.zapCount > 0 || note.repostCount > 0}
 		<div
-			class="flex items-center justify-between px-4 pt-1 pb-2 text-[12px] text-[var(--ui-text-dimmed)]"
+			class="flex items-center justify-between gap-2 px-4 pt-1 pb-1.5 text-[12px] text-[var(--ui-text-dimmed)]"
 		>
-			<div class="flex items-center gap-1.5">
+			<div class="flex min-w-0 items-center gap-1.5">
 				{#if reactionCount > 0}
-					<span
-						class="grid size-5 place-items-center rounded-full bg-primary-500 text-[10px] ring-2 ring-[var(--surface-bg)]"
-						>❤️</span
-					>
-					<span>{reactionCount}</span>
+					<span class="flex -space-x-1.5">
+						{#each note.reactions.slice(0, 3) as r (r.emoji)}
+							<span
+								class="grid size-[18px] place-items-center rounded-full bg-[var(--ui-bg-muted)] text-[9px] ring-2 ring-[var(--surface-bg)]"
+								>{r.emoji || '❤️'}</span
+							>
+						{/each}
+					</span>
+					<span class="font-semibold text-[var(--ui-text-muted)]">{reactionCount}</span>
 				{/if}
 			</div>
-			<span>{note.repostCount || 0} reposts · {compactSats(note.zapTotalSats)} sats</span>
+			<div class="flex shrink-0 items-center gap-3">
+				{#if note.repostCount > 0}<span>{note.repostCount} reposts</span>{/if}
+				{#if note.zapCount > 0}
+					<span class="inline-flex items-center gap-0.5">
+						{compactSats(note.zapTotalSats)} sats
+					</span>
+				{/if}
+			</div>
 		</div>
 	{/if}
 
 	<!-- Action bar -->
 	<div
-		class="mx-4 my-2 flex items-center justify-between gap-1 border-y border-[var(--ui-border-muted)] py-1.5 md:justify-around"
+		class="mx-4 mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] py-1"
 	>
 		<button
 			type="button"
 			onclick={react}
-			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 md:flex-none md:px-3 md:py-1.5 {liked
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
+			class="group relative flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition active:scale-90 md:flex-none md:px-3 {liked
+				? 'text-[var(--tone-error-text)]'
+				: 'text-[var(--ui-text-muted)] hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]'}"
 			aria-label={liked ? 'Unlike' : 'Like'}
 		>
-			<span class="relative">
-				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
+			<span class="relative grid place-items-center">
+				<Icon
+					name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+					class="size-[18px] transition group-active:scale-90"
+				/>
 				{#if burst}
-					<span class="heart-burst pointer-events-none absolute inset-0 text-primary-500">
-						<Icon name="i-solar-heart-bold" class="size-[16px]" />
+					<span
+						class="heart-burst pointer-events-none absolute inset-0 text-[var(--tone-error-text)]"
+					>
+						<Icon name="i-solar-heart-bold" class="size-[18px]" />
 					</span>
 				{/if}
 			</span>
 			{#if reactionCount > 0}
-				<span class="text-[12px] md:hidden">{reactionCount}</span>
+				<span class="tabular-nums">{reactionCount}</span>
+			{:else}
+				<span class="hidden md:inline">Like</span>
 			{/if}
-			<span class="hidden md:inline">{liked ? 'Unlike' : 'Like'}</span>
 		</button>
 		<button
 			type="button"
 			onclick={startReply}
 			disabled={!canCommentOnNote}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-primary-500/10 hover:text-primary-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
 			aria-label={directReplies.length
 				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 				: 'Comment'}
 		>
-			<Icon name="i-lucide-message-circle" class="size-[16px]" />
+			<Icon name="i-lucide-message-circle" class="size-[18px]" />
 			{#if directReplies.length > 0}
-				<span class="text-[12px] md:hidden">{directReplies.length}</span>
+				<span class="tabular-nums">{directReplies.length}</span>
+			{:else}
+				<span class="hidden md:inline">Comment</span>
 			{/if}
-			<span class="hidden md:inline">
-				{directReplies.length
-					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
-					: 'Comment'}
-			</span>
 		</button>
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 md:flex-none md:px-3"
 			aria-label="Share"
 		>
-			<Icon name="i-lucide-share" class="size-[16px]" />
+			<Icon name="i-lucide-share" class="size-[18px]" />
 			<span class="hidden md:inline">Share</span>
 		</button>
 		<button
 			type="button"
 			onclick={zapNote}
 			disabled={!lightningAddress}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
 			aria-label={zapLabel}
 		>
-			<Icon name="i-lucide-zap" class="size-[16px]" />
+			<Icon name="i-lucide-zap" class="size-[18px]" />
 			<span class="hidden md:inline">{zapLabel}</span>
 		</button>
 		<button
 			type="button"
 			onclick={toggleSaved}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] active:scale-90 md:flex-none md:px-3 {saved
+				? 'text-primary-500'
+				: 'text-[var(--ui-text-muted)]'}"
 			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
-			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[16px]" />
+			<Icon
+				name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'}
+				class="size-[18px]"
+			/>
 		</button>
 	</div>
 
@@ -1055,8 +1074,8 @@
 								type="button"
 								onclick={() => reactToComment(reply)}
 								class="inline-flex items-center gap-1 {commentLiked(reply)
-									? 'text-primary-500'
-									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}"
+									? 'text-[var(--tone-error-text)]'
+									: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
 							>
 								<Icon
 									name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
