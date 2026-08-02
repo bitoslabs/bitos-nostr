@@ -91,6 +91,7 @@
 	let groupsLoaded = $state(false);
 	let processedGroupControlsLoaded = false;
 	let lastResolvedTo = $state('');
+	let lastResolvedDraftText = $state('');
 	let lastAutoAnswerCallId = $state('');
 	let uploadingMessage = $state(false);
 	let messageAttachments = $state<MessageAttachment[]>([]);
@@ -297,16 +298,15 @@
 	async function handleMessageFiles(files: FileList | null) {
 		if (!files?.length) return;
 		const provider = activeUploadProvider;
-		if (provider === 'none') {
-			toasts.error('No upload provider. Add Cloudinary or S3 in Settings → Media & Uploads.');
-			return;
-		}
 		uploadingMessage = true;
 		let ok = 0;
 		try {
 			for (const file of Array.from(files)) {
 				try {
-					const uploaded = await media.upload(file, provider);
+					const uploaded = await media.upload(file, provider === 'none' ? undefined : provider, {
+						pubkey: identity.current?.pk,
+						purpose: 'message'
+					});
 					messageAttachments = [...messageAttachments, { ...uploaded, name: file.name }];
 					ok++;
 				} catch (e) {
@@ -315,7 +315,7 @@
 			}
 			if (ok) {
 				toasts.success(
-					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider)}`
+					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider === 'none' ? 'server' : provider)}`
 				);
 			}
 		} finally {
@@ -685,6 +685,13 @@
 		dms.forPeer(peer);
 		profiles.ensure([peer]);
 		if (selected !== peer) selectChat(peer);
+	}
+
+	function resolveDraftText(param: string | null) {
+		const text = param ?? '';
+		if (!text.trim() || text === lastResolvedDraftText) return;
+		lastResolvedDraftText = text;
+		draft = text;
 	}
 
 	function resolveAutoAnswer(answerId: string | null) {
@@ -1554,10 +1561,6 @@
 			toasts.info('Select a chat before attaching a file.');
 			return;
 		}
-		if (activeUploadProvider === 'none') {
-			toasts.info('Add Cloudinary or S3 in Settings → Media & Uploads before attaching files.');
-			return;
-		}
 		if (type === 'image') messageImageInput?.click();
 		else messageFileInput?.click();
 	}
@@ -1621,6 +1624,7 @@
 		loadGroups();
 		groupsLoaded = true;
 		resolveTo(page.url.searchParams.get('to'));
+		resolveDraftText(page.url.searchParams.get('text'));
 		resolveAutoAnswer(page.url.searchParams.get('answer'));
 	});
 	let loadedMessageAccount = $state(identity.current?.pk ?? '');
@@ -1638,8 +1642,10 @@
 		removedGroupIds.clear();
 		loadGroups();
 		resolveTo(page.url.searchParams.get('to'));
+		resolveDraftText(page.url.searchParams.get('text'));
 	});
 	$effect(() => resolveTo(page.url.searchParams.get('to')));
+	$effect(() => resolveDraftText(page.url.searchParams.get('text')));
 	$effect(() => resolveAutoAnswer(page.url.searchParams.get('answer')));
 	$effect(() => {
 		void activeMessages.length;
@@ -2481,7 +2487,7 @@
 					{#if uploadingMessage}
 						<p class="mb-2 flex items-center gap-1.5 text-[11.5px] text-primary-500">
 							<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-							Uploading via {providerLabel(activeUploadProvider)}…
+							Uploading via {providerLabel(activeUploadProvider === 'none' ? 'server' : activeUploadProvider)}…
 						</p>
 					{/if}
 					<div class="flex items-end gap-2">
@@ -2489,9 +2495,7 @@
 							type="button"
 							onclick={() => attachFile('file')}
 							disabled={uploadingMessage || activeUploadProvider === 'none'}
-							title={activeUploadProvider === 'none'
-								? 'No upload provider configured'
-								: `Upload via ${providerLabel(activeUploadProvider)}`}
+							title={`Upload via ${providerLabel(activeUploadProvider === 'none' ? 'server' : activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach file"
 						>
@@ -2504,9 +2508,7 @@
 							type="button"
 							onclick={() => attachFile('image')}
 							disabled={uploadingMessage || activeUploadProvider === 'none'}
-							title={activeUploadProvider === 'none'
-								? 'No upload provider configured'
-								: `Upload via ${providerLabel(activeUploadProvider)}`}
+							title={`Upload via ${providerLabel(activeUploadProvider === 'none' ? 'server' : activeUploadProvider)}`}
 							class="grid size-10 shrink-0 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
 							aria-label="Attach image"
 						>

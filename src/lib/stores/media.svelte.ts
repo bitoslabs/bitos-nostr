@@ -7,12 +7,15 @@
  */
 import { browser } from '$app/environment';
 import {
+	uploadViaServer,
 	uploadWithProvider,
 	type CloudinaryConfig,
 	type MediaProviderId,
 	type MediaSettings,
 	type S3Config,
-	type UploadedMedia
+	type UploadOptions,
+	type UploadedMedia,
+	type UploadedMediaProviderId
 } from '$lib/media/uploaders';
 
 export const STORAGE_KEY = 'bitos:media';
@@ -43,8 +46,9 @@ export const MEDIA_PROVIDERS: {
 	}
 ];
 
-export function providerLabel(id: MediaProviderId | 'none'): string {
+export function providerLabel(id: UploadedMediaProviderId | 'none'): string {
 	if (id === 'none') return 'None';
+	if (id === 'server') return 'BitOS uploads';
 	return MEDIA_PROVIDERS.find((p) => p.id === id)?.label ?? id;
 }
 
@@ -110,10 +114,14 @@ class MediaStore {
 	configured = $derived(MEDIA_PROVIDERS.filter((p) => this.isConfigured(p.id)));
 
 	/** Upload a single file via the given (or the default) provider. */
-	upload = async (file: File, provider?: MediaProviderId): Promise<UploadedMedia> => {
+	upload = async (
+		file: File,
+		provider?: MediaProviderId,
+		options: UploadOptions = {}
+	): Promise<UploadedMedia> => {
 		const id = provider ?? this.state.defaultProvider;
 		if (id === 'none') {
-			throw new Error('No media provider configured. Add one in Settings → Media & Uploads.');
+			return uploadViaServer(file, options);
 		}
 		if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
 		return uploadWithProvider(file, id, this.state);

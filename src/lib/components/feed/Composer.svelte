@@ -105,16 +105,15 @@
 	async function handleFiles(files: FileList | null) {
 		if (!files || !files.length) return;
 		const provider = selectedProvider;
-		if (provider === 'none') {
-			toasts.error('No upload provider. Add Cloudinary or S3 in Settings → Media.');
-			return;
-		}
 		uploading = true;
 		let ok = 0;
 		try {
 			for (const file of Array.from(files)) {
 				try {
-					const uploaded = await media.upload(file, provider);
+					const uploaded = await media.upload(file, provider === 'none' ? undefined : provider, {
+						pubkey: me?.pk,
+						purpose: 'note'
+					});
 					attachments = [...attachments, uploaded];
 					ok++;
 				} catch (e) {
@@ -123,7 +122,7 @@
 			}
 			if (ok)
 				toasts.success(
-					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider)}`
+					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider === 'none' ? 'server' : provider)}`
 				);
 		} finally {
 			uploading = false;
@@ -246,7 +245,7 @@
 				{#if uploading}
 					<p class="mt-2 flex items-center gap-1.5 text-[11.5px] text-primary-500">
 						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-						Uploading via {providerLabel(selectedProvider)}…
+						Uploading via {providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)}…
 					</p>
 				{/if}
 			</div>
@@ -278,10 +277,8 @@
 					<button
 						type="button"
 						onclick={a.pick}
-						disabled={selectedProvider === 'none' || uploading}
-						title={selectedProvider === 'none'
-							? 'No provider configured'
-							: `Upload via ${providerLabel(selectedProvider)}`}
+						disabled={uploading}
+						title={`Upload via ${providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)}`}
 						class="flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-primary-500/5 disabled:pointer-events-none disabled:opacity-40"
 					>
 						<Icon
@@ -322,14 +319,10 @@
 						onchange={(e) => (selectedProvider = e.currentTarget.value as MediaProviderId | 'none')}
 						class="max-w-[140px] rounded-lg bg-[var(--ui-bg-muted)] px-2 py-1.5 text-[12px] font-semibold outline-none"
 					>
-						{#if configuredProviders.length === 0}
-							<option value="none">No provider</option>
-						{:else}
-							{#if selectedProvider === 'none'}<option value="none">Select…</option>{/if}
-							{#each configuredProviders as p (p.id)}
-								<option value={p.id}>{p.label}</option>
-							{/each}
-						{/if}
+						<option value="none">BitOS uploads</option>
+						{#each configuredProviders as p (p.id)}
+							<option value={p.id}>{p.label}</option>
+						{/each}
 					</select>
 				</label>
 

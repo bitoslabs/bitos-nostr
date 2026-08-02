@@ -18,15 +18,19 @@ import { identity } from './identity.svelte';
 import { contacts } from './contacts.svelte';
 import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
+import type { Filter } from 'nostr-tools/filter';
 import { NOSTR_KINDS } from './types';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
 const MAX_PER_AUTHOR = 12;
 const SEEN_KEY = 'bitos:seen-stories';
+const VIEWED_KEY = 'bitos:story-views';
 const IMG_RE = /https?:\/\/[^\s<>"')]+?\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#][^\s<>"')]*)?/i;
 
 export interface StorySlide {
 	id: string;
+	/** Parameterized-replaceable `d` tag — used to build the story's `a` address. */
+	d?: string;
 	pubkey: string;
 	/** Caption / note text. */
 	content: string;
@@ -44,6 +48,51 @@ export interface StoryAuthor {
 	slides: StorySlide[];
 	latestAt: number;
 	hasUnseen: boolean;
+}
+
+/** A like on a story slide (kind 7 ❤️, or any non-view emoji). */
+export interface StoryReaction {
+	pubkey: string;
+	emoji: string;
+	at: number;
+}
+
+/** A public reply to a story slide (kind 1, NIP-10). */
+export interface StoryReply {
+	id: string;
+	pubkey: string;
+	content: string;
+	createdAt: number;
+}
+
+/** Aggregated engagement for a single story slide. */
+export interface StoryInteraction {
+	likes: StoryReaction[];
+	/** Distinct viewer pubkeys (👁️ reactions ∪ reply authors). */
+	views: string[];
+	replies: StoryReply[];
+	likedByMe: boolean;
+	myLikeEventId?: string;
+	likeCount: number;
+	viewCount: number;
+	replyCount: number;
+}
+
+export const EMPTY_STORY_INTERACTION: StoryInteraction = {
+	likes: [],
+	views: [],
+	replies: [],
+	likedByMe: false,
+	likeCount: 0,
+	viewCount: 0,
+	replyCount: 0
+};
+
+const VIEW_EMOJIS = new Set(['👁️', '👁', '👀']);
+
+/** A kind-7 reaction used as an anonymous "view" signal (rather than a like). */
+function isViewContent(content: string): boolean {
+	return VIEW_EMOJIS.has((content || '').trim());
 }
 
 function nowSec() {
@@ -80,6 +129,7 @@ function parseSlide(ev: Event): StorySlide | null {
 	const imageUrl = extractImage(ev);
 	const slide: StorySlide = {
 		id: ev.id,
+		d: ev.tags.find((t) => t[0] === 'd')?.[1] || undefined,
 		pubkey: ev.pubkey.toLowerCase(),
 		content: cleanStoryContent(ev.content, imageUrl),
 		imageUrl,
@@ -100,6 +150,17 @@ class StoriesStore {
 	private seenAt = new Map<string, number>();
 	private unsub: (() => void) | null = null;
 
+	/** Per-slide engagement: likes (❤️), views (👁️), and replies. */
+	interactions = $state<Record<string, StoryInteraction>>({});
+	private trackedSlides = new Map<string, StorySlide>();
+	private addressToId = new Map<string, string>();
+	private reactionsBySlide = new Map<
+		string,
+		Map<string, { emoji: string; at: number; evId: string }>
+	>();
+	private repliesBySlide = new Map<string, Map<string, StoryReply>>();
+	private viewedSlides = new Set<string>();
+
 	/** The current user's own active slides. */
 	mine = $derived(
 		this.authors.find((a) => a.pubkey === identity.current?.pk?.toLowerCase())?.slides ?? []
@@ -113,6 +174,7 @@ class StoriesStore {
 		this.authors = [];
 		this.slidesByAuthor.clear();
 		this.loadSeen();
+		this.loadViewed();
 		this.loading = true;
 		const authors = this.authorList(me);
 		void this.fetch(authors);
@@ -267,6 +329,272 @@ class StoriesStore {
 		);
 		await publish(event);
 		this.ingestDelete(event);
+	}
+
+	/** Build the `a`-tag address (`kind:pubkey:d`) for a story slide. */
+	addressOf = (slide: StorySlide): string | undefined => {
+		if (!slide.d) return undefined;
+		return `${NOSTR_KINDS.STORY_STATUS}:${slide.pubkey}:${slide.d}`;
+	};
+
+	/** Reactive accessor used by the viewer (returns a zeroed object when unknown). */
+	getInteraction = (slideId: string): StoryInteraction =>
+		this.interactions[slideId] ?? EMPTY_STORY_INTERACTION;
+
+	/** Fetch likes/views/replies for a set of slides once (best-effort). */
+	loadActivity = async (slides: StorySlide[]) => {
+		if (!browser || !slides.length) return;
+		this.registerSlides(slides);
+		try {
+			const events = await queryOnce(this.activityFilters(slides));
+			for (const ev of events) this.ingestActivity(ev);
+		} catch {
+			/* best-effort — leave zeroes */
+		}
+	};
+
+	/** Subscribe to live likes/views/replies for a set of slides. Returns an unsub fn. */
+	watchActivity = (slides: StorySlide[]): (() => void) => {
+		if (!browser || !slides.length) return () => {};
+		this.registerSlides(slides);
+		return subscribe(this.activityFilters(slides), {
+			onevent: (ev) => this.ingestActivity(ev)
+		});
+	};
+
+	/** Drop all cached engagement (e.g. on logout). */
+	clearActivity = () => {
+		this.interactions = {};
+		this.trackedSlides.clear();
+		this.addressToId.clear();
+		this.reactionsBySlide.clear();
+		this.repliesBySlide.clear();
+	};
+
+	/** Like a story (kind 7 ❤️). Idempotent — relays keep the latest reaction. */
+	like = async (slide: StorySlide, emoji = '❤️'): Promise<void> => {
+		const me = identity.current;
+		if (!me) throw new Error('No identity');
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.REACTION,
+				content: emoji,
+				created_at: nowSec(),
+				tags: this.targetTags(slide)
+			},
+			hexToBytes(me.sk)
+		);
+		await publish(event);
+		this.ingestActivity(event);
+	};
+
+	/** Remove the current user's like (publishes a NIP-09 delete for it). */
+	unlike = async (slide: StorySlide): Promise<void> => {
+		const me = identity.current;
+		if (!me) throw new Error('No identity');
+		const targetId = this.interactions[slide.id]?.myLikeEventId;
+		const tags = this.targetTags(slide);
+		if (targetId) tags.unshift(['e', targetId]);
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.DELETE,
+				content: 'Removed story like from BitOS',
+				created_at: nowSec(),
+				tags
+			},
+			hexToBytes(me.sk)
+		);
+		await publish(event);
+		this.removeMyLike(slide.id);
+	};
+
+	/** Post a public reply to a story (NIP-10 reply to a replaceable event). */
+	reply = async (slide: StorySlide, text: string): Promise<string> => {
+		const me = identity.current;
+		if (!me) throw new Error('No identity');
+		const content = text.trim();
+		if (!content) throw new Error('Nothing to reply');
+		const address = this.addressOf(slide);
+		const tags: string[][] = [
+			['e', slide.id, '', 'reply'],
+			['p', slide.pubkey]
+		];
+		if (address) tags.push(['a', address, '', 'reply']);
+		const event = finalizeEvent(
+			{ kind: NOSTR_KINDS.TEXT_NOTE, content, created_at: nowSec(), tags },
+			hexToBytes(me.sk)
+		);
+		await publish(event);
+		this.ingestActivity(event);
+		return event.id;
+	};
+
+	/** Record that the current user viewed a slide — once per slide (👁️ reaction). */
+	recordView = async (slide: StorySlide): Promise<void> => {
+		if (!browser) return;
+		const me = identity.current;
+		if (!me) return;
+		if (slide.pubkey === me.pk.toLowerCase()) return; // don't count own views
+		if (this.viewedSlides.has(slide.id)) return;
+		this.viewedSlides.add(slide.id);
+		this.persistViewed();
+		const event = finalizeEvent(
+			{
+				kind: NOSTR_KINDS.REACTION,
+				content: '👁️',
+				created_at: nowSec(),
+				tags: this.targetTags(slide)
+			},
+			hexToBytes(me.sk)
+		);
+		try {
+			await publish(event);
+			this.ingestActivity(event);
+		} catch {
+			/* views are best-effort */
+		}
+	};
+
+	/** `e` + `p` (+ `a`) tags pointing a reaction/reply at a story slide. */
+	private targetTags(slide: StorySlide): string[][] {
+		const address = this.addressOf(slide);
+		const tags: string[][] = [
+			['e', slide.id],
+			['p', slide.pubkey]
+		];
+		if (address) tags.push(['a', address]);
+		return tags;
+	}
+
+	private activityFilters(slides: StorySlide[]): Filter[] {
+		const ids = slides.map((s) => s.id);
+		const addresses = slides.map((s) => this.addressOf(s)).filter(Boolean) as string[];
+		const filters: Filter[] = [{ kinds: [NOSTR_KINDS.REACTION], '#e': ids }];
+		if (addresses.length) {
+			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], '#a': addresses });
+			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids });
+		}
+		return filters;
+	}
+
+	private registerSlides(slides: StorySlide[]) {
+		for (const s of slides) {
+			this.trackedSlides.set(s.id, s);
+			const a = this.addressOf(s);
+			if (a) this.addressToId.set(a, s.id);
+			if (!this.reactionsBySlide.has(s.id)) this.reactionsBySlide.set(s.id, new Map());
+			if (!this.repliesBySlide.has(s.id)) this.repliesBySlide.set(s.id, new Map());
+			if (!this.interactions[s.id]) {
+				this.interactions = { ...this.interactions, [s.id]: EMPTY_STORY_INTERACTION };
+			}
+		}
+	}
+
+	/** Resolve the tracked slide id targeted by a reaction/reply's tags. */
+	private slideIdFromTags(tags: string[][]): string | undefined {
+		for (const t of tags) {
+			if (t[0] === 'e' && t[1] && this.trackedSlides.has(t[1])) return t[1];
+		}
+		for (const t of tags) {
+			if (t[0] === 'a' && t[1]) {
+				const id = this.addressToId.get(t[1]);
+				if (id) return id;
+			}
+		}
+		return undefined;
+	}
+
+	private ingestActivity(ev: Event) {
+		if (ev.kind === NOSTR_KINDS.REACTION) {
+			const slideId = this.slideIdFromTags(ev.tags);
+			if (!slideId) return;
+			const map = this.reactionsBySlide.get(slideId)!;
+			const pubkey = ev.pubkey.toLowerCase();
+			const prev = map.get(pubkey);
+			if (prev && prev.at > ev.created_at) return; // keep the latest reaction per pubkey
+			map.set(pubkey, { emoji: (ev.content || '').trim(), at: ev.created_at, evId: ev.id });
+			this.publishInteraction(slideId);
+			profiles.ensure([ev.pubkey]);
+		} else if (ev.kind === NOSTR_KINDS.TEXT_NOTE) {
+			const slideId = this.slideIdFromTags(ev.tags);
+			if (!slideId) return;
+			const map = this.repliesBySlide.get(slideId)!;
+			if (map.has(ev.id)) return;
+			map.set(ev.id, {
+				id: ev.id,
+				pubkey: ev.pubkey.toLowerCase(),
+				content: ev.content,
+				createdAt: ev.created_at
+			});
+			this.publishInteraction(slideId);
+			profiles.ensure([ev.pubkey]);
+		}
+	}
+
+	private publishInteraction(slideId: string) {
+		this.interactions = { ...this.interactions, [slideId]: this.buildInteraction(slideId) };
+	}
+
+	private buildInteraction(slideId: string): StoryInteraction {
+		const reactions = this.reactionsBySlide.get(slideId);
+		const repliesMap = this.repliesBySlide.get(slideId);
+		const me = identity.current?.pk?.toLowerCase();
+		const replies: StoryReply[] = repliesMap
+			? [...repliesMap.values()].sort((a, b) => a.createdAt - b.createdAt)
+			: [];
+		const likes: StoryReaction[] = [];
+		const likePubkeys = new Set<string>();
+		const viewPubkeys = new Set<string>();
+		let myLikeEventId: string | undefined;
+		if (reactions) {
+			for (const [pubkey, r] of reactions) {
+				if (isViewContent(r.emoji)) {
+					viewPubkeys.add(pubkey);
+					continue;
+				}
+				if (likePubkeys.has(pubkey)) continue;
+				likePubkeys.add(pubkey);
+				likes.push({ pubkey, emoji: r.emoji || '❤️', at: r.at });
+				if (pubkey === me) myLikeEventId = r.evId;
+			}
+		}
+		for (const reply of replies) viewPubkeys.add(reply.pubkey.toLowerCase());
+		return {
+			likes,
+			views: [...viewPubkeys],
+			replies,
+			likedByMe: !!myLikeEventId,
+			myLikeEventId,
+			likeCount: likes.length,
+			viewCount: viewPubkeys.size,
+			replyCount: replies.length
+		};
+	}
+
+	private removeMyLike(slideId: string) {
+		const map = this.reactionsBySlide.get(slideId);
+		const me = identity.current?.pk?.toLowerCase();
+		if (!map || !me) return;
+		const cur = map.get(me);
+		if (cur && !isViewContent(cur.emoji)) map.delete(me);
+		this.publishInteraction(slideId);
+	}
+
+	private loadViewed() {
+		if (!browser) return;
+		try {
+			const raw = localStorage.getItem(VIEWED_KEY);
+			if (!raw) return;
+			const parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) for (const id of parsed) this.viewedSlides.add(String(id));
+		} catch {
+			/* ignore */
+		}
+	}
+
+	private persistViewed() {
+		if (!browser) return;
+		localStorage.setItem(VIEWED_KEY, JSON.stringify([...this.viewedSlides]));
 	}
 
 	/** Mark an author's stories as seen (drives the "read" ring). */

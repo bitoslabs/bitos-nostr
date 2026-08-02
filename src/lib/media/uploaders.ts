@@ -12,6 +12,13 @@
  *                   must have CORS configured to allow PUT from this origin.
  */
 export type MediaProviderId = 'cloudinary' | 's3';
+export type UploadedMediaProviderId = MediaProviderId | 'server';
+export type UploadPurpose = 'note' | 'story' | 'message' | 'profile' | 'test';
+
+export interface UploadOptions {
+	pubkey?: string;
+	purpose?: UploadPurpose;
+}
 
 export interface CloudinaryConfig {
 	/** Cloud name (the `xxxxx` in `res.cloudinary.com/xxxxx`). */
@@ -51,7 +58,7 @@ export interface UploadedMedia {
 	kind: 'image' | 'video' | 'file';
 	mimeType: string;
 	bytes: number;
-	provider: MediaProviderId;
+	provider: UploadedMediaProviderId;
 }
 
 export function classifyMime(mime: string): UploadedMedia['kind'] {
@@ -364,6 +371,38 @@ export async function uploadToS3(file: File, cfg: S3Config): Promise<UploadedMed
 		mimeType: file.type || 'application/octet-stream',
 		bytes: file.size,
 		provider: 's3'
+	};
+}
+
+export async function uploadViaServer(file: File, options: UploadOptions = {}): Promise<UploadedMedia> {
+	const form = new FormData();
+	form.append('file', file);
+	if (options.pubkey) form.append('pubkey', options.pubkey);
+	if (options.purpose) form.append('purpose', options.purpose);
+
+	const res = await fetch('/api/media/upload', {
+		method: 'POST',
+		body: form
+	});
+
+	let payload: { error?: string } & Partial<UploadedMedia> = {};
+	try {
+		payload = (await res.json()) as typeof payload;
+	} catch {
+		payload = {};
+	}
+
+	if (!res.ok) {
+		throw new Error(payload.error || `Server upload failed: ${res.status} ${res.statusText}`);
+	}
+
+	if (!payload.url) throw new Error('Server upload succeeded without a media URL');
+	return {
+		url: payload.url,
+		kind: payload.kind ?? classifyMime(file.type),
+		mimeType: payload.mimeType ?? (file.type || 'application/octet-stream'),
+		bytes: payload.bytes ?? file.size,
+		provider: 'server'
 	};
 }
 

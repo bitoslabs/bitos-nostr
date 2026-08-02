@@ -21,7 +21,7 @@
 		try {
 			const blob = new Blob(['BitOS upload test\n'], { type: 'text/plain' });
 			const file = new File([blob], 'bitos-test.txt', { type: 'text/plain' });
-			const result = await media.upload(file, id);
+			const result = await media.upload(file, id, { purpose: 'test' });
 			toasts.success(`Test upload OK via ${providerLabel(id)}`);
 			void result;
 		} catch (e) {
@@ -34,7 +34,8 @@
 
 <h2 class="mb-1 font-display text-[24px] font-extrabold">Media & Uploads</h2>
 <p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
-	Choose where photos and videos are hosted when you attach them to a note.
+	Choose where photos and videos are hosted when you attach them to a note. If you leave these
+	empty, BitOS can fall back to the server upload API when it is configured.
 </p>
 
 <!-- Default provider -->
@@ -44,7 +45,8 @@
 		<h3 class="text-[15px] font-bold">Default provider</h3>
 	</div>
 	<p class="mb-3 text-[12px] text-[var(--ui-text-muted)]">
-		Used by the composer unless you pick another one while posting.
+		Used by the composer unless you pick another one while posting. Selecting none keeps uploads on
+		the BitOS server fallback path.
 	</p>
 	<div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
 		<button
@@ -55,7 +57,7 @@
 				: 'border-[var(--ui-border)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]'}"
 		>
 			<p class="text-[13px] font-bold text-[var(--ui-text)]">None</p>
-			<p class="mt-0.5 text-[11px]">Disable uploads</p>
+			<p class="mt-0.5 text-[11px]">Use BitOS server uploads</p>
 		</button>
 		{#each MEDIA_PROVIDERS as p (p.id)}
 			<button

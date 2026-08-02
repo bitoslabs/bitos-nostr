@@ -33,6 +33,15 @@ function isReaction(content: string): boolean {
 	return content === '+' || content === '-' || /\p{Extended_Pictographic}/u.test(content);
 }
 
+/** A kind-1 note that replies to a story (kind 30315) — kept out of the global feed. */
+function isStoryReply(ev: { tags: string[][] }): boolean {
+	const hasStoryA = ev.tags.some(
+		(t) => t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith(`${NOSTR_KINDS.STORY_STATUS}:`)
+	);
+	if (!hasStoryA) return false;
+	return ev.tags.some((t) => t[0] === 'e');
+}
+
 class FeedStore {
 	notes = $state<FeedNote[]>([]);
 	pendingNotes = $state<FeedNote[]>([]);
@@ -154,6 +163,7 @@ class FeedStore {
 		options: { queueIfLive?: boolean } = {}
 	) {
 		if (blocks.has(ev.pubkey)) return;
+		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
 		const pollOptions = parsePoll(ev.tags);

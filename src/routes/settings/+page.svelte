@@ -69,16 +69,15 @@
 
 	async function uploadProfileImage(file: File, target: 'avatar' | 'banner') {
 		const provider = activeUploadProvider();
-		if (provider === 'none') {
-			toasts.error('No media provider configured. Add one in Settings → Media & Uploads.');
-			return;
-		}
 		uploadingMedia = target;
 		try {
-			const result = await media.upload(file, provider);
+			const result = await media.upload(file, provider === 'none' ? undefined : provider, {
+				pubkey: me?.pk,
+				purpose: 'profile'
+			});
 			if (target === 'avatar') editingPicture = result.url;
 			else editingBanner = result.url;
-			toasts.success(`Uploaded via ${providerLabel(provider)}`);
+			toasts.success(`Uploaded via ${providerLabel(provider === 'none' ? 'server' : provider)}`);
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {
@@ -488,7 +487,7 @@
 								{#snippet trailing()}
 									<button
 										type="button"
-										title="Upload via {providerLabel(activeUploadProvider())}"
+										title="Upload via {providerLabel(activeUploadProvider() === 'none' ? 'server' : activeUploadProvider())}"
 										onclick={() => avatarInput?.click()}
 										disabled={uploadingMedia !== null}
 										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"
@@ -520,7 +519,7 @@
 								{#snippet trailing()}
 									<button
 										type="button"
-										title="Upload via {providerLabel(activeUploadProvider())}"
+										title="Upload via {providerLabel(activeUploadProvider() === 'none' ? 'server' : activeUploadProvider())}"
 										onclick={() => bannerInput?.click()}
 										disabled={uploadingMedia !== null}
 										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"
