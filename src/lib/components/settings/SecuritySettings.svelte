@@ -4,7 +4,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { relays } from '$lib/nostr/relays.svelte';
+	import { relays, RECOMMENDED } from '$lib/nostr/relays.svelte';
 	import type { Identity } from '$lib/nostr/types';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -41,37 +41,64 @@
 		if (testingRelays[url]) return;
 		testingRelays = { ...testingRelays, [url]: true };
 		relays.setStatus(url, 'connecting');
-		const started = performance.now();
-		try {
-			const latency = await new Promise<number>((resolve, reject) => {
-				const ws = new WebSocket(url);
-				const timeout = window.setTimeout(() => {
-					ws.close();
-					reject(new Error('Connection timed out'));
-				}, 6000);
-				ws.onopen = () => {
-					window.clearTimeout(timeout);
-					const ms = Math.round(performance.now() - started);
-					ws.close();
-					resolve(ms);
-				};
-				ws.onerror = () => {
-					window.clearTimeout(timeout);
-					reject(new Error('Connection failed'));
-				};
-			});
-			relays.setStatus(url, 'ok', latency);
-			toasts.success(`${url} connected in ${latency}ms`);
-		} catch {
+		const res = await relays.ping(url);
+		if (res.status === 'ok') {
+			relays.setStatus(url, 'ok', res.latency);
+			toasts.success(`${url} connected in ${res.latency}ms`);
+		} else {
 			relays.setStatus(url, 'fail', null);
 			toasts.error(`${url} failed`);
-		} finally {
-			testingRelays = { ...testingRelays, [url]: false };
 		}
+		testingRelays = { ...testingRelays, [url]: false };
 	}
 
 	function testAllRelays() {
 		for (const relay of relays.list) void testRelay(relay.url);
+	}
+
+	type RecHealth = { status: 'unknown' | 'connecting' | 'ok' | 'fail'; latency: number | null };
+	let recHealth = $state<Record<string, RecHealth>>({});
+	let queryingRec = $state(false);
+
+	const recommendedNotAdded = $derived(
+		RECOMMENDED.filter((r) => !relays.list.some((x) => x.url === r.url))
+	);
+
+	/** limit/offset pagination for the recommended panel. */
+	const REC_PAGE_SIZE = 4;
+	let recPage = $state(0);
+	const recTotalPages = $derived(
+		Math.max(1, Math.ceil(recommendedNotAdded.length / REC_PAGE_SIZE))
+	);
+	const recPageSlice = $derived(
+		recommendedNotAdded.slice(recPage * REC_PAGE_SIZE, recPage * REC_PAGE_SIZE + REC_PAGE_SIZE)
+	);
+	// Clamp the page back into range when the list shrinks (e.g. after adding a relay).
+	$effect(() => {
+		if (recPage > recTotalPages - 1) recPage = Math.max(0, recTotalPages - 1);
+	});
+
+	async function queryRecommended() {
+		if (queryingRec) return;
+		const targets = recPageSlice; // only the visible page (offset = page * limit)
+		if (!targets.length) return;
+		queryingRec = true;
+		const init: Record<string, RecHealth> = {};
+		for (const r of targets) init[r.url] = { status: 'connecting', latency: null };
+		recHealth = { ...recHealth, ...init };
+		await Promise.all(
+			targets.map(async (r) => {
+				const res = await relays.ping(r.url);
+				recHealth = { ...recHealth, [r.url]: { status: res.status, latency: res.latency } };
+			})
+		);
+		queryingRec = false;
+	}
+
+	function addRecommended(url: string) {
+		const res = relays.add(url);
+		if (res.ok) toasts.success('Relay added');
+		else toasts.error(res.error ?? 'Could not add relay');
 	}
 
 	async function copy(text: string, label: string) {
@@ -306,4 +333,117 @@
 			</li>
 		{/each}
 	</ul>
+</div>
+
+<div class="post-card mb-5 p-5">
+	<div class="mb-1 flex items-center gap-2">
+		<Icon name="i-lucide-sparkles" class="size-[18px] text-primary-500" />
+		<h3 class="text-[15px] font-bold">Recommended relays</h3>
+		<span class="ml-auto text-[11px] text-[var(--ui-text-dimmed)]"
+			>{recommendedNotAdded.length} available</span
+		>
+	</div>
+	<p class="mb-3 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">
+		Popular, reliable relays. Query reachability and add the ones you want — they're checked live.
+	</p>
+	{#if recommendedNotAdded.length === 0}
+		<p
+			class="rounded-lg border border-dashed border-[var(--ui-border-muted)] px-3 py-4 text-center text-[12px] text-[var(--ui-text-dimmed)]"
+		>
+			You've added all recommended relays 🎉
+		</p>
+	{:else}
+		<div class="mb-3">
+			<Button
+				color="neutral"
+				variant="subtle"
+				size="sm"
+				icon={queryingRec ? 'i-lucide-loader-circle' : 'i-lucide-wifi'}
+				onclick={queryRecommended}
+				disabled={queryingRec}
+				class={queryingRec ? '[&_.iconify]:animate-spin' : ''}>{queryingRec
+					? 'Querying…'
+					: 'Query reachability'}</Button
+			>
+		</div>
+		<ul
+			class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
+		>
+			{#each recPageSlice as rec (rec.url)}
+				{@const h = recHealth[rec.url]}
+				<li class="flex items-center gap-2.5 px-3 py-2.5">
+					<span
+						class="size-2 shrink-0 rounded-full {h?.status === 'ok'
+							? 'bg-[var(--tone-success-text)]'
+							: h?.status === 'fail'
+								? 'bg-[var(--tone-error-text)]'
+									: h?.status === 'connecting'
+										? 'animate-pulse bg-primary-500'
+										: 'bg-[var(--ui-text-dimmed)]'}"
+					></span>
+					<div class="min-w-0 flex-1 leading-tight">
+						<div class="flex items-center gap-1.5">
+							<span class="truncate text-[12.5px] font-bold">{rec.name}</span>
+							{#if h?.status === 'ok' && h.latency != null}
+								<span class="text-[10px] text-[var(--ui-text-dimmed)]">· {h.latency}ms</span>
+							{/if}
+						</div>
+						<div class="truncate text-[10.5px] text-[var(--ui-text-dimmed)]">
+							{rec.description} · <span class="font-mono">{rec.url}</span>
+						</div>
+					</div>
+					<button
+						type="button"
+						onclick={() => addRecommended(rec.url)}
+						class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[10.5px] font-semibold text-primary-500 transition hover:bg-primary-500/10"
+					>
+						<Icon name="i-lucide-plus" class="size-3.5" />Add
+					</button>
+				</li>
+			{/each}
+		</ul>
+
+		<!-- pagination: prev · dots + page count · next (limit/offset) -->
+		<div class="mt-3 flex items-center justify-between gap-2">
+			<button
+				type="button"
+				disabled={recPage === 0}
+				onclick={() => (recPage = Math.max(0, recPage - 1))}
+				class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition {recPage === 0
+					? 'cursor-not-allowed text-[var(--ui-text-dimmed)]'
+					: 'text-primary-500 hover:bg-primary-500/10'}"
+			>
+				<Icon name="i-lucide-chevron-left" class="size-3.5" />Prev
+			</button>
+			<div class="flex items-center gap-1.5">
+				{#each Array(recTotalPages).fill(0) as _, i (i)}
+					<button
+						type="button"
+						onclick={() => (recPage = i)}
+						aria-label="Go to page {i + 1}"
+						class="size-1.5 rounded-full transition {i === recPage
+							? 'scale-110 bg-primary-500'
+							: 'bg-[var(--ui-border-accented)] hover:bg-[var(--ui-text-dimmed)]'}"
+					></button>
+				{/each}
+				<span
+					class="ml-1.5 text-[11px] font-medium tabular-nums text-[var(--ui-text-dimmed)]"
+				>
+					{recPage + 1}/{recTotalPages}
+				</span
+				>
+			</div>
+			<button
+				type="button"
+				disabled={recPage >= recTotalPages - 1}
+				onclick={() => (recPage = Math.min(recTotalPages - 1, recPage + 1))}
+				class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition {recPage >=
+					recTotalPages - 1
+					? 'cursor-not-allowed text-[var(--ui-text-dimmed)]'
+					: 'text-primary-500 hover:bg-primary-500/10'}"
+			>
+				Next<Icon name="i-lucide-chevron-right" class="size-3.5" />
+			</button>
+		</div>
+	{/if}
 </div>

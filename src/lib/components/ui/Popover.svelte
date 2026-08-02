@@ -67,7 +67,7 @@
 		triggerClass?: string;
 		triggerActiveClass?: string;
 		label?: string;
-		trigger?: Snippet;
+		trigger?: Snippet<[boolean]>;
 		children?: Snippet;
 	} = $props();
 
@@ -92,7 +92,7 @@
 		aria-expanded={open}
 		aria-haspopup="menu"
 	>
-		{@render trigger?.()}
+		{@render trigger?.(open)}
 	</button>
 	{#if open}
 		<div role="menu" class={panelClass}>

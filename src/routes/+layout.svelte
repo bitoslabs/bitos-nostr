@@ -212,6 +212,7 @@
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
+		profiles.load();
 		blocks.load();
 		privacyNotificationSettings.load();
 		relays.load();

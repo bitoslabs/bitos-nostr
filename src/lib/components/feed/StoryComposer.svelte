@@ -30,9 +30,6 @@
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
 	const myName = $derived(myProfile?.display_name || myProfile?.name || 'You');
-	const hasProvider = $derived(
-		media.state.defaultProvider !== 'none' || media.configured.length > 0
-	);
 	const canPost = $derived((text.trim() || imageUrl) && !posting);
 
 	function reset() {
@@ -57,15 +54,14 @@
 			media.state.defaultProvider !== 'none'
 				? media.state.defaultProvider
 				: media.configured[0]?.id;
-		if (!provider) {
-			toasts.error('No media provider configured.');
-			return;
-		}
 		uploading = true;
 		try {
-			const result = await media.upload(file, provider);
+			const result = await media.upload(file, provider, {
+				pubkey: me?.pk,
+				purpose: 'story'
+			});
 			imageUrl = result.url;
-			toasts.success(`Uploaded via ${providerLabel(provider)}`);
+			toasts.success(`Uploaded via ${providerLabel(provider ?? 'server')}`);
 		} catch (err) {
 			toasts.error((err as Error).message);
 		} finally {
@@ -211,9 +207,9 @@
 							onclick={() => (imageUrl = undefined)}
 							size="sm">Remove</Button
 						>
-					{:else if !hasProvider}
+					{:else}
 						<span class="text-[11px] text-[var(--ui-text-dimmed)]">
-							Configure a provider in Settings → Media
+							Uses BitOS uploads if you do not configure Cloudinary or S3
 						</span>
 					{/if}
 				</div>

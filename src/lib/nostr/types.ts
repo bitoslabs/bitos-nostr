@@ -124,6 +124,13 @@ export interface RelayRecord {
 	checkedAt?: number;
 }
 
+/** A curated, community-popular relay surfaced under Settings → Recommended. */
+export interface RecommendedRelay {
+	url: string;
+	name: string;
+	description: string;
+}
+
 /** Identity material held in memory + localStorage. */
 export interface Identity {
 	/** hex 32-byte private key */

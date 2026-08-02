@@ -863,6 +863,125 @@
 			opacity: 0;
 		}
 	}
+
+	/* Facebook/Instagram-style double-tap “like” burst. */
+	.like-burst-heart {
+		will-change: transform, opacity;
+		animation: bitos-like-pop 0.9s cubic-bezier(0.22, 1.15, 0.3, 1) forwards;
+	}
+	@keyframes bitos-like-pop {
+		0% {
+			transform: scale(0) rotate(-8deg);
+			opacity: 0;
+		}
+		22% {
+			transform: scale(1.18) rotate(5deg);
+			opacity: 1;
+		}
+		44% {
+			transform: scale(0.96) rotate(-2deg);
+		}
+		64% {
+			transform: scale(1.04) rotate(1deg);
+		}
+		82% {
+			transform: scale(1) rotate(0deg);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1.18) rotate(0deg);
+			opacity: 0;
+		}
+	}
+	.like-burst-ring {
+		will-change: transform, opacity;
+		animation: bitos-like-ring 0.75s cubic-bezier(0.22, 0.6, 0.3, 1) forwards;
+	}
+	@keyframes bitos-like-ring {
+		0% {
+			transform: scale(0.15);
+			opacity: 0.55;
+		}
+		100% {
+			transform: scale(2.4);
+			opacity: 0;
+		}
+	}
+	/* Small spring pop for the heart button icon when toggled. */
+	.like-pop {
+		will-change: transform;
+		animation: bitos-like-pop-sm 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+	}
+	@keyframes bitos-like-pop-sm {
+		0% {
+			transform: scale(0.6);
+		}
+		50% {
+			transform: scale(1.35);
+		}
+		100% {
+			transform: scale(1);
+		}
+	}
+
+	/* Confetti-of-hearts particles for the Facebook-style “live like”. */
+	.like-particle {
+		position: absolute;
+		line-height: 1;
+		user-select: none;
+		pointer-events: none;
+		will-change: transform, opacity;
+		animation-name: bitos-like-particle;
+		animation-timing-function: cubic-bezier(0.2, 0.55, 0.25, 1);
+		animation-fill-mode: forwards;
+	}
+	@keyframes bitos-like-particle {
+		0% {
+			transform: translate(-50%, -50%) scale(0.3) rotate(0deg);
+			opacity: 0;
+		}
+		18% {
+			opacity: 1;
+		}
+		100% {
+			transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty) + 72px)) scale(0.45)
+				rotate(var(--rot));
+			opacity: 0;
+		}
+	}
+	.like-combo-badge {
+		will-change: transform, opacity;
+		animation: bitos-combo-pop 0.95s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+	}
+	@keyframes bitos-combo-pop {
+		0% {
+			transform: scale(0) rotate(-8deg);
+			opacity: 0;
+		}
+		25% {
+			transform: scale(1.2) rotate(3deg);
+			opacity: 1;
+		}
+		70% {
+			transform: scale(1) rotate(0deg);
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1.05) translateY(-12px) rotate(0deg);
+			opacity: 0;
+		}
+	}
+	/* Respect users who prefer less motion. */
+	@media (prefers-reduced-motion: reduce) {
+		.like-burst-heart,
+		.like-burst-ring,
+		.like-particle,
+		.like-combo-badge,
+		.like-pop {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+		}
+	}
 	.live-pulse {
 		animation: pulse-live 1.5s ease-in-out infinite;
 	}

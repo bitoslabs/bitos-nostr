@@ -89,6 +89,40 @@ npm install
 npm run dev -- --open
 ```
 
+### Optional server upload fallback
+
+If a user does not configure their own Cloudinary or S3 account, BitOS can
+upload media through the app server and forward it to Cloudinary. Copy
+`.env.example` to `.env` and set:
+
+```sh
+BITOS_CLOUDINARY_CLOUD_NAME=...
+BITOS_CLOUDINARY_API_KEY=...
+BITOS_CLOUDINARY_API_SECRET=...
+BITOS_CLOUDINARY_UPLOAD_PRESET=...
+BITOS_CLOUDINARY_FOLDER=bitos
+```
+
+You need `BITOS_CLOUDINARY_CLOUD_NAME` plus either:
+
+- `BITOS_CLOUDINARY_UPLOAD_PRESET` for unsigned uploads, or
+- `BITOS_CLOUDINARY_API_KEY` + `BITOS_CLOUDINARY_API_SECRET` for signed uploads
+
+The fallback endpoint lives at `/api/media/upload` and is used automatically by
+notes, stories, messages, and profile media uploads when no personal provider is
+selected. Server uploads are organized into Cloudinary folders like:
+
+```text
+<BITOS_CLOUDINARY_FOLDER>/nostr/<pubkey>/<purpose>
+```
+
+Examples:
+
+- `bitos/nostr/<pubkey>/note`
+- `bitos/nostr/<pubkey>/story`
+- `bitos/nostr/<pubkey>/message`
+- `bitos/nostr/<pubkey>/profile`
+
 First visit → onboarding: **Create a new identity** (back up the `nsec`!) or
 **import** an existing key. Then the feed and messages start streaming from the
 default relays (`relay.damus.io`, `nos.lol`, `relay.nostr.band`).

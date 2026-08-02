@@ -14,6 +14,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import StoryRing from './StoryRing.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
+	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
@@ -22,6 +23,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
+	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
@@ -110,19 +112,22 @@
 	const contentTokens = $derived(parseContent(visibleContent));
 	const mediaAttachments = $derived(extractMedia(note.content));
 	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
+	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
 	const hiddenMediaCount = $derived(
 		Math.max(0, mediaAttachments.length - visibleMediaAttachments.length)
 	);
 	let burst = $state(false);
+	let articleEl = $state<HTMLElement | undefined>(undefined);
+	let likeBursts = $state<{ id: number; x: number; y: number; particles: Particle[] }[]>([]);
+	let likeBurstSeq = 0;
 	let rawOpen = $state(false);
 	let deleteOpen = $state(false);
 	let pendingDelete = $state<FeedNote | null>(null);
 	let deleting = $state(false);
 	let previewOpen = $state(false);
 	let previewImageIndex = $state(0);
-	let previewImageUrl = $state('');
 	let replyOpen = $state(false);
 	let replyText = $state('');
 	let replying = $state(false);
@@ -223,24 +228,7 @@
 	function previewImage(url: string) {
 		const index = previewableImages.findIndex((media) => media.url === url);
 		previewImageIndex = index >= 0 ? index : 0;
-		previewImageUrl = url;
 		previewOpen = true;
-	}
-
-	function syncPreviewImage() {
-		previewImageUrl = previewableImages[previewImageIndex]?.url ?? '';
-	}
-
-	function showPreviousPreviewImage() {
-		if (previewImageIndex <= 0) return;
-		previewImageIndex -= 1;
-		syncPreviewImage();
-	}
-
-	function showNextPreviewImage() {
-		if (previewImageIndex >= previewableImages.length - 1) return;
-		previewImageIndex += 1;
-		syncPreviewImage();
 	}
 
 	function trackFeedVideo(node: HTMLVideoElement) {
@@ -467,7 +455,10 @@
 		popovers.close();
 	}
 
-	async function react() {
+	async function react(e?: MouseEvent) {
+		// Capture the click target synchronously — `e.currentTarget` is nulled
+		// once the event finishes dispatching (i.e. after the first `await`).
+		const targetEl = (e?.currentTarget as HTMLElement | null) ?? null;
 		try {
 			const wasLiked = liked;
 			await feed.react(note, '❤️');
@@ -475,10 +466,23 @@
 			if (!wasLiked) {
 				burst = true;
 				setTimeout(() => (burst = false), 600);
+				if (targetEl && articleEl) {
+					const a = articleEl.getBoundingClientRect();
+					const t = targetEl.getBoundingClientRect();
+					triggerLikeBurst(t.left + t.width / 2 - a.left, t.top + t.height / 2 - a.top);
+				}
 			}
-		} catch (e) {
-			toasts.error((e as Error).message);
+		} catch (err) {
+			toasts.error((err as Error).message);
 		}
+	}
+
+	function triggerLikeBurst(x: number, y: number) {
+		const id = ++likeBurstSeq;
+		likeBursts = [...likeBursts, { id, x, y, particles: makeParticles(12) }];
+		setTimeout(() => {
+			likeBursts = likeBursts.filter((b) => b.id !== id);
+		}, 1100);
 	}
 
 	function nextLocalReaction(current: FeedNote, wasLiked: boolean): FeedNote {
@@ -577,18 +581,12 @@
 	}
 
 	$effect(() => {
-		if (!previewOpen) {
-			previewImageUrl = '';
-			previewImageIndex = 0;
-		}
-	});
-
-	$effect(() => {
 		if (identity.current) profiles.ensure([identity.current.pk]);
 	});
 </script>
 
 <article
+	bind:this={articleEl}
 	class="post-card fade-up relative overflow-visible"
 	style="animation-delay:{index * 0.05}s"
 >
@@ -601,7 +599,7 @@
 			<div class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
-					{#if note.reactions.length}<Icon
+					{#if profile?.nip05}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
 						/>{/if}
@@ -924,93 +922,112 @@
 	{/if}
 
 	<!-- Reactions summary -->
-	{#if reactionCount > 0 || note.zapCount > 0}
+	{#if reactionCount > 0 || note.zapCount > 0 || note.repostCount > 0}
 		<div
-			class="flex items-center justify-between px-4 pt-1 pb-2 text-[12px] text-[var(--ui-text-dimmed)]"
+			class="flex items-center justify-between gap-2 px-4 pt-1 pb-1.5 text-[12px] text-[var(--ui-text-dimmed)]"
 		>
-			<div class="flex items-center gap-1.5">
+			<div class="flex min-w-0 items-center gap-1.5">
 				{#if reactionCount > 0}
-					<span
-						class="grid size-5 place-items-center rounded-full bg-primary-500 text-[10px] ring-2 ring-[var(--surface-bg)]"
-						>❤️</span
-					>
-					<span>{reactionCount}</span>
+					<span class="flex -space-x-1.5">
+						{#each note.reactions.slice(0, 3) as r (r.emoji)}
+							<span
+								class="grid size-[18px] place-items-center rounded-full bg-[var(--ui-bg-muted)] text-[9px] ring-2 ring-[var(--surface-bg)]"
+								>{r.emoji || '❤️'}</span
+							>
+						{/each}
+					</span>
+					<span class="font-semibold text-[var(--ui-text-muted)]">{reactionCount}</span>
 				{/if}
 			</div>
-			<span>{note.repostCount || 0} reposts · {compactSats(note.zapTotalSats)} sats</span>
+			<div class="flex shrink-0 items-center gap-3">
+				{#if note.repostCount > 0}<span>{note.repostCount} reposts</span>{/if}
+				{#if note.zapCount > 0}
+					<span class="inline-flex items-center gap-0.5">
+						{compactSats(note.zapTotalSats)} sats
+					</span>
+				{/if}
+			</div>
 		</div>
 	{/if}
 
 	<!-- Action bar -->
 	<div
-		class="mx-4 my-2 flex items-center justify-between gap-1 border-y border-[var(--ui-border-muted)] py-1.5 md:justify-around"
+		class="mx-4 mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] py-1"
 	>
 		<button
 			type="button"
 			onclick={react}
-			class="relative flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors hover:bg-primary-500/10 md:flex-none md:px-3 md:py-1.5 {liked
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-muted)] hover:text-primary-500'}"
+			class="group relative flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition active:scale-90 md:flex-none md:px-3 {liked
+				? 'text-[var(--tone-error-text)]'
+				: 'text-[var(--ui-text-muted)] hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]'}"
 			aria-label={liked ? 'Unlike' : 'Like'}
 		>
-			<span class="relative">
-				<Icon name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-[16px]" />
+			<span class="relative grid place-items-center">
+				<Icon
+					name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+					class="size-[18px] transition group-active:scale-90"
+				/>
 				{#if burst}
-					<span class="heart-burst pointer-events-none absolute inset-0 text-primary-500">
-						<Icon name="i-solar-heart-bold" class="size-[16px]" />
+					<span
+						class="heart-burst pointer-events-none absolute inset-0 text-[var(--tone-error-text)]"
+					>
+						<Icon name="i-solar-heart-bold" class="size-[18px]" />
 					</span>
 				{/if}
 			</span>
 			{#if reactionCount > 0}
-				<span class="text-[12px] md:hidden">{reactionCount}</span>
+				<span class="tabular-nums">{reactionCount}</span>
+			{:else}
+				<span class="hidden md:inline">Like</span>
 			{/if}
-			<span class="hidden md:inline">{liked ? 'Unlike' : 'Like'}</span>
 		</button>
 		<button
 			type="button"
 			onclick={startReply}
 			disabled={!canCommentOnNote}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-primary-500/10 hover:text-primary-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
 			aria-label={directReplies.length
 				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 				: 'Comment'}
 		>
-			<Icon name="i-lucide-message-circle" class="size-[16px]" />
+			<Icon name="i-lucide-message-circle" class="size-[18px]" />
 			{#if directReplies.length > 0}
-				<span class="text-[12px] md:hidden">{directReplies.length}</span>
+				<span class="tabular-nums">{directReplies.length}</span>
+			{:else}
+				<span class="hidden md:inline">Comment</span>
 			{/if}
-			<span class="hidden md:inline">
-				{directReplies.length
-					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
-					: 'Comment'}
-			</span>
 		</button>
 		<button
 			type="button"
 			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 md:flex-none md:px-3"
 			aria-label="Share"
 		>
-			<Icon name="i-lucide-share" class="size-[16px]" />
+			<Icon name="i-lucide-share" class="size-[18px]" />
 			<span class="hidden md:inline">Share</span>
 		</button>
 		<button
 			type="button"
 			onclick={zapNote}
 			disabled={!lightningAddress}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
 			aria-label={zapLabel}
 		>
-			<Icon name="i-lucide-zap" class="size-[16px]" />
+			<Icon name="i-lucide-zap" class="size-[18px]" />
 			<span class="hidden md:inline">{zapLabel}</span>
 		</button>
 		<button
 			type="button"
 			onclick={toggleSaved}
-			class="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] md:flex-none md:px-3 md:py-1.5"
+			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] active:scale-90 md:flex-none md:px-3 {saved
+				? 'text-primary-500'
+				: 'text-[var(--ui-text-muted)]'}"
 			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
-			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[16px]" />
+			<Icon
+				name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'}
+				class="size-[18px]"
+			/>
 		</button>
 	</div>
 
@@ -1078,8 +1095,8 @@
 								type="button"
 								onclick={() => reactToComment(reply)}
 								class="inline-flex items-center gap-1 {commentLiked(reply)
-									? 'text-primary-500'
-									: 'text-[var(--ui-text-dimmed)] hover:text-primary-500'}"
+									? 'text-[var(--tone-error-text)]'
+									: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
 							>
 								<Icon
 									name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
@@ -1281,6 +1298,27 @@
 			{/if}
 		</div>
 	</div>
+	<!-- Like confetti burst overlay -->
+	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+		{#each likeBursts as b (b.id)}
+			{#each b.particles as p (p.id)}
+				<span
+					class="like-particle"
+					style="left:{b.x}px; top:{b.y}px; --tx:{p.tx}px; --ty:{p.ty}px; --rot:{p.rot}deg; font-size:{p.size}px; animation-duration:{p.duration}s; animation-delay:{p.delay}s"
+					>{p.emoji}</span
+				>
+			{/each}
+			<div
+				class="absolute grid size-16 place-items-center"
+				style="left:calc({b.x}px - 32px); top:calc({b.y}px - 32px)"
+			>
+				<Icon
+					name="i-solar-heart-bold"
+					class="like-burst-heart relative size-16 text-[var(--tone-error-text)] drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]"
+				/>
+			</div>
+		{/each}
+	</div>
 </article>
 
 <Dialog bind:open={deleteOpen} title={`Delete ${deleteTargetLabel}`}>
@@ -1341,88 +1379,8 @@
 	</div>
 </Dialog>
 
-<Dialog bind:open={previewOpen} title="Image preview">
-	{#if previewImageUrl}
-		<div class="space-y-3">
-			<div class="relative overflow-hidden rounded-2xl bg-black">
-				<img
-					src={previewImageUrl}
-					alt="Preview"
-					referrerpolicy="no-referrer"
-					class="max-h-[70vh] w-full object-contain"
-				/>
-				{#if previewableImages.length > 1}
-					<div class="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-between p-3">
-						<button
-							type="button"
-							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
-							onclick={showPreviousPreviewImage}
-							disabled={previewImageIndex === 0}
-							aria-label="Previous image"
-						>
-							<Icon name="i-lucide-chevron-left" class="size-5" />
-						</button>
-						<button
-							type="button"
-							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
-							onclick={showNextPreviewImage}
-							disabled={previewImageIndex === previewableImages.length - 1}
-							aria-label="Next image"
-						>
-							<Icon name="i-lucide-chevron-right" class="size-5" />
-						</button>
-					</div>
-				{/if}
-			</div>
-			<div class="flex items-center justify-between gap-3">
-				<p class="min-w-0 truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">
-					{previewImageUrl}
-				</p>
-				{#if previewableImages.length > 1}
-					<p class="shrink-0 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
-						{previewImageIndex + 1} / {previewableImages.length}
-					</p>
-				{/if}
-			</div>
-		</div>
-	{/if}
-	{#snippet footer()}
-		{#if previewableImages.length > 1}
-			<button
-				type="button"
-				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
-				onclick={showPreviousPreviewImage}
-				disabled={previewImageIndex === 0}
-			>
-				<Icon name="i-lucide-chevron-left" class="size-4" />
-				Previous
-			</button>
-			<button
-				type="button"
-				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
-				onclick={showNextPreviewImage}
-				disabled={previewImageIndex === previewableImages.length - 1}
-			>
-				Next
-				<Icon name="i-lucide-chevron-right" class="size-4" />
-			</button>
-		{/if}
-		<button
-			type="button"
-			class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
-			onclick={() => copyText(previewImageUrl, 'Image URL')}
-		>
-			<Icon name="i-lucide-copy" class="size-4" />
-			Copy URL
-		</button>
-		<a
-			href={previewImageUrl}
-			target="_blank"
-			rel="noreferrer"
-			class="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
-		>
-			<Icon name="i-lucide-external-link" class="size-4" />
-			Open original
-		</a>
-	{/snippet}
-</Dialog>
+<ImageLightbox
+	bind:open={previewOpen}
+	images={previewableImageUrls}
+	bind:index={previewImageIndex}
+/>

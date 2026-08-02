@@ -69,4 +69,11 @@ describe('stories.parseSlide', () => {
 		const slide = parseSlide(fakeEvent({ content: 'mood', tags: [['background', gradient]] }));
 		expect(slide?.bg).toBe(gradient);
 	});
+
+	it('captures the `d` tag so likes/replies can target the story address', () => {
+		const slide = parseSlide(
+			fakeEvent({ content: 'vibes', tags: [['d', 'bitos-story-42-abc']] })
+		);
+		expect(slide?.d).toBe('bitos-story-42-abc');
+	});
 });

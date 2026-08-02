@@ -12,11 +12,59 @@ import type { Event } from 'nostr-tools/pure';
 import { relays } from './relays.svelte';
 
 let pool: SimplePool | null = null;
+const RELAY_KIND_SUPPORT_CACHE_KEY = 'bitos:relay-kind-support:v1';
+
+type RelayKindSupportCache = Record<
+	string,
+	{
+		unsupportedKinds?: Record<string, { reason: string; at: number }>;
+	}
+>;
 
 function getPool(): SimplePool {
 	if (!browser) throw new Error('Pool is only available in the browser');
 	if (!pool) pool = new SimplePool();
 	return pool;
+}
+
+function loadRelayKindSupportCache(): RelayKindSupportCache {
+	if (!browser) return {};
+	try {
+		const raw = localStorage.getItem(RELAY_KIND_SUPPORT_CACHE_KEY);
+		if (!raw) return {};
+		const parsed = JSON.parse(raw) as RelayKindSupportCache;
+		return parsed && typeof parsed === 'object' ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function saveRelayKindSupportCache(cache: RelayKindSupportCache) {
+	if (!browser) return;
+	localStorage.setItem(RELAY_KIND_SUPPORT_CACHE_KEY, JSON.stringify(cache));
+}
+
+function relayRejectsKind(reason: string, kind: number): boolean {
+	const text = reason.toLowerCase();
+	const mentionsUnsupported = /(unsupported|not supported|does not support|unsupported kind)/i.test(text);
+	const mentionsKindPolicy =
+		/(kind|event type|event kind)/i.test(text) &&
+		/(blocked|rejected|invalid|denied|forbidden|policy|not allowed|disabled)/i.test(text);
+	const mentionsSpecificKind = text.includes(`${kind}`);
+	return mentionsUnsupported || (mentionsKindPolicy && mentionsSpecificKind);
+}
+
+function isRelayKindUnsupported(url: string, kind: number): boolean {
+	const cache = loadRelayKindSupportCache();
+	return !!cache[url]?.unsupportedKinds?.[`${kind}`];
+}
+
+function markRelayKindUnsupported(url: string, kind: number, reason: string) {
+	const cache = loadRelayKindSupportCache();
+	cache[url] = cache[url] ?? {};
+	cache[url].unsupportedKinds = cache[url].unsupportedKinds ?? {};
+	cache[url].unsupportedKinds![`${kind}`] = { reason, at: Math.floor(Date.now() / 1000) };
+	saveRelayKindSupportCache(cache);
 }
 
 export interface SubscriptionHandlers {
@@ -65,8 +113,42 @@ export async function publish(event: Event): Promise<string[]> {
 	if (!browser) throw new Error('publish() is only available in the browser');
 	const urls = relays.writeUrls;
 	if (!urls.length) throw new Error('No write-enabled relays configured');
-	// pool.publish() returns one Promise per relay (Promise<string>[]).
-	return await Promise.all(getPool().publish(urls, event));
+
+	const candidateUrls = urls.filter((url) => !isRelayKindUnsupported(url, event.kind));
+	if (!candidateUrls.length) {
+		throw new Error(`All write relays previously rejected kind ${event.kind}; skipping publish`);
+	}
+
+	const results = await Promise.allSettled(getPool().publish(candidateUrls, event));
+	const accepted: string[] = [];
+	const failures: string[] = [];
+
+	for (const [index, result] of results.entries()) {
+		const url = candidateUrls[index];
+		if (result.status === 'fulfilled') {
+			accepted.push(result.value);
+			continue;
+		}
+
+		const reason =
+			result.reason instanceof Error
+				? result.reason.message
+				: typeof result.reason === 'string'
+					? result.reason
+					: JSON.stringify(result.reason);
+		failures.push(`${url}: ${reason}`);
+		if (relayRejectsKind(reason, event.kind)) {
+			markRelayKindUnsupported(url, event.kind, reason);
+		}
+	}
+
+	if (!accepted.length) {
+		throw new Error(
+			`Failed to publish kind ${event.kind} to write relays: ${failures.join(' | ')}`
+		);
+	}
+
+	return accepted;
 }
 
 /** Open the WS to every relay so the pool pre-connects (warm-up). */
