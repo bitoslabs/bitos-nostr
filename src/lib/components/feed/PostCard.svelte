@@ -14,6 +14,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import StoryRing from './StoryRing.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
+	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
@@ -110,6 +111,7 @@
 	const contentTokens = $derived(parseContent(visibleContent));
 	const mediaAttachments = $derived(extractMedia(note.content));
 	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
+	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
 	const hiddenMediaCount = $derived(
@@ -122,7 +124,6 @@
 	let deleting = $state(false);
 	let previewOpen = $state(false);
 	let previewImageIndex = $state(0);
-	let previewImageUrl = $state('');
 	let replyOpen = $state(false);
 	let replyText = $state('');
 	let replying = $state(false);
@@ -223,24 +224,7 @@
 	function previewImage(url: string) {
 		const index = previewableImages.findIndex((media) => media.url === url);
 		previewImageIndex = index >= 0 ? index : 0;
-		previewImageUrl = url;
 		previewOpen = true;
-	}
-
-	function syncPreviewImage() {
-		previewImageUrl = previewableImages[previewImageIndex]?.url ?? '';
-	}
-
-	function showPreviousPreviewImage() {
-		if (previewImageIndex <= 0) return;
-		previewImageIndex -= 1;
-		syncPreviewImage();
-	}
-
-	function showNextPreviewImage() {
-		if (previewImageIndex >= previewableImages.length - 1) return;
-		previewImageIndex += 1;
-		syncPreviewImage();
 	}
 
 	function trackFeedVideo(node: HTMLVideoElement) {
@@ -575,13 +559,6 @@
 		pendingDelete = reply;
 		deleteOpen = true;
 	}
-
-	$effect(() => {
-		if (!previewOpen) {
-			previewImageUrl = '';
-			previewImageIndex = 0;
-		}
-	});
 
 	$effect(() => {
 		if (identity.current) profiles.ensure([identity.current.pk]);
@@ -1341,88 +1318,8 @@
 	</div>
 </Dialog>
 
-<Dialog bind:open={previewOpen} title="Image preview">
-	{#if previewImageUrl}
-		<div class="space-y-3">
-			<div class="relative overflow-hidden rounded-2xl bg-black">
-				<img
-					src={previewImageUrl}
-					alt="Preview"
-					referrerpolicy="no-referrer"
-					class="max-h-[70vh] w-full object-contain"
-				/>
-				{#if previewableImages.length > 1}
-					<div class="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-between p-3">
-						<button
-							type="button"
-							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
-							onclick={showPreviousPreviewImage}
-							disabled={previewImageIndex === 0}
-							aria-label="Previous image"
-						>
-							<Icon name="i-lucide-chevron-left" class="size-5" />
-						</button>
-						<button
-							type="button"
-							class="pointer-events-auto grid size-10 place-items-center rounded-full bg-black/55 text-white transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-35"
-							onclick={showNextPreviewImage}
-							disabled={previewImageIndex === previewableImages.length - 1}
-							aria-label="Next image"
-						>
-							<Icon name="i-lucide-chevron-right" class="size-5" />
-						</button>
-					</div>
-				{/if}
-			</div>
-			<div class="flex items-center justify-between gap-3">
-				<p class="min-w-0 truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">
-					{previewImageUrl}
-				</p>
-				{#if previewableImages.length > 1}
-					<p class="shrink-0 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
-						{previewImageIndex + 1} / {previewableImages.length}
-					</p>
-				{/if}
-			</div>
-		</div>
-	{/if}
-	{#snippet footer()}
-		{#if previewableImages.length > 1}
-			<button
-				type="button"
-				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
-				onclick={showPreviousPreviewImage}
-				disabled={previewImageIndex === 0}
-			>
-				<Icon name="i-lucide-chevron-left" class="size-4" />
-				Previous
-			</button>
-			<button
-				type="button"
-				class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-not-allowed disabled:opacity-50"
-				onclick={showNextPreviewImage}
-				disabled={previewImageIndex === previewableImages.length - 1}
-			>
-				Next
-				<Icon name="i-lucide-chevron-right" class="size-4" />
-			</button>
-		{/if}
-		<button
-			type="button"
-			class="inline-flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)]"
-			onclick={() => copyText(previewImageUrl, 'Image URL')}
-		>
-			<Icon name="i-lucide-copy" class="size-4" />
-			Copy URL
-		</button>
-		<a
-			href={previewImageUrl}
-			target="_blank"
-			rel="noreferrer"
-			class="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
-		>
-			<Icon name="i-lucide-external-link" class="size-4" />
-			Open original
-		</a>
-	{/snippet}
-</Dialog>
+<ImageLightbox
+	bind:open={previewOpen}
+	images={previewableImageUrls}
+	bind:index={previewImageIndex}
+/>
