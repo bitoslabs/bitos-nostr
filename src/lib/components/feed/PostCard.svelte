@@ -23,6 +23,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
+	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
@@ -118,6 +119,9 @@
 		Math.max(0, mediaAttachments.length - visibleMediaAttachments.length)
 	);
 	let burst = $state(false);
+	let articleEl = $state<HTMLElement | undefined>(undefined);
+	let likeBursts = $state<{ id: number; x: number; y: number; particles: Particle[] }[]>([]);
+	let likeBurstSeq = 0;
 	let rawOpen = $state(false);
 	let deleteOpen = $state(false);
 	let pendingDelete = $state<FeedNote | null>(null);
@@ -451,7 +455,10 @@
 		popovers.close();
 	}
 
-	async function react() {
+	async function react(e?: MouseEvent) {
+		// Capture the click target synchronously — `e.currentTarget` is nulled
+		// once the event finishes dispatching (i.e. after the first `await`).
+		const targetEl = (e?.currentTarget as HTMLElement | null) ?? null;
 		try {
 			const wasLiked = liked;
 			await feed.react(note, '❤️');
@@ -459,10 +466,23 @@
 			if (!wasLiked) {
 				burst = true;
 				setTimeout(() => (burst = false), 600);
+				if (targetEl && articleEl) {
+					const a = articleEl.getBoundingClientRect();
+					const t = targetEl.getBoundingClientRect();
+					triggerLikeBurst(t.left + t.width / 2 - a.left, t.top + t.height / 2 - a.top);
+				}
 			}
-		} catch (e) {
-			toasts.error((e as Error).message);
+		} catch (err) {
+			toasts.error((err as Error).message);
 		}
+	}
+
+	function triggerLikeBurst(x: number, y: number) {
+		const id = ++likeBurstSeq;
+		likeBursts = [...likeBursts, { id, x, y, particles: makeParticles(12) }];
+		setTimeout(() => {
+			likeBursts = likeBursts.filter((b) => b.id !== id);
+		}, 1100);
 	}
 
 	function nextLocalReaction(current: FeedNote, wasLiked: boolean): FeedNote {
@@ -566,6 +586,7 @@
 </script>
 
 <article
+	bind:this={articleEl}
 	class="post-card fade-up relative overflow-visible"
 	style="animation-delay:{index * 0.05}s"
 >
@@ -1276,6 +1297,27 @@
 				</button>
 			{/if}
 		</div>
+	</div>
+	<!-- Like confetti burst overlay -->
+	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+		{#each likeBursts as b (b.id)}
+			{#each b.particles as p (p.id)}
+				<span
+					class="like-particle"
+					style="left:{b.x}px; top:{b.y}px; --tx:{p.tx}px; --ty:{p.ty}px; --rot:{p.rot}deg; font-size:{p.size}px; animation-duration:{p.duration}s; animation-delay:{p.delay}s"
+					>{p.emoji}</span
+				>
+			{/each}
+			<div
+				class="absolute grid size-16 place-items-center"
+				style="left:calc({b.x}px - 32px); top:calc({b.y}px - 32px)"
+			>
+				<Icon
+					name="i-solar-heart-bold"
+					class="like-burst-heart relative size-16 text-[var(--tone-error-text)] drop-shadow-[0_4px_12px_rgba(0,0,0,0.4)]"
+				/>
+			</div>
+		{/each}
 	</div>
 </article>
 

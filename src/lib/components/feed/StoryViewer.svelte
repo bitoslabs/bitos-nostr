@@ -9,6 +9,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { timeAgo } from '$lib/utils/format';
+	import { makeParticles, type Particle } from '$lib/utils/burst';
 
 	let {
 		author,
@@ -25,11 +26,16 @@
 	let activityOpen = $state(false);
 	let replyMode = $state<'reply' | 'dm'>('reply');
 	let slideEl = $state<HTMLDivElement | undefined>(undefined);
-	let likeBursts = $state<{ id: number; x: number; y: number }[]>([]);
+	let likeBursts = $state<
+		{ id: number; x: number; y: number; particles: Particle[]; combo: number }[]
+	>([]);
 	let heartPop = $state(false);
+	let combo = $state(0);
 	let burstSeq = 0;
 	let lastTap = 0;
 	let tapTimer: ReturnType<typeof setTimeout> | undefined;
+	let lastBurstAt = 0;
+	let comboTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const profile = $derived(profiles.get(author.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
@@ -137,30 +143,49 @@
 		}
 	}
 
-	async function toggleLike() {
+	async function toggleLike(e?: MouseEvent) {
 		if (!slide) return;
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
 			return;
 		}
+		// Capture the click target synchronously — e.currentTarget is nulled after the first await.
+		const targetEl = (e?.currentTarget as HTMLElement | null) ?? null;
 		try {
-			if (liked) await stories.unlike(slide);
-			else {
+			if (liked) {
+				await stories.unlike(slide);
+			} else {
+				fireButtonBurst(targetEl);
 				await stories.like(slide);
 				heartPop = true;
-				setTimeout(() => (heartPop = false), 450);
+				setTimeout(() => (heartPop = false), 500);
 			}
-		} catch (e) {
-			toasts.error((e as Error).message || 'Could not react');
+		} catch (err) {
+			toasts.error((err as Error).message || 'Could not react');
 		}
 	}
 
+	function fireButtonBurst(targetEl: HTMLElement | null) {
+		if (!targetEl || !slideEl) return;
+		const a = slideEl.getBoundingClientRect();
+		const t = targetEl.getBoundingClientRect();
+		triggerLikeBurst(t.left + t.width / 2 - a.left, t.top + t.height / 2 - a.top);
+	}
+
 	function triggerLikeBurst(x: number, y: number) {
+		const now = Date.now();
+		// Combo: rapid bursts ramp up the particle count + show a multiplier.
+		combo = now - lastBurstAt < 1100 ? Math.min(combo + 1, 9) : 1;
+		lastBurstAt = now;
+		if (comboTimer) clearTimeout(comboTimer);
+		comboTimer = setTimeout(() => (combo = 0), 1400);
+
+		const count = Math.min(10 + combo * 2, 24);
 		const id = ++burstSeq;
-		likeBursts = [...likeBursts, { id, x, y }];
+		likeBursts = [...likeBursts, { id, x, y, particles: makeParticles(count), combo }];
 		setTimeout(() => {
 			likeBursts = likeBursts.filter((b) => b.id !== id);
-		}, 850);
+		}, 1150);
 	}
 
 	async function likeWithBurst(x: number, y: number) {
@@ -355,6 +380,24 @@
 						class="like-burst-heart relative size-24 text-[var(--tone-error-text)] drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
 					/>
 				</div>
+				{#each b.particles as p (p.id)}
+					<span
+						class="like-particle"
+						style="left:{b.x}px; top:{b.y}px; --tx:{p.tx}px; --ty:{p.ty}px; --rot:{p.rot}deg; font-size:{p.size}px; animation-duration:{p.duration}s; animation-delay:{p.delay}s"
+						>{p.emoji}</span
+					>
+				{/each}
+				{#if b.combo >= 2}
+					<div
+						class="absolute -translate-x-1/2 -translate-y-1/2"
+						style="left:{b.x}px; top:calc({b.y}px - 74px)"
+					>
+						<span
+							class="like-combo-badge inline-block rounded-full bg-white/95 px-2.5 py-0.5 text-[13px] font-extrabold text-[var(--tone-error-text)] shadow-lg"
+							>×{b.combo}</span
+						>
+					</div>
+				{/if}
 			{/each}
 		</div>
 
