@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
-	import Dialog from '$lib/components/ui/Dialog.svelte';
+	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -72,7 +73,8 @@
 	let discoverScroller: HTMLDivElement | undefined = $state();
 	let oldestMediaEventCreatedAt = $state(0);
 	let mediaDialogOpen = $state(false);
-	let selectedMediaItem = $state<MediaItem | null>(null);
+	let mediaIndex = $state(0);
+	let zoomOpen = $state(false);
 	let relaySearchData = $state<Omit<DiscoverCache, 'savedAt'> | null>(null);
 	let relaySearchToken = 0;
 	const me = $derived(identity.current?.pk ?? '');
@@ -112,6 +114,7 @@
 	const activeMediaCount = $derived(
 		hasActiveRelaySearch ? relaySearchData?.mediaItems.length ?? 0 : filteredMedia.length
 	);
+	const selectedMediaItem = $derived(mediaDialogOpen ? (activeMedia[mediaIndex] ?? null) : null);
 
 	function splitTrailingPunctuation(raw: string) {
 		let core = raw;
@@ -330,14 +333,22 @@
 	async function loadDiscover(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const events = await queryOnce([
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }
-			]);
-			const { data, sortedEvents } = buildDiscoverData(events);
-			applyDiscoverData(data);
-			oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
-			hasMoreMedia = events.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
-			saveDiscoverCache(data);
+			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				const { data, sortedEvents } = buildDiscoverData(events);
+				applyDiscoverData(data);
+				oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
+				hasMoreMedia = events.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
+				saveDiscoverCache(data);
+			};
+			const events = await queryPrimaryFirst(
+				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }],
+				{
+					onSecondary: (mergedEvents) => {
+						applyResults(mergedEvents);
+					}
+				}
+			);
+			applyResults(events);
 		} catch (e) {
 			if (!options.background) {
 				toasts.error((e as Error).message || 'Could not load discover data');
@@ -356,7 +367,7 @@
 			let attempts = 0;
 
 			while (nextMedia.length < MEDIA_PAGE_SIZE && hasMoreMedia && nextCursor > 0 && attempts < 4) {
-				const events = await queryOnce([
+				const events = await queryPrimaryFirst([
 					{
 						kinds: [NOSTR_KINDS.TEXT_NOTE],
 						limit: DISCOVER_PAGE_EVENT_LIMIT,
@@ -422,8 +433,31 @@
 	}
 
 	function openMediaDialog(item: MediaItem) {
-		selectedMediaItem = item;
+		const idx = activeMedia.indexOf(item);
+		mediaIndex = idx >= 0 ? idx : 0;
 		mediaDialogOpen = true;
+	}
+
+	function prevMedia() {
+		if (mediaIndex > 0) {
+			mediaIndex -= 1;
+			zoomOpen = false;
+		}
+	}
+
+	function nextMedia() {
+		if (mediaIndex < activeMedia.length - 1) {
+			mediaIndex += 1;
+			zoomOpen = false;
+		}
+	}
+
+	function onViewerKey(e: KeyboardEvent) {
+		// Let the zoom lightbox own the keyboard while it's open.
+		if (!mediaDialogOpen || zoomOpen) return;
+		if (e.key === 'Escape') mediaDialogOpen = false;
+		else if (e.key === 'ArrowLeft') prevMedia();
+		else if (e.key === 'ArrowRight') nextMedia();
 	}
 
 	async function searchDiscoverRelays(term: string) {
@@ -446,19 +480,26 @@
 					kinds: [NOSTR_KINDS.TEXT_NOTE],
 					limit: DISCOVER_SEARCH_EVENT_LIMIT,
 					search: term
-				} as Parameters<typeof queryOnce>[0][number],
+				} as Filter,
 				{
 					kinds: [NOSTR_KINDS.TEXT_NOTE],
 					limit: DISCOVER_SEARCH_EVENT_LIMIT,
 					'#t': [queryTag || term.toLowerCase()]
-				} as Parameters<typeof queryOnce>[0][number]
+				} as Filter
 			];
-			const events = await queryOnce(filters);
-			if (searchToken !== relaySearchToken) return;
-			relaySearchData = buildDiscoverData(events, { mediaLimit: MAX_CACHED_MEDIA }).data;
-			saveDiscoverSearchCache(term, relaySearchData);
-			profiles.ensure(relaySearchData.creators.map((creator) => creator.pubkey));
-			profiles.ensure(relaySearchData.mediaItems.map((item) => item.pubkey));
+			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				if (searchToken !== relaySearchToken) return;
+				relaySearchData = buildDiscoverData(events, { mediaLimit: MAX_CACHED_MEDIA }).data;
+				saveDiscoverSearchCache(term, relaySearchData);
+				profiles.ensure(relaySearchData.creators.map((creator) => creator.pubkey));
+				profiles.ensure(relaySearchData.mediaItems.map((item) => item.pubkey));
+			};
+			const events = await queryPrimaryFirst(filters, {
+				onSecondary: (mergedEvents) => {
+					applyResults(mergedEvents);
+				}
+			});
+			applyResults(events);
 		} catch (e) {
 			if (searchToken !== relaySearchToken) return;
 			relaySearchData = { trendTags: [], creators: [], mediaItems: [] };
@@ -703,63 +744,123 @@
 	</div>
 </div>
 
-<Dialog bind:open={mediaDialogOpen} title="Media note">
-	{#if selectedMediaItem}
-		{@const profile = profiles.get(selectedMediaItem.pubkey)}
-		{@const name = profile?.display_name || profile?.name || shortKey(selectedMediaItem.pubkey)}
-		<div class="space-y-4">
-			<div class="overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)]">
+<svelte:window onkeydown={onViewerKey} />
+
+{#if mediaDialogOpen && selectedMediaItem}
+	{@const profile = profiles.get(selectedMediaItem.pubkey)}
+	{@const name = profile?.display_name || profile?.name || shortKey(selectedMediaItem.pubkey)}
+	<!-- Immersive media viewer -->
+	<div class="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm animate-fade">
+		<!-- Top bar -->
+		<header class="flex items-center gap-2 p-3 text-white">
+			<a
+				href={`/profile/${selectedMediaItem.pubkey}`}
+				onclick={() => (mediaDialogOpen = false)}
+				class="flex min-w-0 flex-1 items-center gap-2.5 rounded-full p-1 pr-3 transition hover:bg-white/10"
+			>
+				<Avatar
+					pubkey={selectedMediaItem.pubkey}
+					name={name}
+					picture={profile?.picture}
+					size={36}
+				/>
+				<div class="min-w-0 leading-tight">
+					<p class="truncate text-[14px] font-bold">{name}</p>
+					<p class="text-[11.5px] text-white/65">
+						{selectedMediaItem.createdAt ? timeAgo(selectedMediaItem.createdAt) : 'Recent post'}
+					</p>
+				</div>
+			</a>
+			{#if activeMedia.length > 1}
+				<span class="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-bold tabular-nums">
+					{mediaIndex + 1} / {activeMedia.length}
+				</span>
+			{/if}
+			<a
+				href={`/note/${selectedMediaItem.id}?from=discover`}
+				class="hidden h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold transition hover:bg-white/10 sm:inline-flex"
+			>
+				Open note
+			</a>
+			<button
+				type="button"
+				onclick={() => (mediaDialogOpen = false)}
+				class="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 transition hover:bg-white/20"
+				aria-label="Close"
+			>
+				<Icon name="i-lucide-x" class="size-5" />
+			</button>
+		</header>
+
+		<!-- Media stage -->
+		<div class="relative flex min-h-0 flex-1 items-center justify-center px-2 pb-2">
+			{#if activeMedia.length > 1}
+				<button
+					type="button"
+					onclick={prevMedia}
+					disabled={mediaIndex === 0}
+					class="absolute top-1/2 left-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white backdrop-blur transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-30"
+					aria-label="Previous"
+				>
+					<Icon name="i-lucide-chevron-left" class="size-6" />
+				</button>
+			{/if}
+
+			<div class="relative min-h-0 w-full overflow-hidden">
 				{#if selectedMediaItem.kind === 'video'}
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
 						src={selectedMediaItem.url}
-						class="max-h-[55vh] w-full bg-black object-contain"
+						class="mx-auto max-h-[80vh] w-full bg-black object-contain"
 						controls
 						autoplay
 						playsinline
 					></video>
 				{:else}
+					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 					<img
 						src={selectedMediaItem.url}
 						alt="Discover media"
-						class="max-h-[55vh] w-full object-contain"
+						onclick={() => (zoomOpen = true)}
+						class="mx-auto max-h-[80vh] w-auto cursor-zoom-in rounded-xl object-contain"
 					/>
 				{/if}
 			</div>
-			<div class="space-y-3 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-4">
-				<div class="flex items-center gap-3">
-					<a href={`/profile/${selectedMediaItem.pubkey}`} class="shrink-0">
-						<Avatar
-							pubkey={selectedMediaItem.pubkey}
-							name={name}
-							picture={profile?.picture}
-							size={40}
-						/>
-					</a>
-					<div class="min-w-0 flex-1">
-						<a
-							href={`/profile/${selectedMediaItem.pubkey}`}
-							class="block truncate text-[14px] font-bold text-[var(--ui-text-highlighted)] hover:text-primary-500"
-						>
-							{name}
-						</a>
-						<p class="text-[12px] text-[var(--ui-text-muted)]">
-							{selectedMediaItem.createdAt ? timeAgo(selectedMediaItem.createdAt) : 'Recent post'}
-						</p>
-					</div>
-					<a
-						href={`/note/${selectedMediaItem.id}?from=discover`}
-						class="inline-flex h-9 items-center rounded-full border border-[var(--ui-border-muted)] px-3 text-[12px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
-					>
-						Open note
-					</a>
-				</div>
-				{#if selectedMediaItem.content}
-					<p class="max-h-32 overflow-y-auto text-[13px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]">
-						{selectedMediaItem.content}
-					</p>
-				{/if}
-			</div>
+
+			{#if activeMedia.length > 1}
+				<button
+					type="button"
+					onclick={nextMedia}
+					disabled={mediaIndex === activeMedia.length - 1}
+					class="absolute top-1/2 right-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white backdrop-blur transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-30"
+					aria-label="Next"
+				>
+					<Icon name="i-lucide-chevron-right" class="size-6" />
+				</button>
+			{/if}
 		</div>
-	{/if}
-</Dialog>
+
+		<!-- Caption + mobile actions -->
+		{#if selectedMediaItem.content}
+			<footer
+				class="mx-auto max-h-28 max-w-2xl overflow-y-auto px-4 py-2 text-center text-[13px] leading-relaxed whitespace-pre-wrap text-white/90"
+			>
+				{selectedMediaItem.content}
+			</footer>
+		{/if}
+		<div class="flex items-center justify-center gap-2 p-3 sm:hidden">
+			<a
+				href={`/note/${selectedMediaItem.id}?from=discover`}
+				class="inline-flex h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold text-white"
+			>
+				Open note
+			</a>
+		</div>
+	</div>
+{/if}
+
+<ImageLightbox
+	bind:open={zoomOpen}
+	images={selectedMediaItem && selectedMediaItem.kind === 'image' ? [selectedMediaItem.url] : []}
+	index={0}
+/>

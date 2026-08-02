@@ -73,6 +73,61 @@ export interface SubscriptionHandlers {
 	onclose?: (reasons: { url: string; reason: string }[]) => void;
 }
 
+export interface ProgressiveQueryHandlers {
+	onPrimary?: (events: Event[]) => void;
+	onSecondary?: (events: Event[]) => void;
+}
+
+function dedupeEvents(events: Event[]): Event[] {
+	const seen = new Set<string>();
+	return events.filter((event) => {
+		if (seen.has(event.id)) return false;
+		seen.add(event.id);
+		return true;
+	});
+}
+
+async function runQuery(urls: string[], filters: Filter[]): Promise<Event[]> {
+	if (!urls.length || !filters.length) return [];
+	const p = getPool();
+	const settled = await Promise.allSettled(filters.map((filter) => p.querySync(urls, filter)));
+	const batches = settled
+		.filter((result): result is PromiseFulfilledResult<Event[]> => result.status === 'fulfilled')
+		.map((result) => result.value);
+	return dedupeEvents(batches.flat());
+}
+
+async function publishToUrls(urls: string[], event: Event): Promise<{
+	accepted: string[];
+	failures: string[];
+}> {
+	if (!urls.length) return { accepted: [], failures: [] };
+	const results = await Promise.allSettled(getPool().publish(urls, event));
+	const accepted: string[] = [];
+	const failures: string[] = [];
+
+	for (const [index, result] of results.entries()) {
+		const url = urls[index];
+		if (result.status === 'fulfilled') {
+			accepted.push(result.value);
+			continue;
+		}
+
+		const reason =
+			result.reason instanceof Error
+				? result.reason.message
+				: typeof result.reason === 'string'
+					? result.reason
+					: JSON.stringify(result.reason);
+		failures.push(`${url}: ${reason}`);
+		if (relayRejectsKind(reason, event.kind)) {
+			markRelayKindUnsupported(url, event.kind, reason);
+		}
+	}
+
+	return { accepted, failures };
+}
+
 /** Subscribe to one or more filters across all *read* relays. */
 export function subscribe(filters: Filter[], handlers: SubscriptionHandlers): () => void {
 	if (!browser) return () => {};
@@ -103,51 +158,70 @@ export function queryOnce(filters: Filter[]): Promise<Event[]> {
 	if (!browser) return Promise.resolve([]);
 	const urls = relays.urls;
 	if (!urls.length) return Promise.resolve([]);
-	const p = getPool();
-	// querySync takes a single filter; run one query per filter and flatten.
-	return Promise.all(filters.map((f) => p.querySync(urls, f))).then((batches) => batches.flat());
+	return runQuery(urls, filters);
+}
+
+/** Query the primary read relay first, then merge secondary relays in the background. */
+export async function queryPrimaryFirst(
+	filters: Filter[],
+	handlers: ProgressiveQueryHandlers = {}
+): Promise<Event[]> {
+	if (!browser) return [];
+	const allUrls = relays.orderedReadUrls;
+	if (!allUrls.length) return [];
+	const primaryUrls = relays.primaryUrls.length ? relays.primaryUrls : allUrls.slice(0, 1);
+	const secondaryUrls = allUrls.filter((url) => !primaryUrls.includes(url));
+
+	const primaryEvents = await runQuery(primaryUrls, filters);
+	handlers.onPrimary?.(primaryEvents);
+
+	if (secondaryUrls.length) {
+		void runQuery(secondaryUrls, filters)
+			.then((secondaryEvents) => {
+				if (!secondaryEvents.length) return;
+				handlers.onSecondary?.(dedupeEvents([...primaryEvents, ...secondaryEvents]));
+			})
+			.catch(() => {
+				/* background merge is best-effort */
+			});
+	}
+
+	return primaryEvents;
 }
 
 /** Publish a signed event to all *write* relays. */
 export async function publish(event: Event): Promise<string[]> {
 	if (!browser) throw new Error('publish() is only available in the browser');
-	const urls = relays.writeUrls;
+	const urls = relays.orderedWriteUrls;
 	if (!urls.length) throw new Error('No write-enabled relays configured');
 
 	const candidateUrls = urls.filter((url) => !isRelayKindUnsupported(url, event.kind));
 	if (!candidateUrls.length) {
 		throw new Error(`All write relays previously rejected kind ${event.kind}; skipping publish`);
 	}
+	const primaryUrls = relays.primaryWriteUrls.length
+		? candidateUrls.filter((url) => relays.primaryWriteUrls.includes(url))
+		: candidateUrls.slice(0, 1);
+	const secondaryUrls = candidateUrls.filter((url) => !primaryUrls.includes(url));
 
-	const results = await Promise.allSettled(getPool().publish(candidateUrls, event));
-	const accepted: string[] = [];
-	const failures: string[] = [];
-
-	for (const [index, result] of results.entries()) {
-		const url = candidateUrls[index];
-		if (result.status === 'fulfilled') {
-			accepted.push(result.value);
-			continue;
+	const primaryResult = await publishToUrls(primaryUrls, event);
+	if (primaryResult.accepted.length) {
+		if (secondaryUrls.length) {
+			void publishToUrls(secondaryUrls, event).catch(() => {
+				/* background write fan-out is best-effort */
+			});
 		}
-
-		const reason =
-			result.reason instanceof Error
-				? result.reason.message
-				: typeof result.reason === 'string'
-					? result.reason
-					: JSON.stringify(result.reason);
-		failures.push(`${url}: ${reason}`);
-		if (relayRejectsKind(reason, event.kind)) {
-			markRelayKindUnsupported(url, event.kind, reason);
-		}
+		return primaryResult.accepted;
 	}
 
+	const secondaryResult = await publishToUrls(secondaryUrls, event);
+	const accepted = [...primaryResult.accepted, ...secondaryResult.accepted];
+	const failures = [...primaryResult.failures, ...secondaryResult.failures];
 	if (!accepted.length) {
 		throw new Error(
 			`Failed to publish kind ${event.kind} to write relays: ${failures.join(' | ')}`
 		);
 	}
-
 	return accepted;
 }
 

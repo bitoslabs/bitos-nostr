@@ -8,14 +8,14 @@ import type { RelayRecord, RecommendedRelay } from './types';
 export const STORAGE_KEY = 'bitos:relays';
 
 /** Bump when DEFAULTS change so the new relays are seeded once for existing users. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 const DEFAULTS: RelayRecord[] = [
-	{ url: 'wss://relay.damus.io', read: true, write: true, status: 'unknown', latency: null },
-	{ url: 'wss://nos.lol', read: true, write: true, status: 'unknown', latency: null },
-	{ url: 'wss://relay.nostr.band', read: true, write: false, status: 'unknown', latency: null },
-	{ url: 'wss://nostr-pub.wellorder.net', read: true, write: true, status: 'unknown', latency: null },
-	{ url: 'wss://relay.0xchat.com', read: true, write: true, status: 'unknown', latency: null }
+	{ url: 'wss://relay.damus.io', read: true, write: true, primary: true, writePrimary: true, status: 'unknown', latency: null },
+	{ url: 'wss://nos.lol', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
+	{ url: 'wss://relay.nostr.band', read: true, write: false, primary: false, writePrimary: false, status: 'unknown', latency: null },
+	{ url: 'wss://nostr-pub.wellorder.net', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
+	{ url: 'wss://relay.0xchat.com', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null }
 ];
 
 /**
@@ -40,6 +40,40 @@ const URL_RE = /^wss?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/i;
 
 class RelayStore {
 	list = $state<RelayRecord[]>([...DEFAULTS]);
+
+	private normalizeRecord(record: RelayRecord): RelayRecord {
+		return {
+			...record,
+			primary: !!record.primary,
+			writePrimary: !!record.writePrimary
+		};
+	}
+
+	private ensureReadPrimary(list: RelayRecord[]): RelayRecord[] {
+		const normalized = list.map((record) => this.normalizeRecord(record));
+		const chosenPrimaryUrl =
+			normalized.find((record) => record.read && record.primary)?.url ??
+			normalized.find((record) => record.read)?.url;
+		return normalized.map((record) => ({
+			...record,
+			primary: !!(record.read && chosenPrimaryUrl && record.url === chosenPrimaryUrl)
+		}));
+	}
+
+	private ensureWritePrimary(list: RelayRecord[]): RelayRecord[] {
+		const normalized = list.map((record) => this.normalizeRecord(record));
+		const chosenPrimaryUrl =
+			normalized.find((record) => record.write && record.writePrimary)?.url ??
+			normalized.find((record) => record.write)?.url;
+		return normalized.map((record) => ({
+			...record,
+			writePrimary: !!(record.write && chosenPrimaryUrl && record.url === chosenPrimaryUrl)
+		}));
+	}
+
+	private normalizePrimaries(list: RelayRecord[]): RelayRecord[] {
+		return this.ensureWritePrimary(this.ensureReadPrimary(list));
+	}
 
 	load = () => {
 		if (!browser) return;
@@ -68,10 +102,10 @@ class RelayStore {
 				const have = new Set(list.map((r) => r.url));
 				list = [...list, ...DEFAULTS.filter((d) => !have.has(d.url))];
 			}
-			this.list = list;
+			this.list = this.normalizePrimaries(list);
 			this.persist();
 		} else {
-			this.list = [...DEFAULTS];
+			this.list = this.normalizePrimaries([...DEFAULTS]);
 			this.persist();
 		}
 	};
@@ -85,7 +119,19 @@ class RelayStore {
 	};
 
 	urls = $derived(this.list.filter((r) => r.read).map((r) => r.url));
+	primaryUrls = $derived(this.list.filter((r) => r.read && r.primary).map((r) => r.url));
+	secondaryUrls = $derived(this.list.filter((r) => r.read && !r.primary).map((r) => r.url));
+	orderedReadUrls = $derived([
+		...this.list.filter((r) => r.read && r.primary).map((r) => r.url),
+		...this.list.filter((r) => r.read && !r.primary).map((r) => r.url)
+	]);
 	writeUrls = $derived(this.list.filter((r) => r.write).map((r) => r.url));
+	primaryWriteUrls = $derived(this.list.filter((r) => r.write && r.writePrimary).map((r) => r.url));
+	secondaryWriteUrls = $derived(this.list.filter((r) => r.write && !r.writePrimary).map((r) => r.url));
+	orderedWriteUrls = $derived([
+		...this.list.filter((r) => r.write && r.writePrimary).map((r) => r.url),
+		...this.list.filter((r) => r.write && !r.writePrimary).map((r) => r.url)
+	]);
 
 	validate(url: string): string | null {
 		if (!URL_RE.test(url.trim())) return 'Must be a ws:// or wss:// URL';
@@ -103,19 +149,56 @@ class RelayStore {
 		if (err) return { ok: false, error: err };
 		this.list = [
 			...this.list,
-			{ url: this.normalize(url), read: true, write: true, status: 'unknown', latency: null }
+			{
+				url: this.normalize(url),
+				read: true,
+				write: true,
+				primary: !this.list.some((record) => record.read && record.primary),
+				writePrimary: !this.list.some((record) => record.write && record.writePrimary),
+				status: 'unknown',
+				latency: null
+			}
 		];
+		this.list = this.normalizePrimaries(this.list);
 		this.persist();
 		return { ok: true };
 	}
 
 	remove(url: string) {
-		this.list = this.list.filter((r) => r.url !== url);
+		this.list = this.normalizePrimaries(this.list.filter((r) => r.url !== url));
 		this.persist();
 	}
 
 	toggle(url: string, flag: 'read' | 'write') {
-		this.list = this.list.map((r) => (r.url === url ? { ...r, [flag]: !r[flag] } : r));
+		this.list = this.normalizePrimaries(
+			this.list.map((r) => {
+				if (r.url !== url) return r;
+				const next = { ...r, [flag]: !r[flag] };
+				if (flag === 'read' && !next.read) next.primary = false;
+				if (flag === 'write' && !next.write) next.writePrimary = false;
+				return next;
+			})
+		);
+		this.persist();
+	}
+
+	setPrimary(url: string) {
+		this.list = this.normalizePrimaries(
+			this.list.map((record) =>
+				record.url === url ? { ...record, read: true, primary: true } : { ...record, primary: false }
+			)
+		);
+		this.persist();
+	}
+
+	setWritePrimary(url: string) {
+		this.list = this.normalizePrimaries(
+			this.list.map((record) =>
+				record.url === url
+					? { ...record, write: true, writePrimary: true }
+					: { ...record, writePrimary: false }
+			)
+		);
 		this.persist();
 	}
 

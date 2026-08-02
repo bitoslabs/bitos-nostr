@@ -6,7 +6,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
@@ -178,7 +178,21 @@
 		}
 	}
 
-	async function buildReelsFromEvents(events: Awaited<ReturnType<typeof queryOnce>>) {
+	async function updateReelWindow(
+		events: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		options: { append?: boolean } = {}
+	) {
+		const nextReels = await buildReelsFromEvents(events);
+		applyReels(nextReels, options);
+		oldestReelEventCreatedAt =
+			events.slice().sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+		hasMoreReels =
+			events.length >= (options.append ? REELS_PAGE_EVENT_LIMIT : REELS_INITIAL_EVENT_LIMIT) &&
+			!!oldestReelEventCreatedAt;
+		saveReelsCache(options.append ? reels : nextReels);
+	}
+
+	async function buildReelsFromEvents(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
 		const seen: Record<string, true> = {};
 		const baseReels = events
 			.sort((a, b) => b.created_at - a.created_at)
@@ -191,7 +205,7 @@
 			.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
 		const reelIds = baseReels.map((reel) => reel.id);
 		const activity = reelIds.length
-			? await queryOnce([
+			? await queryPrimaryFirst([
 					{
 						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
 						'#e': reelIds,
@@ -213,15 +227,15 @@
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const events = await queryOnce([
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }
-			]);
-			const nextReels = await buildReelsFromEvents(events);
-			applyReels(nextReels);
-			oldestReelEventCreatedAt =
-				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
-			hasMoreReels = events.length >= REELS_INITIAL_EVENT_LIMIT && !!oldestReelEventCreatedAt;
-			saveReelsCache(nextReels);
+			const events = await queryPrimaryFirst(
+				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }],
+				{
+					onSecondary: (mergedEvents) => {
+						void updateReelWindow(mergedEvents);
+					}
+				}
+			);
+			await updateReelWindow(events);
 		} catch (e) {
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
@@ -233,23 +247,25 @@
 		if (loading || loadingMoreReels || !hasMoreReels || !oldestReelEventCreatedAt) return;
 		loadingMoreReels = true;
 		try {
-			const events = await queryOnce([
+			const events = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						limit: REELS_PAGE_EVENT_LIMIT,
+						until: oldestReelEventCreatedAt - 1
+					}
+				],
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
-					limit: REELS_PAGE_EVENT_LIMIT,
-					until: oldestReelEventCreatedAt - 1
+					onSecondary: (mergedEvents) => {
+						void updateReelWindow(mergedEvents, { append: true });
+					}
 				}
-			]);
+			);
 			if (!events.length) {
 				hasMoreReels = false;
 				return;
 			}
-			const nextReels = await buildReelsFromEvents(events);
-			applyReels(nextReels, { append: true });
-			oldestReelEventCreatedAt =
-				events.sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
-			hasMoreReels = events.length >= REELS_PAGE_EVENT_LIMIT && !!oldestReelEventCreatedAt;
-			saveReelsCache(reels);
+			await updateReelWindow(events, { append: true });
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load more reels');
 		} finally {
@@ -492,7 +508,7 @@
 		if (!options.force && commentsLoadedFor === reel.id) return;
 		loadingComments = true;
 		try {
-			const replyEvents = await queryOnce([
+			const replyEvents = await queryPrimaryFirst([
 				{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [reel.id], limit: 200 }
 			]);
 			const replies = replyEvents
@@ -500,7 +516,7 @@
 				.filter((note) => note.replyTo === reel.id);
 			const replyIds = replies.map((reply) => reply.id);
 			const reactions = replyIds.length
-				? await queryOnce([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
+				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
 				: [];
 			const withActivity = applyActivityToNotes(replies, reactions, identity.current?.pk);
 			for (const reply of withActivity) feed.upsertNote(reply);

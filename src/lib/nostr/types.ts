@@ -119,6 +119,8 @@ export interface RelayRecord {
 	url: string;
 	read: boolean;
 	write: boolean;
+	primary: boolean;
+	writePrimary: boolean;
 	status: 'unknown' | 'connecting' | 'ok' | 'fail';
 	latency: number | null;
 	checkedAt?: number;

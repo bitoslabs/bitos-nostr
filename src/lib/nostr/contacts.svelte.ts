@@ -7,7 +7,7 @@ import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
 import { identity } from './identity.svelte';
 import { hexToBytes } from './hex';
-import { publish, queryOnce, subscribe } from './pool';
+import { publish, queryPrimaryFirst, subscribe } from './pool';
 import { NOSTR_KINDS } from './types';
 
 class ContactsStore {
@@ -61,7 +61,12 @@ class ContactsStore {
 	private async load(me: string) {
 		try {
 			const [event] = (
-				await queryOnce([{ kinds: [NOSTR_KINDS.CONTACT_LIST], authors: [me], limit: 1 }])
+				await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.CONTACT_LIST], authors: [me], limit: 1 }], {
+					onSecondary: (mergedEvents) => {
+						const next = mergedEvents.sort((a, b) => b.created_at - a.created_at)[0];
+						if (next) this.ingest(next);
+					}
+				})
 			).sort((a, b) => b.created_at - a.created_at);
 			if (event) this.ingest(event);
 		} finally {

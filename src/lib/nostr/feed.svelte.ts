@@ -6,19 +6,22 @@
  */
 import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
-import { subscribe, publish, queryOnce } from './pool';
+import { subscribe, publish, queryOnce, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
+import type { UploadedMedia } from '$lib/media/uploaders';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
 const MAX_TEXT_NOTE_CHARS = 16_000;
 const MAX_BUFFERED_REACTIONS = 2_000;
+
+type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
 
 type ReactionEvent = {
 	id: string;
@@ -130,21 +133,31 @@ class FeedStore {
 
 		this.loadingMore = true;
 		try {
-			const events = await queryOnce([
-				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
-					limit: PAGE_LIMIT,
-					until: oldest.createdAt - 1
+			const applyPageEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				const before = this.notes.length;
+				const fetchedIds = events.map((ev) => ev.id);
+				for (const ev of events.sort((a, b) => b.created_at - a.created_at)) {
+					this.ingestNote(ev, { queueIfLive: false });
+					profiles.ensure([ev.pubkey]);
 				}
-			]);
-			const before = this.notes.length;
-			const fetchedIds = events.map((ev) => ev.id);
-			for (const ev of events.sort((a, b) => b.created_at - a.created_at)) {
-				this.ingestNote(ev, { queueIfLive: false });
-				profiles.ensure([ev.pubkey]);
-			}
-			if (fetchedIds.length) void this.hydrateActivity(fetchedIds);
-			const added = this.notes.length - before;
+				if (fetchedIds.length) void this.hydrateActivity(fetchedIds);
+				return this.notes.length - before;
+			};
+			const events = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						limit: PAGE_LIMIT,
+						until: oldest.createdAt - 1
+					}
+				],
+				{
+					onSecondary: (mergedEvents) => {
+						applyPageEvents(mergedEvents);
+					}
+				}
+			);
+			const added = applyPageEvents(events);
 			if (!events.length || added === 0 || this.notes.length >= MAX_NOTES) this.hasMore = false;
 			return added;
 		} finally {
@@ -416,37 +429,47 @@ class FeedStore {
 		const uniqueIds = [...new Set(noteIds)].filter(Boolean);
 		if (!uniqueIds.length) return;
 		try {
-			const activity = await queryOnce([
-				{
-					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
-					'#e': uniqueIds,
-					limit: 1000
+			const applyActivity = (activity: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				if (!activity.length) return;
+				const notesById = new Map(
+					[...this.notes, ...this.pendingNotes].map((note) => [note.id, note])
+				);
+				const nonPollActivity = activity.filter((event) => {
+					if (event.kind !== NOSTR_KINDS.REACTION) return true;
+					const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+					const poll = target ? notesById.get(target)?.poll : undefined;
+					if (!poll?.options.some((option) => option.id === event.content)) return true;
+					this.applyPollVote(target!, event);
+					return false;
+				});
+				const visible = this.notes.filter((note) => uniqueIds.includes(note.id));
+				if (visible.length) {
+					const hydrated = applyActivityToNotes(visible, nonPollActivity, identity.current?.pk);
+					const byId = new Map(hydrated.map((note) => [note.id, note]));
+					this.notes = this.notes.map((note) => byId.get(note.id) ?? note);
 				}
-			]);
-			if (!activity.length) return;
-			const notesById = new Map(
-				[...this.notes, ...this.pendingNotes].map((note) => [note.id, note])
+				const pending = this.pendingNotes.filter((note) => uniqueIds.includes(note.id));
+				if (pending.length) {
+					const hydrated = applyActivityToNotes(pending, nonPollActivity, identity.current?.pk);
+					const byId = new Map(hydrated.map((note) => [note.id, note]));
+					this.pendingNotes = this.pendingNotes.map((note) => byId.get(note.id) ?? note);
+				}
+			};
+			const activity = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+						'#e': uniqueIds,
+						limit: 1000
+					}
+				],
+				{
+					onSecondary: (mergedActivity) => {
+						applyActivity(mergedActivity);
+					}
+				}
 			);
-			const nonPollActivity = activity.filter((event) => {
-				if (event.kind !== NOSTR_KINDS.REACTION) return true;
-				const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
-				const poll = target ? notesById.get(target)?.poll : undefined;
-				if (!poll?.options.some((option) => option.id === event.content)) return true;
-				this.applyPollVote(target!, event);
-				return false;
-			});
-			const visible = this.notes.filter((note) => uniqueIds.includes(note.id));
-			if (visible.length) {
-				const hydrated = applyActivityToNotes(visible, nonPollActivity, identity.current?.pk);
-				const byId = new Map(hydrated.map((note) => [note.id, note]));
-				this.notes = this.notes.map((note) => byId.get(note.id) ?? note);
-			}
-			const pending = this.pendingNotes.filter((note) => uniqueIds.includes(note.id));
-			if (pending.length) {
-				const hydrated = applyActivityToNotes(pending, nonPollActivity, identity.current?.pk);
-				const byId = new Map(hydrated.map((note) => [note.id, note]));
-				this.pendingNotes = this.pendingNotes.map((note) => byId.get(note.id) ?? note);
-			}
+			applyActivity(activity);
 		} catch {
 			// Activity hydration is best-effort; leave notes visible even if relays do not answer.
 		}
@@ -531,22 +554,37 @@ class FeedStore {
 	}
 
 	/** Compose + sign + publish a text note. Returns the published event id. */
-	async post(content: string, options: { sensitive?: boolean } = {}): Promise<string> {
+	async post(
+		content: string,
+		options: { sensitive?: boolean; attachments?: PostMediaAttachment[] } = {}
+	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
 		const text = content.trim();
-		if (!text) throw new Error('Nothing to post');
-		if (text.length > MAX_TEXT_NOTE_CHARS) {
+		const attachments = (options.attachments ?? []).filter((attachment) => attachment?.url);
+		const attachmentLines = attachments.map((attachment) => attachment.url.trim()).filter(Boolean);
+		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
+		const tags = options.sensitive ? [['content-warning', 'Sensitive content']] : [];
+		for (const attachment of attachments) {
+			if (attachment.kind === 'image' || attachment.kind === 'video') {
+				const imeta = [`url ${attachment.url}`];
+				if (attachment.mimeType) imeta.push(`m ${attachment.mimeType}`);
+				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
+				tags.push(['imeta', ...imeta]);
+			}
+		}
+		if (!body) throw new Error('Nothing to post');
+		if (body.length > MAX_TEXT_NOTE_CHARS) {
 			throw new Error(
 				`Normal notes are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
 			);
 		}
 		const unsigned = {
 			kind: NOSTR_KINDS.TEXT_NOTE,
-			content: text,
+			content: body,
 			created_at: Math.floor(Date.now() / 1000),
-			tags: options.sensitive ? [['content-warning', 'Sensitive content']] : []
+			tags
 		};
 		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);

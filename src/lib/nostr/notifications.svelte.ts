@@ -6,7 +6,7 @@
  */
 import { browser } from '$app/environment';
 import { SvelteSet } from 'svelte/reactivity';
-import { queryOnce, subscribe } from './pool';
+import { queryPrimaryFirst, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
@@ -143,11 +143,19 @@ class NotificationsStore {
 
 		this.loadingMore = true;
 		try {
-			const events = await queryOnce([this.notificationFilter(me, oldest.createdAt - 1)]);
-			const before = this.items.length;
-			for (const ev of events.sort((a, b) => b.created_at - a.created_at)) this.ingest(ev);
-			const added = this.items.length - before;
-			if (!events.length || added === 0 || this.items.length >= MAX_ITEMS) this.hasMore = false;
+			const applyEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				const before = this.items.length;
+				for (const ev of events.sort((a, b) => b.created_at - a.created_at)) this.ingest(ev);
+				const added = this.items.length - before;
+				if (!events.length || added === 0 || this.items.length >= MAX_ITEMS) this.hasMore = false;
+				return added;
+			};
+			const events = await queryPrimaryFirst([this.notificationFilter(me, oldest.createdAt - 1)], {
+				onSecondary: (mergedEvents) => {
+					applyEvents(mergedEvents);
+				}
+			});
+			const added = applyEvents(events);
 			return added;
 		} finally {
 			this.loadingMore = false;

@@ -4,7 +4,7 @@
  * runes-backed map; the newest metadata per pubkey wins.
  */
 import { browser } from '$app/environment';
-import { queryOnce } from './pool';
+import { queryPrimaryFirst } from './pool';
 import type { Profile } from './types';
 
 const STORAGE_KEY = 'bitos:profiles-cache';
@@ -84,8 +84,7 @@ class ProfileStore {
 		});
 		if (!missing.length) return;
 		missing.forEach((pk) => this.inflight.add(pk));
-		queryOnce([{ kinds: [0], authors: missing }])
-			.then((events) => {
+		const applyProfileEvents = (events: Array<{ pubkey: string; created_at: number; content: string }>) => {
 				for (const ev of events) {
 					try {
 						const data = JSON.parse(ev.content) as Partial<Profile>;
@@ -99,6 +98,15 @@ class ProfileStore {
 						/* ignore malformed metadata */
 					}
 				}
+			};
+		queryPrimaryFirst([{ kinds: [0], authors: missing }], {
+			onSecondary: (events) => {
+				applyProfileEvents(events);
+				this.persist();
+			}
+		})
+			.then((events) => {
+				applyProfileEvents(events);
 			})
 			.finally(() => {
 				missing.forEach((pk) => {

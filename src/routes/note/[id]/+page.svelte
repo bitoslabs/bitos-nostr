@@ -4,7 +4,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
@@ -66,21 +66,43 @@
 		loading = true;
 		loadedFor = id;
 		try {
-			const [event] = await queryOnce([{ ids: [id], limit: 1 }]);
+			const currentLoad = id;
+			const applyNoteEvent = async (event?: Awaited<ReturnType<typeof queryPrimaryFirst>>[number]) => {
+				if (!event) {
+					note = null;
+					return;
+				}
+				profiles.ensure([event.pubkey]);
+				const [hydrated] = applyActivityToNotes(
+					[toFeedNote(event)],
+					await queryPrimaryFirst(
+						[{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': [id], limit: 500 }],
+						{
+							onSecondary: (mergedActivity) => {
+								if (loadedFor !== currentLoad) return;
+								const [nextHydrated] = applyActivityToNotes([toFeedNote(event)], mergedActivity, identity.current?.pk);
+								note = nextHydrated;
+								feed.upsertNote(nextHydrated);
+							}
+						}
+					),
+					identity.current?.pk
+				);
+				note = hydrated;
+				feed.upsertNote(hydrated);
+			};
+			const [event] = await queryPrimaryFirst([{ ids: [id], limit: 1 }], {
+				onSecondary: (mergedEvents) => {
+					if (loadedFor !== currentLoad) return;
+					void applyNoteEvent(mergedEvents[0]);
+				}
+			});
+			if (loadedFor !== currentLoad) return;
 			if (!event) {
 				note = null;
 				return;
 			}
-			profiles.ensure([event.pubkey]);
-			const [hydrated] = applyActivityToNotes(
-				[toFeedNote(event)],
-				await queryOnce([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': [id], limit: 500 }
-				]),
-				identity.current?.pk
-			);
-			note = hydrated;
-			feed.upsertNote(hydrated);
+			await applyNoteEvent(event);
 			await loadReplies(id);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load note');
@@ -90,20 +112,26 @@
 	}
 
 	async function loadReplies(id: string) {
-		const replyEvents = (
-			await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [id], limit: 200 }])
-		)
-			.map(toFeedNote)
-			.filter((item) => item.replyTo === id);
-		if (!replyEvents.length) return;
-		const replyIds = replyEvents.map((reply) => reply.id);
-		const hydratedReplies = applyActivityToNotes(
-			replyEvents,
-			await queryOnce([{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }]),
-			identity.current?.pk
-		);
-		profiles.ensure(hydratedReplies.map((reply) => reply.pubkey));
-		for (const reply of hydratedReplies) feed.upsertNote(reply);
+		const applyReplies = async (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+			const replyEvents = events.map(toFeedNote).filter((item) => item.replyTo === id);
+			if (!replyEvents.length) return;
+			const replyIds = replyEvents.map((reply) => reply.id);
+			const hydratedReplies = applyActivityToNotes(
+				replyEvents,
+				await queryPrimaryFirst([
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }
+				]),
+				identity.current?.pk
+			);
+			profiles.ensure(hydratedReplies.map((reply) => reply.pubkey));
+			for (const reply of hydratedReplies) feed.upsertNote(reply);
+		};
+		const events = await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [id], limit: 200 }], {
+			onSecondary: (mergedEvents) => {
+				void applyReplies(mergedEvents);
+			}
+		});
+		await applyReplies(events);
 	}
 
 	$effect(() => {

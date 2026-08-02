@@ -7,7 +7,7 @@
 	import StoryRing from '$lib/components/feed/StoryRing.svelte';
 	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
@@ -86,27 +86,41 @@
 			.map(([tag, count]) => ({ tag, count }));
 	}
 
+	async function applyProfileEvents(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
+		const nextNotes = events
+			.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)
+			.sort((a, b) => b.created_at - a.created_at)
+			.map(toFeedNote);
+		const noteIds = nextNotes.map((note) => note.id);
+		const activity = noteIds.length
+			? await queryPrimaryFirst([
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+				])
+			: [];
+		notes = applyActivityToNotes(nextNotes, activity, me?.pk);
+	}
+
 	async function loadMyProfile(nextPubkey: string) {
 		if (!nextPubkey || loadedFor === nextPubkey) return;
 		loading = true;
 		loadedFor = nextPubkey;
 		profiles.ensure([nextPubkey]);
 		try {
-			const events = await queryOnce([
-				{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_LIMIT }
-			]);
-			const nextNotes = events
-				.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)
-				.sort((a, b) => b.created_at - a.created_at)
-				.map(toFeedNote);
-			const noteIds = nextNotes.map((note) => note.id);
-			const activity = noteIds.length
-				? await queryOnce([
-						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
-					])
-				: [];
-			notes = applyActivityToNotes(nextNotes, activity, me?.pk);
+			const currentLoad = nextPubkey;
+			const events = await queryPrimaryFirst(
+				[
+					{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 },
+					{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_LIMIT }
+				],
+				{
+					onSecondary: (mergedEvents) => {
+						if (loadedFor !== currentLoad) return;
+						void applyProfileEvents(mergedEvents);
+					}
+				}
+			);
+			if (loadedFor !== currentLoad) return;
+			await applyProfileEvents(events);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load profile');
 		} finally {

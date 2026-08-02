@@ -4,7 +4,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -92,7 +92,7 @@
 		if (!options.force && readCache()) return;
 		loading = true;
 		try {
-			const events = await queryOnce([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }]);
+			const applyRailEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
 			const seenEvents: Record<string, true> = {};
 			const tagCounts: Record<string, number> = {};
 			const authorCounts: Record<string, { count: number; latest: number }> = {};
@@ -142,6 +142,13 @@
 			profiles.ensure(suggested.map((person) => person.pubkey));
 			writeCache();
 			loaded = true;
+			};
+			const events = await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }], {
+				onSecondary: (mergedEvents) => {
+					applyRailEvents(mergedEvents);
+				}
+			});
+			applyRailEvents(events);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load relay trends');
 		} finally {
