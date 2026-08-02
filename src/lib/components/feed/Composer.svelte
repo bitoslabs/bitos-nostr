@@ -184,14 +184,7 @@
 		if (!canPost || posting) return;
 		posting = true;
 		try {
-			let content = text.trim();
-			if (attachments.length) {
-				const links = attachments
-					.map((a) => (a.kind === 'image' ? `![${a.kind}](${a.url})` : a.url))
-					.join('\n');
-				content = content ? `${content}\n\n${links}` : links;
-			}
-			await feed.post(content, { sensitive });
+			await feed.post(text, { sensitive, attachments });
 			text = '';
 			attachments = [];
 			sensitive = false;

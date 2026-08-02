@@ -9,7 +9,7 @@
 	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
@@ -111,20 +111,12 @@
 			.sort((a, b) => b.created_at - a.created_at);
 	}
 
-	async function fetchNotePage(nextPubkey: string, until?: number) {
-		const events = await queryOnce([
-			{
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
-				authors: [nextPubkey],
-				limit: NOTE_PAGE_LIMIT,
-				...(until ? { until } : {})
-			}
-		]);
+	async function buildPageFromEvents(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
 		const noteEvents = uniqueNoteEvents(events);
 		const nextNotes = noteEvents.map(toFeedNote);
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
-			? await queryOnce([
+			? await queryPrimaryFirst([
 					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
 				])
 			: [];
@@ -133,6 +125,20 @@
 			mayHaveMore:
 				events.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE).length >= NOTE_PAGE_LIMIT
 		};
+	}
+
+	async function fetchNotePage(nextPubkey: string, until?: number) {
+		const events = await queryPrimaryFirst(
+			[
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					authors: [nextPubkey],
+					limit: NOTE_PAGE_LIMIT,
+					...(until ? { until } : {})
+				}
+			]
+		);
+		return buildPageFromEvents(events);
 	}
 
 	function mergeNotes(current: FeedNote[], next: FeedNote[]) {
@@ -169,8 +175,29 @@
 		loadedFor = nextPubkey;
 		profiles.ensure([nextPubkey]);
 		try {
-			await queryOnce([{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 }]);
-			const page = await fetchNotePage(nextPubkey);
+			const currentLoad = nextPubkey;
+			void queryPrimaryFirst([{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 }]);
+			const primaryEvents = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						authors: [nextPubkey],
+						limit: NOTE_PAGE_LIMIT
+					}
+				],
+				{
+					onSecondary: (mergedEvents) => {
+						if (loadedFor !== currentLoad) return;
+						void buildPageFromEvents(mergedEvents).then((page) => {
+							if (loadedFor !== currentLoad) return;
+							notes = page.notes;
+							hasMoreNotes = page.mayHaveMore;
+						});
+					}
+				}
+			);
+			if (loadedFor !== currentLoad) return;
+			const page = await buildPageFromEvents(primaryEvents);
 			notes = page.notes;
 			hasMoreNotes = page.mayHaveMore;
 		} catch (e) {

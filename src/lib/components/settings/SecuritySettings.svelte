@@ -101,6 +101,16 @@
 		else toasts.error(res.error ?? 'Could not add relay');
 	}
 
+	function makePrimaryRelay(url: string) {
+		relays.setPrimary(url);
+		toasts.success('Primary relay updated');
+	}
+
+	function makeWritePrimaryRelay(url: string) {
+		relays.setWritePrimary(url);
+		toasts.success('Preferred write relay updated');
+	}
+
 	async function copy(text: string, label: string) {
 		await navigator.clipboard.writeText(text);
 		toasts.success(`${label} copied`);
@@ -274,11 +284,17 @@
 			disabled={!relays.list.length}>Test all</Button
 		>
 	</div>
+	<p class="mb-3 text-[11.5px] leading-relaxed text-[var(--ui-text-dimmed)]">
+		Primary relay handles fast first queries. Other read relays still sync in the background and
+		merge later for better coverage. Preferred write relay gets publishes first, then BitOS fans
+		out to the other write relays in the background.
+	</p>
 	<ul
 		class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
 	>
 		{#each relays.list as r (r.url)}
-			<li class="flex items-center gap-2.5 px-3 py-2.5">
+			<li class="px-3 py-2.5">
+				<div class="flex items-start gap-2.5">
 				<span
 					class="size-2 shrink-0 rounded-full {r.status === 'ok'
 						? 'bg-[var(--tone-success-text)]'
@@ -291,7 +307,7 @@
 				<div class="min-w-0 flex-1 leading-tight">
 					<div class="truncate font-mono text-[12px]">{r.url}</div>
 					<div class="text-[10.5px] text-[var(--ui-text-dimmed)]">
-						{r.read ? 'read' : '—'} · {r.write ? 'write' : '—'}{#if r.latency != null}
+						{r.read ? 'read' : '—'} · {r.write ? 'write' : '—'} · {r.primary ? 'primary' : 'secondary'} · {r.writePrimary ? 'preferred write' : 'normal write'}{#if r.latency != null}
 							· {r.latency}ms{/if}
 						· {formatRelayTime(r.checkedAt)}
 					</div>
@@ -310,6 +326,18 @@
 					</button>
 					<button
 						type="button"
+						onclick={() => makePrimaryRelay(r.url)}
+						class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.primary
+							? 'bg-primary-500/10 text-primary-600'
+							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
+						title={r.primary ? 'Primary relay' : 'Set as primary relay'}
+						aria-label={r.primary ? `Primary relay ${r.url}` : `Set ${r.url} as primary relay`}
+					>
+						<Icon name={r.primary ? 'i-lucide-radio' : 'i-lucide-circle'} class="size-3" />
+						<span>PR</span>
+					</button>
+					<button
+						type="button"
 						onclick={() => relays.toggle(r.url, 'read')}
 						class="rounded-md px-1.5 py-1 text-[10.5px] font-semibold transition {r.read
 							? 'text-primary-500'
@@ -324,11 +352,24 @@
 					>
 					<button
 						type="button"
+						onclick={() => makeWritePrimaryRelay(r.url)}
+						class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.writePrimary
+							? 'bg-primary-500/10 text-primary-600'
+							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
+						title={r.writePrimary ? 'Preferred write relay' : 'Set as preferred write relay'}
+						aria-label={r.writePrimary ? `Preferred write relay ${r.url}` : `Set ${r.url} as preferred write relay`}
+					>
+						<Icon name={r.writePrimary ? 'i-lucide-send' : 'i-lucide-circle-dot'} class="size-3" />
+						<span>PW</span>
+					</button>
+					<button
+						type="button"
 						onclick={() => relays.remove(r.url)}
 						class="grid size-7 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]"
 					>
 						<Icon name="i-lucide-trash-2" class="size-4" />
 					</button>
+				</div>
 				</div>
 			</li>
 		{/each}

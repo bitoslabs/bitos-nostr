@@ -13,7 +13,7 @@
 import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
 import type { Event } from 'nostr-tools/pure';
-import { subscribe, publish, queryOnce } from './pool';
+import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { contacts } from './contacts.svelte';
 import { profiles } from './profiles.svelte';
@@ -212,13 +212,22 @@ class StoriesStore {
 
 	private async fetch(authors: string[]) {
 		try {
-			const events = await queryOnce([
-				{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 },
-				{ kinds: [NOSTR_KINDS.DELETE], authors, limit: 200 }
-			]);
-			for (const ev of events) this.ingest(ev);
-			// opportunistically load author profiles
-			profiles.ensure(events.map((e) => e.pubkey));
+			const applyStoryEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				for (const ev of events) this.ingest(ev);
+				profiles.ensure(events.map((e) => e.pubkey));
+			};
+			const events = await queryPrimaryFirst(
+				[
+					{ kinds: [NOSTR_KINDS.STORY_STATUS], authors, limit: 200 },
+					{ kinds: [NOSTR_KINDS.DELETE], authors, limit: 200 }
+				],
+				{
+					onSecondary: (mergedEvents) => {
+						applyStoryEvents(mergedEvents);
+					}
+				}
+			);
+			applyStoryEvents(events);
 		} finally {
 			this.loading = false;
 		}
@@ -346,7 +355,11 @@ class StoriesStore {
 		if (!browser || !slides.length) return;
 		this.registerSlides(slides);
 		try {
-			const events = await queryOnce(this.activityFilters(slides));
+			const events = await queryPrimaryFirst(this.activityFilters(slides), {
+				onSecondary: (mergedEvents) => {
+					for (const ev of mergedEvents) this.ingestActivity(ev);
+				}
+			});
 			for (const ev of events) this.ingestActivity(ev);
 		} catch {
 			/* best-effort — leave zeroes */
