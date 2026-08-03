@@ -574,11 +574,11 @@
 			</div>
 
 			{#if feed.pendingCount}
-				<div class="sticky top-3 z-10 mb-4 flex justify-center">
+				<div class="pointer-events-none sticky top-16 z-20 mb-4 flex justify-center">
 					<button
 						type="button"
 						onclick={showNewNotes}
-						class="inline-flex items-center gap-2 rounded-full border border-primary-500/20 bg-primary-500 px-4 py-2 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 active:scale-95"
+						class="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-primary-500/20 bg-primary-500 px-4 py-2 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 active:scale-95"
 					>
 						<Icon name="i-lucide-arrow-up" class="size-4" />
 						{feed.pendingCount} new {feed.pendingCount === 1 ? 'note' : 'notes'}
