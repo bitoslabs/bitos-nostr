@@ -290,6 +290,8 @@
 	});
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
+	const PUBLIC_ROUTES = new Set(['/about', '/privacy', '/terms']);
+	const isPublicRoute = $derived(PUBLIC_ROUTES.has(page.url.pathname));
 </script>
 
 <svelte:head>
@@ -311,6 +313,11 @@
 			class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
 		></div>
 	</div>
+{:else if isPublicRoute}
+	<!-- Public pages (About / Privacy / Terms) are reachable pre-login. -->
+	<main class="min-h-screen bg-[var(--ui-bg)]">
+		{@render children?.()}
+	</main>
 {:else if !hasIdentity}
 	<Onboarding />
 {:else}

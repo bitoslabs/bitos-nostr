@@ -9,6 +9,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
 	type TrendTag = { tag: string; count: number };
@@ -20,6 +21,7 @@
 		pubkey: string;
 		content: string;
 		createdAt: number;
+		sensitiveReason: string;
 	};
 	type DiscoverCache = {
 		savedAt: number;
@@ -75,6 +77,7 @@
 	let mediaDialogOpen = $state(false);
 	let mediaIndex = $state(0);
 	let zoomOpen = $state(false);
+	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
 	let relaySearchData = $state<Omit<DiscoverCache, 'savedAt'> | null>(null);
 	let relaySearchToken = 0;
 	const me = $derived(identity.current?.pk ?? '');
@@ -227,13 +230,15 @@
 
 			const media = mediaFromEvent(event);
 			if (media && nextMedia.length < mediaLimit) {
+				const reason = sensitiveMediaReason(event.tags, event.content);
 				nextMedia.push({
 					id: event.id,
 					url: media.url,
 					kind: media.kind,
 					pubkey: event.pubkey,
 					content: event.content,
-					createdAt: event.created_at
+					createdAt: event.created_at,
+					sensitiveReason: reason
 				});
 			}
 		}
@@ -258,7 +263,12 @@
 		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
 		mediaItems = data.mediaItems
 			.slice(0, MAX_CACHED_MEDIA)
-			.map((item) => ({ ...item, kind: item.kind ?? 'image', createdAt: item.createdAt ?? 0 }));
+			.map((item) => ({
+				...item,
+				kind: item.kind ?? 'image',
+				createdAt: item.createdAt ?? 0,
+				sensitiveReason: item.sensitiveReason ?? ''
+			}));
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		profiles.ensure(creators.map((creator) => creator.pubkey));
 		profiles.ensure(mediaItems.map((item) => item.pubkey));
@@ -397,7 +407,8 @@
 						kind: media.kind,
 						pubkey: event.pubkey,
 						content: event.content,
-						createdAt: event.created_at
+						createdAt: event.created_at,
+						sensitiveReason: sensitiveMediaReason(event.tags, event.content)
 					});
 					if (nextMedia.length >= MEDIA_PAGE_SIZE) break;
 				}
@@ -436,6 +447,27 @@
 		const idx = activeMedia.indexOf(item);
 		mediaIndex = idx >= 0 ? idx : 0;
 		mediaDialogOpen = true;
+	}
+
+	function handleMediaTileClick(item: MediaItem) {
+		if (shouldHideMedia(item)) {
+			revealMedia(item);
+			return;
+		}
+		openMediaDialog(item);
+	}
+
+	function isMediaRevealed(item: MediaItem) {
+		return !!revealedSensitiveMedia[item.id];
+	}
+
+	function revealMedia(item: MediaItem) {
+		revealedSensitiveMedia = { ...revealedSensitiveMedia, [item.id]: true };
+	}
+
+	function shouldHideMedia(item: MediaItem) {
+		if (item.kind === 'image') return !isMediaRevealed(item);
+		return !!item.sensitiveReason && !isMediaRevealed(item);
 	}
 
 	function prevMedia() {
@@ -670,14 +702,16 @@
 						{@const name = profile?.display_name || profile?.name || shortKey(item.pubkey)}
 						<button
 							type="button"
-							onclick={() => openMediaDialog(item)}
+							onclick={() => handleMediaTileClick(item)}
 							class="group relative block w-full cursor-pointer overflow-hidden rounded-xl text-left transition-transform hover:scale-[0.97]"
 						>
 							{#if item.kind === 'video'}
 								<!-- svelte-ignore a11y_media_has_caption -->
 								<video
 									src={item.url}
-									class="aspect-video w-full bg-black object-cover"
+									class="aspect-video w-full bg-black object-cover transition {!shouldHideMedia(item)
+										? ''
+										: 'scale-105 blur-2xl saturate-50'}"
 									muted
 									playsinline
 									preload="metadata"
@@ -688,7 +722,38 @@
 									<Icon name="i-lucide-play" class="size-4 fill-current" />
 								</div>
 							{:else}
-								<img src={item.url} class="w-full" alt="" loading="lazy" />
+								<img
+									src={item.url}
+									class="w-full transition {!shouldHideMedia(item)
+										? ''
+										: 'scale-105 blur-2xl saturate-50'}"
+									alt=""
+									loading="lazy"
+								/>
+							{/if}
+							{#if shouldHideMedia(item)}
+								<div
+									class="absolute inset-0 z-10 grid place-items-center bg-black/18 p-4 text-center text-white"
+								>
+									<span
+										class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+									>
+										<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+										<span class="block text-[13px] font-bold"
+											>{item.kind === 'image' ? 'Image hidden' : 'Sensitive media'}</span
+										>
+										<span class="mt-1 block text-[11px] text-white/80"
+											>{item.kind === 'image'
+												? item.sensitiveReason || 'Tap view to reveal'
+												: item.sensitiveReason}</span
+										>
+										<span
+											class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
+										>
+											View
+										</span>
+									</span>
+								</div>
 							{/if}
 							<div
 								class="absolute inset-0 flex items-end bg-black/0 p-3 text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100"
@@ -807,7 +872,30 @@
 			{/if}
 
 			<div class="relative min-h-0 w-full overflow-hidden">
-				{#if selectedMediaItem.kind === 'video'}
+				{#if shouldHideMedia(selectedMediaItem)}
+					<div class="grid min-h-[60vh] place-items-center px-4">
+						<button
+							type="button"
+							onclick={() => revealMedia(selectedMediaItem)}
+							class="max-w-sm rounded-3xl bg-white/10 px-6 py-5 text-center text-white shadow-xl backdrop-blur"
+						>
+							<Icon name="i-lucide-eye-off" class="mx-auto mb-3 size-8 text-white/90" />
+							<p class="text-[15px] font-bold">
+								{selectedMediaItem.kind === 'image' ? 'Image hidden' : 'Sensitive media hidden'}
+							</p>
+							<p class="mt-1 text-[12px] text-white/75">
+								{selectedMediaItem.kind === 'image'
+									? selectedMediaItem.sensitiveReason || 'Tap view to reveal'
+									: selectedMediaItem.sensitiveReason}
+							</p>
+							<span
+								class="mt-4 inline-flex rounded-full bg-white px-4 py-2 text-[12px] font-bold text-black"
+							>
+								Show media
+							</span>
+						</button>
+					</div>
+				{:else if selectedMediaItem.kind === 'video'}
 					<!-- svelte-ignore a11y_media_has_caption -->
 					<video
 						src={selectedMediaItem.url}

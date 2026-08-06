@@ -29,6 +29,7 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
+	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import Poll from './Poll.svelte';
 
 	type ContentToken =
@@ -59,8 +60,6 @@
 	const imagePathPattern =
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const urlPattern = /https?:\/\/[^\s<>()]+/giu;
-	const sensitivePattern =
-		/\b(nsfw|sensitive|content warning|cw:|18\+|adult|nude|nudity|explicit|violence|graphic|gore|blood|self[-\s]?harm)\b/i;
 	const longTextLimit = 420;
 
 	const profile = $derived(profiles.get(note.pubkey));
@@ -152,23 +151,23 @@
 	const canCommentOnNote = $derived(privacyNotificationSettings.canCommentOn(note.pubkey));
 
 	function sensitiveMediaReason() {
-		const contentWarning = note.tags.find(
-			(tag) => tag[0] === 'content-warning' || tag[0] === 'warning'
-		);
-		if (contentWarning) return contentWarning[1] || 'Sensitive media';
-		const sensitiveTag = note.tags.find(
-			(tag) => tag[0] === 't' && sensitivePattern.test(tag[1] ?? '')
-		);
-		if (sensitiveTag) return `Tagged #${sensitiveTag[1]}`;
-		return sensitivePattern.test(note.content) ? 'Sensitive media' : '';
+		return getSensitiveMediaReason(note.tags, note.content);
 	}
 
 	function isMediaRevealed(url: string) {
-		return !shouldCoverMedia || !!revealedSensitiveMedia[url];
+		return !!revealedSensitiveMedia[url];
 	}
 
 	function revealMedia(url: string) {
 		revealedSensitiveMedia = { ...revealedSensitiveMedia, [url]: true };
+	}
+
+	function shouldHideImage(url: string) {
+		return !isMediaRevealed(url);
+	}
+
+	function shouldHideVideo(url: string) {
+		return shouldCoverMedia && !isMediaRevealed(url);
 	}
 
 	function mediaGridClass(count: number) {
@@ -765,7 +764,7 @@
 								>
 							</span>
 						</a>
-					{:else if !isMediaRevealed(media.url)}
+					{:else if shouldHideImage(media.url)}
 						<div class="{tileClass} relative block bg-black">
 							<img
 								src={media.url}
@@ -777,18 +776,22 @@
 							/>
 							<button
 								type="button"
-								class="absolute inset-0 z-10 grid place-items-center bg-black/45 p-4 text-center text-white backdrop-blur-sm"
+								class="absolute inset-0 z-10 grid place-items-center bg-black/18 p-4 text-center text-white"
 								onclick={() => revealMedia(media.url)}
 								aria-label="Show sensitive media"
 							>
-								<span class="max-w-56 rounded-2xl bg-black/55 px-4 py-3 shadow-lg">
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6 text-white/90" />
-									<span class="block text-[13px] font-bold">Sensitive media hidden</span>
-									<span class="mt-1 block text-[11px] text-white/75">{sensitiveReason}</span>
-									<span
-										class="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
+								<span
+									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+								>
+									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+									<span class="block text-[13px] font-bold">Image hidden</span>
+									<span class="mt-1 block text-[11px] text-white/80"
+										>{sensitiveReason || 'Tap view to reveal'}</span
 									>
-										Show media
+									<span
+										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
+									>
+										View
 									</span>
 								</span>
 							</button>
@@ -827,35 +830,37 @@
 						<video
 							use:trackFeedVideo
 							src={media.url}
-							controls={isMediaRevealed(media.url)}
+							controls={!shouldHideVideo(media.url)}
 							preload="metadata"
 							playsinline
-							class="{contentClass} object-cover transition {isMediaRevealed(media.url)
+							class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
 								? ''
 								: 'scale-105 blur-2xl saturate-50'}"
 						></video>
-						{#if showMoreOverlay && isMediaRevealed(media.url)}
+						{#if showMoreOverlay && !shouldHideVideo(media.url)}
 							<div
 								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
 							>
 								+{hiddenMediaCount}
 							</div>
 						{/if}
-						{#if !isMediaRevealed(media.url)}
+						{#if shouldHideVideo(media.url)}
 							<button
 								type="button"
-								class="absolute inset-0 z-10 grid place-items-center bg-black/55 p-4 text-center text-white backdrop-blur-sm"
+								class="absolute inset-0 z-10 grid place-items-center bg-black/18 p-4 text-center text-white"
 								onclick={() => revealMedia(media.url)}
 								aria-label="Show sensitive video"
 							>
-								<span class="max-w-56 rounded-2xl bg-black/55 px-4 py-3 shadow-lg">
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6 text-white/90" />
-									<span class="block text-[13px] font-bold">Sensitive video hidden</span>
-									<span class="mt-1 block text-[11px] text-white/75">{sensitiveReason}</span>
+								<span
+									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+								>
+									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+									<span class="block text-[13px] font-bold">Sensitive video</span>
+									<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
 									<span
-										class="mt-2 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
+										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
 									>
-										Show video
+										View
 									</span>
 								</span>
 							</button>

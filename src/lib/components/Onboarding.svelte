@@ -173,5 +173,12 @@
 		<p class="mt-5 text-center text-[11px] text-[var(--ui-text-dimmed)]">
 			Powered by the Nostr protocol · NIP-01 · NIP-04 · NIP-19
 		</p>
+		<nav class="mt-2 flex items-center justify-center gap-3 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+			<a href="/about" class="transition hover:text-primary-500">About</a>
+			<span aria-hidden="true">·</span>
+			<a href="/privacy" class="transition hover:text-primary-500">Privacy</a>
+			<span aria-hidden="true">·</span>
+			<a href="/terms" class="transition hover:text-primary-500">Terms</a>
+		</nav>
 	</div>
 </div>

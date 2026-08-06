@@ -11,8 +11,9 @@ export const STORAGE_KEY = 'bitos:relays';
 const SCHEMA_VERSION = 4;
 
 const DEFAULTS: RelayRecord[] = [
-	{ url: 'wss://relay.damus.io', read: true, write: true, primary: true, writePrimary: true, status: 'unknown', latency: null },
+	{ url: 'wss://nostr-01.yakihonne.com', read: true, write: true, primary: true, writePrimary: true, status: 'unknown', latency: null },
 	{ url: 'wss://nos.lol', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
+	{ url: 'wss://relay.damus.io', read: true, write: true, primary: true, writePrimary: true, status: 'unknown', latency: null },
 	{ url: 'wss://relay.nostr.band', read: true, write: false, primary: false, writePrimary: false, status: 'unknown', latency: null },
 	{ url: 'wss://nostr-pub.wellorder.net', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
 	{ url: 'wss://relay.0xchat.com', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null }
@@ -24,9 +25,11 @@ const DEFAULTS: RelayRecord[] = [
  * reachability is checked live via `ping()` (WebSocket handshake).
  */
 export const RECOMMENDED: RecommendedRelay[] = [
-	{ url: 'wss://relay.damus.io', name: 'Damus', description: 'Official Damus relay' },
+	{ url: 'wss://nostr-01.yakihonne.com', name: 'Yakihonne', description: 'Japanese Nostr relay' },
 	{ url: 'wss://nos.lol', name: 'nos.lol', description: 'Open relay run by nos.social' },
 	{ url: 'wss://relay.nostr.band', name: 'Nostr Band', description: 'Global feed indexer' },
+	{ url: 'wss://cache2.primal.net/v1', name: 'Primal Cache 2', description: 'Primal cache relay' },
+	{ url: 'wss://relay.damus.io', name: 'Damus', description: 'Official Damus relay' },
 	{ url: 'wss://nostr-pub.wellorder.net', name: 'Wellorder', description: 'Stable public relay' },
 	{ url: 'wss://relay.0xchat.com', name: '0xChat', description: '0xChat secure messaging relay' },
 	{ url: 'wss://relay.primal.net', name: 'Primal', description: 'Fast cache relay by Primal' },

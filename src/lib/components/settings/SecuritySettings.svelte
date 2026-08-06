@@ -3,7 +3,6 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
-	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays, RECOMMENDED } from '$lib/nostr/relays.svelte';
 	import type { Identity } from '$lib/nostr/types';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
