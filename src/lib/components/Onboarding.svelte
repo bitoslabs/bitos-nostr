@@ -16,6 +16,7 @@
 	let createdNsec = $state<string | null>(null);
 	let createdSkHex = $state<string | null>(null);
 	let copied = $state(false);
+	const logo = '/icons/icon-192-192.png';
 
 	function create() {
 		busy = true;
@@ -70,11 +71,7 @@
 	<div class="w-full max-w-md">
 		<!-- Brand -->
 		<div class="mb-7 flex flex-col items-center text-center">
-			<div
-				class="mb-4 grid size-16 place-items-center rounded-2xl bg-primary-500 shadow-[var(--glow-primary)]"
-			>
-				<span class="font-display text-[30px] font-black text-white">B</span>
-			</div>
+			<img src={logo} alt="BitOS logo" class="mb-4 size-16 rounded-2xl shadow-[var(--glow-primary)]" />
 			<h1 class="font-display text-[26px] font-bold tracking-tight">Welcome to BitOS</h1>
 			<p class="mt-1.5 text-[13.5px] text-[var(--ui-text-muted)]">
 				A local-first Nostr client. Your keys never leave this device.

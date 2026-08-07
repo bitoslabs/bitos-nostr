@@ -14,6 +14,7 @@
 	const year = new Date().getFullYear();
 	const path = $derived(page.url.pathname);
 	const me = $derived(identity.current);
+	const logo = '/icons/icon-192-192.png';
 
 	const nav = [
 		{ href: '/about', label: 'About' },
@@ -35,11 +36,7 @@
 	>
 		<div class="mx-auto flex max-w-3xl items-center gap-3 px-5 py-3">
 			<a href="/" class="flex items-center gap-2" aria-label="BitOS home">
-				<span
-					class="grid size-8 place-items-center rounded-lg bg-primary-500 font-display text-[16px] font-black text-white shadow-[var(--glow-primary)]"
-				>
-					B
-				</span>
+				<img src={logo} alt="BitOS logo" class="size-8 rounded-lg shadow-[var(--glow-primary)]" />
 				<span class="font-display text-[15px] font-bold tracking-tight">BitOS</span>
 			</a>
 			<nav class="ml-auto flex items-center gap-1 text-[12.5px] font-semibold">
