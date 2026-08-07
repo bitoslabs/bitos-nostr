@@ -13,13 +13,19 @@
 
 	const nav = [
 		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
-		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true },
-		{ to: '/notifications', label: 'Notifications', icon: 'i-lucide-bell', notifications: true },
+		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true, requiresAuth: true },
+		{
+			to: '/notifications',
+			label: 'Notifications',
+			icon: 'i-lucide-bell',
+			notifications: true,
+			requiresAuth: true
+		},
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
-		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark' },
-		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' },
-		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2' }
+		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark', requiresAuth: true },
+		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
+		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2', requiresAuth: true }
 	];
 
 	function isActive(to: string) {
@@ -28,6 +34,7 @@
 	}
 
 	const me = $derived(identity.current);
+	const visibleNav = $derived(nav.filter((item) => me || !item.requiresAuth));
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
@@ -68,7 +75,7 @@
 	</a>
 
 	<div class="flex flex-1 flex-col gap-2">
-		{#each nav as item (item.to)}
+		{#each visibleNav as item (item.to)}
 			{@const active = isActive(item.to)}
 			<a
 				href={item.to}
@@ -195,6 +202,14 @@
 					</div>
 				{/if}
 			</div>
+		{:else}
+			<a
+				href="/welcome"
+				class="grid size-12 place-items-center rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
+				aria-label="Create or import a key"
+			>
+				<Icon name="i-lucide-log-in" class="size-[18px]" />
+			</a>
 		{/if}
 	</div>
 </nav>

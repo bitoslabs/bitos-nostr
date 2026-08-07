@@ -41,11 +41,64 @@
 		'Sending encrypted DMs (NIP-04)'
 	];
 
-	const legalLinks = [
-		'Terms of Service',
-		'Privacy Policy',
-		'Community Guidelines',
-		'Open Source Licenses'
+	const APP_VERSION = '0.1.0';
+
+	const aboutDetails = [
+		{ icon: 'i-lucide-tag', label: 'Version', value: APP_VERSION },
+		{ icon: 'i-lucide-radio-tower', label: 'Network', value: 'Nostr' },
+		{ icon: 'i-lucide-shield-check', label: 'Identity', value: 'Local (nsec)' },
+		{ icon: 'i-lucide-scale', label: 'License', value: 'Open source' }
+	];
+
+	const aboutLinks = [
+		{
+			label: 'About BitOS',
+			href: '/about',
+			icon: 'i-lucide-info',
+			color: 'text-primary-500',
+			external: false,
+			hint: 'What is Nostr?'
+		},
+		{
+			label: 'Privacy Policy',
+			href: '/privacy',
+			icon: 'i-lucide-lock',
+			color: 'text-accent-500',
+			external: false,
+			hint: ''
+		},
+		{
+			label: 'Terms of Service',
+			href: '/terms',
+			icon: 'i-lucide-file-text',
+			color: 'text-warm-500',
+			external: false,
+			hint: ''
+		},
+		{
+			label: 'Source code',
+			href: 'https://github.com/bitoslabs/bitos-svelte',
+			icon: 'i-lucide-github',
+			color: 'text-[var(--ui-text-muted)]',
+			external: true,
+			hint: 'bitoslabs/bitos-svelte'
+		},
+		{
+			label: 'Website',
+			href: 'https://bitos.space',
+			icon: 'i-lucide-globe',
+			color: 'text-[var(--ui-text-muted)]',
+			external: true,
+			hint: 'bitos.space'
+		},
+		{
+			label: 'Nostr protocol',
+			href: 'https://github.com/nostr-protocol/nips',
+			icon: 'i-lucide-radio-tower',
+			color: 'text-[var(--ui-text-muted)]',
+			external: true,
+			hint: 'NIPs'
+		}
 	];
 </script>
 
@@ -139,43 +192,99 @@
 {#if section === 'about'}
 	<h2 class="mb-1 font-display text-[24px] font-extrabold">About</h2>
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Information about BitOS</p>
-	<div class="mb-5 rounded-2xl bg-primary-500 p-6 text-white shadow-[var(--glow-primary)]">
-		<div class="mb-3 flex items-center gap-3">
+
+	<!-- Hero -->
+	<div
+		class="relative mb-5 overflow-hidden rounded-2xl bg-primary-500 p-6 text-white shadow-[var(--glow-primary)]"
+	>
+		<div
+			class="pointer-events-none absolute -top-12 -right-10 size-40 rounded-full bg-white/15 blur-2xl"
+		></div>
+		<div class="relative mb-3 flex items-center gap-3">
 			<div class="grid size-12 place-items-center rounded-2xl bg-white/20 backdrop-blur">
-				<span class="font-display text-2xl font-extrabold">B</span>
+				<span class="font-display text-2xl font-black">B</span>
 			</div>
 			<div>
 				<h3 class="font-display text-[22px] leading-none font-extrabold">BitOS</h3>
-				<p class="text-[12px] opacity-90">v0.1 · Nostr client</p>
+				<p class="text-[12px] opacity-90">v{APP_VERSION} · Nostr client</p>
 			</div>
 		</div>
-		<p class="text-[13px] leading-relaxed opacity-90">
+		<p class="relative text-[13px] leading-relaxed opacity-95">
 			A local-first, decentralized social client. Your keys never leave this device. Built on the
 			open Nostr protocol.
 		</p>
-	</div>
-	<div class="post-card mb-5 p-5">
-		<div class="space-y-3">
-			{#each legalLinks as l (l)}
-				<a
-					href="https://github.com/nostr-protocol/nostr"
-					target="_blank"
-					rel="noreferrer"
-					class="flex items-center justify-between py-2 transition hover:text-primary-500 {l !==
-					'Terms of Service'
-						? 'border-t border-[var(--ui-border-muted)]'
-						: ''}"
-				>
-					<span class="text-[13.5px] font-semibold">{l}</span><Icon
-						name="i-lucide-external-link"
-						class="size-3.5 text-[var(--ui-text-dimmed)]"
-					/>
-				</a>
-			{/each}
+		<div class="relative mt-5 flex flex-wrap gap-2">
+			<a
+				href="https://github.com/bitoslabs/bitos-svelte"
+				target="_blank"
+				rel="noreferrer"
+				class="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-bold backdrop-blur transition hover:bg-white/25"
+			>
+				<Icon name="i-lucide-github" class="size-3.5" />
+				Source
+			</a>
+			<a
+				href="https://bitos.space"
+				target="_blank"
+				rel="noreferrer"
+				class="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-bold backdrop-blur transition hover:bg-white/25"
+			>
+				<Icon name="i-lucide-globe" class="size-3.5" />
+				bitos.space
+			</a>
+			<a
+				href="/about"
+				class="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-bold backdrop-blur transition hover:bg-white/25"
+			>
+				<Icon name="i-lucide-info" class="size-3.5" />
+				Learn more
+			</a>
 		</div>
 	</div>
+
+	<!-- App details -->
+	<div class="post-card mb-5 p-1.5">
+		{#each aboutDetails as d, i (d.label)}
+			<div
+				class="flex items-center gap-3 px-3.5 py-3 {i !== 0
+					? 'border-t border-[var(--ui-border-muted)]'
+					: ''}"
+			>
+				<Icon name={d.icon} class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
+				<dt class="text-[13px] text-[var(--ui-text-muted)]">{d.label}</dt>
+				<dd class="ml-auto text-right text-[13px] font-semibold text-[var(--ui-text)]">{d.value}</dd>
+			</div>
+		{/each}
+	</div>
+
+	<!-- Links -->
+	<div class="post-card mb-5 p-1.5">
+		{#each aboutLinks as l, i (l.label)}
+			<a
+				href={l.href}
+				target={l.external ? '_blank' : undefined}
+				rel={l.external ? 'noreferrer' : undefined}
+				class="group flex items-center gap-3 px-3.5 py-3 transition hover:bg-[var(--interactive-hover-bg)] {i !== 0
+					? 'border-t border-[var(--ui-border-muted)]'
+					: ''}"
+			>
+				<Icon name={l.icon} class="size-4 shrink-0 {l.color}" />
+				<span class="text-[13.5px] font-semibold text-[var(--ui-text)]">{l.label}</span>
+				<span class="ml-auto flex items-center gap-1 text-[11.5px] text-[var(--ui-text-dimmed)]">
+					{#if l.hint}{l.hint}{/if}
+					<Icon
+						name={l.external ? 'i-lucide-external-link' : 'i-lucide-chevron-right'}
+						class="size-3.5 transition group-hover:translate-x-0.5"
+					/>
+				</span>
+			</a>
+		{/each}
+	</div>
+
 	<div class="py-4 text-center">
-		<p class="text-[12px] text-[var(--ui-text-muted)]">Built on NIP-01 · NIP-04 · NIP-19</p>
+		<p class="text-[12px] text-[var(--ui-text-muted)]">
+			Built on NIP-01 · NIP-04 · NIP-19 · NIP-25 · NIP-38 · NIP-57
+		</p>
 		<p class="mt-1 text-[11px] text-[var(--ui-text-dimmed)]">
 			Decentralized · censorship-resistant · yours.
 		</p>

@@ -38,6 +38,20 @@
 	empty, BitOS can fall back to the server upload API when it is configured.
 </p>
 
+<div class="post-card mb-5 border-primary-500/20 bg-primary-500/5 p-4">
+	<div class="flex items-start gap-3">
+		<Icon name="i-lucide-shield-check" class="mt-0.5 size-[18px] text-primary-500" />
+		<div>
+			<h3 class="text-[14px] font-bold">Upload privacy</h3>
+			<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
+				Supported images are rewritten in your browser before upload so EXIF data like GPS
+				location is dropped. Uploads also use neutral filenames instead of the original file
+				name. Video metadata is not fully stripped yet.
+			</p>
+		</div>
+	</div>
+</div>
+
 <!-- Default provider -->
 <div class="post-card mb-5 p-5">
 	<div class="mb-4 flex items-center gap-2">

@@ -21,6 +21,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { publish } from '$lib/nostr/pool';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { confirms } from '$lib/stores/confirms.svelte';
 	import { shortKey } from '$lib/utils/format';
 	import { hexToBytes } from '$lib/nostr/hex';
 	import type { AccountSummary } from '$lib/nostr/identity.svelte';
@@ -150,12 +151,18 @@
 	}
 
 	function logout() {
-		if (
-			confirm('Log out? This removes your key from this device. Make sure you backed up your nsec.')
-		) {
-			identity.logout();
-			toasts.info('Logged out');
-		}
+		void confirms
+			.danger({
+				title: 'Remove active account?',
+				message:
+					'This removes the active account from this device and signs you out. Make sure you backed up your nsec.',
+				confirmLabel: 'Remove and sign out'
+			})
+			.then((ok) => {
+				if (!ok) return;
+				identity.logout();
+				toasts.info('Active account removed from this device');
+			});
 	}
 
 	function accountDisplayName(account: AccountSummary) {
@@ -207,8 +214,15 @@
 		}
 	}
 
-	function removeAccount(pubkey: string) {
-		if (!confirm('Remove this saved account from this device? Make sure its nsec is backed up.'))
+	async function removeAccount(pubkey: string) {
+		if (
+			!(await confirms.danger({
+				title: 'Remove saved account?',
+				message:
+					'This removes the account from this device. Make sure its nsec is backed up.',
+				confirmLabel: 'Remove'
+			}))
+		)
 			return;
 		identity.removeAccount(pubkey);
 		toasts.info('Account removed from this device');

@@ -6,7 +6,7 @@
  */
 import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
-import { subscribe, publish, queryOnce, queryPrimaryFirst } from './pool';
+import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
@@ -43,6 +43,22 @@ function isStoryReply(ev: { tags: string[][] }): boolean {
 	);
 	if (!hasStoryA) return false;
 	return ev.tags.some((t) => t[0] === 'e');
+}
+
+export function visibleInsertIndex(
+	notes: Pick<FeedNote, 'createdAt'>[],
+	note: Pick<FeedNote, 'createdAt'>,
+	options: { preferNewestOnEqual?: boolean } = {}
+) {
+	let idx = 0;
+	const preferNewestOnEqual = options.preferNewestOnEqual ?? false;
+	while (
+		idx < notes.length &&
+		(preferNewestOnEqual ? notes[idx].createdAt > note.createdAt : notes[idx].createdAt >= note.createdAt)
+	) {
+		idx++;
+	}
+	return idx;
 }
 
 class FeedStore {
@@ -173,7 +189,7 @@ class FeedStore {
 			created_at: number;
 			tags: string[][];
 		},
-		options: { queueIfLive?: boolean } = {}
+		options: { queueIfLive?: boolean; preferNewestOnEqual?: boolean } = {}
 	) {
 		if (blocks.has(ev.pubkey)) return;
 		if (isStoryReply(ev)) return;
@@ -203,7 +219,7 @@ class FeedStore {
 		if (options.queueIfLive && this.notes.length > 0 && note.createdAt >= this.notes[0].createdAt) {
 			this.insertPending(note);
 		} else {
-			this.insertVisible(note);
+			this.insertVisible(note, { preferNewestOnEqual: options.preferNewestOnEqual });
 		}
 		// Relay replay is not ordered: process reactions received before this note.
 		const buffered = this.bufferedReactions.get(note.id);
@@ -215,10 +231,10 @@ class FeedStore {
 		if (note.poll) this.rebuildPoll(note.id);
 	}
 
-	private insertVisible(note: FeedNote) {
-		// insert newest-first
-		let idx = 0;
-		while (idx < this.notes.length && this.notes[idx].createdAt >= note.createdAt) idx++;
+	private insertVisible(note: FeedNote, options: { preferNewestOnEqual?: boolean } = {}) {
+		// Insert newest-first. For optimistic local posts, equal-second timestamps
+		// should still place the freshly posted note ahead of existing entries.
+		const idx = visibleInsertIndex(this.notes, note, options);
 		this.notes = [...this.notes.slice(0, idx), note, ...this.notes.slice(idx)];
 		// rebuild index map (offset by one)
 		this.rebuildIndex();
@@ -589,7 +605,7 @@ class FeedStore {
 		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
-		this.ingestNote(event, { queueIfLive: false });
+		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
 	}
 
@@ -622,7 +638,7 @@ class FeedStore {
 			hexToBytes(id.sk)
 		);
 		await publish(event);
-		this.ingestNote(event, { queueIfLive: false });
+		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
 	}
 
@@ -690,7 +706,7 @@ class FeedStore {
 			hexToBytes(id.sk)
 		);
 		await publish(event);
-		this.ingestNote(event, { queueIfLive: false });
+		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
 	}
 

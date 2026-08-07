@@ -3,11 +3,11 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
-	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays, RECOMMENDED } from '$lib/nostr/relays.svelte';
 	import type { Identity } from '$lib/nostr/types';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { confirms } from '$lib/stores/confirms.svelte';
 
 	type Props = {
 		me: Identity;
@@ -137,12 +137,14 @@
 
 	async function restoreSettings() {
 		if (
-			!confirm(
-				'Restore encrypted BitOS settings from Nostr? This will overwrite local appearance, privacy, notification, media, relay and block settings.'
-			)
-		) {
+			!(await confirms.warning({
+				title: 'Restore synced settings?',
+				message:
+					'This overwrites local appearance, privacy, notification, media, relay and block settings with the encrypted backup from Nostr.',
+				confirmLabel: 'Restore'
+			}))
+		)
 			return;
-		}
 		try {
 			const backup = await settingsSync.restoreLatestBackup();
 			if (!backup) {

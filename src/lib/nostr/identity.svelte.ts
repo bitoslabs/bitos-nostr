@@ -100,9 +100,12 @@ class IdentityStore {
 	};
 
 	logout = () => {
-		this.current = null;
-		if (browser) localStorage.removeItem(STORAGE_KEY);
-		this.refreshSummaries();
+		if (!this.current) {
+			if (browser) localStorage.removeItem(STORAGE_KEY);
+			this.refreshSummaries();
+			return;
+		}
+		this.removeAccount(this.current.pk);
 	};
 
 	switchTo = (pubkey: string): Identity => {
@@ -119,7 +122,11 @@ class IdentityStore {
 	removeAccount = (pubkey: string) => {
 		const next = this.storedAccounts().filter((item) => buildIdentity(item.sk).pk !== pubkey);
 		this.persistAccounts(next);
-		if (this.current?.pk === pubkey) this.logout();
+		if (this.current?.pk === pubkey) {
+			this.current = null;
+			if (browser) localStorage.removeItem(STORAGE_KEY);
+			this.refreshSummaries(next);
+		}
 	};
 
 	private persist = () => {
@@ -136,9 +143,22 @@ class IdentityStore {
 		try {
 			const raw = localStorage.getItem(ACCOUNTS_KEY);
 			const parsed = raw ? (JSON.parse(raw) as StoredAccount[]) : [];
-			return Array.isArray(parsed)
-				? parsed.filter((item) => /^[0-9a-fA-F]{64}$/.test(item.sk))
-				: [];
+			if (!Array.isArray(parsed)) return [];
+			const uniqueByPubkey = new Map<string, StoredAccount>();
+			for (const item of parsed) {
+				if (!item || !/^[0-9a-fA-F]{64}$/.test(item.sk)) continue;
+				const normalized = item.sk.toLowerCase();
+				const pk = buildIdentity(normalized).pk;
+				const existing = uniqueByPubkey.get(pk);
+				if (!existing || (item.lastUsedAt ?? 0) >= existing.lastUsedAt) {
+					uniqueByPubkey.set(pk, {
+						sk: normalized,
+						profile: item.profile,
+						lastUsedAt: item.lastUsedAt ?? 0
+					});
+				}
+			}
+			return [...uniqueByPubkey.values()].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
 		} catch {
 			return [];
 		}

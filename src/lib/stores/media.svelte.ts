@@ -6,6 +6,7 @@
  * the S3 secret key lives on-device (same trust model as the Nostr nsec).
  */
 import { browser } from '$app/environment';
+import { sanitizeMediaForUpload } from '$lib/media/privacy';
 import {
 	uploadViaServer,
 	uploadWithProvider,
@@ -119,12 +120,13 @@ class MediaStore {
 		provider?: MediaProviderId,
 		options: UploadOptions = {}
 	): Promise<UploadedMedia> => {
+		const sanitized = await sanitizeMediaForUpload(file);
 		const id = provider ?? this.state.defaultProvider;
 		if (id === 'none') {
-			return uploadViaServer(file, options);
+			return uploadViaServer(sanitized, options);
 		}
 		if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
-		return uploadWithProvider(file, id, this.state);
+		return uploadWithProvider(sanitized, id, this.state);
 	};
 }
 

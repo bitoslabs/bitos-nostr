@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import type { Filter } from 'nostr-tools/filter';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import StoriesBar from '$lib/components/feed/StoriesBar.svelte';
 	import Composer from '$lib/components/feed/Composer.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
@@ -80,6 +81,40 @@
 	);
 	const renderedNotes = $derived(filteredNotes.slice(0, renderedCount));
 	const hasMoreRenderedNotes = $derived(renderedCount < filteredNotes.length);
+	const pendingAuthors = $derived.by(() => {
+		const seen: Record<string, boolean> = {};
+		const unique: { pubkey: string; name: string; picture?: string | null }[] = [];
+		for (const note of feed.pendingNotes) {
+			if (seen[note.pubkey]) continue;
+			seen[note.pubkey] = true;
+			const profile = profiles.get(note.pubkey);
+			unique.push({
+				pubkey: note.pubkey,
+				name: profile?.display_name || profile?.name || '',
+				picture: profile?.picture
+			});
+			if (unique.length >= 4) break;
+		}
+		return unique;
+	});
+	const pendingAuthorCount = $derived.by(() => {
+		const seen: Record<string, boolean> = {};
+		let count = 0;
+		for (const note of feed.pendingNotes) {
+			if (seen[note.pubkey]) continue;
+			seen[note.pubkey] = true;
+			count += 1;
+		}
+		return count;
+	});
+	const pendingAuthorSummary = $derived.by(() => {
+		if (!pendingAuthorCount) return '';
+		if (pendingAuthorCount === 1) {
+			const author = pendingAuthors[0];
+			return author?.name ? `from ${author.name}` : 'from 1 person';
+		}
+		return `from ${pendingAuthorCount} people`;
+	});
 
 	function renderMoreNotes() {
 		if (!hasMoreRenderedNotes) return;
@@ -156,11 +191,11 @@
 	}
 
 	function uniqueTimelineEvents(events: Event[]) {
-		const seen = new Set<string>();
+		const seen: Record<string, boolean> = {};
 		return events
 			.filter((event) => {
-				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen.has(event.id)) return false;
-				seen.add(event.id);
+				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen[event.id]) return false;
+				seen[event.id] = true;
 				return true;
 			})
 			.sort((a, b) => b.created_at - a.created_at);
@@ -563,25 +598,74 @@
 				</div>
 			{/if}
 
-			<!-- Stories -->
-			<div class="mb-4">
-				<StoriesBar />
-			</div>
+			{#if identity.current}
+				<!-- Stories -->
+				<div class="mb-4">
+					<StoriesBar />
+				</div>
 
-			<!-- Composer -->
-			<div class="mb-4">
-				<Composer />
-			</div>
+				<!-- Composer -->
+				<div class="mb-4">
+					<Composer />
+				</div>
+			{:else}
+				<div class="mb-4 rounded-2xl border border-primary-500/15 bg-primary-500/10 px-4 py-3">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<p class="text-[14px] font-bold text-primary-600">Browsing BitOS as a guest</p>
+							<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
+								Public notes stay open to everyone. Create or import a key when you want to post,
+								reply, react, bookmark, or message.
+							</p>
+						</div>
+						<a
+							href="/welcome"
+							class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
+						>
+							Create or import a key
+						</a>
+					</div>
+				</div>
+			{/if}
 
 			{#if feed.pendingCount}
-				<div class="sticky top-3 z-10 mb-4 flex justify-center">
+				<div class="pointer-events-none sticky top-16 z-20 mb-4 flex justify-center">
 					<button
 						type="button"
 						onclick={showNewNotes}
-						class="inline-flex items-center gap-2 rounded-full border border-primary-500/20 bg-primary-500 px-4 py-2 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 active:scale-95"
+						class="pointer-events-auto inline-flex items-center gap-3 rounded-full border border-primary-500/20 bg-primary-500 px-3 py-2 text-left text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 active:scale-95 sm:px-4"
 					>
 						<Icon name="i-lucide-arrow-up" class="size-4" />
-						{feed.pendingCount} new {feed.pendingCount === 1 ? 'note' : 'notes'}
+						{#if pendingAuthors.length}
+							<div class="flex items-center gap-2.5">
+								<div class="flex -space-x-2">
+									{#each pendingAuthors as author, index (author.pubkey)}
+										<div
+											class="rounded-full ring-2 ring-primary-500/40 {index === 0
+												? 'ring-white/80'
+												: 'ring-primary-500/30'} {index === 3 ? 'hidden sm:block' : ''}"
+										>
+											<Avatar
+												pubkey={author.pubkey}
+												name={author.name}
+												picture={author.picture}
+												size={24}
+											/>
+										</div>
+									{/each}
+								</div>
+								<div class="flex flex-col leading-none">
+									<span class="text-[13px] font-bold">
+										{feed.pendingCount} new {feed.pendingCount === 1 ? 'note' : 'notes'}
+									</span>
+									<span class="text-[11px] font-medium text-white/80">{pendingAuthorSummary}</span>
+								</div>
+							</div>
+						{:else}
+							<span class="text-[13px] font-bold">
+								{feed.pendingCount} new {feed.pendingCount === 1 ? 'note' : 'notes'}
+							</span>
+						{/if}
 					</button>
 				</div>
 			{/if}
