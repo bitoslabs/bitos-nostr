@@ -12,6 +12,7 @@ export const settingsSections = [
 	{ key: 'privacy', label: 'Privacy', icon: 'i-lucide-lock', tint: '#5856D6', group: 'preferences' },
 	{ key: 'notifications', label: 'Notifications', icon: 'i-lucide-bell', tint: '#FF3B30', group: 'preferences' },
 	{ key: 'appearance', label: 'Appearance', icon: 'i-lucide-palette', tint: '#FF2D92', group: 'preferences' },
+	{ key: 'algorithm', label: 'Algorithm', icon: 'i-lucide-wand-sparkles', tint: '#BF5AF2', group: 'preferences' },
 	{ key: 'security', label: 'Security & Relay', icon: 'i-lucide-shield-check', tint: '#FF9500', group: 'content' },
 	{ key: 'media', label: 'Media & Uploads', icon: 'i-lucide-cloud-upload', tint: '#34C759', group: 'content' },
 	{ key: 'language', label: 'Language & Region', icon: 'i-lucide-languages', tint: '#5AC8FA', group: 'content' },

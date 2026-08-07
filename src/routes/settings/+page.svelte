@@ -6,6 +6,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import AppearanceSettings from '$lib/components/settings/AppearanceSettings.svelte';
+	import AlgorithmSettings from '$lib/components/settings/AlgorithmSettings.svelte';
 	import MediaSettings from '$lib/components/settings/MediaSettings.svelte';
 	import PrivacyNotificationSettings from '$lib/components/settings/PrivacyNotificationSettings.svelte';
 	import SecuritySettings from '$lib/components/settings/SecuritySettings.svelte';
@@ -744,6 +745,11 @@
 			<!-- APPEARANCE (wired to real preferences) -->
 			{#if section === 'appearance'}
 				<AppearanceSettings />
+			{/if}
+
+			<!-- ALGORITHM (feed / reels / discover ranking) -->
+			{#if section === 'algorithm'}
+				<AlgorithmSettings />
 			{/if}
 
 			<!-- SECURITY (Nostr keys + relays) -->

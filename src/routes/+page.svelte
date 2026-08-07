@@ -15,6 +15,8 @@
 	import { NOSTR_KINDS, type Event, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
+	import { algorithmPreferences, buildScoringContext, rankNotesWithBreakdown } from '$lib/algorithm';
+	import { detectPreset } from '$lib/algorithm/presets';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 
@@ -79,8 +81,28 @@
 			);
 		})
 	);
-	const renderedNotes = $derived(filteredNotes.slice(0, renderedCount));
-	const hasMoreRenderedNotes = $derived(renderedCount < filteredNotes.length);
+	// Algorithm ranking — only on the "For you" timeline (not search/tag/following).
+	const algorithmActive = $derived(
+		algorithmPreferences.isEnabled('feed') &&
+			feedMode === 'foryou' &&
+			!useRelayFeed &&
+			!followingOnly
+	);
+	const scoredFeed = $derived.by(() => {
+		if (!algorithmActive) return { notes: filteredNotes, breakdown: new Map() };
+		const ctx = buildScoringContext('feed', filteredNotes);
+		return rankNotesWithBreakdown('feed', filteredNotes, ctx);
+	});
+	const rankedNotes = $derived(scoredFeed.notes);
+	const scoreBreakdown = $derived(scoredFeed.breakdown);
+	const feedPresetLabel = $derived.by(() => {
+		if (!algorithmActive) return '';
+		const id = detectPreset(algorithmPreferences.config.feed);
+		if (id === 'custom') return 'Custom mix';
+		return `${id[0].toUpperCase()}${id.slice(1)}`;
+	});
+	const renderedNotes = $derived(rankedNotes.slice(0, renderedCount));
+	const hasMoreRenderedNotes = $derived(renderedCount < rankedNotes.length);
 	const pendingAuthors = $derived.by(() => {
 		const seen: Record<string, boolean> = {};
 		const unique: { pubkey: string; name: string; picture?: string | null }[] = [];
@@ -118,7 +140,7 @@
 
 	function renderMoreNotes() {
 		if (!hasMoreRenderedNotes) return;
-		renderedCount = Math.min(filteredNotes.length, renderedCount + RENDER_BATCH_SIZE);
+		renderedCount = Math.min(rankedNotes.length, renderedCount + RENDER_BATCH_SIZE);
 	}
 
 	function hasMedia(note: FeedNote) {
@@ -278,6 +300,37 @@
 
 	function loadMoreNotes() {
 		void feed.loadMore();
+	}
+
+	const RANK_TAG_COLORS: Record<string, string> = {
+		recency: '#3b82f6',
+		engagement: '#f97316',
+		zaps: '#eab308',
+		affinity: '#ec4899',
+		wot: '#22c55e',
+		novelty: '#14b8a6'
+	};
+	const RANK_TAG_ICONS: Record<string, string> = {
+		recency: 'i-lucide-clock',
+		engagement: 'i-lucide-flame',
+		zaps: 'i-lucide-zap',
+		affinity: 'i-lucide-heart-handshake',
+		wot: 'i-lucide-shield-check',
+		novelty: 'i-lucide-shuffle'
+	};
+
+	/** Build the "why am I seeing this" chip from a note's score breakdown. */
+	function rankTagFor(note: FeedNote): { label: string; icon: string; color: string } | undefined {
+		if (!algorithmActive) return undefined;
+		const b = scoreBreakdown.get(note.id);
+		if (!b?.topSignal) return undefined;
+		// Only surface a chip for the notes that actually ranked into the top window —
+		// showing it on every post would be noise.
+		return {
+			label: b.topSignal.label,
+			icon: RANK_TAG_ICONS[b.topSignal.signalId] ?? 'i-lucide-sparkles',
+			color: RANK_TAG_COLORS[b.topSignal.signalId] ?? '#94a3b8'
+		};
 	}
 
 	function handleFeedScroll() {
@@ -731,9 +784,25 @@
 					{/if}
 				</div>
 			{:else}
+				{#if algorithmActive && renderedNotes.length > 0}
+					<div
+						class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-500/15 bg-primary-500/5 px-3 py-2"
+					>
+						<div class="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-primary-600">
+							<Icon name="i-lucide-wand-sparkles" class="size-4 shrink-0" />
+							<span class="truncate">Ranked for you · {feedPresetLabel}</span>
+						</div>
+						<a
+							href="/settings/algorithm"
+							class="shrink-0 rounded-full px-2 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/10"
+						>
+							<Icon name="i-lucide-sliders-horizontal" class="mr-1 inline size-3.5" />Tune
+						</a>
+					</div>
+				{/if}
 				<div class="space-y-5">
 					{#each renderedNotes as note, i (note.id)}
-						<PostCard {note} index={i} />
+						<PostCard {note} index={i} rankTag={rankTagFor(note)} />
 					{/each}
 				</div>
 

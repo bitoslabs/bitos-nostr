@@ -48,8 +48,14 @@
 	let {
 		note,
 		index = 0,
-		onNoteChange
-	}: { note: FeedNote; index?: number; onNoteChange?: (note: FeedNote) => void } = $props();
+		onNoteChange,
+		rankTag
+	}: {
+		note: FeedNote;
+		index?: number;
+		onNoteChange?: (note: FeedNote) => void;
+		rankTag?: { label: string; icon: string; color: string };
+	} = $props();
 
 	const contentPattern =
 		/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
@@ -616,6 +622,16 @@
 				</p>
 			</div>
 		</a>
+		{#if rankTag}
+			<span
+				class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] sm:inline-flex"
+				style="color:{rankTag.color}"
+				title={`Ranked high for ${rankTag.label.toLowerCase()}`}
+			>
+				<Icon name={rankTag.icon} class="size-3" />
+				{rankTag.label}
+			</span>
+		{/if}
 		<div class="shrink-0">
 			<Popover
 				id={menuId}

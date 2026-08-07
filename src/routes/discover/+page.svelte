@@ -5,6 +5,8 @@
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+	import { contacts } from '$lib/nostr/contacts.svelte';
+	import { algorithmPreferences, getWotSet } from '$lib/algorithm';
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
@@ -111,6 +113,35 @@
 	const activeCreators = $derived(
 		hasActiveRelaySearch ? (relaySearchData?.creators ?? []) : filteredCreators
 	);
+	const rankedCreators = $derived.by(() => {
+		const list = activeCreators;
+		if (!list.length || !algorithmPreferences.isEnabled('discover')) return list;
+		const cfg = algorithmPreferences.config.discover.signals;
+		const now = Math.floor(Date.now() / 1000);
+		const halfLife = algorithmPreferences.recencyHalfLifeSeconds;
+		const followingSet = contacts.followingSet;
+		const wotSet = getWotSet(identity.current?.pk);
+		let maxCount = 1;
+		for (const c of list) if (c.count > maxCount) maxCount = c.count;
+		const wEng = cfg.engagement?.enabled ? cfg.engagement.weight : 0;
+		const wRec = cfg.recency?.enabled ? cfg.recency.weight : 0;
+		const wWot = cfg.wot?.enabled ? cfg.wot.weight : 0;
+		const total = wEng + wRec + wWot || 1;
+		return [...list]
+			.map((creator) => {
+				const engagement = Math.log10(1 + creator.count) / Math.log10(1 + maxCount);
+				const recency = Math.pow(0.5, Math.max(0, now - creator.latest) / halfLife);
+				const wot = followingSet.has(creator.pubkey)
+					? 1
+					: wotSet.has(creator.pubkey)
+						? 0.6
+						: 0.2;
+				const score = (engagement * wEng + recency * wRec + wot * wWot) / total;
+				return { creator, score };
+			})
+			.sort((a, b) => b.score - a.score)
+			.map((item) => item.creator);
+	});
 	const activeMedia = $derived(
 		hasActiveRelaySearch ? relaySearchData?.mediaItems.slice(0, mediaVisibleCount) ?? [] : visibleMedia
 	);
@@ -652,10 +683,20 @@
 		</div>
 
 		<div class="mb-8">
-			<h3 class="mb-3 font-display text-[18px] font-extrabold">Active creators</h3>
+			<div class="mb-3 flex items-center justify-between gap-2">
+				<h3 class="font-display text-[18px] font-extrabold">Active creators</h3>
+				{#if activeCreators.length}
+					<a
+						href="/settings/algorithm"
+						class="text-[11px] font-bold text-primary-500 transition hover:text-primary-600"
+					>
+						{algorithmPreferences.isEnabled('discover') ? 'Ranked · Tune' : 'Tune'}
+					</a>
+				{/if}
+			</div>
 			{#if activeCreators.length}
 				<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{#each activeCreators as creator (creator.pubkey)}
+					{#each rankedCreators as creator (creator.pubkey)}
 						{@const profile = profiles.get(creator.pubkey)}
 						{@const name = profile?.display_name || profile?.name || shortKey(creator.pubkey)}
 						<a href={`/profile/${creator.pubkey}`} class="post-card p-4 text-center">

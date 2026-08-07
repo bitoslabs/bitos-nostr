@@ -11,6 +11,7 @@
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
@@ -55,7 +56,18 @@
 	let reelVisibility = new Map<string, number>();
 	let visibilityObserver: IntersectionObserver | null = null;
 	let oldestReelEventCreatedAt = $state(0);
-	const renderedReels = $derived(reels.slice(0, renderedReelCount));
+	const rankedReels = $derived.by(() => {
+		if (!reels.length) return reels;
+		if (!algorithmPreferences.isEnabled('reels')) return reels;
+		// Fold the current watch-time proxy into engagement. Snap a copy so dwell is a
+		// soft, best-effort input (re-ranking only fires when `reels`/config change,
+		// never on every visibility tick — that would jitter the scroll snap).
+		const dwell = new Map<string, number>();
+		for (const [id, ratio] of reelVisibility) dwell.set(id, ratio);
+		const ctx = buildScoringContext('reels', reels, { dwell });
+		return rankNotes('reels', reels, ctx);
+	});
+	const renderedReels = $derived(rankedReels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
 	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
