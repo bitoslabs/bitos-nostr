@@ -43,9 +43,11 @@
 
 	const APP_VERSION = __APP_VERSION__;
 	const logo = '/icons/icon-192-192.png';
+	const launchDate = 'August 8, 2026';
 
 	const aboutDetails = [
 		{ icon: 'i-lucide-tag', label: 'Version', value: APP_VERSION },
+		{ icon: 'i-lucide-rocket', label: 'Launch', value: launchDate },
 		{ icon: 'i-lucide-radio-tower', label: 'Network', value: 'Nostr' },
 		{ icon: 'i-lucide-shield-check', label: 'Identity', value: 'Local (nsec)' },
 		{ icon: 'i-lucide-scale', label: 'License', value: 'Open source' }
@@ -208,6 +210,7 @@
 			<div>
 				<h3 class="font-display text-[22px] leading-none font-extrabold">BitOS</h3>
 				<p class="text-[12px] opacity-90">v{APP_VERSION} · Nostr client</p>
+				<p class="mt-1 text-[11px] opacity-80">Launches {launchDate}</p>
 			</div>
 		</div>
 		<p class="relative text-[13px] leading-relaxed opacity-95">
