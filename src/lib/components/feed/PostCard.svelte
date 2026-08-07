@@ -776,7 +776,7 @@
 							/>
 							<button
 								type="button"
-								class="absolute inset-0 z-10 grid place-items-center bg-black/18 p-4 text-center text-white"
+								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-4 text-center text-white"
 								onclick={() => revealMedia(media.url)}
 								aria-label="Show sensitive media"
 							>
@@ -847,7 +847,7 @@
 						{#if shouldHideVideo(media.url)}
 							<button
 								type="button"
-								class="absolute inset-0 z-10 grid place-items-center bg-black/18 p-4 text-center text-white"
+								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-4 text-center text-white"
 								onclick={() => revealMedia(media.url)}
 								aria-label="Show sensitive video"
 							>
