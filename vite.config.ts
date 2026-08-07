@@ -5,6 +5,16 @@ import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 
 export default defineConfig({
+	server: {
+		host: '127.0.0.1',
+		port: 5173,
+		allowedHosts: ['social.bitos.space', 'www.social.bitos.space']
+	},
+	preview: {
+		host: '127.0.0.1',
+		port: 5173,
+		allowedHosts: ['social.bitos.space', 'www.social.bitos.space']
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({
