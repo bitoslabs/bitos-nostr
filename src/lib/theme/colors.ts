@@ -86,6 +86,58 @@ export const accentScale: Record<string, AccentScale> = {
 		'800': '#9f1239',
 		'900': '#881337',
 		'950': '#4c0519'
+	},
+	cyan: {
+		'50': '#ecfeff',
+		'100': '#cffafe',
+		'200': '#a5f3fc',
+		'300': '#67e8f9',
+		'400': '#22d3ee',
+		'500': '#06b6d4',
+		'600': '#0891b2',
+		'700': '#0e7490',
+		'800': '#155e75',
+		'900': '#164e63',
+		'950': '#083344'
+	},
+	emerald: {
+		'50': '#ecfdf5',
+		'100': '#d1fae5',
+		'200': '#a7f3d0',
+		'300': '#6ee7b7',
+		'400': '#34d399',
+		'500': '#10b981',
+		'600': '#059669',
+		'700': '#047857',
+		'800': '#065f46',
+		'900': '#064e3b',
+		'950': '#022c22'
+	},
+	fuchsia: {
+		'50': '#fdf4ff',
+		'100': '#fae8ff',
+		'200': '#f5d0fe',
+		'300': '#f0abfc',
+		'400': '#e879f9',
+		'500': '#d946ef',
+		'600': '#c026d3',
+		'700': '#a21caf',
+		'800': '#86198f',
+		'900': '#701a75',
+		'950': '#4a044e'
+	},
+	lime: {
+		'50': '#f7fee7',
+		'100': '#ecfccb',
+		'200': '#d9f99d',
+		'300': '#bef264',
+		'400': '#a3e635',
+		'500': '#84cc16',
+		'600': '#65a30d',
+		'700': '#4d7c0f',
+		'800': '#3f6212',
+		'900': '#365314',
+		'950': '#1a2e05'
 	}
 };
 
@@ -95,7 +147,11 @@ export const accentOptions = [
 	{ key: 'coral', label: 'Coral', hex: '#ff755f' },
 	{ key: 'violet', label: 'Violet', hex: '#8b5cf6' },
 	{ key: 'amber', label: 'Amber', hex: '#f59e0b' },
-	{ key: 'rose', label: 'Rose', hex: '#f43f5e' }
+	{ key: 'rose', label: 'Rose', hex: '#f43f5e' },
+	{ key: 'cyan', label: 'Cyan', hex: '#06b6d4' },
+	{ key: 'emerald', label: 'Emerald', hex: '#10b981' },
+	{ key: 'fuchsia', label: 'Fuchsia', hex: '#d946ef' },
+	{ key: 'lime', label: 'Lime', hex: '#84cc16' }
 ] as const;
 
 export type AccentKey = (typeof accentOptions)[number]['key'];

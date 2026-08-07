@@ -41,7 +41,8 @@
 		'Sending encrypted DMs (NIP-04)'
 	];
 
-	const APP_VERSION = '0.1.0';
+	const APP_VERSION = __APP_VERSION__;
+	const logo = '/icons/icon-192-192.png';
 
 	const aboutDetails = [
 		{ icon: 'i-lucide-tag', label: 'Version', value: APP_VERSION },
@@ -201,8 +202,8 @@
 			class="pointer-events-none absolute -top-12 -right-10 size-40 rounded-full bg-white/15 blur-2xl"
 		></div>
 		<div class="relative mb-3 flex items-center gap-3">
-			<div class="grid size-12 place-items-center rounded-2xl bg-white/20 backdrop-blur">
-				<span class="font-display text-2xl font-black">B</span>
+			<div class="size-12 overflow-hidden rounded-2xl bg-white/20 p-1.5 backdrop-blur">
+				<img src={logo} alt="BitOS logo" class="size-full rounded-[1rem] object-cover" />
 			</div>
 			<div>
 				<h3 class="font-display text-[22px] leading-none font-extrabold">BitOS</h3>

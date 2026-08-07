@@ -33,20 +33,24 @@
 			body: 'A calm, Apple-faithful interface with light/dark themes, no trackers, and no ads — ever.'
 		}
 	];
+
+	const version = `v${__APP_VERSION__}`;
+	const logo = '/icons/icon-192-192.png';
 </script>
 
 <svelte:head><title>About · BitOS</title></svelte:head>
 
 <!-- Hero -->
 <section class="text-center">
-	<div
-		class="mx-auto mb-5 grid size-16 place-items-center rounded-2xl bg-primary-500 text-white shadow-[var(--glow-primary)]"
-	>
-		<span class="font-display text-[30px] font-black">B</span>
-	</div>
+	<img src={logo} alt="BitOS logo" class="mx-auto mb-5 size-16 rounded-2xl shadow-[var(--glow-primary)]" />
 	<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight sm:text-[40px]">
 		BitOS
 	</h1>
+	<p
+		class="mt-2 inline-flex items-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-1 text-[11px] font-semibold tracking-[0.16em] text-[var(--ui-text-muted)] uppercase"
+	>
+		{version}
+	</p>
 	<p class="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-[var(--ui-text-muted)]">
 		A <strong class="text-[var(--ui-text)]">local-first</strong> social client for the
 		<strong class="text-[var(--ui-text)]">Nostr</strong> protocol. Your keys never leave your
