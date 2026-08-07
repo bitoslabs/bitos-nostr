@@ -212,9 +212,11 @@
 
 	onMount(() => {
 		if ('serviceWorker' in navigator) {
-			void navigator.serviceWorker.register('/service-worker.js').catch(() => {
+			void navigator.serviceWorker
+				.register('/service-worker.js', { type: 'module' })
+				.catch(() => {
 				/* PWA support is best-effort. */
-			});
+				});
 		}
 		preferences.load();
 		preferences.apply();
