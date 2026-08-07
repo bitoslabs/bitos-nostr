@@ -563,15 +563,35 @@
 				</div>
 			{/if}
 
-			<!-- Stories -->
-			<div class="mb-4">
-				<StoriesBar />
-			</div>
+			{#if identity.current}
+				<!-- Stories -->
+				<div class="mb-4">
+					<StoriesBar />
+				</div>
 
-			<!-- Composer -->
-			<div class="mb-4">
-				<Composer />
-			</div>
+				<!-- Composer -->
+				<div class="mb-4">
+					<Composer />
+				</div>
+			{:else}
+				<div class="mb-4 rounded-2xl border border-primary-500/15 bg-primary-500/10 px-4 py-3">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<p class="text-[14px] font-bold text-primary-600">Browsing BitOS as a guest</p>
+							<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
+								Public notes stay open to everyone. Create or import a key when you want to post,
+								reply, react, bookmark, or message.
+							</p>
+						</div>
+						<a
+							href="/welcome"
+							class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
+						>
+							Create or import a key
+						</a>
+					</div>
+				</div>
+			{/if}
 
 			{#if feed.pendingCount}
 				<div class="pointer-events-none sticky top-16 z-20 mb-4 flex justify-center">

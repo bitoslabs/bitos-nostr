@@ -1,22 +1,28 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { generateSecretKey } from 'nostr-tools/pure';
+	import { nsecEncode } from 'nostr-tools/nip19';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
+	import { bytesToHex, hexToBytes } from '$lib/nostr/hex';
 
 	let mode = $state<'intro' | 'create' | 'import'>('intro');
 	let secret = $state('');
 	let busy = $state(false);
 	let createdNsec = $state<string | null>(null);
+	let createdSkHex = $state<string | null>(null);
 	let copied = $state(false);
 
 	function create() {
 		busy = true;
 		try {
-			const id = identity.create();
-			createdNsec = id.nsec;
+			const skHex = bytesToHex(generateSecretKey());
+			createdSkHex = skHex;
+			createdNsec = nsecEncode(hexToBytes(skHex));
 			toasts.success('New Nostr identity generated');
 		} catch (e) {
 			toasts.error((e as Error).message);
@@ -25,16 +31,20 @@
 		}
 	}
 
-	function finishCreate() {
-		// identity.current is already set; the layout gate will reveal the app.
+	async function finishCreate() {
+		if (!createdSkHex) return;
+		identity.importSecret(createdSkHex);
 		relays.load();
+		await goto('/');
 	}
 
-	function doImport() {
+	async function doImport() {
 		busy = true;
 		try {
 			identity.importSecret(secret);
+			relays.load();
 			toasts.success('Identity imported');
+			await goto('/');
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {
@@ -48,6 +58,12 @@
 		copied = true;
 		setTimeout(() => (copied = false), 1500);
 	}
+
+	$effect(() => {
+		if (!identity.ready || !identity.current) return;
+		if (mode === 'create' && createdNsec) return;
+		void goto('/');
+	});
 </script>
 
 <div class="grid min-h-screen place-items-center p-5">
@@ -110,7 +126,7 @@
 							Your private key (nsec) — back this up
 						</p>
 						<div class="flex gap-2">
-							<Input bind:value={createdNsec} readonly class="font-mono text-[12px]" />
+							<Input bind:value={createdNsec} readonly class="w-full font-mono text-[12px]" />
 							<Button
 								square
 								size="md"
@@ -136,7 +152,11 @@
 					<button
 						type="button"
 						class="w-full text-center text-[12px] text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text-muted)]"
-						onclick={() => (mode = 'intro')}
+						onclick={() => {
+							mode = 'intro';
+							createdNsec = null;
+							createdSkHex = null;
+						}}
 					>
 						← Back
 					</button>

@@ -52,6 +52,7 @@
 	import { media, providerLabel } from '$lib/stores/media.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { confirms } from '$lib/stores/confirms.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
 	type MessageAttachment = UploadedMedia & {
@@ -994,7 +995,12 @@
 		const me = identity.current;
 		const group = groupThreads.find((thread) => thread.id === groupId);
 		if (!me || !group) return;
-		if (browser && !window.confirm(`Leave "${group.name}"?`)) return;
+		if (!(await confirms.danger({
+			title: `Leave “${group.name}”?`,
+			message: 'You will stop receiving messages from this group.',
+			confirmLabel: 'Leave',
+			icon: 'i-lucide-log-out'
+		}))) return;
 		await broadcastGroupControl(group, 'leave-group', me.pk);
 		removedGroupIds.add(groupId);
 		groupThreads = groupThreads.filter((thread) => thread.id !== groupId);
@@ -1112,8 +1118,12 @@
 		return true;
 	}
 
-	function deleteGroup(groupId: string) {
-		if (browser && !window.confirm('Delete this local group and its messages?')) return;
+	async function deleteGroup(groupId: string) {
+		if (!(await confirms.danger({
+			title: 'Delete this group?',
+			message: 'This local group and its messages will be removed from this device.',
+			confirmLabel: 'Delete'
+		}))) return;
 		removedGroupIds.add(groupId);
 		groupThreads = groupThreads.filter((group) => group.id !== groupId);
 		if (selected === `group:${groupId}`) selected = '';

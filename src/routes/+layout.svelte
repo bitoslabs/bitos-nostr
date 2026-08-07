@@ -25,11 +25,14 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { callAlerts } from '$lib/stores/call-alerts.svelte';
+	import { authMessageForPath, isProtectedRoute, isStandalonePublicRoute } from '$lib/auth/access';
+	import PublicShell from '$lib/components/PublicShell.svelte';
+	import AuthRequired from '$lib/components/auth/AuthRequired.svelte';
 	import IncomingCallOverlay from '$lib/components/calls/IncomingCallOverlay.svelte';
 	import NavRail from '$lib/components/shell/NavRail.svelte';
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
-	import Onboarding from '$lib/components/Onboarding.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
+	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
 	let { children } = $props();
 	const favicon = '/favicon.ico';
@@ -244,6 +247,8 @@
 		} else {
 			if (previousPk) clearSettingsAutoRestoreAttempt();
 			clearRuntimeAccountState();
+			ensureConnected();
+			feed.start();
 		}
 	});
 
@@ -251,14 +256,16 @@
 	let lastRelays = $state<string>('');
 	$effect(() => {
 		const sig = relays.urls.join(',');
-		if (sig === lastRelays || !identity.current) return;
+		if (sig === lastRelays) return;
 		lastRelays = sig;
 		ensureConnected();
-		contacts.start();
-		stories.start();
 		feed.start();
-		dms.start();
-		notifications.start();
+		if (identity.current) {
+			contacts.start();
+			stories.start();
+			dms.start();
+			notifications.start();
+		}
 	});
 
 	// Stories are scoped to me + my follow list, and contacts load asynchronously.
@@ -290,8 +297,9 @@
 	});
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
-	const PUBLIC_ROUTES = new Set(['/about', '/privacy', '/terms']);
-	const isPublicRoute = $derived(PUBLIC_ROUTES.has(page.url.pathname));
+	const isPublicRoute = $derived(isStandalonePublicRoute(page.url.pathname));
+	const routeNeedsAuth = $derived(isProtectedRoute(page.url.pathname));
+	const authMessage = $derived(authMessageForPath(page.url.pathname));
 </script>
 
 <svelte:head>
@@ -314,12 +322,9 @@
 		></div>
 	</div>
 {:else if isPublicRoute}
-	<!-- Public pages (About / Privacy / Terms) are reachable pre-login. -->
-	<main class="min-h-screen bg-[var(--ui-bg)]">
+	<PublicShell>
 		{@render children?.()}
-	</main>
-{:else if !hasIdentity}
-	<Onboarding />
+	</PublicShell>
 {:else}
 	<div class="flex h-screen w-full overflow-hidden">
 		<!-- Desktop nav rail (Pulse icon rail) -->
@@ -333,7 +338,11 @@
 		<main
 			class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
 		>
-			{@render children?.()}
+			{#if routeNeedsAuth && !hasIdentity}
+				<AuthRequired title={authMessage.title} description={authMessage.description} />
+			{:else}
+				{@render children?.()}
+			{/if}
 		</main>
 	</div>
 
@@ -342,3 +351,4 @@
 
 <IncomingCallOverlay />
 <Toaster />
+<ConfirmDialog />

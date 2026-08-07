@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
+	import { identity } from '$lib/nostr/identity.svelte';
 
 	/**
 	 * Shell for public, pre-login pages (About / Privacy / Terms). Renders a
@@ -12,6 +13,7 @@
 
 	const year = new Date().getFullYear();
 	const path = $derived(page.url.pathname);
+	const me = $derived(identity.current);
 
 	const nav = [
 		{ href: '/about', label: 'About' },
@@ -50,6 +52,14 @@
 						{item.label}
 					</a>
 				{/each}
+				{#if !me}
+					<a
+						href="/welcome"
+						class="ml-2 rounded-full bg-primary-500 px-3 py-1.5 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+					>
+						Sign in
+					</a>
+				{/if}
 			</nav>
 		</div>
 	</header>

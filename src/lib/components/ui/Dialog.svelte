@@ -1,16 +1,38 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 
-	/** Centered modal dialog. Closes on overlay click / ESC. */
+	/**
+	 * Centered modal dialog. Closes on overlay click / ESC by default.
+	 * Pass `closeOnOverlay={false}` to make the overlay non-dismissing
+	 * (useful for destructive confirmations).
+	 */
 	let {
 		open = $bindable(false),
 		title,
+		closeOnOverlay = true,
+		onClose,
 		children,
 		footer
-	}: { open?: boolean; title?: string; children?: Snippet; footer?: Snippet } = $props();
+	}: {
+		open?: boolean;
+		title?: string;
+		closeOnOverlay?: boolean;
+		onClose?: () => void;
+		children?: Snippet;
+		footer?: Snippet;
+	} = $props();
+
+	const dismiss = () => {
+		if (!closeOnOverlay) return;
+		open = false;
+		onClose?.();
+	};
 
 	const onKey = (e: KeyboardEvent) => {
-		if (open && e.key === 'Escape') open = false;
+		if (open && e.key === 'Escape' && closeOnOverlay) {
+			open = false;
+			onClose?.();
+		}
 	};
 </script>
 
@@ -23,7 +45,7 @@
 			aria-label="Close dialog"
 			tabindex="-1"
 			class="animate-fade absolute inset-0 bg-black/45 backdrop-blur-[3px]"
-			onclick={() => (open = false)}
+			onclick={dismiss}
 		></button>
 		<div
 			class="surface-card animate-rise relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden shadow-2xl shadow-black/30"

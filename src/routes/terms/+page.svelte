@@ -1,14 +1,11 @@
 <script lang="ts">
-	import PublicShell from '$lib/components/PublicShell.svelte';
-
 	const lastUpdated = 'August 2025';
 </script>
 
 <svelte:head><title>Terms of Service · BitOS</title></svelte:head>
 
-<PublicShell>
-	<h1 class="font-display text-[30px] font-extrabold tracking-tight sm:text-[34px]">Terms of Service</h1>
-	<p class="mt-2 text-[13px] text-[var(--ui-text-dimmed)]">Last updated: {lastUpdated}</p>
+<h1 class="font-display text-[30px] font-extrabold tracking-tight sm:text-[34px]">Terms of Service</h1>
+<p class="mt-2 text-[13px] text-[var(--ui-text-dimmed)]">Last updated: {lastUpdated}</p>
 
 	<p class="mt-6 text-[14px] leading-relaxed text-[var(--ui-text-muted)]">
 		These Terms govern your use of <strong class="text-[var(--ui-text)]">BitOS</strong>, an open-source
@@ -107,10 +104,9 @@
 		>.
 	</p>
 
-	<p class="mt-8 text-[12.5px] text-[var(--ui-text-dimmed)]">
-		See also:
-		<a href="/privacy" class="font-semibold text-primary-500 hover:underline">Privacy Policy</a>
-		·
-		<a href="/about" class="font-semibold text-primary-500 hover:underline">About BitOS</a>
-	</p>
-</PublicShell>
+<p class="mt-8 text-[12.5px] text-[var(--ui-text-dimmed)]">
+	See also:
+	<a href="/privacy" class="font-semibold text-primary-500 hover:underline">Privacy Policy</a>
+	·
+	<a href="/about" class="font-semibold text-primary-500 hover:underline">About BitOS</a>
+</p>

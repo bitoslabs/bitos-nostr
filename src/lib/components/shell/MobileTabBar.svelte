@@ -19,15 +19,21 @@
 	const tabs = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
-		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true },
-		{ to: '/notifications', label: 'Activity', icon: 'i-lucide-bell', notifications: true }
+		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true, requiresAuth: true },
+		{
+			to: '/notifications',
+			label: 'Activity',
+			icon: 'i-lucide-bell',
+			notifications: true,
+			requiresAuth: true
+		}
 	];
 
 	const moreItems = [
 		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
-		{ to: '/bookmarks', label: 'Saved', icon: 'i-lucide-bookmark' },
-		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user' },
-		{ to: '/settings', label: 'Account', icon: 'i-lucide-settings-2' }
+		{ to: '/bookmarks', label: 'Saved', icon: 'i-lucide-bookmark', requiresAuth: true },
+		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
+		{ to: '/settings', label: 'Account', icon: 'i-lucide-settings-2', requiresAuth: true }
 	];
 
 	function isActive(to: string) {
@@ -36,12 +42,14 @@
 	}
 
 	const me = $derived(identity.current);
+	const visibleTabs = $derived(tabs.filter((item) => me || !item.requiresAuth));
+	const visibleMoreItems = $derived(moreItems.filter((item) => me || !item.requiresAuth));
 	const displayName = $derived(
 		me?.pk ? profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You' : ''
 	);
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
-	const moreActive = $derived(moreItems.some((item) => isActive(item.to)));
+	const moreActive = $derived(visibleMoreItems.some((item) => isActive(item.to)));
 
 	function accountName(account: (typeof identity.accounts)[number]) {
 		const profile = profiles.get(account.pk) ?? account.profile;
@@ -68,7 +76,7 @@
 	class="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] pb-[env(safe-area-inset-bottom)] lg:hidden"
 	aria-label="Primary"
 >
-	{#each tabs as tab (tab.to)}
+	{#each visibleTabs as tab (tab.to)}
 		{@const active = isActive(tab.to)}
 		<a
 			href={tab.to}
@@ -182,7 +190,7 @@
 			<MenuDivider />
 		{/if}
 
-		{#each moreItems as item (item.to)}
+		{#each visibleMoreItems as item (item.to)}
 			<MenuItem
 				href={item.to}
 				icon={item.icon}
@@ -193,5 +201,11 @@
 				{item.label}
 			</MenuItem>
 		{/each}
+		{#if !me}
+			<MenuDivider />
+			<MenuItem href="/welcome" icon="i-lucide-log-in">
+				Create or import a key
+			</MenuItem>
+		{/if}
 	</Popover>
 </nav>
