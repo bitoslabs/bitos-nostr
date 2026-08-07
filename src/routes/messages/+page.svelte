@@ -235,6 +235,10 @@
 		if (id) closedCallIds.add(id);
 	}
 
+	function isSecureDm(message: DirectMessage | undefined | null) {
+		return message?.protocol === 'nip17';
+	}
+
 	function displayNameForPubkey(pubkey: string) {
 		const profile = profiles.get(pubkey);
 		return profile?.display_name || profile?.name || shortKey(pubkey);
@@ -1828,6 +1832,14 @@
 						</div>
 						<div class="flex items-center justify-between">
 							<p class="truncate text-[13px] text-[var(--ui-text-muted)]">
+								{#if conversation.kind === 'dm' && isSecureDm(dms.conversations.find((dm) => dm.peer === conversation.id)?.lastMessage)}
+									<span
+										class="mr-1 inline-flex items-center align-middle text-emerald-600 dark:text-emerald-300"
+										title="Last message used Secure DM (NIP-17)"
+									>
+										<Icon name="i-lucide-shield-check" class="size-3.5" />
+									</span>
+								{/if}
 								{#if conversation.previewPrefix}
 									<span class="font-semibold text-[var(--ui-text)]"
 										>{conversation.previewPrefix}</span
@@ -1924,7 +1936,7 @@
 									{active.onlineCount} online - {active.memberCount} members
 								{:else}
 									<Icon name="i-lucide-lock" class="size-3.5 text-[var(--tone-success-text)]" />
-									Encrypted - NIP-04
+									Encrypted - Secure DMs + legacy fallback
 								{/if}
 							</p>
 						</div>
@@ -2201,11 +2213,12 @@
 								{@const callSignal = parseCallSignal(msg.content)}
 								{@const msgMedia = mediaFromMessage(msg.content)}
 								<div class="flex {msg.mine ? 'justify-end' : 'justify-start'}">
-									<div
-										class="max-w-[78%] {msg.mine
-											? 'bubble-out rounded-br-md'
-											: 'bubble-in rounded-bl-md'} px-4 py-2.5 text-[14px] leading-relaxed"
-									>
+									<div class="max-w-[78%]">
+										<div
+											class="{msg.mine
+												? 'bubble-out rounded-br-md'
+												: 'bubble-in rounded-bl-md'} px-4 py-2.5 text-[14px] leading-relaxed"
+										>
 										{#if invite}
 											<div class="min-w-[240px] space-y-3">
 												<div class="flex items-center gap-3">
@@ -2413,15 +2426,24 @@
 											<p class="break-words whitespace-pre-wrap">{msg.content}</p>
 										{/if}
 										<div
-											class="mt-0.5 text-right text-[10px] {msg.mine
+											class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] {msg.mine
 												? 'text-white/60'
 												: 'text-[var(--ui-text-dimmed)]'}"
 										>
+											{#if isSecureDm(msg)}
+												<span
+													class="inline-flex items-center text-emerald-200 dark:text-emerald-300"
+													title="Secure DM"
+												>
+													<Icon name="i-lucide-shield-check" class="size-3" />
+												</span>
+											{/if}
 											{new Date(msg.createdAt * 1000).toLocaleTimeString(undefined, {
 												hour: '2-digit',
 												minute: '2-digit'
 											})}
 										</div>
+									</div>
 									</div>
 								</div>
 							{/each}
@@ -2800,7 +2822,7 @@
 								name="i-lucide-lock"
 								class="mr-1 inline size-3.5 text-[var(--tone-success-text)]"
 							/>
-							Messages in this conversation are encrypted with NIP-04.
+							Messages in this conversation support Secure DMs (NIP-17) with legacy NIP-04 fallback.
 						</div>
 					</div>
 				{/if}
@@ -2921,7 +2943,7 @@
 			<Icon name="i-lucide-lock" class="mr-1 inline size-3.5 text-[var(--tone-success-text)]" />
 			{active.kind === 'group'
 				? 'This group thread is local UI state until a Nostr group protocol is connected.'
-				: 'Messages use NIP-04 encryption. Calls and file uploads require additional Nostr-compatible services.'}
+				: 'Messages prefer Secure DMs (NIP-17) and can still read legacy NIP-04 chats. Calls and file uploads require additional Nostr-compatible services.'}
 		</div>
 		{#if activeGroup}
 			<div class="mt-5">

@@ -1,7 +1,7 @@
 # BitOS Nostr
 
 A local-first **Nostr** social client — a **Feed** (kind 1 text notes) and
-**Chat** (NIP-04 direct messages) — built with SvelteKit 2 + Svelte 5 (runes) +
+**Chat** (Secure DMs with NIP-04 fallback) — built with SvelteKit 2 + Svelte 5 (runes) +
 Tailwind v4.
 
 This app fuses three sources:
@@ -10,7 +10,7 @@ This app fuses three sources:
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`bitdigo/notes/web`** (BitOS Notes) | The _visual language & settings_ — Apple-faithful, macOS-Notes 3-pane aesthetic, system fonts, the signature **`#FFCC00` yellow** brand, traffic-light titlebar, the relay model (read/write flags + health test), and the appearance/account settings UX.     |
 | **`school-erp-svelte`**               | The _component code pattern_ — Svelte 5 runes, `tailwind-variants` buttons, an offline Iconify/Lucide icon registry, a runes-based preferences singleton, `--ui-*` surface tokens, glass/surface utilities, and the desktop-sidebar + mobile-bottom-tab shell. |
-| **Nostr protocol**                    | The actual _features_ — NIP-01 events, NIP-04 encrypted DMs, NIP-19 (`npub`/`nsec`) keys, and a `SimplePool` relay client.                                                                                                                                     |
+| **Nostr protocol**                    | The actual _features_ — NIP-01 events, Secure DMs (NIP-17) with NIP-04 fallback, NIP-19 (`npub`/`nsec`) keys, and a `SimplePool` relay client.                                                                                                               |
 
 ## Features
 
@@ -20,7 +20,8 @@ This app fuses three sources:
 - **📰 Feed (`/`)** — live global timeline of kind 1 text notes streamed from
   your relays. Compose + post (⌘⏎), ❤️ react (kind 7), copy, avatars + display
   names resolved from kind 0 metadata.
-- **💬 Messages (`/messages`)** — end-to-end-encrypted NIP-04 direct messages,
+- **💬 Messages (`/messages`)** — end-to-end-encrypted direct messages with
+  Secure DMs (NIP-17) and legacy NIP-04 compatibility,
   grouped into conversations with day dividers, search, and a "new message"
   dialog (paste an `npub`). Deep-links via `?to=<npub|hex>`.
 - **⚙️ Settings (`/settings`)** — appearance (light/dark/system + 5 accent

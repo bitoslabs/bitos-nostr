@@ -1,22 +1,20 @@
 /**
- * Direct messages (NIP-04). Subscribes to encrypted kind-4 events to and from
- * the active pubkey, decrypts them with nostr-tools/nip04, and groups them into
- * conversations. New outbound messages are encrypted + published.
- *
- * NIP-04 uses a shared secret derived via ECDH + an IV in the `content` field
- * formatted as "<ciphertext>?iv=<iv>". This is the most widely-supported DM
- * scheme; NIP-44/NIP-17 can be layered on later behind the same API.
+ * Direct messages. Subscribes to legacy NIP-04 kind-4 events plus secure
+ * gift-wrapped NIP-17 events, decrypts them on-device, and groups them into
+ * conversations. New outbound messages prefer NIP-17 and fall back to NIP-04
+ * only if secure delivery fails at the relay layer.
  */
 import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
 import { nip04 } from 'nostr-tools';
+import { unwrapEvent, wrapManyEvents } from 'nostr-tools/nip17';
 import { subscribe, publish } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
 import { hexToBytes } from './hex';
-import { NOSTR_KINDS, type Conversation, type DirectMessage } from './types';
+import { NOSTR_KINDS, type Conversation, type DirectMessage, type Event } from './types';
 
 const STORAGE_KEY_PREFIX = 'bitos:dm-conversations';
 const MAX_CACHED_CONVERSATIONS = 80;
@@ -56,11 +54,12 @@ class DMStore {
 		this.loadCached(me);
 		this.loading = true;
 		this.connected = false;
-		// NIP-04: recipient in `p` tag. Fetch messages I authored OR addressed to me.
+		// Legacy kind-4 DMs plus secure gift-wrapped DMs addressed to me.
 		this.unsub = subscribe(
 			[
 				{ kinds: [NOSTR_KINDS.DIRECT_MESSAGE], authors: [me] },
-				{ kinds: [NOSTR_KINDS.DIRECT_MESSAGE], '#p': [me] }
+				{ kinds: [NOSTR_KINDS.DIRECT_MESSAGE], '#p': [me] },
+				{ kinds: [NOSTR_KINDS.GIFT_WRAP], '#p': [me] }
 			],
 			{
 				oneose: () => {
@@ -84,42 +83,77 @@ class DMStore {
 		this.connected = false;
 	};
 
-	private async ingest(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		created_at: number;
-		tags: string[][];
-	}) {
+	private async ingest(ev: Event) {
 		const me = identity.current;
 		if (!me) return;
-		const mine = ev.pubkey === me.pk;
-		// Counterparty: if I'm the author, the recipient is in a p-tag; else sender.
-		const peer = mine ? (ev.tags.find((t) => t[0] === 'p')?.[1] ?? '') : ev.pubkey;
-		if (!peer) return;
-		if (!mine && blocks.has(peer)) return;
+		const msg =
+			ev.kind === NOSTR_KINDS.GIFT_WRAP
+				? this.ingestGiftWrap(ev, me)
+				: await this.ingestLegacyDm(ev, me);
+		if (!msg) return;
+		this.attach(msg);
+		profiles.ensure([msg.peer]);
+	}
+
+	private canAcceptPeer(peer: string, mine: boolean) {
+		if (!peer) return false;
+		if (!mine && blocks.has(peer)) return false;
 		const existingConversation = this.conversations.some(
 			(conversation) => conversation.peer === peer
 		);
-		if (!mine && !existingConversation && !privacyNotificationSettings.canReceiveDmFrom(peer))
-			return;
+		return mine || existingConversation || privacyNotificationSettings.canReceiveDmFrom(peer);
+	}
+
+	private async ingestLegacyDm(
+		ev: Event,
+		me: NonNullable<typeof identity.current>
+	): Promise<DirectMessage | null> {
+		const mine = ev.pubkey === me.pk;
+		const peer = mine ? (ev.tags.find((tag) => tag[0] === 'p')?.[1] ?? '') : ev.pubkey;
+		if (!peer || !this.canAcceptPeer(peer, mine)) return null;
+
 		let plaintext: string;
 		try {
-			// nip04.decrypt needs hex keys
 			plaintext = await nip04.decrypt(me.sk, peer, ev.content);
 		} catch {
-			plaintext = '🔒 Unable to decrypt (different key?)';
+			plaintext = 'Unable to decrypt this legacy DM.';
 		}
-		const msg: DirectMessage = {
+
+		return {
 			id: ev.id,
 			pubkey: ev.pubkey,
 			peer,
 			content: plaintext,
 			createdAt: ev.created_at,
-			mine
+			mine,
+			protocol: 'nip04'
 		};
-		this.attach(msg);
-		profiles.ensure([peer]);
+	}
+
+	private ingestGiftWrap(
+		ev: Event,
+		me: NonNullable<typeof identity.current>
+	): DirectMessage | null {
+		try {
+			const inner = unwrapEvent(ev, hexToBytes(me.sk));
+			if (inner.kind !== NOSTR_KINDS.PRIVATE_DIRECT_MESSAGE) return null;
+			const mine = inner.pubkey === me.pk;
+			const peer = mine
+				? (inner.tags.find((tag) => tag[0] === 'p' && tag[1] !== me.pk)?.[1] ?? '')
+				: inner.pubkey;
+			if (!peer || !this.canAcceptPeer(peer, mine)) return null;
+			return {
+				id: ev.id,
+				pubkey: inner.pubkey,
+				peer,
+				content: inner.content,
+				createdAt: inner.created_at,
+				mine,
+				protocol: 'nip17'
+			};
+		} catch {
+			return null;
+		}
 	}
 
 	private attach(msg: DirectMessage) {
@@ -221,29 +255,46 @@ class DMStore {
 		if (blocks.has(peer)) throw new Error('Unblock this user before messaging them');
 		const body = text.trim();
 		if (!body) return;
+		const createdAt = Math.floor(Date.now() / 1000);
+		const secureEvents = wrapManyEvents(hexToBytes(me.sk), [{ publicKey: peer }], body);
+		try {
+			await Promise.all(secureEvents.map((event) => publish(event)));
+			this.attach({
+				id: secureEvents[0]?.id ?? `${me.pk}:${peer}:${createdAt}`,
+				pubkey: me.pk,
+				peer,
+				content: body,
+				createdAt,
+				mine: true,
+				protocol: 'nip17'
+			});
+			return;
+		} catch {
+			/* secure delivery failed on current relays; fall back to legacy */
+		}
+
 		const ciphertext = await nip04.encrypt(me.sk, peer, body);
-		const event = finalizeEvent(
+		const legacyEvent = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.DIRECT_MESSAGE,
 				content: ciphertext,
-				created_at: Math.floor(Date.now() / 1000),
+				created_at: createdAt,
 				tags: [
 					['p', peer],
-					// NIP-04 hint that clients should not index this publicly
 					['-']
 				]
 			},
 			hexToBytes(me.sk)
 		);
-		await publish(event);
-		// optimistic local echo
+		await publish(legacyEvent);
 		this.attach({
-			id: event.id,
+			id: legacyEvent.id,
 			pubkey: me.pk,
 			peer,
 			content: body,
-			createdAt: event.created_at,
-			mine: true
+			createdAt,
+			mine: true,
+			protocol: 'nip04'
 		});
 	}
 }
