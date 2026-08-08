@@ -181,9 +181,11 @@
 	function mediaGridStyle(count: number) {
 		if (count <= 1) return '';
 		if (count === 2) return 'grid-auto-rows: minmax(0, 220px);';
-		if (count === 3) return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 160px);';
+		if (count === 3)
+			return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 160px);';
 		if (count === 4) return 'grid-auto-rows: minmax(0, 150px);';
-		if (count === 5) return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 125px);';
+		if (count === 5)
+			return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 125px);';
 		return 'grid-auto-rows: minmax(0, 120px);';
 	}
 
@@ -591,10 +593,7 @@
 				<MenuItem href={`/messages?to=${note.pubkey}`} icon="i-lucide-message-circle">
 					Message author
 				</MenuItem>
-				<MenuItem
-					icon={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
-					onclick={toggleSaved}
-				>
+				<MenuItem icon={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'} onclick={toggleSaved}>
 					{saved ? 'Unsave note' : 'Save note'}
 				</MenuItem>
 				<MenuItem icon="i-lucide-link" onclick={() => copyText(noteLink, 'Note link')}>
@@ -617,51 +616,44 @@
 						Copy attachment URL
 					</MenuItem>
 				{/if}
-				<MenuItem
-					icon="i-lucide-user-round"
-					onclick={() => copyText(authorNpub, 'Author npub')}
-				>
+				<MenuItem icon="i-lucide-user-round" onclick={() => copyText(authorNpub, 'Author npub')}>
 					Copy author npub
 				</MenuItem>
 				<MenuItem icon="i-lucide-braces" onclick={showRaw}>View raw note</MenuItem>
 
 				<MenuDivider />
 
-				<MenuItem icon="i-lucide-thumbs-down" onclick={notInterested}>
-				Not interested
-			</MenuItem>
-			{#if !isMe}
-				<MenuItem
-					icon={interactionProfile.isAuthorMuted(note.pubkey)
-						? 'i-lucide-eye'
-						: 'i-lucide-eye-off'}
-					onclick={toggleMuteAuthor}
-				>
-					{interactionProfile.isAuthorMuted(note.pubkey)
-						? `Show more from ${displayName}`
-						: `Show less from ${displayName}`}
-				</MenuItem>
-			{/if}
-			{#each extractTags(note).slice(0, 3) as tag (tag)}
-				{#if interactionProfile.isTagMuted(tag)}
-					<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
-						Show more about #{tag}
-					</MenuItem>
-				{:else}
-					<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
-						Show less about #{tag}
+				<MenuItem icon="i-lucide-thumbs-down" onclick={notInterested}>Not interested</MenuItem>
+				{#if !isMe}
+					<MenuItem
+						icon={interactionProfile.isAuthorMuted(note.pubkey)
+							? 'i-lucide-eye'
+							: 'i-lucide-eye-off'}
+						onclick={toggleMuteAuthor}
+					>
+						{interactionProfile.isAuthorMuted(note.pubkey)
+							? `Show more from ${displayName}`
+							: `Show less from ${displayName}`}
 					</MenuItem>
 				{/if}
-			{/each}
+				{#each extractTags(note).slice(0, 3) as tag (tag)}
+					{#if interactionProfile.isTagMuted(tag)}
+						<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
+							Show more about #{tag}
+						</MenuItem>
+					{:else}
+						<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
+							Show less about #{tag}
+						</MenuItem>
+					{/if}
+				{/each}
 
-			<MenuDivider />
+				<MenuDivider />
 
-			<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
+				<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
 				{#if !isMe}
 					<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
-					<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>
-						Block author
-					</MenuItem>
+					<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>Block author</MenuItem>
 				{:else}
 					<MenuItem tone="danger" icon="i-lucide-trash-2" onclick={askDeleteNote}>
 						Delete note
@@ -743,7 +735,8 @@
 									Open image
 								</span>
 								<span class="block truncate text-[12px] text-[var(--ui-text-muted)]"
-									>{media.url}</span>
+									>{media.url}</span
+								>
 							</span>
 						</a>
 					{:else if shouldHideImage(media.url)}
@@ -765,7 +758,9 @@
 								<span
 									class="w-full max-w-[11rem] rounded-[18px] border border-white/15 bg-white/10 px-3 py-2 shadow-lg backdrop-blur-sm sm:max-w-48"
 								>
-									<span class="flex items-center justify-center gap-2 text-[11px] font-bold text-white">
+									<span
+										class="flex items-center justify-center gap-2 text-[11px] font-bold text-white"
+									>
 										<Icon name="i-lucide-eye-off" class="size-4" />
 										<span>View</span>
 									</span>
@@ -801,53 +796,55 @@
 						</button>
 					{/if}
 				{:else if media.type === 'video'}
-						<div class="{tileClass} relative bg-black overflow-hidden">
-							<!-- svelte-ignore a11y_media_has_caption -->
-							<video
-								use:trackFeedVideo
-								src={media.url}
-								controls={!shouldHideVideo(media.url)}
-								preload="metadata"
-								playsinline
-								class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
-									? ''
-									: 'scale-105 blur-2xl saturate-50'}"
-							></video>
-							{#if !shouldHideVideo(media.url)}
-								<div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 p-2 text-white shadow-lg">
-									<Icon name="i-lucide-play" class="size-4" />
-								</div>
-							{/if}
-							{#if showMoreOverlay}
-								<div
-									class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+					<div class="{tileClass} relative overflow-hidden bg-black">
+						<!-- svelte-ignore a11y_media_has_caption -->
+						<video
+							use:trackFeedVideo
+							src={media.url}
+							controls={!shouldHideVideo(media.url)}
+							preload="metadata"
+							playsinline
+							class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
+								? ''
+								: 'scale-105 blur-2xl saturate-50'}"
+						></video>
+						{#if !shouldHideVideo(media.url)}
+							<div
+								class="pointer-events-none absolute top-3 left-3 rounded-full bg-black/55 p-2 text-white shadow-lg"
+							>
+								<Icon name="i-lucide-play" class="size-4" />
+							</div>
+						{/if}
+						{#if showMoreOverlay}
+							<div
+								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+							>
+								+{hiddenMediaCount}
+							</div>
+						{/if}
+						{#if shouldHideVideo(media.url)}
+							<button
+								type="button"
+								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-3 text-center text-white"
+								onclick={() => revealMedia(media.url)}
+								aria-label="Show sensitive video"
+							>
+								<span
+									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
 								>
-									+{hiddenMediaCount}
-								</div>
-							{/if}
-							{#if shouldHideVideo(media.url)}
-								<button
-									type="button"
-									class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-3 text-center text-white"
-									onclick={() => revealMedia(media.url)}
-									aria-label="Show sensitive video"
-								>
+									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+									<span class="block text-[13px] font-bold">Sensitive video</span>
+									<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
 									<span
-										class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
 									>
-										<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
-										<span class="block text-[13px] font-bold">Sensitive video</span>
-										<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
-										<span
-											class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
-										>
-											View
-										</span>
+										View
 									</span>
-								</button>
-							{/if}
-						</div>
-{:else if media.type === 'audio'}
+								</span>
+							</button>
+						{/if}
+					</div>
+				{:else if media.type === 'audio'}
 					<div class="{tileClass} flex min-h-28 flex-col justify-center gap-3 p-4">
 						<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
 							<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
@@ -871,7 +868,8 @@
 							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
 								{media.host}
 							</span>
-							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span>
+							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span
+							>
 						</span>
 					</a>
 				{/if}
@@ -982,10 +980,7 @@
 				: 'text-[var(--ui-text-muted)]'}"
 			aria-label={saved ? 'Unsave note' : 'Save note'}
 		>
-			<Icon
-				name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'}
-				class="size-[18px]"
-			/>
+			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[18px]" />
 		</button>
 	</div>
 
@@ -1017,7 +1012,10 @@
 								<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
 							{/if}
 							{#if identity.current?.pk === reply.pubkey}
-								<span class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase">you</span>
+								<span
+									class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
+									>you</span
+								>
 							{/if}
 							<time
 								class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
@@ -1092,10 +1090,16 @@
 													{childName}
 												</a>
 												{#if childProfile?.nip05}
-													<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+													<Icon
+														name="i-lucide-badge-check"
+														class="size-3 shrink-0 text-primary-500"
+													/>
 												{/if}
 												{#if identity.current?.pk === child.pubkey}
-													<span class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase">you</span>
+													<span
+														class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
+														>you</span
+													>
 												{/if}
 												<time
 													class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
@@ -1107,9 +1111,16 @@
 												<button
 													type="button"
 													onclick={() => reactToComment(child)}
-													class="inline-flex items-center gap-1 {commentLiked(child) ? 'text-[var(--tone-error-text)]' : 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
+													class="inline-flex items-center gap-1 {commentLiked(child)
+														? 'text-[var(--tone-error-text)]'
+														: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
 												>
-													<Icon name={commentLiked(child) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-3" />
+													<Icon
+														name={commentLiked(child)
+															? 'i-solar-heart-bold'
+															: 'i-solar-heart-linear'}
+														class="size-3"
+													/>
 													{commentLiked(child) ? 'Unlike' : 'Like'}
 													{#if commentReactionCount(child)}
 														<span class="font-semibold"> · {commentReactionCount(child)}</span>
