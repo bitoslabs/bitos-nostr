@@ -982,6 +982,134 @@
 			animation-iteration-count: 1 !important;
 		}
 	}
+	/* ===== Call experience — premium voice/video visuals ===== */
+	.call-orb {
+		position: relative;
+		display: inline-grid;
+		place-items: center;
+		border-radius: 9999px;
+		transition:
+			transform 0.18s ease,
+			background-color 0.18s ease,
+			box-shadow 0.18s ease,
+			color 0.18s ease;
+	}
+	.call-orb:hover {
+		transform: translateY(-1px) scale(1.05);
+	}
+	.call-orb:active {
+		transform: scale(0.95);
+	}
+	.call-orb:focus-visible {
+		outline: 2px solid var(--ui-color-primary-500);
+		outline-offset: 2px;
+	}
+
+	/* Concentric expanding rings used behind avatars while ringing / connecting. */
+	.call-ring {
+		position: absolute;
+		inset: 0;
+		border-radius: 9999px;
+		border: 2px solid var(--ui-color-primary-500);
+		opacity: 0;
+		pointer-events: none;
+		animation: call-ring-pulse 2.1s cubic-bezier(0.22, 0.7, 0.3, 1) infinite;
+	}
+	.call-ring--2 {
+		animation-delay: 0.7s;
+	}
+	.call-ring--3 {
+		animation-delay: 1.4s;
+	}
+	@keyframes call-ring-pulse {
+		0% {
+			transform: scale(0.9);
+			opacity: 0.7;
+		}
+		80%,
+		100% {
+			transform: scale(1.95);
+			opacity: 0;
+		}
+	}
+
+	/* Entrance animations for call surfaces. */
+	.call-bounce-in {
+		animation: call-bounce-in 0.5s cubic-bezier(0.22, 1.2, 0.3, 1) both;
+	}
+	@keyframes call-bounce-in {
+		0% {
+			opacity: 0;
+			transform: translateY(-26px) scale(0.95);
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+	.call-slide-up {
+		animation: call-slide-up 0.4s cubic-bezier(0.22, 1.1, 0.3, 1) both;
+	}
+	@keyframes call-slide-up {
+		0% {
+			opacity: 0;
+			transform: translateY(40px) scale(0.96);
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
+	}
+
+	/* Immersive gradient backdrop for the voice-call stage. */
+	.call-stage-voice {
+		background: radial-gradient(
+			125% 125% at 50% 16%,
+			color-mix(in oklab, var(--ui-color-primary-500) 30%, #0b1220) 0%,
+			#0b1220 58%,
+			#070b14 100%
+		);
+	}
+
+	/* Shimmer sweep used on connecting / loading call surfaces. */
+	.call-shimmer {
+		position: relative;
+		overflow: hidden;
+	}
+	.call-shimmer::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		background: linear-gradient(
+			110deg,
+			transparent 30%,
+			rgba(255, 255, 255, 0.16) 50%,
+			transparent 70%
+		);
+		background-size: 220% 100%;
+		animation: call-shimmer 1.9s linear infinite;
+		pointer-events: none;
+	}
+	@keyframes call-shimmer {
+		0% {
+			background-position: 220% 0;
+		}
+		100% {
+			background-position: -120% 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.call-orb,
+		.call-ring,
+		.call-bounce-in,
+		.call-slide-up,
+		.call-shimmer::after {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+		}
+	}
+
 	.live-pulse {
 		animation: pulse-live 1.5s ease-in-out infinite;
 	}

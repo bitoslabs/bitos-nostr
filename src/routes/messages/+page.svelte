@@ -562,7 +562,9 @@
 	}
 
 	function supportsSpeakerOutput() {
-		return browser && typeof (HTMLMediaElement.prototype as OutputMediaElement).setSinkId === 'function';
+		return (
+			browser && typeof (HTMLMediaElement.prototype as OutputMediaElement).setSinkId === 'function'
+		);
 	}
 
 	function supportsPictureInPicture() {
@@ -571,8 +573,8 @@
 		return (
 			activeCall === 'video' &&
 			!!pipDocument.pictureInPictureEnabled &&
-			typeof (remoteVideoEl as PictureInPictureVideoElement | undefined)?.requestPictureInPicture ===
-				'function'
+			typeof (remoteVideoEl as PictureInPictureVideoElement | undefined)
+				?.requestPictureInPicture === 'function'
 		);
 	}
 
@@ -811,7 +813,10 @@
 				removeFailedGroupPeer(peer);
 				return;
 			}
-			if (!options.multi && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
+			if (
+				!options.multi &&
+				(pc.connectionState === 'failed' || pc.connectionState === 'disconnected')
+			) {
 				callState = 'reconnecting';
 				callError = 'Reconnecting...';
 				void restartCallIce();
@@ -829,7 +834,7 @@
 			!identity.current ||
 			!callId ||
 			!activeCall ||
-			!callPeer && !peerConnections.size ||
+			(!callPeer && !peerConnections.size) ||
 			Date.now() - lastIceRestartAt < 3_000
 		)
 			return;
@@ -1008,10 +1013,7 @@
 					packetsReceived?: number;
 				};
 				if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
-					highestRtt = Math.max(
-						highestRtt,
-						stat.currentRoundTripTime ?? stat.roundTripTime ?? 0
-					);
+					highestRtt = Math.max(highestRtt, stat.currentRoundTripTime ?? stat.roundTripTime ?? 0);
 				}
 				if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
 					selectedTransport = stat.protocol ?? stat.networkType ?? '';
@@ -2567,10 +2569,7 @@
 		};
 	});
 	$effect(() => {
-		if (
-			!shouldStartCallTimeout(showCall, callState)
-		)
-			return;
+		if (!shouldStartCallTimeout(showCall, callState)) return;
 
 		const timer = setTimeout(() => {
 			callError = 'No answer';
@@ -2802,22 +2801,26 @@
 							</p>
 						</div>
 					</div>
-					<div class="flex shrink-0 items-center gap-1">
+					<div
+						class="flex shrink-0 items-center gap-1 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 p-1"
+					>
 						<button
 							type="button"
 							onclick={() => startCall('voice')}
-							class="grid size-10 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500"
+							title="Voice call"
+							class="group grid size-9 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--surface-bg)] hover:text-primary-500 hover:shadow-sm"
 							aria-label="Start voice call"
 						>
-							<Icon name="i-lucide-phone" class="size-4" />
+							<Icon name="i-lucide-phone" class="size-4 transition group-active:scale-90" />
 						</button>
 						<button
 							type="button"
 							onclick={() => startCall('video')}
-							class="grid size-10 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500"
+							title="Video call"
+							class="group grid size-9 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--surface-bg)] hover:text-primary-500 hover:shadow-sm"
 							aria-label="Start video call"
 						>
-							<Icon name="i-lucide-video" class="size-4" />
+							<Icon name="i-lucide-video" class="size-4 transition group-active:scale-90" />
 						</button>
 						<button
 							type="button"
@@ -3944,7 +3947,6 @@
 	{/snippet}
 </Dialog>
 
-
 {#if showPreCall && preCallKind}
 	<Dialog
 		bind:open={showPreCall}
@@ -3953,17 +3955,57 @@
 	>
 		<div class="space-y-4">
 			{#if preCallKind === 'video'}
-				<div class="relative aspect-video overflow-hidden rounded-2xl bg-neutral-950">
-					<video use:streamSource={localStream} autoplay muted playsinline class="size-full object-cover"></video>
+				<div
+					class="relative aspect-video overflow-hidden rounded-2xl bg-neutral-950 ring-1 ring-[var(--ui-border)]"
+				>
+					<video
+						use:streamSource={localStream}
+						autoplay
+						muted
+						playsinline
+						class="size-full object-cover"
+					></video>
+					<span
+						class="pointer-events-none absolute top-2 left-2 flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur"
+					>
+						<span
+							class="size-1.5 rounded-full {cameraEnabled ? 'bg-emerald-400' : 'bg-neutral-400'}"
+						></span>
+						Preview
+					</span>
 					{#if !cameraEnabled}
-						<div class="absolute inset-0 grid place-items-center bg-neutral-950 text-white">
-							<Icon name="i-lucide-camera-off" class="size-10" />
+						<div
+							class="absolute inset-0 grid place-items-center bg-neutral-950/85 text-white backdrop-blur-sm"
+						>
+							<div class="flex flex-col items-center gap-2">
+								<Icon name="i-lucide-camera-off" class="size-10 text-white/70" />
+								<span class="text-[11px] font-semibold text-white/70">Camera off</span>
+							</div>
 						</div>
 					{/if}
 				</div>
 			{:else}
-				<div class="grid place-items-center rounded-2xl bg-primary-500/10 py-8">
-					<Icon name="i-lucide-mic" class="size-10 text-primary-600 dark:text-primary-300" />
+				<div
+					class="call-stage-voice relative grid place-items-center overflow-hidden rounded-2xl py-10 ring-1 ring-[var(--ui-border)]"
+				>
+					<div class="relative">
+						<span class="call-ring"></span>
+						<span class="call-ring call-ring--2"></span>
+						<span class="call-ring call-ring--3"></span>
+						<div
+							class="grid size-14 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)]"
+						>
+							<Icon name="i-lucide-mic" class="size-6" />
+						</div>
+					</div>
+					<div class="absolute bottom-3 flex h-4 items-end gap-[3px]" aria-hidden="true">
+						{#each Array(24) as _, i (i)}
+							<span
+								class="wave-bar w-[3px] rounded-full bg-primary-300/70"
+								style={`height: ${25 + ((i * 47) % 60)}%; animation-delay: ${(i % 6) * 0.1}s`}
+							></span>
+						{/each}
+					</div>
 				</div>
 			{/if}
 			<p class="text-center text-[12px] text-[var(--ui-text-muted)]">
@@ -3976,44 +4018,94 @@
 				</Button>
 			{/if}
 			{#if microphones.length}
-				<div class="space-y-1 text-left">
-					<div class="flex items-center justify-between text-[10px] font-semibold text-[var(--ui-text-muted)]">
-						<span>Microphone test</span>
-						<span>{micLevel > 3 ? 'Signal detected' : 'Speak to test'}</span>
+				<div class="space-y-1.5 text-left">
+					<div
+						class="flex items-center justify-between text-[10px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+					>
+						<span class="flex items-center gap-1"
+							><Icon name="i-lucide-mic" class="size-3" /> Microphone test</span
+						>
+						<span
+							class="rounded-full px-1.5 py-0.5 font-semibold {micLevel > 3
+								? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
+								: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]'}"
+							>{micLevel > 3 ? 'Signal detected' : 'Speak to test'}</span
+						>
 					</div>
-					<div class="h-2 overflow-hidden rounded-full bg-[var(--ui-border-muted)]">
+					<div class="h-2.5 overflow-hidden rounded-full bg-[var(--ui-border-muted)]">
 						<div
-							class="h-full rounded-full bg-emerald-500 transition-[width] duration-75"
-							style={`width: ${micLevel}%`}
+							class="h-full rounded-full bg-gradient-to-r from-emerald-400 via-emerald-500 to-primary-500 transition-[width] duration-75"
+							style={`width: ${Math.min(100, micLevel)}%`}
 						></div>
 					</div>
 				</div>
 			{/if}
-			<div class="flex items-center justify-center gap-3 text-[10px] font-semibold">
-				<span class="text-[var(--ui-text-muted)]">Mic: <span class={permissionClass(microphonePermission)}>{permissionLabel(microphonePermission)}</span></span>
+			<div class="flex flex-wrap items-center justify-center gap-2 text-[10px] font-bold">
+				<span
+					class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 py-1 text-[var(--ui-text-muted)]"
+				>
+					<Icon name="i-lucide-mic" class="size-3" /> Mic:
+					<span class={permissionClass(microphonePermission)}
+						>{permissionLabel(microphonePermission)}</span
+					>
+				</span>
 				{#if preCallKind === 'video'}
-					<span class="text-[var(--ui-text-muted)]">Camera: <span class={permissionClass(cameraPermission)}>{permissionLabel(cameraPermission)}</span></span>
+					<span
+						class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 py-1 text-[var(--ui-text-muted)]"
+					>
+						<Icon name="i-lucide-camera" class="size-3" /> Camera:
+						<span class={permissionClass(cameraPermission)}
+							>{permissionLabel(cameraPermission)}</span
+						>
+					</span>
 				{/if}
 			</div>
 			<div class="grid gap-2 text-left sm:grid-cols-3">
 				{#if microphones.length}
-					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Microphone</span>
-						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedMicrophone} onchange={(event) => void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}>
-							{#each microphones as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Microphone', index)}</option>{/each}
+					<label class="space-y-1"
+						><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase"
+							>Microphone</span
+						>
+						<select
+							class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+							value={selectedMicrophone}
+							onchange={(event) =>
+								void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}
+						>
+							{#each microphones as device, index (device.deviceId)}<option value={device.deviceId}
+									>{deviceLabel(device, 'Microphone', index)}</option
+								>{/each}
 						</select>
 					</label>
 				{/if}
 				{#if preCallKind === 'video' && cameras.length}
-					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Camera</span>
-						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedCamera} onchange={(event) => void changeCamera((event.currentTarget as HTMLSelectElement).value)}>
-							{#each cameras as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Camera', index)}</option>{/each}
+					<label class="space-y-1"
+						><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Camera</span>
+						<select
+							class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+							value={selectedCamera}
+							onchange={(event) =>
+								void changeCamera((event.currentTarget as HTMLSelectElement).value)}
+						>
+							{#each cameras as device, index (device.deviceId)}<option value={device.deviceId}
+									>{deviceLabel(device, 'Camera', index)}</option
+								>{/each}
 						</select>
 					</label>
 				{/if}
 				{#if speakers.length}
-					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Speaker</span>
-						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedSpeaker} onchange={(event) => void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}>
-							{#each speakers as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Speaker', index)}</option>{/each}
+					<label class="space-y-1"
+						><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Speaker</span
+						>
+						<select
+							class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+							value={selectedSpeaker}
+							onchange={(event) =>
+								void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}
+						>
+							{#each speakers as device, index (device.deviceId)}<option value={device.deviceId}
+									>{deviceLabel(device, 'Speaker', index)}</option
+								>{/each}
 						</select>
 					</label>
 				{/if}
@@ -4029,307 +4121,440 @@
 					{speakerTestPlaying ? 'Playing test sound...' : 'Test speaker output'}
 				</Button>
 			{/if}
-			<div class="flex justify-center gap-2">
-				<Button color="neutral" variant="soft" square icon={micEnabled ? 'i-lucide-mic' : 'i-lucide-mic-off'} aria-label="Toggle microphone" onclick={toggleMic} />
+			<div class="flex justify-center gap-2.5">
+				<button
+					type="button"
+					title={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+					aria-label="Toggle microphone"
+					onclick={toggleMic}
+					class="call-orb size-11 {micEnabled
+						? 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'
+						: 'bg-[var(--tone-error-bg)] text-[var(--tone-error-text)] hover:opacity-90'}"
+				>
+					<Icon name={micEnabled ? 'i-lucide-mic' : 'i-lucide-mic-off'} class="size-5" />
+				</button>
 				{#if preCallKind === 'video'}
-					<Button color="neutral" variant="soft" square icon={cameraEnabled ? 'i-lucide-camera' : 'i-lucide-camera-off'} aria-label="Toggle camera" onclick={toggleCamera} />
+					<button
+						type="button"
+						title={cameraEnabled ? 'Turn off camera' : 'Turn on camera'}
+						aria-label="Toggle camera"
+						onclick={toggleCamera}
+						class="call-orb size-11 {cameraEnabled
+							? 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'
+							: 'bg-[var(--tone-error-bg)] text-[var(--tone-error-text)] hover:opacity-90'}"
+					>
+						<Icon name={cameraEnabled ? 'i-lucide-camera' : 'i-lucide-camera-off'} class="size-5" />
+					</button>
 				{/if}
 			</div>
 		</div>
 		{#snippet footer()}
 			<Button color="neutral" variant="subtle" onclick={cancelPreCall}>Cancel</Button>
-			<Button color="primary" icon={preCallKind === 'video' ? 'i-lucide-video' : 'i-lucide-phone'} onclick={() => void confirmPreCall()}>Start call</Button>
+			<Button
+				color="primary"
+				icon={preCallKind === 'video' ? 'i-lucide-video' : 'i-lucide-phone'}
+				onclick={() => void confirmPreCall()}>Start call</Button
+			>
 		{/snippet}
 	</Dialog>
 {/if}
 
 {#if showCall && !callMinimized}
 	<Dialog
-	bind:open={showCall}
-	closeOnOverlay={false}
-	title={`${callGroupId ? 'Group ' : ''}${activeCall === 'video' ? 'Video call' : 'Voice call'}`}
+		bind:open={showCall}
+		closeOnOverlay={false}
+		title={`${callGroupId ? 'Group ' : ''}${activeCall === 'video' ? 'Video call' : 'Voice call'}`}
 	>
-	{#if activeCall}
-		<div class="space-y-4 text-center">
-			<div
-				bind:this={callMediaPanel}
-				class="{callFullscreen
-					? 'h-full w-full rounded-none'
-					: activeCall === 'video'
-						? 'aspect-video'
-						: 'aspect-square max-w-52'} relative mx-auto grid w-full overflow-hidden bg-neutral-950 text-white {callFullscreen ? '' : 'rounded-2xl'}"
-			>
-				{#if activeCall === 'video'}
-					{#if remoteParticipants.length}
+		{#if activeCall}
+			<div class="space-y-4 text-center">
+				<div
+					bind:this={callMediaPanel}
+					class="{callFullscreen
+						? 'h-full w-full rounded-none'
+						: activeCall === 'video'
+							? 'aspect-video'
+							: 'aspect-square max-w-72'} relative mx-auto grid w-full overflow-hidden {activeCall ===
+					'voice'
+						? 'call-stage-voice'
+						: 'bg-neutral-950'} text-white shadow-lg shadow-black/20 {callFullscreen
+						? ''
+						: 'rounded-2xl'}"
+				>
+					{#if activeCall === 'video'}
+						{#if remoteParticipants.length}
+							<div
+								class="grid size-full gap-1 {remoteParticipants.length === 1
+									? 'grid-cols-1'
+									: 'grid-cols-2'}"
+							>
+								{#each remoteParticipants as participant (participant.peer)}
+									<div class="relative overflow-hidden bg-black ring-1 ring-white/10 ring-inset">
+										<video
+											use:streamSource={participant.stream}
+											data-call-output
+											autoplay
+											playsinline
+											class="size-full object-cover"
+										></video>
+										<div
+											class="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] font-semibold text-white backdrop-blur"
+										>
+											<span class="size-1.5 rounded-full bg-emerald-400"></span>
+											{participant.name}
+										</div>
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<video
+								bind:this={remoteVideoEl}
+								use:pictureInPictureEvents
+								data-call-output
+								autoplay
+								playsinline
+								class="size-full object-cover"
+							></video>
+						{/if}
 						<div
-							class="grid size-full gap-1 {remoteParticipants.length === 1
-								? 'grid-cols-1'
-								: 'grid-cols-2'}"
+							class="absolute right-3 bottom-3 overflow-hidden rounded-2xl border-2 border-white/25 bg-black shadow-xl shadow-black/40"
 						>
-							{#each remoteParticipants as participant (participant.peer)}
-								<div class="relative overflow-hidden bg-black">
-									<video
-										use:streamSource={participant.stream}
-										data-call-output
-										autoplay
-										playsinline
-										class="size-full object-cover"
-									></video>
-									<div
-										class="absolute right-2 bottom-2 rounded-full bg-black/55 px-2 py-1 text-[10px] font-semibold text-white"
-									>
-										{participant.name}
+							<video
+								bind:this={localVideoEl}
+								autoplay
+								muted
+								playsinline
+								class="aspect-video w-28 object-cover"
+							></video>
+							<span
+								class="pointer-events-none absolute bottom-1 left-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] font-semibold text-white"
+								>You</span
+							>
+						</div>
+					{:else}
+						<div class="grid h-full place-items-center px-4 py-6">
+							<div class="flex flex-col items-center gap-5">
+								<div class="relative grid size-28 place-items-center">
+									<span class="call-ring"></span>
+									<span class="call-ring call-ring--2"></span>
+									<span class="call-ring call-ring--3"></span>
+									<div class="relative">
+										{#if callPeer}
+											<Avatar
+												pubkey={callPeer}
+												name={callDisplayTitle()}
+												picture={profiles.get(callPeer)?.picture}
+												size={96}
+												class="relative mask-squircle ring-4 ring-white/10"
+											/>
+										{:else}
+											<div
+												class="relative grid size-24 place-items-center mask-squircle bg-primary-500 text-3xl font-bold text-white shadow-[var(--glow-primary)]"
+											>
+												{active?.initials ?? 'GC'}
+											</div>
+										{/if}
+										<span
+											class="absolute -bottom-1 left-1/2 grid size-7 -translate-x-1/2 place-items-center rounded-full bg-primary-500 text-white ring-4 ring-black/30"
+										>
+											<Icon name="i-lucide-phone" class="size-3.5" />
+										</span>
 									</div>
 								</div>
-							{/each}
-						</div>
-					{:else}
-						<video
-							bind:this={remoteVideoEl}
-							use:pictureInPictureEvents
-							data-call-output
-							autoplay
-							playsinline
-							class="size-full object-cover"
-						></video>
-					{/if}
-					<video
-						bind:this={localVideoEl}
-						autoplay
-						muted
-						playsinline
-						class="absolute right-3 bottom-3 aspect-video w-24 rounded-xl border border-white/20 bg-black object-cover"
-					></video>
-				{:else}
-					<div class="grid h-full place-items-center">
-						<div class="space-y-3">
-							<Icon name="i-lucide-phone" class="mx-auto size-12 text-primary-300" />
-							{#if callGroupId}
-								<p class="text-[12px] text-white/70">
-									{Math.max(1, remoteParticipants.length + 1)} participants connected
-								</p>
-							{/if}
-						</div>
-					</div>
-				{/if}
-				<audio bind:this={remoteAudioEl} data-call-output autoplay></audio>
-				{#if activeCall === 'voice'}
-					{#each remoteParticipants as participant (participant.peer)}
-						<audio use:streamSource={participant.stream} data-call-output autoplay></audio>
-					{/each}
-				{/if}
-			</div>
-			<div>
-				<p class="text-[15px] font-bold">{callDisplayTitle()}</p>
-				<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
-					{callState === 'incoming'
-						? 'Incoming encrypted call request'
-						: callState === 'outgoing'
-							? 'Calling...'
-							: callState === 'connected'
-								? 'Connected'
-								: callState === 'reconnecting'
-									? 'Reconnecting...'
-									: 'Connecting...'}
-					{#if callGroupId && callState !== 'incoming'}
-						- {Math.max(1, remoteParticipants.length + 1)} joined
-					{/if}
-				</p>
-				{#if callState === 'connected'}
-					<p
-						class="mt-1 font-mono text-[13px] font-semibold text-primary-600 dark:text-primary-300"
-						aria-live="polite"
-					>
-						{formatDuration(callElapsedSeconds)}
-					</p>
-					<p class="mt-1 text-[11px] font-semibold {callQualityClass()}">
-						{callQualityLabel()}{callQualityDetail ? ` - ${callQualityDetail}` : ''}
-					</p>
-					<Button
-						color="neutral"
-						variant="ghost"
-						class="mt-1 h-auto px-1 py-0 text-[10px]"
-						onclick={() => (showCallDiagnostics = !showCallDiagnostics)}
-					>
-						{showCallDiagnostics ? 'Hide diagnostics' : 'Connection details'}
-					</Button>
-					{#if showCallDiagnostics}
-						<div class="mx-auto mt-2 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 rounded-xl bg-[var(--surface-muted)] px-3 py-2 text-left text-[10px]">
-							<span class="text-[var(--ui-text-muted)]">Round trip</span>
-							<span class="font-mono font-semibold">{callRttMs === null ? '—' : `${callRttMs} ms`}</span>
-							<span class="text-[var(--ui-text-muted)]">Packet loss</span>
-							<span class="font-mono font-semibold">{callLossPercent === null ? '—' : `${callLossPercent}%`}</span>
-							<span class="text-[var(--ui-text-muted)]">ICE state</span>
-							<span class="font-mono font-semibold">{callIceState || 'checking'}</span>
-							<span class="text-[var(--ui-text-muted)]">Transport</span>
-							<span class="font-mono font-semibold">{callTransport || '—'}</span>
-							<Button
-								color="neutral"
-								variant="soft"
-								class="col-span-2 mt-1"
-								icon="i-lucide-copy"
-								onclick={() => void copyCallDiagnostics()}
-							>
-								Copy diagnostics
-							</Button>
+								<div class="flex h-6 items-end gap-[3px]" aria-hidden="true">
+									{#each Array(32) as _, i (i)}
+										<span
+											class="wave-bar w-[3px] rounded-full bg-primary-300/80"
+											style={`height: ${20 + ((i * 53) % 80)}%; animation-delay: ${(i % 8) * 0.08}s`}
+										></span>
+									{/each}
+								</div>
+								{#if callGroupId}
+									<p class="text-[12px] font-semibold text-white/70">
+										{Math.max(1, remoteParticipants.length + 1)} participants connected
+									</p>
+								{/if}
+							</div>
 						</div>
 					{/if}
-				{/if}
-				{#if callError}
-					<p class="mt-2 text-[12px] text-[var(--tone-error-text)]">{callError}</p>
-				{/if}
-			</div>
-			<div class="flex justify-center gap-2">
-				{#if callState === 'incoming'}
-					<Button
-						color="primary"
-						icon={activeCall === 'video' ? 'i-lucide-video' : 'i-lucide-phone'}
-						onclick={() => acceptIncomingCall()}
-					>
-						Answer
-					</Button>
-				{:else}
-					<Button
-						color="neutral"
-						variant="soft"
-						square
-						icon={micEnabled ? 'i-lucide-mic' : 'i-lucide-mic-off'}
-						aria-label="Microphone"
-						onclick={toggleMic}
-					/>
-					{#if activeCall === 'video'}
-						<Button
-							color="neutral"
-							variant="soft"
-							square
-							icon={cameraEnabled ? 'i-lucide-camera' : 'i-lucide-camera-off'}
-							aria-label="Camera"
-							onclick={toggleCamera}
-						/>
-						<Button
-							color={screenSharing ? 'primary' : 'neutral'}
-							variant="soft"
-							square
-							icon={screenSharing ? 'i-lucide-monitor-off' : 'i-lucide-monitor-up'}
-							aria-label={screenSharing ? 'Stop screen sharing' : 'Share screen'}
-							onclick={toggleScreenShare}
-						/>
-						<Button
-							color="neutral"
-							variant="soft"
-							square
-							icon={callFullscreen ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'}
-							aria-label={callFullscreen ? 'Exit fullscreen video' : 'Fullscreen video'}
-							onclick={toggleCallFullscreen}
-						/>
-						{#if supportsPictureInPicture()}
-							<Button
-								color={callPictureInPicture ? 'primary' : 'neutral'}
-								variant="soft"
-								square
-								icon="i-lucide-picture-in-picture-2"
-								aria-label={callPictureInPicture ? 'Close picture-in-picture' : 'Picture-in-picture'}
-								onclick={togglePictureInPicture}
-							/>
-						{/if}
-					{:else}
-						<Button
-							color="neutral"
-							variant="soft"
-							square
-							icon="i-lucide-video"
-							aria-label="Switch to video"
-							onclick={switchToVideo}
-						/>
-					{/if}
-					{#if callGroupId}
-						<Button
-							color="primary"
-							variant="soft"
-							icon="i-lucide-user-plus"
-							onclick={inviteGroupMembersToActiveCall}
-						>
-							Invite again
-						</Button>
-					{/if}
-				{/if}
-			</div>
-			{#if callState !== 'incoming' && (microphones.length > 1 || cameras.length > 1 || speakers.length > 1)}
-				<div class="grid gap-2 text-left sm:grid-cols-3">
-					{#if microphones.length > 1}
-						<label class="space-y-1">
-							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Mic</span>
-							<select
-								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
-								value={selectedMicrophone}
-								onchange={(event) =>
-									void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}
-							>
-								{#each microphones as device, index (device.deviceId)}
-									<option value={device.deviceId}>{deviceLabel(device, 'Microphone', index)}</option>
-								{/each}
-							</select>
-						</label>
-					{/if}
-					{#if activeCall === 'video' && cameras.length > 1}
-						<label class="space-y-1">
-							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Camera</span>
-							<select
-								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
-								value={selectedCamera}
-								onchange={(event) =>
-									void changeCamera((event.currentTarget as HTMLSelectElement).value)}
-							>
-								{#each cameras as device, index (device.deviceId)}
-									<option value={device.deviceId}>{deviceLabel(device, 'Camera', index)}</option>
-								{/each}
-							</select>
-						</label>
-					{/if}
-					{#if speakers.length > 1}
-						<label class="space-y-1">
-							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Speaker</span>
-							<select
-								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
-								value={selectedSpeaker}
-								onchange={(event) =>
-									void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}
-							>
-								{#each speakers as device, index (device.deviceId)}
-									<option value={device.deviceId}>{deviceLabel(device, 'Speaker', index)}</option>
-								{/each}
-							</select>
-						</label>
+					<audio bind:this={remoteAudioEl} data-call-output autoplay></audio>
+					{#if activeCall === 'voice'}
+						{#each remoteParticipants as participant (participant.peer)}
+							<audio use:streamSource={participant.stream} data-call-output autoplay></audio>
+						{/each}
 					{/if}
 				</div>
-			{/if}
-		</div>
-	{/if}
-	{#snippet footer()}
-		{#if callState !== 'incoming'}
-			<Button
-				color="neutral"
-				variant="subtle"
-				icon="i-lucide-minus"
-				onclick={() => (callMinimized = true)}
-			>
-				Minimize
-			</Button>
+				<div>
+					<p class="text-[15px] font-bold">{callDisplayTitle()}</p>
+					<p
+						class="mt-1 flex items-center justify-center gap-1.5 text-[12px] text-[var(--ui-text-muted)]"
+					>
+						<span
+							class="inline-block size-1.5 shrink-0 rounded-full {callState === 'connected'
+								? 'bg-emerald-500'
+								: callState === 'reconnecting'
+									? 'live-pulse bg-amber-500'
+									: 'live-pulse bg-primary-500'}"
+						></span>
+						{callState === 'incoming'
+							? 'Incoming encrypted call request'
+							: callState === 'outgoing'
+								? 'Calling...'
+								: callState === 'connected'
+									? 'Connected'
+									: callState === 'reconnecting'
+										? 'Reconnecting...'
+										: 'Connecting...'}
+						{#if callGroupId && callState !== 'incoming'}
+							- {Math.max(1, remoteParticipants.length + 1)} joined
+						{/if}
+					</p>
+					{#if callState === 'connected'}
+						<p
+							class="mt-1 font-mono text-[13px] font-semibold text-primary-600 dark:text-primary-300"
+							aria-live="polite"
+						>
+							{formatDuration(callElapsedSeconds)}
+						</p>
+						<p class="mt-1 text-[11px] font-semibold {callQualityClass()}">
+							{callQualityLabel()}{callQualityDetail ? ` - ${callQualityDetail}` : ''}
+						</p>
+						<Button
+							color="neutral"
+							variant="ghost"
+							class="mt-1 h-auto px-1 py-0 text-[10px]"
+							onclick={() => (showCallDiagnostics = !showCallDiagnostics)}
+						>
+							{showCallDiagnostics ? 'Hide diagnostics' : 'Connection details'}
+						</Button>
+						{#if showCallDiagnostics}
+							<div
+								class="mx-auto mt-2 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 rounded-xl bg-[var(--surface-muted)] px-3 py-2 text-left text-[10px]"
+							>
+								<span class="text-[var(--ui-text-muted)]">Round trip</span>
+								<span class="font-mono font-semibold"
+									>{callRttMs === null ? '—' : `${callRttMs} ms`}</span
+								>
+								<span class="text-[var(--ui-text-muted)]">Packet loss</span>
+								<span class="font-mono font-semibold"
+									>{callLossPercent === null ? '—' : `${callLossPercent}%`}</span
+								>
+								<span class="text-[var(--ui-text-muted)]">ICE state</span>
+								<span class="font-mono font-semibold">{callIceState || 'checking'}</span>
+								<span class="text-[var(--ui-text-muted)]">Transport</span>
+								<span class="font-mono font-semibold">{callTransport || '—'}</span>
+								<Button
+									color="neutral"
+									variant="soft"
+									class="col-span-2 mt-1"
+									icon="i-lucide-copy"
+									onclick={() => void copyCallDiagnostics()}
+								>
+									Copy diagnostics
+								</Button>
+							</div>
+						{/if}
+					{/if}
+					{#if callError}
+						<p class="mt-2 text-[12px] text-[var(--tone-error-text)]">{callError}</p>
+					{/if}
+				</div>
+				<div class="flex flex-wrap items-center justify-center gap-2.5">
+					{#if callState === 'incoming'}
+						<button
+							type="button"
+							title="Answer call"
+							aria-label="Answer call"
+							onclick={() => acceptIncomingCall()}
+							class="call-orb size-16 bg-[var(--tone-success-text)] text-white shadow-[0_8px_24px_-4px_rgba(26,138,94,0.55)]"
+						>
+							<Icon
+								name={activeCall === 'video' ? 'i-lucide-video' : 'i-lucide-phone'}
+								class="size-6"
+							/>
+						</button>
+					{:else}
+						<button
+							type="button"
+							title={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+							aria-label={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
+							onclick={toggleMic}
+							class="call-orb size-12 {micEnabled
+								? 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'
+								: 'bg-[var(--tone-error-bg)] text-[var(--tone-error-text)] hover:opacity-90'}"
+						>
+							<Icon name={micEnabled ? 'i-lucide-mic' : 'i-lucide-mic-off'} class="size-5" />
+						</button>
+						{#if activeCall === 'video'}
+							<button
+								type="button"
+								title={cameraEnabled ? 'Turn off camera' : 'Turn on camera'}
+								aria-label={cameraEnabled ? 'Turn off camera' : 'Turn on camera'}
+								onclick={toggleCamera}
+								class="call-orb size-12 {cameraEnabled
+									? 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'
+									: 'bg-[var(--tone-error-bg)] text-[var(--tone-error-text)] hover:opacity-90'}"
+							>
+								<Icon
+									name={cameraEnabled ? 'i-lucide-camera' : 'i-lucide-camera-off'}
+									class="size-5"
+								/>
+							</button>
+							<button
+								type="button"
+								title={screenSharing ? 'Stop screen sharing' : 'Share screen'}
+								aria-label={screenSharing ? 'Stop screen sharing' : 'Share screen'}
+								onclick={toggleScreenShare}
+								class="call-orb size-12 {screenSharing
+									? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
+									: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'}"
+							>
+								<Icon
+									name={screenSharing ? 'i-lucide-monitor-off' : 'i-lucide-monitor-up'}
+									class="size-5"
+								/>
+							</button>
+							<button
+								type="button"
+								title={callFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+								aria-label={callFullscreen ? 'Exit fullscreen video' : 'Fullscreen video'}
+								onclick={toggleCallFullscreen}
+								class="call-orb size-12 bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]"
+							>
+								<Icon
+									name={callFullscreen ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'}
+									class="size-5"
+								/>
+							</button>
+							{#if supportsPictureInPicture()}
+								<button
+									type="button"
+									title={callPictureInPicture ? 'Close picture-in-picture' : 'Picture-in-picture'}
+									aria-label={callPictureInPicture
+										? 'Close picture-in-picture'
+										: 'Picture-in-picture'}
+									onclick={togglePictureInPicture}
+									class="call-orb size-12 {callPictureInPicture
+										? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
+										: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'}"
+								>
+									<Icon name="i-lucide-picture-in-picture-2" class="size-5" />
+								</button>
+							{/if}
+						{:else}
+							<button
+								type="button"
+								title="Switch to video call"
+								aria-label="Switch to video"
+								onclick={switchToVideo}
+								class="call-orb size-12 bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]"
+							>
+								<Icon name="i-lucide-video" class="size-5" />
+							</button>
+						{/if}
+						{#if callGroupId}
+							<button
+								type="button"
+								onclick={inviteGroupMembersToActiveCall}
+								class="inline-flex h-12 items-center gap-1.5 rounded-full bg-primary-500/15 px-4 text-[12px] font-semibold text-primary-700 transition hover:-translate-y-0.5 hover:bg-primary-500/20 dark:text-primary-300"
+							>
+								<Icon name="i-lucide-user-plus" class="size-4" /> Invite again
+							</button>
+						{/if}
+					{/if}
+				</div>
+				{#if callState !== 'incoming' && (microphones.length > 1 || cameras.length > 1 || speakers.length > 1)}
+					<div class="grid gap-2 text-left sm:grid-cols-3">
+						{#if microphones.length > 1}
+							<label class="space-y-1">
+								<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Mic</span>
+								<select
+									class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+									value={selectedMicrophone}
+									onchange={(event) =>
+										void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}
+								>
+									{#each microphones as device, index (device.deviceId)}
+										<option value={device.deviceId}
+											>{deviceLabel(device, 'Microphone', index)}</option
+										>
+									{/each}
+								</select>
+							</label>
+						{/if}
+						{#if activeCall === 'video' && cameras.length > 1}
+							<label class="space-y-1">
+								<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase"
+									>Camera</span
+								>
+								<select
+									class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+									value={selectedCamera}
+									onchange={(event) =>
+										void changeCamera((event.currentTarget as HTMLSelectElement).value)}
+								>
+									{#each cameras as device, index (device.deviceId)}
+										<option value={device.deviceId}>{deviceLabel(device, 'Camera', index)}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
+						{#if speakers.length > 1}
+							<label class="space-y-1">
+								<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase"
+									>Speaker</span
+								>
+								<select
+									class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+									value={selectedSpeaker}
+									onchange={(event) =>
+										void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}
+								>
+									{#each speakers as device, index (device.deviceId)}
+										<option value={device.deviceId}>{deviceLabel(device, 'Speaker', index)}</option>
+									{/each}
+								</select>
+							</label>
+						{/if}
+					</div>
+				{/if}
+			</div>
 		{/if}
-		<Button color="error" icon="i-lucide-phone-off" onclick={() => endCall()}>End call</Button>
-	{/snippet}
+		{#snippet footer()}
+			{#if callState !== 'incoming'}
+				<Button
+					color="neutral"
+					variant="subtle"
+					icon="i-lucide-minus"
+					onclick={() => (callMinimized = true)}
+				>
+					Minimize
+				</Button>
+			{/if}
+			<Button
+				color="error"
+				icon="i-lucide-phone-off"
+				class="shadow-[0_4px_16px_-4px_rgba(226,59,59,0.5)]"
+				onclick={() => endCall()}>End call</Button
+			>
+		{/snippet}
 	</Dialog>
 {/if}
 
 {#if showCall && callMinimized && activeCall}
 	<div
-		class="fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-2xl border border-[var(--ui-border)] bg-[var(--surface-bg)] px-4 py-3 shadow-2xl shadow-black/20"
+		class="call-slide-up fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-2xl border border-[var(--ui-border)] bg-[var(--surface-bg)] px-4 py-3 shadow-[var(--shadow-pop)] transition hover:-translate-y-0.5"
 		role="status"
 	>
-		<div class="grid size-9 place-items-center rounded-xl bg-primary-500 text-white">
+		<div class="relative grid size-9 place-items-center rounded-xl bg-primary-500 text-white">
 			<Icon name={activeCall === 'video' ? 'i-lucide-video' : 'i-lucide-phone'} class="size-4" />
+			<span
+				class="absolute -top-1 -right-1 size-2.5 rounded-full bg-emerald-400 ring-2 ring-[var(--surface-bg)] {callState ===
+				'reconnecting'
+					? 'live-pulse'
+					: ''}"
+			></span>
 		</div>
-		<div class="min-w-0">
+		<button type="button" class="min-w-0 text-left" onclick={() => (callMinimized = false)}>
 			<p class="max-w-40 truncate text-[12px] font-bold">{callDisplayTitle()}</p>
 			<p class="text-[11px] text-[var(--ui-text-muted)]">
 				{callState === 'connected'
@@ -4338,7 +4563,7 @@
 						? 'Reconnecting...'
 						: 'Connecting...'}
 			</p>
-		</div>
+		</button>
 		<Button
 			color="neutral"
 			variant="soft"
