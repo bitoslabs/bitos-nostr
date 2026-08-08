@@ -72,6 +72,7 @@
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const urlPattern = /https?:\/\/[^\s<>()]+/giu;
 	const longTextLimit = 420;
+	const MAX_VISIBLE_MEDIA = 6;
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
@@ -124,7 +125,7 @@
 	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
 	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
 	const firstAttachment = $derived(mediaAttachments[0]);
-	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, 5));
+	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, MAX_VISIBLE_MEDIA));
 	const hiddenMediaCount = $derived(
 		Math.max(0, mediaAttachments.length - visibleMediaAttachments.length)
 	);
@@ -184,13 +185,22 @@
 	function mediaGridClass(count: number) {
 		if (count <= 1) return 'grid-cols-1';
 		if (count === 2) return 'grid-cols-2';
-		return 'grid-cols-2 auto-rows-[150px] sm:auto-rows-[180px]';
+		if (count <= 5) return 'grid-cols-2';
+		return 'grid-cols-2 sm:grid-cols-3';
+	}
+
+	function mediaGridStyle(count: number) {
+		if (count <= 1) return '';
+		if (count === 2) return 'grid-auto-rows: minmax(0, 220px);';
+		if (count === 3) return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 160px);';
+		if (count === 4) return 'grid-auto-rows: minmax(0, 150px);';
+		if (count === 5) return 'grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); grid-auto-rows: minmax(0, 125px);';
+		return 'grid-auto-rows: minmax(0, 120px);';
 	}
 
 	function mediaTileClass(index: number, count: number) {
 		if (count <= 2) return 'aspect-video';
-		if (count === 3 && index === 0) return 'row-span-2';
-		if (count >= 5 && index < 2) return 'row-span-2';
+		if ((count === 3 || count === 5) && index === 0) return 'row-span-2';
 		return '';
 	}
 
@@ -401,7 +411,7 @@
 			if (type === 'link' && attachments.some((item) => item.type !== 'link')) continue;
 			attachments.push({ type, url: core, host: hostFromUrl(core), ...embed });
 		}
-		return attachments.slice(0, 4);
+		return attachments.slice(0, 9);
 	}
 
 	function toggleSaved() {
@@ -815,6 +825,7 @@
 			class="mx-4 mb-3 grid gap-0.5 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaGridClass(
 				visibleMediaAttachments.length
 			)}"
+			style={mediaGridStyle(visibleMediaAttachments.length)}
 		>
 			{#each visibleMediaAttachments as media, mediaIndex (media.url)}
 				{@const tileClass = mediaTileClass(mediaIndex, visibleMediaAttachments.length)}
@@ -839,8 +850,7 @@
 									Open image
 								</span>
 								<span class="block truncate text-[12px] text-[var(--ui-text-muted)]"
-									>{media.url}</span
-								>
+									>{media.url}</span>
 							</span>
 						</a>
 					{:else if shouldHideImage(media.url)}
@@ -855,22 +865,16 @@
 							/>
 							<button
 								type="button"
-								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-4 text-center text-white"
+								class="absolute inset-0 z-5 grid place-items-center bg-black/16 p-2 text-center text-white"
 								onclick={() => revealMedia(media.url)}
 								aria-label="Show sensitive media"
 							>
 								<span
-									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+									class="w-full max-w-[11rem] rounded-[18px] border border-white/15 bg-white/10 px-3 py-2 shadow-lg backdrop-blur-sm sm:max-w-48"
 								>
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
-									<span class="block text-[13px] font-bold">Image hidden</span>
-									<span class="mt-1 block text-[11px] text-white/80"
-										>{sensitiveReason || 'Tap view to reveal'}</span
-									>
-									<span
-										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
-									>
-										View
+									<span class="flex items-center justify-center gap-2 text-[11px] font-bold text-white">
+										<Icon name="i-lucide-eye-off" class="size-4" />
+										<span>View</span>
 									</span>
 								</span>
 							</button>
@@ -904,75 +908,53 @@
 						</button>
 					{/if}
 				{:else if media.type === 'video'}
-					<div class="{tileClass} relative bg-black">
-						<!-- svelte-ignore a11y_media_has_caption -->
-						<video
-							use:trackFeedVideo
-							src={media.url}
-							controls={!shouldHideVideo(media.url)}
-							preload="metadata"
-							playsinline
-							class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
-								? ''
-								: 'scale-105 blur-2xl saturate-50'}"
-						></video>
-						{#if showMoreOverlay && !shouldHideVideo(media.url)}
-							<div
-								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
-							>
-								+{hiddenMediaCount}
-							</div>
-						{/if}
-						{#if shouldHideVideo(media.url)}
-							<button
-								type="button"
-								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-4 text-center text-white"
-								onclick={() => revealMedia(media.url)}
-								aria-label="Show sensitive video"
-							>
-								<span
-									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+						<div class="{tileClass} relative bg-black overflow-hidden">
+							<!-- svelte-ignore a11y_media_has_caption -->
+							<video
+								use:trackFeedVideo
+								src={media.url}
+								controls={!shouldHideVideo(media.url)}
+								preload="metadata"
+								playsinline
+								class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
+									? ''
+									: 'scale-105 blur-2xl saturate-50'}"
+							></video>
+							{#if !shouldHideVideo(media.url)}
+								<div class="pointer-events-none absolute left-3 top-3 rounded-full bg-black/55 p-2 text-white shadow-lg">
+									<Icon name="i-lucide-play" class="size-4" />
+								</div>
+							{/if}
+							{#if showMoreOverlay}
+								<div
+									class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
 								>
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
-									<span class="block text-[13px] font-bold">Sensitive video</span>
-									<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
+									+{hiddenMediaCount}
+								</div>
+							{/if}
+							{#if shouldHideVideo(media.url)}
+								<button
+									type="button"
+									class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-3 text-center text-white"
+									onclick={() => revealMedia(media.url)}
+									aria-label="Show sensitive video"
+								>
 									<span
-										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
+										class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
 									>
-										View
+										<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+										<span class="block text-[13px] font-bold">Sensitive video</span>
+										<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
+										<span
+											class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
+										>
+											View
+										</span>
 									</span>
-								</span>
-							</button>
-						{/if}
-					</div>
-				{:else if media.type === 'embed' && media.embedUrl}
-					<div class="{tileClass} relative overflow-hidden bg-black">
-						<iframe
-							src={media.embedUrl}
-							title={`${media.provider ?? 'Video'} embed`}
-							class={contentClass}
-							loading="lazy"
-							allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-							allowfullscreen
-						></iframe>
-						<a
-							href={media.url}
-							target="_blank"
-							rel="noreferrer"
-							class="flex items-center justify-between gap-3 bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:text-primary-500"
-						>
-							<span class="truncate">{media.provider ?? media.host}</span>
-							<Icon name="i-lucide-external-link" class="size-4 shrink-0" />
-						</a>
-						{#if showMoreOverlay}
-							<div
-								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
-							>
-								+{hiddenMediaCount}
-							</div>
-						{/if}
-					</div>
-				{:else if media.type === 'audio'}
+								</button>
+							{/if}
+						</div>
+{:else if media.type === 'audio'}
 					<div class="{tileClass} flex min-h-28 flex-col justify-center gap-3 p-4">
 						<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
 							<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
@@ -996,8 +978,7 @@
 							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
 								{media.host}
 							</span>
-							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span
-							>
+							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span>
 						</span>
 					</a>
 				{/if}
