@@ -1,5 +1,8 @@
 # BitOS Nostr
 
+
+[BitOS](https://social.bitos.space)
+
 A local-first **Nostr** social client — a **Feed** (kind 1 text notes) and
 **Chat** (Secure DMs with NIP-04 fallback) — built with SvelteKit 2 + Svelte 5 (runes) +
 Tailwind v4.
