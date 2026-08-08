@@ -13,6 +13,7 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { NOSTR_KINDS, type Event, type FeedNote } from '$lib/nostr/types';
+	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
 	import {
@@ -262,24 +263,6 @@
 			.includes(query);
 	}
 
-	function toFeedNote(
-		ev: Pick<Event, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>
-	): FeedNote {
-		const replyTag = ev.tags.find((tag) => tag[0] === 'e' && tag[3] === 'reply');
-		return {
-			id: ev.id,
-			pubkey: ev.pubkey,
-			content: ev.content,
-			createdAt: ev.created_at,
-			tags: ev.tags,
-			replyTo: replyTag?.[1],
-			reactions: [],
-			repostCount: 0,
-			zapCount: 0,
-			zapTotalSats: 0
-		};
-	}
-
 	function uniqueTimelineEvents(events: Event[]) {
 		const seen: Record<string, boolean> = {};
 		return events
@@ -416,6 +399,14 @@
 	function handleInteract(interactedNote: FeedNote, kind: 'react' | 'save', active: boolean) {
 		if (active) interactionProfile.recordInteraction(interactedNote, kind === 'save' ? 0.8 : 1);
 		else interactionProfile.recordInteractionRemoved(interactedNote, kind === 'save' ? 0.8 : 1);
+	}
+
+	function handleNoteChange(next: FeedNote) {
+		if (relayFeedNotes.some((note) => note.id === next.id)) {
+			relayFeedNotes = relayFeedNotes.map((note) => (note.id === next.id ? next : note));
+		} else {
+			feed.upsertNote(next);
+		}
 	}
 
 	function openExplainer(note: FeedNote) {
@@ -850,7 +841,12 @@
 					</div>
 					<div class="space-y-3">
 						{#each newlyRevealedNotes as note, i (note.id)}
-							<PostCard {note} index={i} onInteract={handleInteract} />
+							<PostCard
+								{note}
+								index={i}
+								onInteract={handleInteract}
+								onNoteChange={handleNoteChange}
+							/>
 						{/each}
 					</div>
 				</section>
@@ -940,6 +936,7 @@
 						<PostCard
 							{note}
 							index={i}
+							onNoteChange={handleNoteChange}
 							rankTag={rankTagFor(note)}
 							onExplain={() => openExplainer(note)}
 							onInteract={handleInteract}

@@ -41,11 +41,22 @@ export function applyActivityToNotes(
 	const zapIds = new Set<string>();
 	const reactionsByNote = new Map<string, FeedNote['reactions']>();
 	const zapsByNote = new Map<string, { count: number; sats: number }>();
+	const pollVotesByNote = new Map<string, Map<string, { optionId: string; at: number }>>();
 
 	for (const ev of events) {
 		if (ev.kind === NOSTR_KINDS.REACTION) {
 			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
 			if (!target || !noteIds.has(target) || ev.content === '-' || reactionIds.has(ev.id)) continue;
+			const targetNote = notes.find((note) => note.id === target);
+			if (targetNote?.poll?.options.some((option) => option.id === ev.content)) {
+				const votes = pollVotesByNote.get(target) ?? new Map();
+				const previous = votes.get(ev.pubkey);
+				if (!previous || ev.created_at >= previous.at) {
+					votes.set(ev.pubkey, { optionId: ev.content, at: ev.created_at });
+					pollVotesByNote.set(target, votes);
+				}
+				continue;
+			}
 			reactionIds.add(ev.id);
 			const current = reactionsByNote.get(target) ?? [];
 			const emoji = ev.content || '❤️';
@@ -74,10 +85,29 @@ export function applyActivityToNotes(
 		}
 	}
 
-	return notes.map((note) => ({
-		...note,
-		reactions: reactionsByNote.get(note.id) ?? note.reactions,
-		zapCount: zapsByNote.get(note.id)?.count ?? note.zapCount,
-		zapTotalSats: zapsByNote.get(note.id)?.sats ?? note.zapTotalSats
-	}));
+	return notes.map((note) => {
+		const pollVotes = pollVotesByNote.get(note.id);
+		const votes: Record<string, number> = {};
+		let myVote: string | undefined;
+		if (pollVotes) {
+			for (const [pubkey, vote] of pollVotes) {
+				votes[vote.optionId] = (votes[vote.optionId] ?? 0) + 1;
+				if (pubkey === myPubkey) myVote = vote.optionId;
+			}
+		}
+		return {
+			...note,
+			reactions: reactionsByNote.get(note.id) ?? note.reactions,
+			zapCount: zapsByNote.get(note.id)?.count ?? note.zapCount,
+			zapTotalSats: zapsByNote.get(note.id)?.sats ?? note.zapTotalSats,
+			poll: note.poll && pollVotesByNote.has(note.id)
+				? {
+						...note.poll,
+						votes,
+						totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
+						myVote
+					}
+				: note.poll
+		};
+	});
 }

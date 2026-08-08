@@ -14,7 +14,11 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	const GIPHY_KEY =
-		(import.meta.env.VITE_GIPHY_API_KEY as string | undefined) || 'Gc7131jiJuvI7IdN0HZ1D7nh0ow5BU6g';
+		(import.meta.env.VITE_GIPHY_API_KEY as string | undefined) ||
+		'Gc7131jiJuvI7IdN0HZ1D7nh0ow5BU6g';
+	const STORAGE_KEY = 'bitos:gif-picker:v1';
+	const CACHE_TTL = 24 * 60 * 60 * 1000;
+	const RECENT_LIMIT = 12;
 
 	export interface GifChoice {
 		url: string;
@@ -27,14 +31,55 @@
 
 	type GiphyImageSet = { url: string; width?: string; height?: string };
 	type GiphyItem = { id: string; images: Record<string, GiphyImageSet>; title?: string };
+	type GifItem = { id: string; preview: string; url: string; w: number; h: number };
+	type GifStorage = {
+		recent?: GifItem[];
+		trending?: { savedAt: number; items: GifItem[] };
+	};
 
 	let query = $state('');
-	let items = $state<{ id: string; preview: string; url: string; w: number; h: number }[]>([]);
+	let items = $state<GifItem[]>([]);
+	let recent = $state<GifItem[]>([]);
+	let tab = $state<'recent' | 'trending'>('trending');
 	let loading = $state(false);
 	let loaded = $state(false);
 	let error = $state('');
 	let debounce: ReturnType<typeof setTimeout> | undefined;
 	let controller: AbortController | undefined;
+	let storage = $state<GifStorage>({});
+
+	function readStorage() {
+		try {
+			const raw = localStorage.getItem(STORAGE_KEY);
+			if (raw) {
+				const saved = JSON.parse(raw) as GifStorage;
+				// Keep only the intentionally persistent data; older versions stored search results here.
+				storage = { recent: saved.recent, trending: saved.trending };
+				localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
+			}
+		} catch {
+			storage = {};
+		}
+		recent = Array.isArray(storage.recent) ? storage.recent.slice(0, RECENT_LIMIT) : [];
+	}
+
+	function writeStorage() {
+		try {
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
+		} catch {
+			// GIF cache is an enhancement; private browsing and quota limits are safe to ignore.
+		}
+	}
+
+	function fresh(cached: { savedAt: number; items: GifItem[] } | undefined) {
+		return !!cached && Date.now() - cached.savedAt < CACHE_TTL && cached.items.length > 0;
+	}
+
+	function remember(item: GifItem) {
+		recent = [item, ...recent.filter((gif) => gif.id !== item.id)].slice(0, RECENT_LIMIT);
+		storage = { ...storage, recent };
+		writeStorage();
+	}
 
 	async function fetchGifs(q: string) {
 		if (!browser) return;
@@ -42,6 +87,7 @@
 		controller = new AbortController();
 		loading = true;
 		error = '';
+		const normalizedQuery = q.trim().toLowerCase();
 		try {
 			const endpoint = q.trim()
 				? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=30&rating=pg`
@@ -49,7 +95,7 @@
 			const res = await fetch(endpoint, { signal: controller.signal });
 			if (!res.ok) throw new Error(`Giphy ${res.status}`);
 			const json = (await res.json()) as { data: GiphyItem[] };
-			items = json.data.map((gif) => {
+			const nextItems = json.data.map((gif) => {
 				const preview =
 					gif.images.fixed_height_small ?? gif.images.fixed_height ?? gif.images.original;
 				const full = gif.images.original ?? preview;
@@ -61,6 +107,12 @@
 					h: Number(preview.height ?? 120)
 				};
 			});
+			if (normalizedQuery || tab !== 'recent') items = nextItems;
+			const savedAt = Date.now();
+			if (!normalizedQuery) {
+				storage = { ...storage, trending: { savedAt, items: nextItems } };
+				writeStorage();
+			}
 			if (!items.length && q.trim()) error = 'No GIFs found';
 		} catch (e) {
 			if ((e as Error).name !== 'AbortError') error = 'Could not load GIFs';
@@ -71,17 +123,34 @@
 	}
 
 	function onInput() {
+		tab = 'trending';
 		clearTimeout(debounce);
 		debounce = setTimeout(() => fetchGifs(query), 350);
 	}
 
-	function pick(item: { url: string; preview: string; w: number; h: number }) {
+	function pick(item: GifItem) {
+		remember(item);
 		onpick({ url: item.url, preview: item.preview, width: item.w, height: item.h });
 	}
 
-	// Load trending the first time the picker renders.
+	function showRecent() {
+		tab = 'recent';
+		query = '';
+		items = recent;
+		error = '';
+	}
+
+	// Restore useful context immediately, then revalidate it in the background.
 	$effect(() => {
-		if (browser && !loaded && !loading) fetchGifs('');
+		if (!browser || loaded || loading) return;
+		readStorage();
+		const cached = storage.trending;
+		if (cached && fresh(cached)) {
+			items = cached.items;
+			loaded = true;
+			if (recent.length) tab = 'recent';
+		}
+		fetchGifs('');
 	});
 </script>
 
@@ -101,14 +170,48 @@
 		{/if}
 	</div>
 
+	{#if !query.trim() && recent.length}
+		<div class="flex gap-1 border-b border-[var(--ui-border-muted)] px-2 pt-2">
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					showRecent();
+				}}
+				class="rounded-md px-2 py-1 text-[11px] {tab === 'recent'
+					? 'bg-[var(--ui-bg-muted)] font-medium text-[var(--ui-text)]'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				Recent
+			</button>
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					tab = 'trending';
+					items = storage.trending?.items ?? items;
+				}}
+				class="rounded-md px-2 py-1 text-[11px] {tab === 'trending'
+					? 'bg-[var(--ui-bg-muted)] font-medium text-[var(--ui-text)]'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				Trending
+			</button>
+		</div>
+	{/if}
+
 	<div class="max-h-[280px] overflow-y-auto p-2">
 		{#if error}
-			<p class="grid place-items-center gap-2 py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]">
+			<p
+				class="grid place-items-center gap-2 py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]"
+			>
 				<Icon name="i-lucide-image-off" class="size-6" />
 				{error}
 			</p>
 		{:else if !loading && !items.length}
-			<p class="py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]">Type to search GIFs</p>
+			<p class="py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]">
+				{query.trim() ? 'No GIFs found' : 'No GIFs to show yet'}
+			</p>
 		{:else}
 			<!-- Masonry via CSS columns keeps varied GIF heights tidy without JS. -->
 			<div class="gap-2 [column-count:2] sm:[column-count:3]">
@@ -139,7 +242,9 @@
 			</div>
 		{/if}
 	</div>
-	<p class="flex items-center justify-center gap-1 border-t border-[var(--ui-border-muted)] p-1.5 text-[10px] text-[var(--ui-text-dimmed)]">
+	<p
+		class="flex items-center justify-center gap-1 border-t border-[var(--ui-border-muted)] p-1.5 text-[10px] text-[var(--ui-text-dimmed)]"
+	>
 		<Icon name="i-lucide-info" class="size-3" />
 		Powered by Giphy
 	</p>

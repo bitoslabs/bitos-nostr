@@ -709,7 +709,7 @@
 		{/if}
 
 		{#if note.poll}
-			<Poll {note} />
+			<Poll {note} onVoted={onNoteChange} />
 		{/if}
 	</div>
 

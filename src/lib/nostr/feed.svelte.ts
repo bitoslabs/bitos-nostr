@@ -660,12 +660,12 @@ class FeedStore {
 	 * option id and which references the poll note via an `e` tag. Re-voting is
 	 * allowed; the latest vote per pubkey wins.
 	 */
-	async votePoll(note: FeedNote, optionId: string): Promise<void> {
-		if (!browser) return;
+	async votePoll(note: FeedNote, optionId: string): Promise<FeedNote> {
+		if (!browser) return note;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
 		if (!note.poll?.options.some((o) => o.id === optionId)) throw new Error('Invalid option');
-		if (note.poll.myVote === optionId) return; // already voted this option
+		if (note.poll.myVote === optionId) return note; // already voted this option
 		const event = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.REACTION,
@@ -686,6 +686,22 @@ class FeedStore {
 			content: optionId,
 			created_at: event.created_at
 		});
+
+		// Search/profile pages render notes outside this store. Return the same
+		// optimistic update so those cards can update immediately as well.
+		const previousVote = note.poll.myVote;
+		const votes = { ...note.poll.votes };
+		if (previousVote) votes[previousVote] = Math.max(0, (votes[previousVote] ?? 0) - 1);
+		votes[optionId] = (votes[optionId] ?? 0) + 1;
+		return {
+			...note,
+			poll: {
+				...note.poll,
+				votes,
+				totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
+				myVote: optionId
+			}
+		};
 	}
 
 	/** Publish a kind-1 reply to an existing note using NIP-10 style tags. */
