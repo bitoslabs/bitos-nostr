@@ -96,7 +96,7 @@ export interface NotificationItem {
 /** Logical notification category used for filtering + per-type mute. */
 export type NotificationType = NotificationItem['type'];
 
-/** A NIP-04 direct message. */
+/** A direct message decrypted from either legacy or secure DM envelopes. */
 export interface DirectMessage {
 	id: string;
 	pubkey: string; // sender pubkey
@@ -104,6 +104,7 @@ export interface DirectMessage {
 	content: string; // decrypted plaintext
 	createdAt: number;
 	mine: boolean;
+	protocol?: 'nip04' | 'nip17';
 }
 
 /** A conversation row. */
@@ -150,9 +151,12 @@ export const NOSTR_KINDS = {
 	DELETE: 5,
 	REACTION: 7,
 	DIRECT_MESSAGE: 4,
+	DM_SEAL: 13,
+	PRIVATE_DIRECT_MESSAGE: 14,
 	REPOST: 6,
 	CONTACT_LIST: 3,
 	ZAP: 9735,
+	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
 	STORY_STATUS: 30315
 } as const;

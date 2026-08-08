@@ -19,6 +19,14 @@ import {
 	type PrivacyNotificationSettingsState
 } from '$lib/stores/privacy-notification-settings.svelte';
 import { blocks, STORAGE_KEY as BLOCKS_KEY } from '$lib/stores/blocks.svelte';
+import {
+	algorithmPreferences,
+	ALGORITHM_STORAGE_KEY as ALGORITHM_KEY
+} from '$lib/algorithm';
+import {
+	interactionProfile,
+	PROFILE_STORAGE_KEY as PROFILE_KEY
+} from '$lib/algorithm';
 
 const APP_DATA_KIND = 30078;
 const SETTINGS_D_TAG = 'bitos-settings-v1';
@@ -28,13 +36,15 @@ function plainClone<T>(value: T): T {
 }
 
 export interface SettingsBackup {
-	version: 1;
+	version: 2;
 	updatedAt: number;
 	appearance: Preferences;
 	privacyNotifications: PrivacyNotificationSettingsState;
 	media: MediaSettings;
 	relays: RelayRecord[];
 	blockedPubkeys: string[];
+	algorithm: unknown;
+	interactionProfile: unknown;
 }
 
 class SettingsSyncStore {
@@ -45,13 +55,15 @@ class SettingsSyncStore {
 
 	private buildBackup(): SettingsBackup {
 		return {
-			version: 1,
+			version: 2,
 			updatedAt: Math.floor(Date.now() / 1000),
 			appearance: plainClone(preferences.state),
 			privacyNotifications: plainClone(privacyNotificationSettings.state),
 			media: plainClone(media.state),
 			relays: plainClone(relays.list),
-			blockedPubkeys: [...blocks.blocked]
+			blockedPubkeys: [...blocks.blocked],
+			algorithm: JSON.parse(localStorage.getItem(ALGORITHM_KEY) ?? 'null'),
+			interactionProfile: JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null')
 		};
 	}
 
@@ -112,7 +124,8 @@ class SettingsSyncStore {
 		if (!latest) return null;
 		const plaintext = await this.decryptFromSelf(latest.content);
 		const parsed = JSON.parse(plaintext) as SettingsBackup;
-		if (parsed.version !== 1) throw new Error('Unsupported settings backup version');
+		if (parsed.version !== 2 && parsed.version !== 1)
+			throw new Error('Unsupported settings backup version');
 		this.lastRemoteAt = parsed.updatedAt || latest.created_at;
 		return parsed;
 	}
@@ -128,12 +141,18 @@ class SettingsSyncStore {
 			localStorage.setItem(MEDIA_KEY, JSON.stringify(backup.media));
 			localStorage.setItem(RELAYS_KEY, JSON.stringify(backup.relays));
 			localStorage.setItem(BLOCKS_KEY, JSON.stringify(backup.blockedPubkeys));
+			if (backup.algorithm)
+				localStorage.setItem(ALGORITHM_KEY, JSON.stringify(backup.algorithm));
+			if (backup.interactionProfile)
+				localStorage.setItem(PROFILE_KEY, JSON.stringify(backup.interactionProfile));
 			preferences.load();
 			preferences.apply();
 			privacyNotificationSettings.load();
 			media.load();
 			relays.load();
 			blocks.load();
+			algorithmPreferences.load();
+			interactionProfile.load();
 			this.lastRemoteAt = backup.updatedAt;
 			return backup;
 		} finally {

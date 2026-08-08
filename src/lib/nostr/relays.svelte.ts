@@ -27,6 +27,7 @@ const DEFAULTS: RelayRecord[] = [
 export const RECOMMENDED: RecommendedRelay[] = [
 	{ url: 'wss://nostr-01.yakihonne.com', name: 'Yakihonne', description: 'Japanese Nostr relay' },
 	{ url: 'wss://nos.lol', name: 'nos.lol', description: 'Open relay run by nos.social' },
+	{ url: 'wss://yabu.me', name: 'Yabu', description: 'Yabu.me public relay' },
 	{ url: 'wss://relay.nostr.band', name: 'Nostr Band', description: 'Global feed indexer' },
 	{ url: 'wss://cache2.primal.net/v1', name: 'Primal Cache 2', description: 'Primal cache relay' },
 	{ url: 'wss://relay.damus.io', name: 'Damus', description: 'Official Damus relay' },
