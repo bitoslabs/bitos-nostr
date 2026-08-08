@@ -1,10 +1,38 @@
 <script module lang="ts">
 	/** Quick emoji palette for the reply toolbar. */
 	export const REPLY_EMOJIS = [
-		'😀', '😂', '🤣', '😊', '😍', '🥰', '😘', '😎',
-		'🤔', '🥳', '😴', '🤯', '🥺', '😭', '😢', '😡',
-		'👍', '👎', '👏', '🙌', '🙏', '💪', '🫂', '👀',
-		'❤️', '🔥', '✨', '⚡', '🎉', '💯', '💩', '🐮'
+		'😀',
+		'😂',
+		'🤣',
+		'😊',
+		'😍',
+		'🥰',
+		'😘',
+		'😎',
+		'🤔',
+		'🥳',
+		'😴',
+		'🤯',
+		'🥺',
+		'😭',
+		'😢',
+		'😡',
+		'👍',
+		'👎',
+		'👏',
+		'🙌',
+		'🙏',
+		'💪',
+		'🫂',
+		'👀',
+		'❤️',
+		'🔥',
+		'✨',
+		'⚡',
+		'🎉',
+		'💯',
+		'💩',
+		'🐮'
 	];
 </script>
 
@@ -114,7 +142,11 @@
 	const ringProgress = $derived(Math.min(text.length / SOFT_LIMIT, 1));
 	const ringOffset = $derived(RING_C * (1 - ringProgress));
 	const ringStroke = $derived(
-		overHard ? 'var(--tone-error-text)' : overSoft ? 'var(--color-warm-500)' : 'var(--ui-color-primary-500)'
+		overHard
+			? 'var(--tone-error-text)'
+			: overSoft
+				? 'var(--color-warm-500)'
+				: 'var(--ui-color-primary-500)'
 	);
 	const remaining = $derived(HARD_LIMIT - text.length);
 
@@ -401,7 +433,7 @@
 			onclick={syncMention}
 			onkeyup={syncMention}
 			onblur={() => setTimeout(() => (mention = null), 120)}
-			class="max-h-40 min-h-[36px] w-full resize-none rounded-2xl bg-[var(--ui-bg-muted)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--ui-text)] outline-none transition placeholder:text-[var(--ui-text-dimmed)] focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+			class="max-h-40 min-h-[36px] w-full resize-none rounded-2xl bg-[var(--ui-bg-muted)] px-3.5 py-2 text-[13px] leading-relaxed text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-60"
 		></textarea>
 
 		<!-- @mention dropdown -->
@@ -413,9 +445,14 @@
 				{#each filteredMentions as candidate, i (candidate.pubkey)}
 					<button
 						type="button"
+						onpointerdown={(event) => {
+							event.preventDefault();
+							selectMention(candidate);
+						}}
 						onclick={() => selectMention(candidate)}
 						onmouseenter={() => (mentionIndex = i)}
-						class="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors {i === mentionIndex
+						class="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors {i ===
+						mentionIndex
 							? 'bg-[var(--interactive-hover-bg)]'
 							: ''}"
 						role="option"
@@ -437,7 +474,10 @@
 							</span>
 						</span>
 						{#if i === mentionIndex}
-							<Icon name="i-lucide-corner-down-left" class="size-3.5 text-[var(--ui-text-dimmed)]" />
+							<Icon
+								name="i-lucide-corner-down-left"
+								class="size-3.5 text-[var(--ui-text-dimmed)]"
+							/>
 						{/if}
 					</button>
 				{/each}
@@ -464,12 +504,15 @@
 							</div>
 						{/if}
 						{#if attachment.source === 'gif'}
-							<span class="absolute bottom-0.5 left-0.5 rounded bg-black/65 px-1 text-[8px] font-bold tracking-wide text-white uppercase">GIF</span>
+							<span
+								class="absolute bottom-0.5 left-0.5 rounded bg-black/65 px-1 text-[8px] font-bold tracking-wide text-white uppercase"
+								>GIF</span
+							>
 						{/if}
 						<button
 							type="button"
 							onclick={() => removeAttachment(i)}
-							class="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition hover:bg-black/85 group-hover:opacity-100"
+							class="absolute top-0.5 right-0.5 grid size-5 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition group-hover:opacity-100 hover:bg-black/85"
 							aria-label="Remove attachment"
 						>
 							<Icon name="i-lucide-x" class="size-3" />
@@ -497,7 +540,10 @@
 					aria-label="Add photo"
 					class="grid size-8 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-500 disabled:opacity-40"
 				>
-					<Icon name={uploading ? 'i-lucide-loader-circle' : 'i-lucide-image'} class="size-[17px] {uploading ? 'animate-spin' : ''}" />
+					<Icon
+						name={uploading ? 'i-lucide-loader-circle' : 'i-lucide-image'}
+						class="size-[17px] {uploading ? 'animate-spin' : ''}"
+					/>
 				</button>
 				<button
 					type="button"
@@ -523,7 +569,11 @@
 						<Icon name="i-lucide-film" class="size-[17px]" />
 						<span class="sr-only">GIF</span>
 					{/snippet}
-					<GifPicker onpick={(gif) => { pickGif(gif); }} />
+					<GifPicker
+						onpick={(gif) => {
+							pickGif(gif);
+						}}
+					/>
 				</Popover>
 
 				<Popover
@@ -543,7 +593,9 @@
 						{#each REPLY_EMOJIS as emoji (emoji)}
 							<button
 								type="button"
-								onclick={() => { insertAtCursor(emoji); }}
+								onclick={() => {
+									insertAtCursor(emoji);
+								}}
 								class="grid size-7 place-items-center rounded-md text-[16px] transition hover:bg-[var(--interactive-hover-bg)]"
 							>
 								{emoji}
@@ -552,7 +604,9 @@
 					</div>
 				</Popover>
 
-				<span class="ml-1 hidden items-center gap-1 text-[10px] text-[var(--ui-text-dimmed)] sm:inline-flex">
+				<span
+					class="ml-1 hidden items-center gap-1 text-[10px] text-[var(--ui-text-dimmed)] sm:inline-flex"
+				>
 					<Icon name="i-lucide-cloud-upload" class="size-3" />
 					{providerLabelValue}
 				</span>
@@ -560,9 +614,18 @@
 
 			<div class="flex items-center gap-1.5">
 				{#if text.length > 0}
-					<div class="relative grid size-7 place-items-center" title={`${text.length.toLocaleString()} characters`}>
+					<div
+						class="relative grid size-7 place-items-center"
+						title={`${text.length.toLocaleString()} characters`}
+					>
 						<svg class="size-7 -rotate-90" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-							<circle cx="14" cy="14" r={RING_R} stroke="var(--ui-border-accented)" stroke-width="2.5" />
+							<circle
+								cx="14"
+								cy="14"
+								r={RING_R}
+								stroke="var(--ui-border-accented)"
+								stroke-width="2.5"
+							/>
 							<circle
 								cx="14"
 								cy="14"
@@ -576,7 +639,13 @@
 							/>
 						</svg>
 						{#if remaining <= 999}
-							<span class="absolute text-[9px] font-bold tabular-nums {overHard ? 'text-[var(--tone-error-text)]' : overSoft ? 'text-warm-500' : 'text-primary-500'}">{remaining}</span>
+							<span
+								class="absolute text-[9px] font-bold tabular-nums {overHard
+									? 'text-[var(--tone-error-text)]'
+									: overSoft
+										? 'text-warm-500'
+										: 'text-primary-500'}">{remaining}</span
+							>
 						{/if}
 					</div>
 				{/if}
@@ -588,12 +657,29 @@
 					aria-label="Post reply"
 					title="Enter to send · Shift+Enter for new line"
 				>
-					<Icon name={posting ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'} class="size-4 {posting ? 'animate-spin' : ''}" />
+					<Icon
+						name={posting ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
+						class="size-4 {posting ? 'animate-spin' : ''}"
+					/>
 				</button>
 			</div>
 		</div>
 	</div>
 
-	<input bind:this={imageInput} type="file" accept="image/*" multiple class="hidden" onchange={onFileInput} />
-	<input bind:this={videoInput} type="file" accept="video/*" multiple class="hidden" onchange={onFileInput} />
+	<input
+		bind:this={imageInput}
+		type="file"
+		accept="image/*"
+		multiple
+		class="hidden"
+		onchange={onFileInput}
+	/>
+	<input
+		bind:this={videoInput}
+		type="file"
+		accept="video/*"
+		multiple
+		class="hidden"
+		onchange={onFileInput}
+	/>
 </div>
