@@ -116,7 +116,13 @@ export async function uploadToCloudinary(
 
 	// Parameters that participate in the signature (everything except file/signature/api_key).
 	const signedParams: Record<string, string> = {};
-	if (uploadPreset) {
+	if (signedMode) {
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		signedParams.timestamp = timestamp;
+		form.append('timestamp', timestamp);
+		form.append('api_key', apiKey);
+	}
+	if (!signedMode && uploadPreset) {
 		form.append('upload_preset', uploadPreset);
 		signedParams.upload_preset = uploadPreset;
 	}
@@ -126,12 +132,8 @@ export async function uploadToCloudinary(
 	}
 
 	if (signedMode) {
-		const timestamp = Math.floor(Date.now() / 1000).toString();
-		signedParams.timestamp = timestamp;
-		form.append('timestamp', timestamp);
 		const signature = await signCloudinaryRequest(signedParams, apiSecret);
 		form.append('signature', signature);
-		form.append('api_key', apiKey);
 	}
 
 	const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {

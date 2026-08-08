@@ -11,6 +11,8 @@ function cloudinaryConfig() {
 	const apiSecret = env.BITOS_CLOUDINARY_API_SECRET?.trim() ?? '';
 	const uploadPreset = env.BITOS_CLOUDINARY_UPLOAD_PRESET?.trim() ?? '';
 	const folder = env.BITOS_CLOUDINARY_FOLDER?.trim() ?? '';
+	const signedMode = !!(apiKey && apiSecret);
+	const unsignedMode = !!uploadPreset;
 
 	return {
 		cloudName,
@@ -18,7 +20,9 @@ function cloudinaryConfig() {
 		apiSecret,
 		uploadPreset,
 		folder,
-		enabled: !!cloudName && (!!uploadPreset || !!(apiKey && apiSecret))
+		signedMode,
+		unsignedMode,
+		enabled: !!cloudName && (signedMode || unsignedMode)
 	};
 }
 
@@ -66,7 +70,13 @@ export async function POST({ request }) {
 	upstreamForm.append('file', maybeFile);
 
 	const signedParams: Record<string, string> = {};
-	if (cfg.uploadPreset) {
+	if (cfg.signedMode) {
+		const timestamp = Math.floor(Date.now() / 1000).toString();
+		signedParams.timestamp = timestamp;
+		upstreamForm.append('timestamp', timestamp);
+		upstreamForm.append('api_key', cfg.apiKey);
+	}
+	if (cfg.unsignedMode && !cfg.signedMode) {
 		upstreamForm.append('upload_preset', cfg.uploadPreset);
 		signedParams.upload_preset = cfg.uploadPreset;
 	}
@@ -79,11 +89,7 @@ export async function POST({ request }) {
 		signedParams.folder = folder;
 	}
 
-	if (cfg.apiKey && cfg.apiSecret) {
-		const timestamp = Math.floor(Date.now() / 1000).toString();
-		signedParams.timestamp = timestamp;
-		upstreamForm.append('timestamp', timestamp);
-		upstreamForm.append('api_key', cfg.apiKey);
+	if (cfg.signedMode) {
 		upstreamForm.append('signature', await signCloudinaryRequest(signedParams, cfg.apiSecret));
 	}
 
