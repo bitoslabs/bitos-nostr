@@ -377,14 +377,17 @@ export async function uploadToS3(file: File, cfg: S3Config): Promise<UploadedMed
 }
 
 export async function uploadViaServer(file: File, options: UploadOptions = {}): Promise<UploadedMedia> {
-	const form = new FormData();
-	form.append('file', file);
-	if (options.pubkey) form.append('pubkey', options.pubkey);
-	if (options.purpose) form.append('purpose', options.purpose);
+	const params = new URLSearchParams();
+	if (options.pubkey) params.set('pubkey', options.pubkey);
+	if (options.purpose) params.set('purpose', options.purpose);
 
-	const res = await fetch('/api/media/upload', {
+	const url = `/api/media/upload${params.toString() ? `?${params}` : ''}`;
+	const res = await fetch(url, {
 		method: 'POST',
-		body: form
+		headers: {
+			'X-Upload-Filename': encodeURIComponent(file.name)
+		},
+		body: file
 	});
 
 	let payload: { error?: string } & Partial<UploadedMedia> = {};
