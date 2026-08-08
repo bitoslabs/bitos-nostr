@@ -14,6 +14,7 @@ import type { FeedNote } from '$lib/nostr/types';
 import { algorithmPreferences } from './preferences.svelte';
 import { resolveSignal } from './registry';
 import { applyDiversity } from './diversity';
+import { negativePenalty } from './penalties';
 import { SIGNAL_BY_ID } from './definitions';
 import type { ScoringContext, ScoreBreakdown, SurfaceId } from './types';
 
@@ -32,6 +33,10 @@ export function rankNotes<T extends FeedNote>(
 	// Off = chronological, never hidden.
 	if (!cfg.enabled) return [...candidates].sort((a, b) => b.createdAt - a.createdAt);
 
+	// Hard-filter notes the user explicitly dismissed, then score the rest.
+	const eligible = candidates.filter((n) => negativePenalty(n) > 0);
+	if (!eligible.length) return eligible;
+
 	// Total active weight for normalization (so turning signals off re-balances).
 	const entries = Object.entries(cfg.signals).filter(([, state]) => state.enabled && state.weight > 0);
 	const totalWeight = entries.reduce((sum, [, state]) => sum + state.weight, 0);
@@ -39,13 +44,15 @@ export function rankNotes<T extends FeedNote>(
 		return [...candidates].sort((a, b) => b.createdAt - a.createdAt);
 	}
 
-	const scored: Scored<T>[] = candidates.map((note) => {
+	const scored: Scored<T>[] = eligible.map((note) => {
 		let score = 0;
 		for (const [id, state] of entries) {
 			const fn = resolveSignal(id);
 			if (!fn) continue;
 			score += (fn(note, ctx) * state.weight) / totalWeight;
 		}
+		// Soft negative-feedback multiplier (muted author/tag) — pushes down, never hides.
+		score *= negativePenalty(note);
 		return { note, score };
 	});
 
@@ -72,6 +79,8 @@ export function rankNotesWithBreakdown<T extends FeedNote>(
 		const notes = [...candidates].sort((a, b) => b.createdAt - a.createdAt);
 		return { notes, breakdown: new Map() };
 	}
+	const eligible = candidates.filter((n) => negativePenalty(n) > 0);
+	if (!eligible.length) return { notes: eligible, breakdown: new Map() };
 
 	const entries = Object.entries(cfg.signals).filter(([, state]) => state.enabled && state.weight > 0);
 	const totalWeight = entries.reduce((sum, [, state]) => sum + state.weight, 0);
@@ -80,7 +89,7 @@ export function rankNotesWithBreakdown<T extends FeedNote>(
 		return { notes, breakdown: new Map() };
 	}
 
-	const withBreakdown: (Scored<T> & { breakdown: ScoreBreakdown })[] = candidates.map((note) => {
+	const withBreakdown: (Scored<T> & { breakdown: ScoreBreakdown })[] = eligible.map((note) => {
 		let score = 0;
 		const contributions: ScoreBreakdown['contributions'] = [];
 		for (const [id, state] of entries) {
@@ -92,6 +101,8 @@ export function rankNotesWithBreakdown<T extends FeedNote>(
 			const label = SIGNAL_BY_ID[id]?.label ?? id;
 			contributions.push({ signalId: id, label, contribution, raw });
 		}
+		// Reflect the negative-feedback multiplier in the final score.
+		score *= negativePenalty(note);
 		contributions.sort((a, b) => b.contribution - a.contribution);
 		const top = contributions[0];
 		return {

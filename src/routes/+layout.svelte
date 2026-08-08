@@ -12,7 +12,7 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
-	import { algorithmPreferences } from '$lib/algorithm';
+	import { algorithmPreferences, interactionProfile } from '$lib/algorithm';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
@@ -230,6 +230,7 @@
 		relays.load();
 		identity.load();
 		algorithmPreferences.load();
+		interactionProfile.load();
 	});
 
 	// React to login/logout (onboarding) at runtime: start/stop subscriptions.

@@ -26,6 +26,7 @@
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { interactionProfile, extractTags } from '$lib/algorithm';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
@@ -49,12 +50,16 @@
 		note,
 		index = 0,
 		onNoteChange,
-		rankTag
+		rankTag,
+		onExplain,
+		onInteract
 	}: {
 		note: FeedNote;
 		index?: number;
 		onNoteChange?: (note: FeedNote) => void;
 		rankTag?: { label: string; icon: string; color: string };
+		onExplain?: () => void;
+		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
 	} = $props();
 
 	const contentPattern =
@@ -401,6 +406,7 @@
 
 	function toggleSaved() {
 		const nextSaved = bookmarks.toggle(note);
+		onInteract?.(note, 'save', nextSaved);
 		if (nextSaved) {
 			toasts.success('Saved');
 		} else {
@@ -412,6 +418,27 @@
 	function hideNote() {
 		feed.hideNote(note.id);
 		toasts.info('Note hidden');
+		popovers.close();
+	}
+
+	/** "Not interested" — hide + record a soft negative signal so similar notes
+	 *  rank lower. The single most important trust action in any feed. */
+	function notInterested() {
+		interactionProfile.dismissNote(note.id);
+		feed.hideNote(note.id);
+		toasts.success("Got it — we'll show less like this");
+		popovers.close();
+	}
+
+	function toggleMuteAuthor() {
+		const muted = interactionProfile.toggleMutedAuthor(note.pubkey);
+		toasts.info(muted ? `Showing less from ${displayName}` : `Showing more from ${displayName}`);
+		popovers.close();
+	}
+
+	function toggleMuteTag(tag: string) {
+		const muted = interactionProfile.toggleMutedTag(tag);
+		toasts.info(muted ? `Showing less about #${tag}` : `Showing more about #${tag}`);
 		popovers.close();
 	}
 
@@ -469,6 +496,7 @@
 			await feed.react(note, '❤️');
 			if (onNoteChange) onNoteChange(nextLocalReaction(note, wasLiked));
 			if (!wasLiked) {
+				onInteract?.(note, 'react', true);
 				burst = true;
 				setTimeout(() => (burst = false), 600);
 				if (targetEl && articleEl) {
@@ -623,14 +651,20 @@
 			</div>
 		</a>
 		{#if rankTag}
-			<span
-				class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] sm:inline-flex"
+			<button
+				type="button"
+				onclick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onExplain?.();
+				}}
+				class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold transition hover:border-primary-500/40 hover:bg-primary-500/5 sm:inline-flex"
 				style="color:{rankTag.color}"
-				title={`Ranked high for ${rankTag.label.toLowerCase()}`}
+				title="Why am I seeing this?"
 			>
 				<Icon name={rankTag.icon} class="size-3" />
 				{rankTag.label}
-			</span>
+			</button>
 		{/if}
 		<div class="shrink-0">
 			<Popover
@@ -685,7 +719,36 @@
 
 				<MenuDivider />
 
-				<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
+				<MenuItem icon="i-lucide-thumbs-down" onclick={notInterested}>
+				Not interested
+			</MenuItem>
+			{#if !isMe}
+				<MenuItem
+					icon={interactionProfile.isAuthorMuted(note.pubkey)
+						? 'i-lucide-eye'
+						: 'i-lucide-eye-off'}
+					onclick={toggleMuteAuthor}
+				>
+					{interactionProfile.isAuthorMuted(note.pubkey)
+						? `Show more from ${displayName}`
+						: `Show less from ${displayName}`}
+				</MenuItem>
+			{/if}
+			{#each extractTags(note).slice(0, 3) as tag (tag)}
+				{#if interactionProfile.isTagMuted(tag)}
+					<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
+						Show more about #{tag}
+					</MenuItem>
+				{:else}
+					<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
+						Show less about #{tag}
+					</MenuItem>
+				{/if}
+			{/each}
+
+			<MenuDivider />
+
+			<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
 				{#if !isMe}
 					<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
 					<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>

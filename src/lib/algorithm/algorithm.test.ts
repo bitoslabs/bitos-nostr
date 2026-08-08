@@ -4,6 +4,11 @@ import { algorithmPreferences } from './preferences.svelte';
 import { applyDiversity } from './diversity';
 import { buildAffinity } from './context';
 import { rankNotes, rankNotesWithBreakdown } from './pipeline';
+import {
+	interactionProfile,
+	extractTags
+} from './interaction-profile.svelte';
+import { negativePenalty } from './penalties';
 import type { ScoringContext } from './types';
 
 function note(id: string, pubkey: string, createdAt: number, over: Partial<FeedNote> = {}): FeedNote {
@@ -172,5 +177,78 @@ describe('dynamic from user activity', () => {
 			ctx({ affinity: new Map([['creator', 1]]) })
 		);
 		expect(after[0].id).toBe('older-creator');
+	});
+});
+
+describe('negative feedback (topics / penalties / dismissal)', () => {
+	beforeEach(() => {
+		algorithmPreferences.load();
+		algorithmPreferences.resetAll();
+		interactionProfile.clear();
+	});
+
+	it('extracts hashtags from tags and inline text', () => {
+		const tags = extractTags({
+			content: 'loving #bitcoin today',
+			tags: [['t', 'Nostr'], ['t', 'bitcoin']]
+		});
+		expect(tags).toContain('bitcoin');
+		expect(tags).toContain('nostr');
+	});
+
+	it('hides dismissed notes from the ranked output', () => {
+		interactionProfile.dismissNote('dismissed');
+		const candidates = [
+			note('dismissed', 'a', 9_000_000, {
+				reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+			}),
+			note('kept', 'a', 1_000)
+		];
+		const ranked = rankNotes('feed', candidates, ctx());
+		expect(ranked.map((n) => n.id)).not.toContain('dismissed');
+		expect(ranked.map((n) => n.id)).toContain('kept');
+	});
+
+	it('penalizes soft-muted authors (still visible, pushed down)', () => {
+		interactionProfile.toggleMutedAuthor('noisy');
+		// noisier note would otherwise win on engagement, but the penalty pushes it down.
+		const noisy = note('n', 'noisy', 5_000_000, {
+			reactions: [{ emoji: '❤️', count: 50, byMe: false }]
+		});
+		const quiet = note('q', 'friend', 4_999_000);
+		const penalty = negativePenalty(noisy);
+		expect(penalty).toBeLessThan(1);
+		expect(negativePenalty(quiet)).toBe(1);
+	});
+
+	it('topics signal rewards a tag the user has engaged with', () => {
+		// Record interest in #bitcoin by "interacting" with a tagged note.
+		interactionProfile.recordInteraction(
+			{ pubkey: 'creator', content: '#bitcoin', tags: [['t', 'bitcoin']] },
+			1
+		);
+		const interest = interactionProfile.interestFor('bitcoin');
+		expect(interest).toBeGreaterThan(0);
+
+		// Disable everything but topics.
+		for (const id of Object.keys(algorithmPreferences.config.feed.signals)) {
+			algorithmPreferences.config.feed.signals[id].enabled = id === 'topics';
+		}
+		const withTag = note('tagged', 'stranger', 1_000, { tags: [['t', 'bitcoin']] });
+		const noTag = note('plain', 'stranger', 9_999_999);
+		const ranked = rankNotes('feed', [noTag, withTag], ctx());
+		expect(ranked[0].id).toBe('tagged');
+	});
+
+	it('persists interactions into the profile state the ranker reads', () => {
+		interactionProfile.recordInteraction(
+			{ pubkey: 'creator', content: '#bitcoin', tags: [['t', 'bitcoin']] },
+			2
+		);
+		interactionProfile.toggleMutedAuthor('spam');
+		expect(interactionProfile.state.authorAffinity.creator).toBeGreaterThan(0);
+		expect(interactionProfile.state.tagInterest.bitcoin).toBeGreaterThan(0);
+		expect(interactionProfile.isAuthorMuted('spam')).toBe(true);
+		expect(interactionProfile.affinityFor('creator')).toBeGreaterThan(0);
 	});
 });

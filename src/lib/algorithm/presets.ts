@@ -33,18 +33,19 @@ const ENGAGEMENT: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			engagement: { weight: 0.45 },
-			zaps: { weight: 0.3 },
-			recency: { weight: 0.15 },
-			affinity: { weight: 0.1 }
+			engagement: { weight: 0.4 },
+			zaps: { weight: 0.28 },
+			topics: { weight: 0.17 },
+			recency: { weight: 0.15 }
 		})
 	},
 	reels: {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			engagement: { weight: 0.55 },
-			zaps: { weight: 0.3 },
+			engagement: { weight: 0.52 },
+			zaps: { weight: 0.28 },
+			topics: { weight: 0.05 },
 			recency: { weight: 0.15 }
 		})
 	},
@@ -52,8 +53,9 @@ const ENGAGEMENT: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			engagement: { weight: 0.5 },
-			zaps: { weight: 0.35 },
+			engagement: { weight: 0.46 },
+			zaps: { weight: 0.32 },
+			topics: { weight: 0.07 },
 			recency: { weight: 0.15 }
 		})
 	}
@@ -64,30 +66,31 @@ const TRUST: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			affinity: { weight: 0.4 },
-			wot: { weight: 0.3 },
-			recency: { weight: 0.2 },
-			engagement: { weight: 0.1 }
+			affinity: { weight: 0.34 },
+			wot: { weight: 0.26 },
+			topics: { weight: 0.2 },
+			recency: { weight: 0.2 }
 		})
 	},
 	reels: {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			affinity: { weight: 0.4 },
-			wot: { weight: 0.3 },
-			engagement: { weight: 0.2 },
-			recency: { weight: 0.1 }
+			affinity: { weight: 0.36 },
+			wot: { weight: 0.28 },
+			topics: { weight: 0.16 },
+			engagement: { weight: 0.2 }
 		})
 	},
 	discover: {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			wot: { weight: 0.5 },
-			affinity: { weight: 0.25 },
-			zaps: { weight: 0.15 },
-			recency: { weight: 0.1 }
+			wot: { weight: 0.44 },
+			affinity: { weight: 0.22 },
+			topics: { weight: 0.14 },
+			zaps: { weight: 0.12 },
+			recency: { weight: 0.08 }
 		})
 	}
 };

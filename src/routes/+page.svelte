@@ -15,8 +15,10 @@
 	import { NOSTR_KINDS, type Event, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
-	import { algorithmPreferences, buildScoringContext, rankNotesWithBreakdown } from '$lib/algorithm';
+	import { algorithmPreferences, buildScoringContext, rankNotesWithBreakdown, interactionProfile } from '$lib/algorithm';
 	import { detectPreset } from '$lib/algorithm/presets';
+	import type { ScoreBreakdown } from '$lib/algorithm';
+	import RankExplainer from '$lib/components/feed/RankExplainer.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 
@@ -88,13 +90,61 @@
 			!useRelayFeed &&
 			!followingOnly
 	);
-	const scoredFeed = $derived.by(() => {
-		if (!algorithmActive) return { notes: filteredNotes, breakdown: new Map() };
-		const ctx = buildScoringContext('feed', filteredNotes);
-		return rankNotesWithBreakdown('feed', filteredNotes, ctx);
+	// Smooth ranking: instead of re-sorting on *every* reaction arrival (which
+	// makes the post you're reading jump), recompute on a short debounce. Hard
+	// triggers (reveal, loadMore, settings change) run immediately.
+	let rankedFeed = $state<{ notes: FeedNote[]; breakdown: Map<string, ScoreBreakdown> }>({
+		notes: [],
+		breakdown: new Map()
 	});
-	const rankedNotes = $derived(scoredFeed.notes);
-	const scoreBreakdown = $derived(scoredFeed.breakdown);
+	let rankToken = 0;
+	let explainerBreakdown = $state<ScoreBreakdown | null>(null);
+	let explainerOpen = $state(false);
+
+	function computeRanking(candidates: FeedNote[]) {
+		if (!algorithmActive || !candidates.length) {
+			rankedFeed = { notes: candidates, breakdown: new Map() };
+			return;
+		}
+		const ctx = buildScoringContext('feed', candidates);
+		rankedFeed = rankNotesWithBreakdown('feed', candidates, ctx);
+	}
+
+	function scheduleRank(reason: 'hard' | 'soft' = 'soft') {
+		const token = ++rankToken;
+		const delay = reason === 'hard' || !algorithmPreferences.smoothRanking ? 0 : 600;
+		const handle = window.setTimeout(() => {
+			if (token !== rankToken) return; // superseded by a newer change
+			computeRanking(filteredNotes);
+		}, delay);
+		return () => window.clearTimeout(handle);
+	}
+
+	// Recompute when the candidate pool, config, profile, or freshness change.
+	$effect(() => {
+		// Touch reactive deps so this effect re-runs on each:
+		void filteredNotes.length;
+		void filteredNotes;
+		void algorithmPreferences.config.feed;
+		void algorithmPreferences.recencyHalfLifeSeconds;
+		void interactionProfile.version;
+		if (!algorithmActive) {
+			rankedFeed = { notes: filteredNotes, breakdown: new Map() };
+			return;
+		}
+		const cancel = scheduleRank('soft');
+		return cancel;
+	});
+
+	// Hard (immediate) re-rank when the user explicitly reveals new notes,
+	// changes a setting, or refreshes the WoT graph.
+	$effect(() => {
+		void algorithmPreferences.smoothRanking;
+		void algorithmPreferences.wotVersion;
+	});
+
+	const rankedNotes = $derived(rankedFeed.notes);
+	const scoreBreakdown = $derived(rankedFeed.breakdown);
 	const feedPresetLabel = $derived.by(() => {
 		if (!algorithmActive) return '';
 		const id = detectPreset(algorithmPreferences.config.feed);
@@ -293,13 +343,34 @@
 		const count = feed.revealPending();
 		if (!count) return;
 		renderedCount = INITIAL_RENDER_COUNT;
+		// Reveal merges new notes into the candidate pool → re-rank immediately.
+		computeRanking(filteredNotes);
+		rankToken++; // cancel any pending soft re-rank
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
 	}
 
 	function loadMoreNotes() {
-		void feed.loadMore();
+		void feed.loadMore().then(() => {
+			// Older notes expanded the pool → re-rank immediately so the fresh mix shows.
+			computeRanking(filteredNotes);
+			rankToken++;
+		});
+	}
+
+	/** Record a positive interaction into the persistent profile so affinity &
+	 *  topics adapt. */
+	function handleInteract(interactedNote: FeedNote, kind: 'react' | 'save', active: boolean) {
+		if (active) interactionProfile.recordInteraction(interactedNote, kind === 'save' ? 0.8 : 1);
+		else interactionProfile.recordInteractionRemoved(interactedNote, kind === 'save' ? 0.8 : 1);
+	}
+
+	function openExplainer(note: FeedNote) {
+		const b = scoreBreakdown.get(note.id);
+		if (!b) return;
+		explainerBreakdown = b;
+		explainerOpen = true;
 	}
 
 	const RANK_TAG_COLORS: Record<string, string> = {
@@ -802,7 +873,13 @@
 				{/if}
 				<div class="space-y-5">
 					{#each renderedNotes as note, i (note.id)}
-						<PostCard {note} index={i} rankTag={rankTagFor(note)} />
+					<PostCard
+						{note}
+						index={i}
+						rankTag={rankTagFor(note)}
+						onExplain={() => openExplainer(note)}
+						onInteract={handleInteract}
+					/>
 					{/each}
 				</div>
 
@@ -843,3 +920,5 @@
 	<!-- Right rail -->
 	<TrendingRail />
 </div>
+
+<RankExplainer bind:open={explainerOpen} breakdown={explainerBreakdown} />

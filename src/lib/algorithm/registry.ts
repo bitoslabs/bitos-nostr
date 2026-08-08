@@ -5,6 +5,7 @@ import { zapScore } from './signals/zaps';
 import { affinityScore } from './signals/affinity';
 import { wotScore } from './signals/wot';
 import { noveltyScore } from './signals/novelty';
+import { topicsScore } from './signals/topics';
 
 /**
  * Signal registry — id → scoring function. New signals are added here; the
@@ -16,7 +17,8 @@ export const signalRegistry: Record<string, SignalFn> = {
 	zaps: zapScore,
 	affinity: affinityScore,
 	wot: wotScore,
-	novelty: noveltyScore
+	novelty: noveltyScore,
+	topics: topicsScore
 };
 
 /** Safe lookup — unknown signal ids score 0 instead of throwing. */

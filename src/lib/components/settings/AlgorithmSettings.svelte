@@ -13,7 +13,8 @@
 		algorithmPreferences,
 		DEFAULT_RECENCY_HALF_LIFE_SECONDS,
 		SURFACE_META,
-		signalDefinitions
+		signalDefinitions,
+		interactionProfile
 	} from '$lib/algorithm';
 	import {
 		PRESET_META,
@@ -343,6 +344,43 @@
 				<p class="text-[13px] font-bold text-[var(--ui-text)]">Refresh web-of-trust graph</p>
 				<p class="text-[11px] text-[var(--ui-text-muted)]">
 					Re-fetch follow-of-follows used by the trust signal.
+				</p>
+			</div>
+			<Icon name="i-lucide-chevron-right" class="size-4 text-[var(--ui-text-dimmed)]" />
+		</button>
+
+		<!-- Smooth ranking: anti-jump toggle -->
+		<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
+			<Icon name="i-lucide-waves" class="size-5 text-primary-500" />
+			<div class="min-w-0 flex-1">
+				<p class="text-[13px] font-bold text-[var(--ui-text)]">Smooth ranking</p>
+				<p class="text-[11px] text-[var(--ui-text-muted)]">
+					Debounce re-sorts so a post you're reading doesn't jump.
+				</p>
+			</div>
+			<button
+				type="button"
+				class="toggle {algorithmPreferences.smoothRanking ? 'on' : ''}"
+				aria-label="Smooth ranking"
+				aria-pressed={algorithmPreferences.smoothRanking}
+				onclick={() => algorithmPreferences.setSmoothRanking(!algorithmPreferences.smoothRanking)}
+			></button>
+		</div>
+
+		<!-- Clear learned interactions -->
+		<button
+			type="button"
+			class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3 text-left transition hover:bg-[var(--interactive-hover-bg)]"
+			onclick={() => {
+				interactionProfile.clear();
+				toasts.success('Learned interests cleared');
+			}}
+		>
+			<Icon name="i-lucide-eraser" class="size-5 text-primary-500" />
+			<div class="min-w-0 flex-1">
+				<p class="text-[13px] font-bold text-[var(--ui-text)]">Clear learned interests</p>
+				<p class="text-[11px] text-[var(--ui-text-muted)]">
+					Reset affinity, topics, and “show less” signals you've trained.
 				</p>
 			</div>
 			<Icon name="i-lucide-chevron-right" class="size-4 text-[var(--ui-text-dimmed)]" />

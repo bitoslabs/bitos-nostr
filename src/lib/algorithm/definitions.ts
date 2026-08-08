@@ -29,6 +29,12 @@ export const SIGNAL_DEFINITIONS: SignalDefinition[] = [
 		icon: 'i-lucide-heart-handshake'
 	},
 	{
+		id: 'topics',
+		label: 'Topics',
+		description: 'Boost #hashtags you engage with most.',
+		icon: 'i-lucide-hash'
+	},
+	{
 		id: 'wot',
 		label: 'Web of trust',
 		description: 'Distance from your follow graph. A quality gate, not popularity.',

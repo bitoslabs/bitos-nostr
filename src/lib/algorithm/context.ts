@@ -6,11 +6,11 @@
 import { browser } from '$app/environment';
 import { contacts } from '$lib/nostr/contacts.svelte';
 import { identity } from '$lib/nostr/identity.svelte';
-import { bookmarks } from '$lib/stores/bookmarks.svelte';
 import { feed } from '$lib/nostr/feed.svelte';
 import { NOSTR_KINDS } from '$lib/nostr/types';
 import { queryPrimaryFirst } from '$lib/nostr/pool';
 import { algorithmPreferences } from './preferences.svelte';
+import { interactionProfile } from './interaction-profile.svelte';
 import type { FeedNote } from '$lib/nostr/types';
 import type { ScoringContext, SurfaceId } from './types';
 
@@ -68,44 +68,42 @@ function scheduleWotRefresh(me: string, following: string[]) {
 }
 
 /**
- * Affinity map: pubkey → 0–1. Built from the notes already in the live feed that
- * the user has reacted to or that carry zaps attributed to them, plus bookmarked
- * authors. A light recency bias keeps it from fossilizing.
+ * Affinity map: pubkey → 0–1. Merges the *persistent* interaction profile
+ * (long-term learning, survives reloads) with the *ephemeral* signal from notes
+ * currently in the live feed (immediate responsiveness to a just-given ❤️).
  */
 export function buildAffinity(notes: FeedNote[], me?: string): Map<string, number> {
 	const scores = new Map<string, number>();
-	if (!me) return scores;
+
+	// 1) Persistent profile (decayed, capped) — the long-term memory.
+	for (const [pk] of Object.entries(interactionProfile.state.authorAffinity)) {
+		scores.set(pk, interactionProfile.affinityFor(pk));
+	}
+
+	if (!me) return normalize(scores);
 	const now = Math.floor(Date.now() / 1000);
 
 	const bump = (pubkey: string, weight: number, createdAt: number) => {
 		if (!pubkey || pubkey === me) return;
-		// Recency bias: interactions with recent notes weigh more.
+		// Short-term recency bias so a ❤️ you just gave matters most.
 		const ageDays = Math.max(0, (now - createdAt) / 86400);
-		const recency = Math.pow(0.5, ageDays / 30); // ~1 month half-life
-		scores.set(pubkey, (scores.get(pubkey) ?? 0) + weight * recency);
+		const recency = Math.pow(0.5, ageDays / 14); // ~2-week ephemeral half-life
+		scores.set(pubkey, Math.min(1, (scores.get(pubkey) ?? 0) + weight * recency * 0.3));
 	};
 
+	// 2) Ephemeral boost from this session's live reactions.
 	for (const note of notes) {
 		const reactedByMe = note.reactions.some((r) => r.byMe);
 		if (reactedByMe) bump(note.pubkey, 1, note.createdAt);
-		if (note.zapTotalSats > 0 && note.reactions.some((r) => r.byMe)) {
-			// We can't attribute zaps to *me* precisely here; treat reacted notes as
-			// a proxy for stronger affinity.
-			bump(note.pubkey, 0.5, note.createdAt);
-		}
 	}
 
-	for (const bookmark of bookmarks.items) {
-		bump(bookmark.note.pubkey, 0.8, bookmark.note.createdAt);
-	}
+	return normalize(scores);
+}
 
-	// Normalize to 0–1 via a soft log curve so power-interactors don't dominate.
-	let max = 0;
-	for (const value of scores.values()) if (value > max) max = value;
-	const norm = Math.log10(1 + max) || 1;
+function normalize(scores: Map<string, number>): Map<string, number> {
 	const out = new Map<string, number>();
-	for (const [pubkey, value] of scores) {
-		out.set(pubkey, Math.min(1, Math.log10(1 + value) / norm));
+	for (const [pk, value] of scores) {
+		if (value > 0) out.set(pk, Math.min(1, value));
 	}
 	return out;
 }
@@ -137,6 +135,8 @@ export function buildScoringContext(
 
 	// Track WoT freshness so ranked surfaces re-run when the second-hop set lands.
 	void algorithmPreferences.wotVersion;
+	// Track the persistent interaction profile so ranking re-runs on new activity.
+	void interactionProfile.version;
 
 	const affinity = buildAffinity(feed.notes, me);
 	const recentAuthors = recentAuthorsFrom(candidates, options.topWindow ?? 6);

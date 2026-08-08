@@ -20,6 +20,13 @@ export {
 } from './presets';
 export { signals, clamp01 } from './presets-helpers';
 export {
+	interactionProfile,
+	PROFILE_STORAGE_KEY,
+	extractTags
+} from './interaction-profile.svelte';
+export type { InteractionProfileState } from './interaction-profile.svelte';
+export { negativePenalty } from './penalties';
+export {
 	buildScoringContext,
 	buildAffinity,
 	getWotSet,

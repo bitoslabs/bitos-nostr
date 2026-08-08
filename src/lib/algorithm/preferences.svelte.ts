@@ -30,9 +30,10 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			recency: { enabled: true, weight: 0.35 },
-			affinity: { enabled: true, weight: 0.25 },
-			engagement: { enabled: true, weight: 0.25 },
+			recency: { enabled: true, weight: 0.3 },
+			affinity: { enabled: true, weight: 0.22 },
+			topics: { enabled: true, weight: 0.13 },
+			engagement: { enabled: true, weight: 0.2 },
 			zaps: { enabled: true, weight: 0.15 }
 		})
 	},
@@ -40,9 +41,10 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			engagement: { enabled: true, weight: 0.45 },
-			zaps: { enabled: true, weight: 0.3 },
+			engagement: { enabled: true, weight: 0.4 },
+			zaps: { enabled: true, weight: 0.28 },
 			recency: { enabled: true, weight: 0.15 },
+			topics: { enabled: true, weight: 0.07 },
 			affinity: { enabled: false, weight: 0.1 }
 		})
 	},
@@ -50,9 +52,10 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			engagement: { enabled: true, weight: 0.4 },
-			wot: { enabled: true, weight: 0.3 },
-			zaps: { enabled: true, weight: 0.2 },
+			engagement: { enabled: true, weight: 0.36 },
+			wot: { enabled: true, weight: 0.28 },
+			topics: { enabled: true, weight: 0.12 },
+			zaps: { enabled: true, weight: 0.14 },
 			recency: { enabled: true, weight: 0.1 }
 		})
 	}
@@ -71,6 +74,9 @@ class AlgorithmPreferencesStore {
 	/** Bumps whenever the WoT second-hop cache refreshes, so ranked surfaces that
 	 *  depend on it re-run. See `algorithm/context.ts`. */
 	wotVersion = $state(0);
+	/** When on, ranked surfaces debounce re-sorting so a post you're reading
+	 *  doesn't jump when a reaction arrives. Off = re-rank on every change. */
+	smoothRanking = $state(true);
 	bumpWotVersion = () => {
 		this.wotVersion++;
 	};
@@ -83,6 +89,7 @@ class AlgorithmPreferencesStore {
 			if (raw) {
 				const parsed = JSON.parse(raw) as Partial<AlgorithmPreferences> & {
 					recencyHalfLifeSeconds?: number;
+				smoothRanking?: boolean;
 				};
 				this.config = {
 					feed: this.mergeSurface('feed', parsed.feed),
@@ -95,6 +102,7 @@ class AlgorithmPreferencesStore {
 				) {
 					this.recencyHalfLifeSeconds = parsed.recencyHalfLifeSeconds as number;
 				}
+				this.smoothRanking = parsed.smoothRanking !== false;
 			}
 		} catch {
 			/* ignore malformed storage */
@@ -118,7 +126,8 @@ class AlgorithmPreferencesStore {
 			ALGORITHM_STORAGE_KEY,
 			JSON.stringify({
 				...this.config,
-				recencyHalfLifeSeconds: this.recencyHalfLifeSeconds
+				recencyHalfLifeSeconds: this.recencyHalfLifeSeconds,
+				smoothRanking: this.smoothRanking
 			})
 		);
 	};
@@ -151,6 +160,11 @@ class AlgorithmPreferencesStore {
 		this.persist();
 	};
 
+	setSmoothRanking = (enabled: boolean) => {
+		this.smoothRanking = enabled;
+		this.persist();
+	};
+
 	setRecencyHalfLife = (seconds: number) => {
 		this.recencyHalfLifeSeconds = Math.max(600, Math.round(seconds));
 		this.persist();
@@ -171,6 +185,7 @@ class AlgorithmPreferencesStore {
 	resetAll = () => {
 		this.config = structuredClone(DEFAULTS);
 		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
+		this.smoothRanking = true;
 		this.persist();
 	};
 
