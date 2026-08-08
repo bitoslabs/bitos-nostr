@@ -52,10 +52,35 @@ export async function POST({ request }) {
 		);
 	}
 
-	const formData = await request.formData();
-	const maybeFile = formData.get('file');
-	const pubkey = safePubkey(formData.get('pubkey'));
-	const purpose = safePurpose(formData.get('purpose'));
+	const contentType = request.headers.get('content-type') ?? '';
+	const url = new URL(request.url, 'http://localhost');
+	const pubkey = safePubkey(url.searchParams.get('pubkey'));
+	const purpose = safePurpose(url.searchParams.get('purpose'));
+
+	let maybeFile: File | null = null;
+	if (contentType.startsWith('multipart/form-data')) {
+		const formData = await request.formData();
+		const fileFromForm = formData.get('file');
+		if (fileFromForm instanceof File) {
+			maybeFile = fileFromForm;
+		}
+		const pubkeyFromForm = safePubkey(formData.get('pubkey'));
+		if (pubkeyFromForm) {
+			url.searchParams.set('pubkey', pubkeyFromForm);
+		}
+		const purposeFromForm = safePurpose(formData.get('purpose'));
+		if (purposeFromForm) {
+			url.searchParams.set('purpose', purposeFromForm);
+		}
+	} else {
+		const filenameHeader = request.headers.get('x-upload-filename') ?? 'upload.bin';
+		const filename = decodeURIComponent(filenameHeader);
+		const bodyBlob = await request.blob();
+		maybeFile = new File([bodyBlob], filename, {
+			type: bodyBlob.type || 'application/octet-stream'
+		});
+	}
+
 	if (!(maybeFile instanceof File)) {
 		return json({ error: 'Missing file upload' }, { status: 400 });
 	}
