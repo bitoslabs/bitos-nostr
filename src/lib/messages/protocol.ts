@@ -75,6 +75,7 @@ export type GroupControlPayload = GroupInvite & {
 };
 
 export type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
+export type CallOutcome = 'ended' | 'missed' | 'declined';
 export type CallSignal = {
 	callId: string;
 	type: CallSignalType;
@@ -84,6 +85,7 @@ export type CallSignal = {
 	sdp?: string;
 	candidate?: string;
 	duration?: number;
+	outcome?: CallOutcome;
 };
 
 export const GROUPS_KEY_PREFIX = 'bitos:message-groups';
@@ -276,6 +278,7 @@ export function callSignalText(signal: CallSignal) {
 	if (signal.sdp) params.set('sdp', signal.sdp);
 	if (signal.candidate) params.set('candidate', signal.candidate);
 	if (typeof signal.duration === 'number') params.set('duration', String(signal.duration));
+	if (signal.outcome) params.set('outcome', signal.outcome);
 	return [
 		`${signal.kind === 'video' ? 'Video' : 'Voice'} call signal on BitOS.`,
 		'Open BitOS Messages to continue the call.',
@@ -311,7 +314,10 @@ export function parseCallSignal(content: string): CallSignal | null {
 			groupId: params.get('groupId')?.trim() || undefined,
 			sdp: params.get('sdp') ?? undefined,
 			candidate: params.get('candidate') ?? undefined,
-			duration: Number(params.get('duration') ?? 0) || undefined
+			duration: Number(params.get('duration') ?? 0) || undefined,
+			outcome: ['ended', 'missed', 'declined'].includes(params.get('outcome') ?? '')
+				? (params.get('outcome') as CallOutcome)
+				: undefined
 		};
 	} catch {
 		return null;

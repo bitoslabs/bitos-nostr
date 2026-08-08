@@ -7,6 +7,7 @@
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import StoryRing from '$lib/components/feed/StoryRing.svelte';
 	import ProfileActionMenu from '$lib/components/profile/ProfileActionMenu.svelte';
+	import ProfileConnections from '$lib/components/profile/ProfileConnections.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
@@ -38,13 +39,26 @@
 	let followPending = $state(false);
 	let loadedFor = $state('');
 	let notes = $state<FeedNote[]>([]);
-	let activeTab = $state<'posts' | 'replies' | 'media'>('posts');
+	let activeTab = $state<'posts' | 'replies' | 'media' | 'pinned' | 'liked' | 'reposts'>('posts');
+	let pinnedNotes = $state<FeedNote[]>([]);
+	let likedNotes = $state<FeedNote[]>([]);
+	let repostedNotes = $state<FeedNote[]>([]);
 
 	const posts = $derived(notes.filter((note) => !note.replyTo));
 	const replies = $derived(notes.filter((note) => !!note.replyTo));
 	const media = $derived(notes.filter((note) => mediaUrlPattern.test(note.content)));
 	const visibleNotes = $derived(
-		activeTab === 'posts' ? posts : activeTab === 'replies' ? replies : media
+		activeTab === 'posts'
+			? posts
+			: activeTab === 'replies'
+				? replies
+				: activeTab === 'media'
+					? media
+					: activeTab === 'pinned'
+						? pinnedNotes
+						: activeTab === 'liked'
+							? likedNotes
+							: repostedNotes
 	);
 	const normalizedWebsite = $derived(
 		profile?.website
@@ -54,6 +68,19 @@
 			: ''
 	);
 	const highlights = $derived(buildHighlights(notes));
+	const reactionTotal = $derived(
+		notes.reduce(
+			(sum, note) => sum + note.reactions.reduce((count, reaction) => count + reaction.count, 0),
+			0
+		)
+	);
+	const satsReceived = $derived(notes.reduce((sum, note) => sum + note.zapTotalSats, 0));
+
+	function compactSats(value: number) {
+		if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+		if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+		return String(value);
+	}
 
 	function resolvePubkey(value: string | undefined) {
 		if (!value) return '';
@@ -128,17 +155,88 @@
 	}
 
 	async function fetchNotePage(nextPubkey: string, until?: number) {
-		const events = await queryPrimaryFirst(
-			[
-				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
-					authors: [nextPubkey],
-					limit: NOTE_PAGE_LIMIT,
-					...(until ? { until } : {})
-				}
-			]
-		);
+		const events = await queryPrimaryFirst([
+			{
+				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				authors: [nextPubkey],
+				limit: NOTE_PAGE_LIMIT,
+				...(until ? { until } : {})
+			}
+		]);
 		return buildPageFromEvents(events);
+	}
+
+	async function loadPinnedNotes(nextPubkey: string) {
+		const [list] = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.PINNED_NOTES], authors: [nextPubkey], limit: 1 }
+		]);
+		if (loadedFor !== nextPubkey) return;
+		const ids =
+			list?.tags
+				.filter((tag) => tag[0] === 'e' && /^[0-9a-f]{64}$/i.test(tag[1] ?? ''))
+				.map((tag) => tag[1])
+				.filter((id, index, all): id is string => !!id && all.indexOf(id) === index) ?? [];
+		if (!ids.length) return;
+		const noteEvents = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids, limit: ids.length }
+		]);
+		if (loadedFor !== nextPubkey) return;
+		const notesById = new Map(noteEvents.map((event) => [event.id, toFeedNote(event)]));
+		const ordered = ids.map((id) => notesById.get(id)).filter((note): note is FeedNote => !!note);
+		const activity = await queryPrimaryFirst([
+			{
+				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+				'#e': ordered.map((note) => note.id),
+				limit: 500
+			}
+		]);
+		if (loadedFor !== nextPubkey) return;
+		pinnedNotes = applyActivityToNotes(ordered, activity, identity.current?.pk);
+	}
+
+	async function loadInteractionNotes(nextPubkey: string) {
+		const events = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST], authors: [nextPubkey], limit: 300 }
+		]);
+		if (loadedFor !== nextPubkey) return;
+		const idsFor = (kind: number) =>
+			[
+				...new Set(
+					events
+						.filter((event) => event.kind === kind && event.content !== '-')
+						.sort((a, b) => b.created_at - a.created_at)
+						.map(
+							(event) =>
+								event.tags.find(
+									(tag) => tag[0] === 'e' && /^[0-9a-f]{64}$/i.test(tag[1] ?? '')
+								)?.[1]
+						)
+						.filter((id): id is string => !!id)
+				)
+			].slice(0, 80);
+		const likedIds = idsFor(NOSTR_KINDS.REACTION);
+		const repostedIds = idsFor(NOSTR_KINDS.REPOST);
+		const ids = [...new Set([...likedIds, ...repostedIds])];
+		if (!ids.length) return;
+		const noteEvents = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids, limit: ids.length }
+		]);
+		const notesById = new Map(noteEvents.map((event) => [event.id, toFeedNote(event)]));
+		const hydrate = async (targetIds: string[]) => {
+			const ordered = targetIds
+				.map((id) => notesById.get(id))
+				.filter((note): note is FeedNote => !!note);
+			const activity = await queryPrimaryFirst([
+				{
+					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					'#e': ordered.map((note) => note.id),
+					limit: 500
+				}
+			]);
+			return applyActivityToNotes(ordered, activity, identity.current?.pk);
+		};
+		likedNotes = await hydrate(likedIds);
+		repostedNotes = await hydrate(repostedIds);
 	}
 
 	function mergeNotes(current: FeedNote[], next: FeedNote[]) {
@@ -173,8 +271,19 @@
 		hasMoreNotes = false;
 		notes = [];
 		loadedFor = nextPubkey;
+		pinnedNotes = [];
+		likedNotes = [];
+		repostedNotes = [];
 		profiles.ensure([nextPubkey]);
 		try {
+			void loadPinnedNotes(nextPubkey).catch((error) => {
+				if (loadedFor === nextPubkey)
+					toasts.error((error as Error).message || 'Could not load pinned notes');
+			});
+			void loadInteractionNotes(nextPubkey).catch((error) => {
+				if (loadedFor === nextPubkey)
+					toasts.error((error as Error).message || 'Could not load profile activity');
+			});
 			const currentLoad = nextPubkey;
 			void queryPrimaryFirst([{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 }]);
 			const primaryEvents = await queryPrimaryFirst(
@@ -415,6 +524,22 @@
 			</div>
 		</div>
 
+		<ProfileConnections {pubkey} />
+
+		{#if reactionTotal || satsReceived}
+			<div class="post-card mb-5 flex flex-wrap items-center gap-5 px-4 py-3">
+				<div class="flex items-center gap-2 text-[12px] text-[var(--ui-text-muted)]">
+					<Icon name="i-lucide-heart" class="size-4 text-warm-500" />
+					<strong class="text-[var(--ui-text)]">{reactionTotal}</strong> reactions
+				</div>
+				<div class="flex items-center gap-2 text-[12px] text-[var(--ui-text-muted)]">
+					<Icon name="i-lucide-zap" class="size-4 text-warm-500" />
+					<strong class="text-[var(--ui-text)]">{compactSats(satsReceived)}</strong> sats received
+				</div>
+				<span class="text-[11px] text-[var(--ui-text-dimmed)]">From loaded notes</span>
+			</div>
+		{/if}
+
 		<div class="mb-5">
 			<h3 class="mb-3 font-display text-[16px] font-extrabold">Highlights</h3>
 			<div
@@ -477,6 +602,37 @@
 				>
 					Media
 				</button>
+				{#if pinnedNotes.length}
+					<button
+						type="button"
+						onclick={() => (activeTab = 'pinned')}
+						class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'pinned'
+							? 'border-primary-500 text-[var(--ui-text)]'
+							: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+					>
+						Pinned
+					</button>
+				{/if}
+				{#if likedNotes.length}
+					<button
+						type="button"
+						onclick={() => (activeTab = 'liked')}
+						class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'liked'
+							? 'border-primary-500 text-[var(--ui-text)]'
+							: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+						>Liked</button
+					>
+				{/if}
+				{#if repostedNotes.length}
+					<button
+						type="button"
+						onclick={() => (activeTab = 'reposts')}
+						class="border-b-2 px-4 py-3 text-[13px] font-bold transition {activeTab === 'reposts'
+							? 'border-primary-500 text-[var(--ui-text)]'
+							: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+						>Reposts</button
+					>
+				{/if}
 			</div>
 		</div>
 

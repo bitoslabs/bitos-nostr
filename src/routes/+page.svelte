@@ -9,13 +9,18 @@
 	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryPrimaryFirst } from '$lib/nostr/pool';
+	import { queryParallelProgressive, queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { NOSTR_KINDS, type Event, type FeedNote } from '$lib/nostr/types';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
-	import { algorithmPreferences, buildScoringContext, rankNotesWithBreakdown, interactionProfile } from '$lib/algorithm';
+	import {
+		algorithmPreferences,
+		buildScoringContext,
+		rankNotesWithBreakdown,
+		interactionProfile
+	} from '$lib/algorithm';
 	import { detectPreset } from '$lib/algorithm/presets';
 	import type { ScoreBreakdown } from '$lib/algorithm';
 	import RankExplainer from '$lib/components/feed/RankExplainer.svelte';
@@ -23,8 +28,6 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 
 	type FeedFilter = 'all' | 'originals' | 'replies' | 'media' | 'liked' | 'mine';
-	type SearchMode = 'local' | 'relay';
-
 	const filterOptions: { key: FeedFilter; label: string; icon: string }[] = [
 		{ key: 'all', label: 'All', icon: 'i-lucide-list-filter' },
 		{ key: 'originals', label: 'Original', icon: 'i-lucide-message-square' },
@@ -47,23 +50,28 @@
 	let feedMode = $state<'foryou' | 'following'>('foryou');
 	let searchQuery = $state('');
 	let searchOpen = $state(false);
-	let searchMode = $state<SearchMode>('local');
 	let renderedCount = $state(INITIAL_RENDER_COUNT);
+	let promotedNewIds = $state<Set<string>>(new Set());
 	let lastViewSignature = $state('');
 	let relayFeedNotes = $state<FeedNote[]>([]);
 	let relayFeedLoading = $state(false);
 	let relayFeedMerging = $state(false);
 	let relayFeedStatus = $state<'idle' | 'primary' | 'merged'>('idle');
 	let relayFeedSignature = $state('');
+	let relayFeedRevision = 0;
+	let relayFeedHasResult = $state(false);
 	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const normalizedSearch = $derived(searchQuery.trim().toLowerCase());
-	const useRelayFeed = $derived(!!activeTag || (!!normalizedSearch && searchMode === 'relay'));
-	const baseNotes = $derived(useRelayFeed ? relayFeedNotes : feed.notes);
+	const useRelayFeed = $derived(!!activeTag || normalizedSearch.length >= 2);
+	// Keep local matches visible while the remote search is in flight.
+	const baseNotes = $derived(useRelayFeed && relayFeedHasResult ? relayFeedNotes : feed.notes);
 	const selectedFilterOptions = $derived(
 		filterOptions.filter((option) => activeFilters.includes(option.key))
 	);
 	const activeFilterLabel = $derived(
-		selectedFilterOptions.length ? selectedFilterOptions.map((option) => option.label).join(', ') : 'All'
+		selectedFilterOptions.length
+			? selectedFilterOptions.map((option) => option.label).join(', ')
+			: 'All'
 	);
 	const pinnedTags = $derived(feedPreferences.state.pinnedTags);
 	const followingOnly = $derived(feedMode === 'following' && !useRelayFeed);
@@ -144,6 +152,9 @@
 	});
 
 	const rankedNotes = $derived(rankedFeed.notes);
+	const rankedNotesWithoutNew = $derived(
+		rankedNotes.filter((note) => !promotedNewIds.has(note.id))
+	);
 	const scoreBreakdown = $derived(rankedFeed.breakdown);
 	const feedPresetLabel = $derived.by(() => {
 		if (!algorithmActive) return '';
@@ -151,8 +162,13 @@
 		if (id === 'custom') return 'Custom mix';
 		return `${id[0].toUpperCase()}${id.slice(1)}`;
 	});
-	const renderedNotes = $derived(rankedNotes.slice(0, renderedCount));
-	const hasMoreRenderedNotes = $derived(renderedCount < rankedNotes.length);
+	const renderedNotes = $derived(rankedNotesWithoutNew.slice(0, renderedCount));
+	const hasMoreRenderedNotes = $derived(renderedCount < rankedNotesWithoutNew.length);
+	const newlyRevealedNotes = $derived(
+		filteredNotes
+			.filter((note) => promotedNewIds.has(note.id))
+			.sort((a, b) => b.createdAt - a.createdAt)
+	);
 	const pendingAuthors = $derived.by(() => {
 		const seen: Record<string, boolean> = {};
 		const unique: { pubkey: string; name: string; picture?: string | null }[] = [];
@@ -246,7 +262,9 @@
 			.includes(query);
 	}
 
-	function toFeedNote(ev: Pick<Event, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>): FeedNote {
+	function toFeedNote(
+		ev: Pick<Event, 'id' | 'pubkey' | 'content' | 'created_at' | 'tags'>
+	): FeedNote {
 		const replyTag = ev.tags.find((tag) => tag[0] === 'e' && tag[3] === 'reply');
 		return {
 			id: ev.id,
@@ -276,10 +294,18 @@
 	function relayFilters(): Filter[] {
 		const filters: Filter[] = [];
 		if (activeTag) {
-			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], '#t': [activeTag], limit: RELAY_RESULT_LIMIT });
+			filters.push({
+				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				'#t': [activeTag],
+				limit: RELAY_RESULT_LIMIT
+			});
 		}
 		if (normalizedSearch) {
-			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], search: normalizedSearch, limit: RELAY_RESULT_LIMIT });
+			filters.push({
+				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				search: normalizedSearch,
+				limit: RELAY_RESULT_LIMIT
+			});
 			if (!activeTag) {
 				filters.push({
 					kinds: [NOSTR_KINDS.TEXT_NOTE],
@@ -303,9 +329,14 @@
 		return applyActivityToNotes(nextNotes, activity, identity.current?.pk);
 	}
 
-	async function applyRelayFeed(events: Event[], signature: string, status: 'primary' | 'merged') {
+	async function applyRelayFeed(
+		events: Event[],
+		signature: string,
+		status: 'primary' | 'merged',
+		revision: number
+	) {
 		const nextNotes = await buildRelayFeed(events);
-		if (relayFeedSignature !== signature) return;
+		if (relayFeedSignature !== signature || revision !== relayFeedRevision) return;
 		relayFeedNotes = nextNotes;
 		relayFeedStatus = status;
 		relayFeedMerging = false;
@@ -313,25 +344,39 @@
 	}
 
 	async function loadRelayFeed() {
-		const signature = `${activeTag}|${searchMode}|${normalizedSearch}`;
+		const signature = `${activeTag}|${normalizedSearch}`;
 		const filters = relayFilters();
 		if (!filters.length) return;
 		relayFeedSignature = signature;
+		relayFeedHasResult = false;
 		relayFeedLoading = true;
 		relayFeedMerging = true;
 		relayFeedStatus = 'primary';
+		relayFeedRevision = 0;
 		try {
-			const events = await queryPrimaryFirst(filters, {
+			const events = await queryParallelProgressive(filters, {
+				onPrimary: (primaryEvents) => {
+					relayFeedRevision = 1;
+					relayFeedHasResult = true;
+					void applyRelayFeed(primaryEvents, signature, 'primary', 1);
+				},
 				onSecondary: (mergedEvents) => {
 					if (relayFeedSignature !== signature) return;
-					void applyRelayFeed(mergedEvents, signature, 'merged');
+					relayFeedRevision = 2;
+					void applyRelayFeed(mergedEvents, signature, 'merged', 2);
 				}
 			});
 			if (relayFeedSignature !== signature) return;
-			await applyRelayFeed(events, signature, 'primary');
+			// The callback applies the primary batch. This fallback also covers
+			// callers/environments where the callback is unavailable.
+			if (relayFeedRevision === 0) {
+				relayFeedRevision = 1;
+				await applyRelayFeed(events, signature, 'primary', 1);
+			}
 		} catch (e) {
 			if (relayFeedSignature === signature) {
 				relayFeedNotes = [];
+				relayFeedHasResult = true;
 				toasts.error((e as Error).message || 'Could not load relay feed');
 			}
 		} finally {
@@ -340,8 +385,10 @@
 	}
 
 	function showNewNotes() {
+		const incomingIds = new Set(feed.pendingNotes.map((note) => note.id));
 		const count = feed.revealPending();
 		if (!count) return;
+		promotedNewIds = new Set([...promotedNewIds, ...incomingIds]);
 		renderedCount = INITIAL_RENDER_COUNT;
 		// Reveal merges new notes into the candidate pool → re-rank immediately.
 		computeRanking(filteredNotes);
@@ -349,6 +396,11 @@
 		requestAnimationFrame(() => {
 			feedScroller?.scrollTo({ top: 0, behavior: 'smooth' });
 		});
+	}
+
+	function dismissNewNotes() {
+		promotedNewIds = new Set();
+		renderedCount = INITIAL_RENDER_COUNT;
 	}
 
 	function loadMoreNotes() {
@@ -427,23 +479,21 @@
 	});
 
 	$effect(() => {
-		if (activeTag) {
-			searchMode = 'relay';
-			return;
-		}
-		if (!normalizedSearch && searchMode === 'relay') searchMode = 'local';
-	});
-
-	$effect(() => {
 		if (!useRelayFeed) {
 			relayFeedNotes = [];
+			relayFeedHasResult = false;
 			relayFeedLoading = false;
 			relayFeedMerging = false;
 			relayFeedStatus = 'idle';
 			relayFeedSignature = '';
 			return;
 		}
-		void loadRelayFeed();
+		if (activeTag) {
+			void loadRelayFeed();
+			return;
+		}
+		const timer = window.setTimeout(() => void loadRelayFeed(), 250);
+		return () => window.clearTimeout(timer);
 	});
 </script>
 
@@ -485,7 +535,8 @@
 							searchOpen = !searchOpen;
 							if (!searchOpen) searchQuery = '';
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {searchOpen || normalizedSearch
+						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {searchOpen ||
+						normalizedSearch
 							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
 							: ''}"
 						aria-label={searchOpen ? 'Hide search' : 'Show search'}
@@ -500,8 +551,8 @@
 							popovers.toggle(filterMenuId);
 						}}
 						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {!activeFilters.includes(
-						'all'
-					) || activeFilters.length > 1
+							'all'
+						) || activeFilters.length > 1
 							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
 							: ''}"
 						aria-label="Filters"
@@ -519,8 +570,8 @@
 									type="button"
 									onclick={() => toggleFilter(option.key)}
 									class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold transition-colors hover:bg-[var(--interactive-hover-bg)] {isFilterSelected(
-									option.key
-								)
+										option.key
+									)
 										? 'text-primary-600'
 										: 'text-[var(--ui-text-muted)]'}"
 								>
@@ -548,7 +599,7 @@
 								bind:value={searchQuery}
 								type="search"
 								placeholder="Search notes, hashtags, or authors"
-								class="w-full rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-2.5 pr-3 pl-9 text-[13px] text-[var(--ui-text)] outline-none transition focus:border-primary-500/40 focus:ring-2 focus:ring-primary-500/15"
+								class="w-full rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-2.5 pr-3 pl-9 text-[13px] text-[var(--ui-text)] transition outline-none focus:border-primary-500/40 focus:ring-2 focus:ring-primary-500/15"
 							/>
 						</label>
 						{#if normalizedSearch}
@@ -561,31 +612,9 @@
 							</button>
 						{/if}
 					</div>
-					<div class="flex items-center gap-2">
-						<button
-							type="button"
-							onclick={() => (searchMode = 'local')}
-							class="rounded-full px-3 py-1.5 text-[11px] font-bold transition {searchMode === 'local'
-								? 'bg-primary-500 text-white'
-								: 'border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] hover:text-primary-500'}"
-						>
-							Quick filter
-						</button>
-						<button
-							type="button"
-							onclick={() => (searchMode = 'relay')}
-							disabled={!normalizedSearch && !activeTag}
-							class="rounded-full px-3 py-1.5 text-[11px] font-bold transition {searchMode === 'relay'
-								? 'bg-primary-500 text-white'
-								: 'border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] hover:text-primary-500 disabled:cursor-default disabled:opacity-50'}"
-						>
-							Relay search
-						</button>
-						<span class="text-[11px] text-[var(--ui-text-dimmed)]">
-							{searchMode === 'local'
-								? 'Filters only the notes already loaded.'
-								: 'Queries the primary relay first, then merges others.'}
-						</span>
+					<div class="flex items-center gap-1.5 text-[11px] text-[var(--ui-text-dimmed)]">
+						<Icon name="i-lucide-zap" class="size-3.5 text-primary-500" />
+						<span>Instant results, then more from your relays</span>
 					</div>
 				</div>
 			{/if}
@@ -595,12 +624,12 @@
 				class="sticky top-0 z-10 -mx-5 mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-5 backdrop-blur-md"
 			>
 				<div
-					class="flex items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+					class="flex [scrollbar-width:none] items-center gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden"
 				>
 					<a
 						href="/"
 						onclick={() => (feedMode = 'foryou')}
-						class="relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3.5 py-3 text-[13.5px] font-bold transition-colors {!activeTag &&
+						class="relative flex shrink-0 items-center gap-1.5 px-3.5 py-3 text-[13.5px] font-bold whitespace-nowrap transition-colors {!activeTag &&
 						feedMode === 'foryou'
 							? 'text-primary-600'
 							: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
@@ -618,7 +647,7 @@
 					<a
 						href="/"
 						onclick={() => (feedMode = 'following')}
-						class="relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3.5 py-3 text-[13.5px] font-bold transition-colors {!activeTag &&
+						class="relative flex shrink-0 items-center gap-1.5 px-3.5 py-3 text-[13.5px] font-bold whitespace-nowrap transition-colors {!activeTag &&
 						feedMode === 'following'
 							? 'text-primary-600'
 							: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
@@ -641,14 +670,16 @@
 						{#each pinnedTags as tag (tag)}
 							<a
 								href={`/?tag=${encodeURIComponent(tag)}`}
-								class="relative flex shrink-0 items-center whitespace-nowrap px-3 py-3 text-[13px] font-semibold transition-colors {activeTag === tag
+								class="relative flex shrink-0 items-center px-3 py-3 text-[13px] font-semibold whitespace-nowrap transition-colors {activeTag ===
+								tag
 									? 'text-primary-600'
 									: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
 								aria-current={activeTag === tag ? 'page' : undefined}
 							>
 								#{tag}
 								<span
-									class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary-500 transition-opacity {activeTag === tag
+									class="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary-500 transition-opacity {activeTag ===
+									tag
 										? 'opacity-100'
 										: 'opacity-0'}"
 								></span>
@@ -679,7 +710,9 @@
 						</span>
 					</div>
 					<div class="flex items-center gap-2">
-						<span class="rounded-full border border-primary-500/15 bg-white/70 px-2.5 py-1 text-[11px] font-bold text-primary-600">
+						<span
+							class="rounded-full border border-primary-500/15 bg-white/70 px-2.5 py-1 text-[11px] font-bold text-primary-600"
+						>
 							{#if useRelayFeed}
 								{relayFeedMerging || relayFeedLoading
 									? 'Primary relay · merging others…'
@@ -794,6 +827,35 @@
 				</div>
 			{/if}
 
+			{#if newlyRevealedNotes.length && !useRelayFeed}
+				<section class="mb-5 rounded-2xl border border-primary-500/20 bg-primary-500/5 p-3">
+					<div class="mb-3 flex items-center justify-between gap-3 px-1">
+						<div class="flex min-w-0 items-center gap-2">
+							<Icon name="i-lucide-sparkles" class="size-4 shrink-0 text-primary-500" />
+							<div class="min-w-0">
+								<p class="truncate text-[13px] font-bold text-primary-600">New posts · just now</p>
+								<p class="text-[11px] text-[var(--ui-text-muted)]">
+									{newlyRevealedNotes.length}
+									{newlyRevealedNotes.length === 1 ? 'post' : 'posts'} from your live feed
+								</p>
+							</div>
+						</div>
+						<button
+							type="button"
+							onclick={dismissNewNotes}
+							class="shrink-0 rounded-lg px-2 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/10"
+						>
+							Continue to For you
+						</button>
+					</div>
+					<div class="space-y-3">
+						{#each newlyRevealedNotes as note, i (note.id)}
+							<PostCard {note} index={i} onInteract={handleInteract} />
+						{/each}
+					</div>
+				</section>
+			{/if}
+
 			<!-- Posts -->
 			{#if feed.loading && !feed.notes.length}
 				<div class="flex flex-col items-center gap-3 py-20 text-center">
@@ -824,7 +886,9 @@
 						<Icon name={followingOnly ? 'i-lucide-users' : 'i-lucide-filter-x'} class="size-7" />
 					</div>
 					<div>
-						<p class="text-[15px] font-semibold">{followingOnly ? 'Nothing from your follows yet' : 'No matching notes'}</p>
+						<p class="text-[15px] font-semibold">
+							{followingOnly ? 'Nothing from your follows yet' : 'No matching notes'}
+						</p>
 						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
 							{useRelayFeed
 								? 'Your relays did not return matching notes yet. Try another tag or search term.'
@@ -873,13 +937,13 @@
 				{/if}
 				<div class="space-y-5">
 					{#each renderedNotes as note, i (note.id)}
-					<PostCard
-						{note}
-						index={i}
-						rankTag={rankTagFor(note)}
-						onExplain={() => openExplainer(note)}
-						onInteract={handleInteract}
-					/>
+						<PostCard
+							{note}
+							index={i}
+							rankTag={rankTagFor(note)}
+							onExplain={() => openExplainer(note)}
+							onInteract={handleInteract}
+						/>
 					{/each}
 				</div>
 

@@ -10,6 +10,7 @@ import { queryPrimaryFirst, subscribe } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
+import { extractMentionEntities } from '$lib/utils/nip27';
 import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
@@ -32,6 +33,26 @@ function isReply(tags: string[][]): boolean {
 
 function isPositiveReaction(content: string): boolean {
 	return content !== '-';
+}
+
+export function parseNotificationContent(content: string): string {
+	const text = content.trim();
+	if (!text) return '';
+
+	try {
+		const parsed: unknown = JSON.parse(text);
+		if (typeof parsed === 'string') return parseNotificationContent(parsed);
+		if (parsed && typeof parsed === 'object') {
+			const obj = parsed as Record<string, unknown>;
+			if (typeof obj.content === 'string') return parseNotificationContent(obj.content);
+			if (typeof obj.text === 'string') return parseNotificationContent(obj.text);
+			if (typeof obj.body === 'string') return parseNotificationContent(obj.body);
+		}
+	} catch {
+		// Ignore parse failures and use raw content.
+	}
+
+	return content;
 }
 
 /** A note #p-tags the active user without being a reply (standalone mention). */
@@ -178,7 +199,9 @@ class NotificationsStore {
 		this.items = [item, ...this.items]
 			.sort((a, b) => b.createdAt - a.createdAt)
 			.slice(0, MAX_ITEMS);
-		profiles.ensure([item.pubkey]);
+		// Fetch the actor's profile plus anyone they mention inline so preview
+		// @names resolve.
+		profiles.ensure([item.pubkey, ...extractMentionEntities(ev.content).pubkeys]);
 	}
 
 	private toNotification(ev: Event): NotificationItem | null {
@@ -199,18 +222,18 @@ class NotificationsStore {
 		}
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && isReply(ev.tags)) {
 			const targetId = eventTarget(ev.tags);
-			return this.makeItem(ev, 'comment', targetId, ev.content);
+			return this.makeItem(ev, 'comment', targetId, parseNotificationContent(ev.content));
 		}
 		// A note that mentions you via #p but isn't part of a reply thread.
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && mentionsMe(ev.tags, identity.current?.pk)) {
-			return this.makeItem(ev, 'mention', undefined, ev.content);
+			return this.makeItem(ev, 'mention', undefined, parseNotificationContent(ev.content));
 		}
 		if (ev.kind === NOSTR_KINDS.CONTACT_LIST) {
 			return this.makeItem(ev, 'follow', undefined, ev.content);
 		}
 		if (ev.kind === NOSTR_KINDS.REPOST) {
 			const targetId = eventTarget(ev.tags);
-			return this.makeItem(ev, 'repost', targetId, ev.content);
+			return this.makeItem(ev, 'repost', targetId, parseNotificationContent(ev.content));
 		}
 		return null;
 	}

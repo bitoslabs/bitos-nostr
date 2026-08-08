@@ -13,6 +13,7 @@
 	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import StoryRing from './StoryRing.svelte';
+	import ReplyComposer from './ReplyComposer.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -31,13 +32,11 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { parseContent, splitTrailingPunctuation, hostFromUrl } from '$lib/utils/note-content';
+	import CommentBody from './CommentBody.svelte';
+	import MentionLink from './MentionLink.svelte';
 	import Poll from './Poll.svelte';
 
-	type ContentToken =
-		| { type: 'text'; value: string }
-		| { type: 'url'; value: string; host: string }
-		| { type: 'nostr'; value: string }
-		| { type: 'hashtag'; value: string; tag: string };
 	type MediaAttachment = {
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
 		url: string;
@@ -62,8 +61,6 @@
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
 	} = $props();
 
-	const contentPattern =
-		/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
 	const videoPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
 	const audioPattern = /\.(?:aac|flac|m4a|mp3|ogg|opus|wav)$/i;
@@ -76,10 +73,6 @@
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
-	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
-	const currentDisplayName = $derived(
-		currentProfile?.display_name || currentProfile?.name || 'You'
-	);
 	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
 	const isMe = $derived(identity.current?.pk === note.pubkey);
 	const liked = $derived(note.reactions.some((r) => r.byMe));
@@ -140,13 +133,9 @@
 	let previewOpen = $state(false);
 	let previewImageIndex = $state(0);
 	let replyOpen = $state(false);
-	let replyText = $state('');
-	let replying = $state(false);
-	let replyInput: HTMLInputElement | undefined;
+	let replyFocusTick = $state(0);
 	let showAllReplies = $state(false);
 	let replyingToCommentId = $state('');
-	let commentReplyText = $state('');
-	let commentReplying = $state(false);
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
 	const sensitiveReason = $derived(sensitiveMediaReason());
@@ -273,12 +262,8 @@
 			toasts.error('Create or import a key first');
 			return;
 		}
-		if (!canCommentOnNote) {
-			toasts.info('Commenting is limited by your privacy settings');
-			return;
-		}
 		replyOpen = true;
-		setTimeout(() => replyInput?.focus(), 0);
+		replyFocusTick++;
 	}
 
 	function startCommentReply(reply: FeedNote) {
@@ -286,56 +271,7 @@
 			toasts.error('Create or import a key first');
 			return;
 		}
-		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
-			toasts.info('Commenting is limited by your privacy settings');
-			return;
-		}
-		replyingToCommentId = reply.id;
-		commentReplyText = '';
-	}
-
-	function splitTrailingPunctuation(value: string) {
-		const match = value.match(/^(.+?)([.,!?;:]+)?$/);
-		return {
-			core: match?.[1] ?? value,
-			suffix: match?.[2] ?? ''
-		};
-	}
-
-	function hostFromUrl(url: string) {
-		try {
-			return new URL(url).hostname.replace(/^www\./, '');
-		} catch {
-			return url;
-		}
-	}
-
-	function parseContent(content: string): ContentToken[] {
-		const tokens: ContentToken[] = [];
-		let lastIndex = 0;
-
-		for (const match of content.matchAll(contentPattern)) {
-			const value = match[0];
-			const index = match.index ?? 0;
-			if (index > lastIndex) tokens.push({ type: 'text', value: content.slice(lastIndex, index) });
-
-			if (value.startsWith('#')) {
-				tokens.push({ type: 'hashtag', value, tag: value.slice(1).toLowerCase() });
-			} else if (value.toLowerCase().startsWith('nostr:')) {
-				const { core, suffix } = splitTrailingPunctuation(value);
-				tokens.push({ type: 'nostr', value: core });
-				if (suffix) tokens.push({ type: 'text', value: suffix });
-			} else {
-				const { core, suffix } = splitTrailingPunctuation(value);
-				tokens.push({ type: 'url', value: core, host: hostFromUrl(core) });
-				if (suffix) tokens.push({ type: 'text', value: suffix });
-			}
-
-			lastIndex = index + value.length;
-		}
-
-		if (lastIndex < content.length) tokens.push({ type: 'text', value: content.slice(lastIndex) });
-		return tokens;
+		replyingToCommentId = replyingToCommentId === reply.id ? '' : reply.id;
 	}
 
 	function embedForUrl(url: string): Pick<MediaAttachment, 'embedUrl' | 'provider'> | null {
@@ -567,49 +503,11 @@
 		window.location.href = `lightning:${lightningAddress}`;
 	}
 
-	async function submitReply() {
-		if (!replyText.trim() || replying) return;
-		if (!canCommentOnNote) {
-			toasts.info('Commenting is limited by your privacy settings');
-			return;
-		}
-		replying = true;
-		try {
-			await feed.reply(note, replyText);
-			replyText = '';
-			replyOpen = false;
-			toasts.success('Reply posted to Nostr');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		} finally {
-			replying = false;
-		}
-	}
-
 	async function reactToComment(reply: FeedNote) {
 		try {
 			await feed.react(reply, '❤️');
 		} catch (e) {
 			toasts.error((e as Error).message);
-		}
-	}
-
-	async function submitCommentReply(reply: FeedNote) {
-		if (!commentReplyText.trim() || commentReplying) return;
-		if (!privacyNotificationSettings.canCommentOn(reply.pubkey)) {
-			toasts.info('Commenting is limited by your privacy settings');
-			return;
-		}
-		commentReplying = true;
-		try {
-			await feed.reply(reply, commentReplyText);
-			commentReplyText = '';
-			replyingToCommentId = '';
-			toasts.success('Reply posted to Nostr');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		} finally {
-			commentReplying = false;
 		}
 	}
 
@@ -787,12 +685,7 @@
 						{token.value}
 					</a>
 				{:else if token.type === 'nostr'}
-					<a
-						href={token.value}
-						class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
-					>
-						{token.value.slice(0, 28)}{token.value.length > 28 ? '…' : ''}
-					</a>
+					<MentionLink value={token.value} />
 				{:else}
 					<a
 						href={token.value}
@@ -1120,41 +1013,18 @@
 							>
 								{replyName}
 							</a>
+							{#if replyProfile?.nip05}
+								<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
+							{/if}
+							{#if identity.current?.pk === reply.pubkey}
+								<span class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase">you</span>
+							{/if}
 							<time
 								class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
 								title={timeFull(reply.createdAt)}>{timeAgo(reply.createdAt)}</time
 							>
 						</div>
-						<p class="mt-0.5 text-[13px] leading-relaxed break-words whitespace-pre-wrap">
-							{#each parseContent(reply.content) as token, tokenIndex (`${reply.id}:${token.type}:${tokenIndex}:${token.value}`)}
-								{#if token.type === 'text'}
-									{token.value}
-								{:else if token.type === 'hashtag'}
-									<a
-										href={`/?tag=${encodeURIComponent(token.tag)}`}
-										class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
-									>
-										{token.value}
-									</a>
-								{:else if token.type === 'nostr'}
-									<a
-										href={token.value}
-										class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
-									>
-										{token.value.slice(0, 24)}{token.value.length > 24 ? '…' : ''}
-									</a>
-								{:else}
-									<a
-										href={token.value}
-										target="_blank"
-										rel="noreferrer"
-										class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
-									>
-										{token.host}
-									</a>
-								{/if}
-							{/each}
-						</p>
+						<CommentBody content={reply.content} tags={reply.tags} />
 						<div class="mt-1.5 flex items-center gap-3 text-[11.5px] font-bold">
 							<button
 								type="button"
@@ -1221,17 +1091,30 @@
 												>
 													{childName}
 												</a>
+												{#if childProfile?.nip05}
+													<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+												{/if}
+												{#if identity.current?.pk === child.pubkey}
+													<span class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase">you</span>
+												{/if}
 												<time
 													class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
 													title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
 												>
 											</div>
-											<p
-												class="mt-0.5 text-[12.5px] leading-relaxed break-words whitespace-pre-wrap"
-											>
-												{child.content}
-											</p>
+											<CommentBody content={child.content} tags={child.tags} compact />
 											<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
+												<button
+													type="button"
+													onclick={() => reactToComment(child)}
+													class="inline-flex items-center gap-1 {commentLiked(child) ? 'text-[var(--tone-error-text)]' : 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
+												>
+													<Icon name={commentLiked(child) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'} class="size-3" />
+													{commentLiked(child) ? 'Unlike' : 'Like'}
+													{#if commentReactionCount(child)}
+														<span class="font-semibold"> · {commentReactionCount(child)}</span>
+													{/if}
+												</button>
 												<button
 													type="button"
 													onclick={() => hideComment(child)}
@@ -1256,46 +1139,14 @@
 						{/if}
 
 						{#if replyingToCommentId === reply.id}
-							<div class="mt-2 flex items-center gap-2">
-								{#if identity.current}
-									<Avatar
-										pubkey={identity.current.pk}
-										name={currentDisplayName}
-										picture={currentProfile?.picture}
-										size={28}
-									/>
-								{/if}
-								<input
-									bind:value={commentReplyText}
-									type="text"
-									placeholder={`Reply to ${replyName}...`}
-									disabled={commentReplying}
-									onkeydown={(e) => {
-										if (e.key === 'Enter') {
-											e.preventDefault();
-											void submitCommentReply(reply);
-										}
-										if (e.key === 'Escape') {
-											replyingToCommentId = '';
-											commentReplyText = '';
-										}
-									}}
-									class="h-8 flex-1 rounded-full bg-[var(--surface-bg)] px-3 text-[12.5px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/30 disabled:opacity-60"
+							<div class="mt-3">
+								<ReplyComposer
+									parent={reply}
+									placeholder={`Reply to ${replyName}…`}
+									autofocus
+									onSubmitted={() => (replyingToCommentId = '')}
+									onCancel={() => (replyingToCommentId = '')}
 								/>
-								<button
-									type="button"
-									onclick={() => submitCommentReply(reply)}
-									disabled={!commentReplyText.trim() ||
-										commentReplying ||
-										!privacyNotificationSettings.canCommentOn(reply.pubkey)}
-									class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
-									aria-label="Post comment reply"
-								>
-									<Icon
-										name={commentReplying ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
-										class="size-3.5 {commentReplying ? 'animate-spin' : ''}"
-									/>
-								</button>
 							</div>
 						{/if}
 					</div>
@@ -1322,46 +1173,14 @@
 	{/if}
 
 	<!-- Reply input -->
-	<div class="px-4 pt-1 pb-4 {replyOpen || replyText ? '' : 'hidden sm:block'}">
-		<div class="flex items-center gap-2">
-			{#if identity.current}
-				<Avatar
-					pubkey={identity.current.pk}
-					name={currentDisplayName}
-					picture={currentProfile?.picture}
-					size={28}
-				/>
-			{/if}
-			<input
-				bind:this={replyInput}
-				bind:value={replyText}
-				type="text"
-				placeholder={identity.current ? 'Reply to this note…' : 'Create or import a key to reply'}
-				disabled={!identity.current || replying}
-				onkeydown={(e) => {
-					if (e.key === 'Enter') {
-						e.preventDefault();
-						void submitReply();
-					}
-				}}
-				onfocus={() => (replyOpen = true)}
-				class="flex-1 rounded-full bg-[var(--ui-bg-muted)] px-4 py-2 text-[13px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-60"
-			/>
-			{#if replyOpen || replyText}
-				<button
-					type="button"
-					onclick={submitReply}
-					disabled={!replyText.trim() || replying}
-					class="grid size-9 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-50"
-					aria-label="Post reply"
-				>
-					<Icon
-						name={replying ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
-						class="size-4 {replying ? 'animate-spin' : ''}"
-					/>
-				</button>
-			{/if}
-		</div>
+	<div class="px-4 pt-1 pb-4 {replyOpen ? '' : 'hidden sm:block'}">
+		<ReplyComposer
+			parent={note}
+			placeholder="Reply to this note…"
+			autofocus={replyOpen}
+			focusTick={replyFocusTick}
+			onSubmitted={() => (replyOpen = false)}
+		/>
 	</div>
 	<!-- Like confetti burst overlay -->
 	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">

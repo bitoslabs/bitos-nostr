@@ -46,7 +46,9 @@ function saveRelayKindSupportCache(cache: RelayKindSupportCache) {
 
 function relayRejectsKind(reason: string, kind: number): boolean {
 	const text = reason.toLowerCase();
-	const mentionsUnsupported = /(unsupported|not supported|does not support|unsupported kind)/i.test(text);
+	const mentionsUnsupported = /(unsupported|not supported|does not support|unsupported kind)/i.test(
+		text
+	);
 	const mentionsKindPolicy =
 		/(kind|event type|event kind)/i.test(text) &&
 		/(blocked|rejected|invalid|denied|forbidden|policy|not allowed|disabled)/i.test(text);
@@ -97,7 +99,10 @@ async function runQuery(urls: string[], filters: Filter[]): Promise<Event[]> {
 	return dedupeEvents(batches.flat());
 }
 
-async function publishToUrls(urls: string[], event: Event): Promise<{
+async function publishToUrls(
+	urls: string[],
+	event: Event
+): Promise<{
 	accepted: string[];
 	failures: string[];
 }> {
@@ -177,6 +182,38 @@ export async function queryPrimaryFirst(
 
 	if (secondaryUrls.length) {
 		void runQuery(secondaryUrls, filters)
+			.then((secondaryEvents) => {
+				if (!secondaryEvents.length) return;
+				handlers.onSecondary?.(dedupeEvents([...primaryEvents, ...secondaryEvents]));
+			})
+			.catch(() => {
+				/* background merge is best-effort */
+			});
+	}
+
+	return primaryEvents;
+}
+
+/** Query primary and secondary relays concurrently, exposing a progressive
+ * primary result followed by a deduplicated merge. Useful for interactive
+ * search where waiting for one slow relay should not block the UI. */
+export async function queryParallelProgressive(
+	filters: Filter[],
+	handlers: ProgressiveQueryHandlers = {}
+): Promise<Event[]> {
+	if (!browser) return [];
+	const allUrls = relays.orderedReadUrls;
+	if (!allUrls.length) return [];
+	const primaryUrls = relays.primaryUrls.length ? relays.primaryUrls : allUrls.slice(0, 1);
+	const secondaryUrls = allUrls.filter((url) => !primaryUrls.includes(url));
+
+	const primaryPromise = runQuery(primaryUrls, filters);
+	const secondaryPromise = runQuery(secondaryUrls, filters);
+	const primaryEvents = await primaryPromise;
+	handlers.onPrimary?.(primaryEvents);
+
+	if (secondaryUrls.length) {
+		void secondaryPromise
 			.then((secondaryEvents) => {
 				if (!secondaryEvents.length) return;
 				handlers.onSecondary?.(dedupeEvents([...primaryEvents, ...secondaryEvents]));

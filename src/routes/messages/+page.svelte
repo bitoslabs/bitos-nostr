@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
+	import { env } from '$env/dynamic/public';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -31,6 +32,7 @@
 	} from '$lib/messages/protocol';
 	import type {
 		CallKind,
+		CallOutcome,
 		CallSignal,
 		ChatFilter,
 		ChatKind,
@@ -54,12 +56,42 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { confirms } from '$lib/stores/confirms.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
+	import { canReceiveNewCall, canStartNewCall } from '$lib/messages/call-admission';
+	import {
+		shouldRemoveGroupPeer,
+		shouldStartCallTimeout,
+		shouldStartReconnectTimeout
+	} from '$lib/messages/call-lifecycle';
 
 	type MessageAttachment = UploadedMedia & {
 		name: string;
 	};
 
-	type CallState = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'connected';
+	type CallState = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'connected' | 'reconnecting';
+	type CallQuality = 'unknown' | 'good' | 'fair' | 'poor';
+	type OutputMediaElement = HTMLMediaElement & {
+		setSinkId?: (sinkId: string) => Promise<void>;
+	};
+	type AudioDestinationWithSink = AudioDestinationNode & {
+		setSinkId?: (sinkId: string) => Promise<void>;
+	};
+	type PictureInPictureDocument = Document & {
+		pictureInPictureEnabled?: boolean;
+		pictureInPictureElement?: Element | null;
+		exitPictureInPicture?: () => Promise<void>;
+	};
+	type PictureInPictureVideoElement = HTMLVideoElement & {
+		requestPictureInPicture?: () => Promise<unknown>;
+	};
+	type PeerStatsSnapshot = {
+		packetsLost: number;
+		packetsReceived: number;
+	};
+	type PermissionStateValue = 'granted' | 'denied' | 'prompt' | 'unknown';
+
+	const CALL_SETUP_TIMEOUT_MS = 45_000;
+	const CALL_RECONNECT_TIMEOUT_MS = 10_000;
+	const CALL_DEVICES_KEY_PREFIX = 'messages-call-devices:';
 
 	type RemoteParticipant = {
 		peer: string;
@@ -79,16 +111,40 @@
 	let newGroupMembers = $state('');
 	let memberInput = $state('');
 	let activeCall = $state<CallKind | null>(null);
+	let preCallKind = $state<CallKind | null>(null);
+	let showPreCall = $state(false);
 	let callState = $state<CallState>('idle');
 	let callPeer = $state('');
 	let callGroupId = $state('');
 	let callTitle = $state('');
 	let callId = $state('');
 	let callError = $state('');
+	let micLevel = $state(0);
+	let speakerTestPlaying = $state(false);
+	let microphonePermission = $state<PermissionStateValue>('unknown');
+	let cameraPermission = $state<PermissionStateValue>('unknown');
 	let incomingCall = $state<CallSignal | null>(null);
 	let micEnabled = $state(true);
 	let cameraEnabled = $state(true);
+	let screenSharing = $state(false);
+	let microphones = $state<MediaDeviceInfo[]>([]);
+	let cameras = $state<MediaDeviceInfo[]>([]);
+	let speakers = $state<MediaDeviceInfo[]>([]);
+	let selectedMicrophone = $state('');
+	let selectedCamera = $state('');
+	let selectedSpeaker = $state('');
+	let callQuality = $state<CallQuality>('unknown');
+	let callQualityDetail = $state('');
+	let callRttMs = $state<number | null>(null);
+	let callLossPercent = $state<number | null>(null);
+	let callIceState = $state('');
+	let callTransport = $state('');
+	let showCallDiagnostics = $state(false);
+	let iceRestartInFlight = false;
+	let lastIceRestartAt = 0;
+	let callPictureInPicture = $state(false);
 	let showCall = $state(false);
+	let callMinimized = $state(false);
 	let groupsLoaded = $state(false);
 	let processedGroupControlsLoaded = false;
 	let lastResolvedTo = $state('');
@@ -98,25 +154,30 @@
 	let messageAttachments = $state<MessageAttachment[]>([]);
 	let messageFileInput = $state<HTMLInputElement | null>(null);
 	let messageImageInput = $state<HTMLInputElement | null>(null);
-	let callStartedAt = 0;
+	let callConnectedAt = 0;
+	let callElapsedSeconds = $state(0);
 	let groupPersistTimer: ReturnType<typeof setTimeout> | null = null;
 	let threadEl: HTMLDivElement | undefined = $state();
 	let localVideoEl: HTMLVideoElement | undefined = $state();
 	let remoteVideoEl: HTMLVideoElement | undefined = $state();
 	let remoteAudioEl: HTMLAudioElement | undefined = $state();
+	let callMediaPanel: HTMLDivElement | undefined = $state();
+	let callFullscreen = $state(false);
 	const processedGroupMessageIds = new Set<string>();
 	const processedGroupControlIds = new Set<string>();
 	const processedCallSignalIds = new Set<string>();
 	const processedGroupCallLogIds = new Set<string>();
 	const closedCallIds = new Set<string>();
 	const removedGroupIds = new Set<string>();
-	let localStream: MediaStream | null = null;
+	let localStream = $state<MediaStream | null>(null);
+	let screenStream: MediaStream | null = null;
 	let remoteStream: MediaStream | null = null;
 	let remoteParticipants = $state<RemoteParticipant[]>([]);
 	let peerConnection: RTCPeerConnection | null = null;
 	const peerConnections = new Map<string, RTCPeerConnection>();
 	const remoteStreamsByPeer = new Map<string, MediaStream>();
 	const pendingIceCandidatesByPeer = new Map<string, RTCIceCandidateInit[]>();
+	const previousInboundStats = new Map<string, PeerStatsSnapshot>();
 	let pendingIceCandidates: RTCIceCandidateInit[] = [];
 
 	let groupThreads = $state<GroupThread[]>([]);
@@ -335,9 +396,10 @@
 	}
 
 	function attachCallMedia() {
-		if (localVideoEl) localVideoEl.srcObject = localStream;
+		if (localVideoEl) localVideoEl.srcObject = screenStream ?? localStream;
 		if (remoteVideoEl) remoteVideoEl.srcObject = remoteStream;
 		if (remoteAudioEl) remoteAudioEl.srcObject = remoteStream;
+		void applySpeakerOutput();
 	}
 
 	function streamSource(node: HTMLMediaElement, stream: MediaStream | null) {
@@ -348,6 +410,17 @@
 			},
 			destroy() {
 				node.srcObject = null;
+			}
+		};
+	}
+
+	function pictureInPictureEvents(node: HTMLVideoElement) {
+		node.addEventListener('enterpictureinpicture', onPictureInPictureChange);
+		node.addEventListener('leavepictureinpicture', onPictureInPictureChange);
+		return {
+			destroy() {
+				node.removeEventListener('enterpictureinpicture', onPictureInPictureChange);
+				node.removeEventListener('leavepictureinpicture', onPictureInPictureChange);
 			}
 		};
 	}
@@ -369,6 +442,34 @@
 		return callPeer ? displayNameForPubkey(callPeer) : active?.name;
 	}
 
+	function callIceServers(): RTCIceServer[] {
+		const turnUrls = (env.PUBLIC_CALL_TURN_URLS ?? '')
+			.split(',')
+			.map((url) => url.trim())
+			.filter(Boolean);
+		return [
+			{ urls: 'stun:stun.l.google.com:19302' },
+			...(turnUrls.length
+				? [
+						{
+							urls: turnUrls,
+							username: env.PUBLIC_CALL_TURN_USERNAME,
+							credential: env.PUBLIC_CALL_TURN_CREDENTIAL
+						}
+					]
+				: [])
+		];
+	}
+
+	function markCallConnected() {
+		if (!callConnectedAt) {
+			callConnectedAt = Date.now();
+			callElapsedSeconds = 0;
+		}
+		callState = 'connected';
+		void loadCallDevices();
+	}
+
 	function closePeerConnection() {
 		peerConnection?.close();
 		peerConnection = null;
@@ -376,7 +477,23 @@
 		peerConnections.clear();
 		remoteStreamsByPeer.clear();
 		pendingIceCandidatesByPeer.clear();
+		previousInboundStats.clear();
 		remoteParticipants = [];
+	}
+
+	function removeFailedGroupPeer(peer: string) {
+		peerConnections.get(peer)?.close();
+		peerConnections.delete(peer);
+		remoteStreamsByPeer.delete(peer);
+		pendingIceCandidatesByPeer.delete(peer);
+		remoteParticipants = remoteParticipants.filter((participant) => participant.peer !== peer);
+		if (!peerConnections.size) {
+			callState = 'reconnecting';
+			callError = 'All group participants disconnected';
+		} else {
+			callState = 'connected';
+			callError = `${displayNameForPubkey(peer)} disconnected`;
+		}
 	}
 
 	function stopLocalMedia() {
@@ -384,23 +501,48 @@
 		localStream = null;
 	}
 
+	function stopScreenStream() {
+		if (screenStream) {
+			for (const track of screenStream.getTracks()) track.onended = null;
+			screenStream.getTracks().forEach((track) => track.stop());
+		}
+		screenStream = null;
+		screenSharing = false;
+	}
+
 	function resetCallState() {
+		if (browser && document.fullscreenElement === callMediaPanel) void document.exitFullscreen();
+		callFullscreen = false;
 		closePeerConnection();
 		stopLocalMedia();
+		stopScreenStream();
 		remoteStream = null;
 		pendingIceCandidates = [];
 		activeCall = null;
+		preCallKind = null;
+		showPreCall = false;
 		callState = 'idle';
 		callPeer = '';
 		callGroupId = '';
 		callTitle = '';
 		callId = '';
 		callError = '';
-		callStartedAt = 0;
+		micLevel = 0;
+		callConnectedAt = 0;
+		callElapsedSeconds = 0;
+		callQuality = 'unknown';
+		callQualityDetail = '';
+		callRttMs = null;
+		callLossPercent = null;
+		callIceState = '';
+		callTransport = '';
+		showCallDiagnostics = false;
+		callPictureInPicture = false;
 		incomingCall = null;
 		micEnabled = true;
 		cameraEnabled = true;
 		showCall = false;
+		callMinimized = false;
 		attachCallMedia();
 	}
 
@@ -417,6 +559,159 @@
 
 	async function sendCallSignal(peer: string, signal: CallSignal) {
 		await dms.send(peer, callSignalText(signal));
+	}
+
+	function supportsSpeakerOutput() {
+		return browser && typeof (HTMLMediaElement.prototype as OutputMediaElement).setSinkId === 'function';
+	}
+
+	function supportsPictureInPicture() {
+		if (!browser) return false;
+		const pipDocument = document as PictureInPictureDocument;
+		return (
+			activeCall === 'video' &&
+			!!pipDocument.pictureInPictureEnabled &&
+			typeof (remoteVideoEl as PictureInPictureVideoElement | undefined)?.requestPictureInPicture ===
+				'function'
+		);
+	}
+
+	function deviceLabel(device: MediaDeviceInfo, fallback: string, index: number) {
+		return device.label || `${fallback} ${index + 1}`;
+	}
+
+	async function refreshMediaPermissions() {
+		if (!browser || !navigator.permissions?.query) return;
+		const read = async (name: 'microphone' | 'camera') => {
+			try {
+				const status = await navigator.permissions.query({ name } as PermissionDescriptor);
+				return status.state as PermissionStateValue;
+			} catch {
+				return 'unknown' as PermissionStateValue;
+			}
+		};
+		[microphonePermission, cameraPermission] = await Promise.all([
+			read('microphone'),
+			read('camera')
+		]);
+	}
+
+	function callDevicesStorageKey() {
+		return `${CALL_DEVICES_KEY_PREFIX}${identity.current?.pk ?? 'anonymous'}`;
+	}
+
+	function loadSavedCallDevices() {
+		if (!browser) return;
+		try {
+			const saved = JSON.parse(localStorage.getItem(callDevicesStorageKey()) ?? '{}') as {
+				microphone?: string;
+				camera?: string;
+				speaker?: string;
+			};
+			if (saved.microphone) selectedMicrophone = saved.microphone;
+			if (saved.camera) selectedCamera = saved.camera;
+			if (saved.speaker) selectedSpeaker = saved.speaker;
+		} catch {
+			/* Ignore unavailable or invalid browser storage. */
+		}
+	}
+
+	function saveCallDevices() {
+		if (!browser) return;
+		try {
+			localStorage.setItem(
+				callDevicesStorageKey(),
+				JSON.stringify({
+					microphone: selectedMicrophone,
+					camera: selectedCamera,
+					speaker: selectedSpeaker
+				})
+			);
+		} catch {
+			/* Storage may be disabled in private browsing. */
+		}
+	}
+
+	async function loadCallDevices() {
+		if (!browser || !navigator.mediaDevices?.enumerateDevices) return;
+		try {
+			const devices = await navigator.mediaDevices.enumerateDevices();
+			microphones = devices.filter((device) => device.kind === 'audioinput');
+			cameras = devices.filter((device) => device.kind === 'videoinput');
+			speakers = supportsSpeakerOutput()
+				? devices.filter((device) => device.kind === 'audiooutput')
+				: [];
+			const currentMicrophone = localStream?.getAudioTracks()[0]?.getSettings().deviceId;
+			const currentCamera = localStream?.getVideoTracks()[0]?.getSettings().deviceId;
+			selectedMicrophone =
+				currentMicrophone ||
+				(microphones.some((device) => device.deviceId === selectedMicrophone)
+					? selectedMicrophone
+					: '') ||
+				microphones[0]?.deviceId ||
+				'';
+			selectedCamera =
+				currentCamera ||
+				(cameras.some((device) => device.deviceId === selectedCamera) ? selectedCamera : '') ||
+				cameras[0]?.deviceId ||
+				'';
+			selectedSpeaker =
+				(speakers.some((device) => device.deviceId === selectedSpeaker) ? selectedSpeaker : '') ||
+				speakers[0]?.deviceId ||
+				'';
+			await applySpeakerOutput();
+		} catch {
+			/* Device labels may be unavailable until the browser grants media permission. */
+		}
+	}
+
+	async function applySpeakerOutput(sinkId = selectedSpeaker) {
+		if (!browser || !sinkId || !supportsSpeakerOutput()) return;
+		const mediaElements = [
+			remoteVideoEl,
+			remoteAudioEl,
+			...document.querySelectorAll<HTMLMediaElement>('[data-call-output]')
+		].filter((element): element is OutputMediaElement => !!element);
+		await Promise.allSettled(
+			[...new Set(mediaElements)].map((element) => element.setSinkId?.(sinkId))
+		);
+	}
+
+	async function changeSpeaker(deviceId: string) {
+		selectedSpeaker = deviceId;
+		saveCallDevices();
+		await applySpeakerOutput(deviceId);
+	}
+
+	async function testSpeakerOutput() {
+		if (!browser || !supportsSpeakerOutput() || speakerTestPlaying) return;
+		const context = new AudioContext();
+		try {
+			const destination = context.destination as AudioDestinationWithSink;
+			if (selectedSpeaker && destination.setSinkId) await destination.setSinkId(selectedSpeaker);
+			await context.resume();
+			const gain = context.createGain();
+			gain.gain.value = 0.06;
+			gain.connect(destination);
+			speakerTestPlaying = true;
+			const startedAt = context.currentTime;
+			[0, 0.22, 0.44].forEach((offset, index) => {
+				const oscillator = context.createOscillator();
+				oscillator.type = 'sine';
+				oscillator.frequency.value = index === 1 ? 880 : 660;
+				oscillator.connect(gain);
+				oscillator.start(startedAt + offset);
+				oscillator.stop(startedAt + offset + 0.14);
+			});
+			setTimeout(() => {
+				speakerTestPlaying = false;
+				void context.close();
+			}, 750);
+		} catch {
+			speakerTestPlaying = false;
+			await context.close();
+			toasts.info('Speaker testing is not available in this browser');
+		}
 	}
 
 	function mediaErrorMessage(error: unknown, kind: CallKind) {
@@ -442,17 +737,25 @@
 		}
 		if (!localStream) {
 			localStream = await navigator.mediaDevices.getUserMedia({
-				audio: true,
-				video: kind === 'video'
+				audio: selectedMicrophone ? { deviceId: { exact: selectedMicrophone } } : true,
+				video:
+					kind === 'video'
+						? selectedCamera
+							? { deviceId: { exact: selectedCamera } }
+							: true
+						: false
 			});
 		} else if (kind === 'video' && !localStream.getVideoTracks().length) {
-			const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+			const videoStream = await navigator.mediaDevices.getUserMedia({
+				video: selectedCamera ? { deviceId: { exact: selectedCamera } } : true
+			});
 			const [videoTrack] = videoStream.getVideoTracks();
 			if (videoTrack) localStream.addTrack(videoTrack);
 		}
 		localStream.getAudioTracks().forEach((track) => (track.enabled = micEnabled));
 		localStream.getVideoTracks().forEach((track) => (track.enabled = cameraEnabled));
 		attachCallMedia();
+		void loadCallDevices();
 		return localStream;
 	}
 
@@ -469,7 +772,7 @@
 			remoteStream = new MediaStream();
 		}
 		const pc = new RTCPeerConnection({
-			iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+			iceServers: callIceServers()
 		});
 		if (options.multi) peerConnections.set(peer, pc);
 		else peerConnection = pc;
@@ -499,13 +802,19 @@
 			} else {
 				remoteStream = targetStream;
 			}
-			callState = 'connected';
+			markCallConnected();
 			attachCallMedia();
 		};
 		pc.onconnectionstatechange = () => {
-			if (pc.connectionState === 'connected') callState = 'connected';
-			if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-				callError = 'Call connection was interrupted';
+			if (pc.connectionState === 'connected') markCallConnected();
+			if (shouldRemoveGroupPeer(!!options.multi, pc.connectionState)) {
+				removeFailedGroupPeer(peer);
+				return;
+			}
+			if (!options.multi && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
+				callState = 'reconnecting';
+				callError = 'Reconnecting...';
+				void restartCallIce();
 			}
 		};
 		const stream = await ensureLocalMedia(kind);
@@ -514,9 +823,138 @@
 		return pc;
 	}
 
+	async function restartCallIce() {
+		if (
+			iceRestartInFlight ||
+			!identity.current ||
+			!callId ||
+			!activeCall ||
+			!callPeer && !peerConnections.size ||
+			Date.now() - lastIceRestartAt < 3_000
+		)
+			return;
+		const targets = peerConnections.size
+			? [...peerConnections.entries()]
+			: callPeer && peerConnection
+				? [[callPeer, peerConnection] as [string, RTCPeerConnection]]
+				: [];
+		if (!targets.length) return;
+		iceRestartInFlight = true;
+		lastIceRestartAt = Date.now();
+		try {
+			await Promise.all(
+				targets.map(async ([peer, pc]) => {
+					const offer = await pc.createOffer({ iceRestart: true });
+					await pc.setLocalDescription(offer);
+					await sendCallSignal(peer, {
+						callId,
+						type: 'offer',
+						kind: activeCall as CallKind,
+						from: identity.current?.pk ?? '',
+						groupId: callGroupId || undefined,
+						sdp: offer.sdp
+					});
+				})
+			);
+			callError = 'Reconnecting...';
+		} catch {
+			callError = 'Could not refresh the call connection';
+		} finally {
+			iceRestartInFlight = false;
+		}
+	}
+
 	function toggleMic() {
 		micEnabled = !micEnabled;
 		localStream?.getAudioTracks().forEach((track) => (track.enabled = micEnabled));
+	}
+
+	async function replaceLocalTrack(kind: 'audio' | 'video', deviceId: string) {
+		if (!browser || !navigator.mediaDevices?.getUserMedia || !localStream) return;
+		const nextStream = await navigator.mediaDevices.getUserMedia({
+			audio: kind === 'audio' ? { deviceId: { exact: deviceId } } : false,
+			video: kind === 'video' ? { deviceId: { exact: deviceId } } : false
+		});
+		const [nextTrack] =
+			kind === 'audio' ? nextStream.getAudioTracks() : nextStream.getVideoTracks();
+		if (!nextTrack) return;
+		nextTrack.enabled = kind === 'audio' ? micEnabled : cameraEnabled;
+		const oldTracks =
+			kind === 'audio' ? localStream.getAudioTracks() : localStream.getVideoTracks();
+		for (const oldTrack of oldTracks) {
+			localStream.removeTrack(oldTrack);
+			oldTrack.stop();
+		}
+		localStream.addTrack(nextTrack);
+		if (kind === 'audio' || !screenSharing) {
+			await Promise.all(
+				callPeerConnections().map(async (pc) => {
+					const sender = pc.getSenders().find((item) => item.track?.kind === kind);
+					if (sender) await sender.replaceTrack(nextTrack);
+					else pc.addTrack(nextTrack, localStream as MediaStream);
+				})
+			);
+		}
+		attachCallMedia();
+	}
+
+	async function changeMicrophone(deviceId: string) {
+		if (!deviceId || deviceId === selectedMicrophone) return;
+		selectedMicrophone = deviceId;
+		saveCallDevices();
+		try {
+			if (localStream) await replaceLocalTrack('audio', deviceId);
+		} catch (e) {
+			callError = mediaErrorMessage(e, activeCall ?? 'voice');
+			toasts.error(callError);
+		}
+	}
+
+	async function changeCamera(deviceId: string) {
+		if (!deviceId || deviceId === selectedCamera) return;
+		selectedCamera = deviceId;
+		saveCallDevices();
+		try {
+			if (localStream && activeCall === 'video') await replaceLocalTrack('video', deviceId);
+		} catch (e) {
+			callError = mediaErrorMessage(e, 'video');
+			toasts.error(callError);
+		}
+	}
+
+	async function toggleCallFullscreen() {
+		if (!browser || !callMediaPanel) return;
+		try {
+			if (document.fullscreenElement) await document.exitFullscreen();
+			else await callMediaPanel.requestFullscreen();
+		} catch {
+			toasts.info('Fullscreen is not available in this browser');
+		}
+	}
+
+	function onFullscreenChange() {
+		callFullscreen = document.fullscreenElement === callMediaPanel;
+	}
+
+	async function togglePictureInPicture() {
+		if (!remoteVideoEl || !supportsPictureInPicture()) return;
+		const pipDocument = document as PictureInPictureDocument;
+		try {
+			if (pipDocument.pictureInPictureElement && pipDocument.exitPictureInPicture) {
+				await pipDocument.exitPictureInPicture();
+				callPictureInPicture = false;
+				return;
+			}
+			await (remoteVideoEl as PictureInPictureVideoElement).requestPictureInPicture?.();
+			callPictureInPicture = true;
+		} catch {
+			toasts.info('Picture-in-picture is not available for this video yet');
+		}
+	}
+
+	function onPictureInPictureChange() {
+		const pipDocument = document as PictureInPictureDocument;
+		callPictureInPicture = pipDocument.pictureInPictureElement === remoteVideoEl;
 	}
 
 	async function ensureVideoTrackInCall() {
@@ -527,6 +965,180 @@
 			if (!before.has(track.id)) {
 				peerConnection?.addTrack(track, stream);
 				for (const pc of peerConnections.values()) pc.addTrack(track, stream);
+			}
+		}
+	}
+
+	function callPeerConnections() {
+		return peerConnections.size
+			? [...peerConnections.values()]
+			: peerConnection
+				? [peerConnection]
+				: [];
+	}
+
+	async function updateCallQuality() {
+		const connections = callPeerConnections();
+		if (!connections.length) {
+			callQuality = 'unknown';
+			callQualityDetail = '';
+			callRttMs = null;
+			callLossPercent = null;
+			callIceState = '';
+			callTransport = '';
+			return;
+		}
+		let highestRtt = 0;
+		let highestLoss = 0;
+		let selectedIceState = '';
+		let selectedTransport = '';
+		for (const [index, pc] of connections.entries()) {
+			selectedIceState = pc.iceConnectionState;
+			const stats = await pc.getStats();
+			stats.forEach((report) => {
+				const stat = report as RTCStats & {
+					type: string;
+					roundTripTime?: number;
+					currentRoundTripTime?: number;
+					state?: string;
+					nominated?: boolean;
+					protocol?: string;
+					networkType?: string;
+					packetsLost?: number;
+					packetsReceived?: number;
+				};
+				if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
+					highestRtt = Math.max(
+						highestRtt,
+						stat.currentRoundTripTime ?? stat.roundTripTime ?? 0
+					);
+				}
+				if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
+					selectedTransport = stat.protocol ?? stat.networkType ?? '';
+				}
+				if (stat.type === 'inbound-rtp' && typeof stat.packetsReceived === 'number') {
+					const key = `${index}:${report.id}`;
+					const previous = previousInboundStats.get(key);
+					const currentLost = stat.packetsLost ?? 0;
+					const currentReceived = stat.packetsReceived;
+					if (previous) {
+						const lostDelta = Math.max(0, currentLost - previous.packetsLost);
+						const receivedDelta = Math.max(0, currentReceived - previous.packetsReceived);
+						const totalDelta = lostDelta + receivedDelta;
+						if (totalDelta > 0) highestLoss = Math.max(highestLoss, lostDelta / totalDelta);
+					}
+					previousInboundStats.set(key, {
+						packetsLost: currentLost,
+						packetsReceived: currentReceived
+					});
+				}
+			});
+		}
+		if (!highestRtt && !highestLoss) {
+			callQuality = 'unknown';
+			callQualityDetail = 'Collecting network data';
+			callRttMs = null;
+			callLossPercent = null;
+			callIceState = selectedIceState;
+			callTransport = selectedTransport;
+			return;
+		}
+		if (highestRtt > 0.5 || highestLoss > 0.08) callQuality = 'poor';
+		else if (highestRtt > 0.25 || highestLoss > 0.03) callQuality = 'fair';
+		else callQuality = 'good';
+		const parts = [];
+		if (highestRtt) parts.push(`${Math.round(highestRtt * 1000)} ms`);
+		if (highestLoss) parts.push(`${Math.round(highestLoss * 100)}% loss`);
+		callQualityDetail = parts.join(' - ');
+		callRttMs = highestRtt ? Math.round(highestRtt * 1000) : null;
+		callLossPercent = highestLoss ? Math.round(highestLoss * 100) : 0;
+		callIceState = selectedIceState;
+		callTransport = selectedTransport;
+	}
+
+	function callQualityLabel() {
+		if (callQuality === 'good') return 'Good connection';
+		if (callQuality === 'fair') return 'Fair connection';
+		if (callQuality === 'poor') return 'Poor connection';
+		return 'Checking connection';
+	}
+
+	function callQualityClass() {
+		if (callQuality === 'good') return 'text-emerald-600 dark:text-emerald-300';
+		if (callQuality === 'fair') return 'text-amber-600 dark:text-amber-300';
+		if (callQuality === 'poor') return 'text-[var(--tone-error-text)]';
+		return 'text-[var(--ui-text-muted)]';
+	}
+
+	async function copyCallDiagnostics() {
+		if (!browser || !navigator.clipboard?.writeText) {
+			toasts.info('Copying diagnostics is not available in this browser');
+			return;
+		}
+		const report = [
+			'BitOS call diagnostics',
+			`Time: ${new Date().toISOString()}`,
+			`Browser: ${navigator.userAgent}`,
+			`Call type: ${activeCall ?? 'unknown'}${callGroupId ? ' (group)' : ''}`,
+			`Quality: ${callQualityLabel()}`,
+			`Round trip: ${callRttMs === null ? 'unknown' : `${callRttMs} ms`}`,
+			`Packet loss: ${callLossPercent === null ? 'unknown' : `${callLossPercent}%`}`,
+			`ICE state: ${callIceState || 'unknown'}`,
+			`Transport: ${callTransport || 'unknown'}`,
+			`Online: ${navigator.onLine ? 'yes' : 'no'}`
+		].join('\n');
+		try {
+			await navigator.clipboard.writeText(report);
+			toasts.success('Call diagnostics copied');
+		} catch {
+			toasts.info('Could not copy call diagnostics');
+		}
+	}
+
+	function permissionLabel(state: PermissionStateValue) {
+		if (state === 'granted') return 'Allowed';
+		if (state === 'denied') return 'Blocked';
+		if (state === 'prompt') return 'Needs permission';
+		return 'Unavailable';
+	}
+
+	function permissionClass(state: PermissionStateValue) {
+		if (state === 'granted') return 'text-emerald-600 dark:text-emerald-300';
+		if (state === 'denied') return 'text-[var(--tone-error-text)]';
+		return 'text-amber-600 dark:text-amber-300';
+	}
+
+	async function toggleScreenShare() {
+		if (activeCall !== 'video' || callState !== 'connected' || !browser) return;
+		if (screenSharing) {
+			const camera = localStream?.getVideoTracks()[0];
+			if (!camera) return;
+			for (const pc of callPeerConnections()) {
+				const sender = pc.getSenders().find((item) => item.track?.kind === 'video');
+				if (sender) await sender.replaceTrack(camera);
+			}
+			stopScreenStream();
+			attachCallMedia();
+			return;
+		}
+		try {
+			const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+			const screenTrack = stream.getVideoTracks()[0];
+			if (!screenTrack) return;
+			screenStream = stream;
+			screenSharing = true;
+			screenTrack.onended = () => {
+				void toggleScreenShare();
+			};
+			for (const pc of callPeerConnections()) {
+				const sender = pc.getSenders().find((item) => item.track?.kind === 'video');
+				if (sender) await sender.replaceTrack(screenTrack);
+			}
+			attachCallMedia();
+		} catch (error) {
+			if ((error as DOMException)?.name !== 'AbortError') {
+				callError = 'Could not start screen sharing';
+				toasts.error(callError);
 			}
 		}
 	}
@@ -999,12 +1611,15 @@
 		const me = identity.current;
 		const group = groupThreads.find((thread) => thread.id === groupId);
 		if (!me || !group) return;
-		if (!(await confirms.danger({
-			title: `Leave “${group.name}”?`,
-			message: 'You will stop receiving messages from this group.',
-			confirmLabel: 'Leave',
-			icon: 'i-lucide-log-out'
-		}))) return;
+		if (
+			!(await confirms.danger({
+				title: `Leave “${group.name}”?`,
+				message: 'You will stop receiving messages from this group.',
+				confirmLabel: 'Leave',
+				icon: 'i-lucide-log-out'
+			}))
+		)
+			return;
 		await broadcastGroupControl(group, 'leave-group', me.pk);
 		removedGroupIds.add(groupId);
 		groupThreads = groupThreads.filter((thread) => thread.id !== groupId);
@@ -1123,11 +1738,14 @@
 	}
 
 	async function deleteGroup(groupId: string) {
-		if (!(await confirms.danger({
-			title: 'Delete this group?',
-			message: 'This local group and its messages will be removed from this device.',
-			confirmLabel: 'Delete'
-		}))) return;
+		if (
+			!(await confirms.danger({
+				title: 'Delete this group?',
+				message: 'This local group and its messages will be removed from this device.',
+				confirmLabel: 'Delete'
+			}))
+		)
+			return;
 		removedGroupIds.add(groupId);
 		groupThreads = groupThreads.filter((group) => group.id !== groupId);
 		if (selected === `group:${groupId}`) selected = '';
@@ -1233,7 +1851,12 @@
 		}
 		processedGroupCallLogIds.add(key);
 		const author = displayNameForPubkey(signal.from);
-		const label = `${signal.kind === 'video' ? 'Video' : 'Voice'} call ended`;
+		const label =
+			signal.outcome === 'missed'
+				? `${signal.kind === 'video' ? 'Video' : 'Voice'} call missed`
+				: signal.outcome === 'declined'
+					? `${signal.kind === 'video' ? 'Video' : 'Voice'} call declined`
+					: `${signal.kind === 'video' ? 'Video' : 'Voice'} call ended`;
 		groupThreads = groupThreads.map((thread) =>
 			thread.id === signal.groupId
 				? {
@@ -1264,6 +1887,21 @@
 			e.preventDefault();
 			void send();
 		}
+	}
+
+	function onCallVisibilityChange() {
+		if (document.visibilityState !== 'visible' || !showCall || !activeCall) return;
+		if (callState === 'connected' || callState === 'reconnecting') {
+			callState = 'reconnecting';
+			callError = 'Refreshing connection...';
+			lastIceRestartAt = 0;
+			void restartCallIce();
+		}
+	}
+
+	function onCallPageHide() {
+		if (!showCall || !activeCall || callState === 'idle') return;
+		void endCall(true, callState === 'incoming' ? 'declined' : 'ended');
 	}
 
 	async function sendGroupCallOffers(kind: CallKind, group: GroupThread, recipients: string[]) {
@@ -1316,9 +1954,9 @@
 			callTitle = group.name;
 			callId = `${me.pk.slice(0, 10)}-${Date.now()}`;
 			callState = 'outgoing';
-			callStartedAt = Math.floor(Date.now() / 1000);
 			callError = '';
 			showCall = true;
+			callMinimized = false;
 			await ensureLocalMedia(kind);
 			addGroupCallMessage(group.id, kind, 'started');
 			await sendGroupCallOffers(kind, group, recipients);
@@ -1348,6 +1986,75 @@
 	}
 
 	async function startCall(kind: CallKind) {
+		if (!canStartNewCall(showCall, callState)) {
+			toasts.info('Finish the current call before starting another one.');
+			return;
+		}
+		if (active?.kind === 'group' && activeGroup) {
+			preCallKind = kind;
+			activeCall = kind;
+			callGroupId = activeGroup.id;
+			callTitle = activeGroup.name;
+			callError = '';
+			showPreCall = true;
+			try {
+				await ensureLocalMedia(kind);
+				await refreshMediaPermissions();
+			} catch (e) {
+				callError = mediaErrorMessage(e, kind);
+				toasts.error(callError);
+			}
+			return;
+		}
+		if (!active || active.kind !== 'dm') {
+			toasts.info('Select a chat before starting a call.');
+			return;
+		}
+		preCallKind = kind;
+		activeCall = kind;
+		callPeer = active.id;
+		callTitle = '';
+		callError = '';
+		showPreCall = true;
+		try {
+			await ensureLocalMedia(kind);
+			await refreshMediaPermissions();
+		} catch (e) {
+			callError = mediaErrorMessage(e, kind);
+			toasts.error(callError);
+		}
+	}
+
+	function cancelPreCall() {
+		if (!showPreCall) return;
+		stopLocalMedia();
+		activeCall = null;
+		preCallKind = null;
+		callPeer = '';
+		callGroupId = '';
+		callTitle = '';
+		callError = '';
+		showPreCall = false;
+	}
+
+	async function retryPreCallMedia() {
+		const kind = preCallKind;
+		if (!kind) return;
+		stopLocalMedia();
+		callError = '';
+		try {
+			await ensureLocalMedia(kind);
+			await refreshMediaPermissions();
+		} catch (e) {
+			callError = mediaErrorMessage(e, kind);
+			toasts.error(callError);
+		}
+	}
+
+	async function confirmPreCall() {
+		const kind = preCallKind;
+		if (!kind) return;
+		showPreCall = false;
 		if (active?.kind === 'group' && activeGroup) {
 			await startGroupCall(kind, activeGroup);
 			return;
@@ -1368,9 +2075,9 @@
 			callTitle = '';
 			callId = `${me.pk.slice(0, 10)}-${Date.now()}`;
 			callState = 'outgoing';
-			callStartedAt = Math.floor(Date.now() / 1000);
 			callError = '';
 			showCall = true;
+			callMinimized = false;
 			const pc = await createPeerConnection(callPeer, callId, kind);
 			const offer = await pc.createOffer();
 			await pc.setLocalDescription(offer);
@@ -1400,9 +2107,9 @@
 				: '';
 			callId = signal.callId;
 			callState = 'connecting';
-			callStartedAt = Math.floor(Date.now() / 1000);
 			callError = '';
 			showCall = true;
+			callMinimized = false;
 			const pc = await createPeerConnection(signal.from, signal.callId, signal.kind);
 			await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp });
 			await flushPendingIceCandidates();
@@ -1423,7 +2130,7 @@
 		}
 	}
 
-	async function endCall(notify = true) {
+	async function endCall(notify = true, outcome: CallOutcome = 'ended') {
 		const peers = [
 			...new Set([...peerConnections.keys(), callPeer].filter((peer): peer is string => !!peer))
 		];
@@ -1431,9 +2138,13 @@
 		const id = callId;
 		const groupId = callGroupId || undefined;
 		const me = identity.current;
-		const duration = callStartedAt ? Math.max(0, Math.floor(Date.now() / 1000) - callStartedAt) : 0;
+		const duration = callConnectedAt
+			? Math.max(0, Math.floor((Date.now() - callConnectedAt) / 1000))
+			: 0;
 		markCallClosed(id);
-		if (notify && groupId && kind) addGroupCallMessage(groupId, kind, 'ended', duration);
+		if (notify && groupId && kind) {
+			addGroupCallMessage(groupId, kind, outcome === 'missed' ? 'missed' : 'ended', duration);
+		}
 		if (notify && peers.length && kind && me) {
 			try {
 				await Promise.allSettled(
@@ -1451,7 +2162,8 @@
 							kind,
 							from: me.pk,
 							groupId,
-							duration
+							duration,
+							outcome
 						})
 					])
 				);
@@ -1472,6 +2184,23 @@
 		if (signal.type === 'offer') {
 			if (closedCallIds.has(signal.callId)) return;
 			if (!signal.sdp) return;
+			const sameCall =
+				signal.callId === callId &&
+				(signal.from === callPeer ||
+					(!!signal.groupId && !!callGroupId && signal.groupId === callGroupId));
+			if (!canReceiveNewCall(showCall, callState, sameCall)) {
+				if (identity.current) {
+					void sendCallSignal(signal.from, {
+						callId: signal.callId,
+						type: 'end',
+						kind: signal.kind,
+						from: identity.current.pk,
+						groupId: signal.groupId,
+						outcome: 'declined'
+					});
+				}
+				return;
+			}
 			const mappedGroupPc =
 				signal.groupId && signal.callId === callId ? peerConnections.get(signal.from) : null;
 			if (mappedGroupPc) {
@@ -1547,9 +2276,19 @@
 			return;
 		}
 		if (signal.type === 'ice' && signal.candidate) {
-			const candidate = JSON.parse(signal.candidate) as RTCIceCandidateInit;
+			let candidate: RTCIceCandidateInit;
+			try {
+				candidate = JSON.parse(signal.candidate) as RTCIceCandidateInit;
+			} catch {
+				callError = 'Received an invalid network candidate';
+				return;
+			}
 			if (pc?.remoteDescription) {
-				await pc.addIceCandidate(candidate);
+				try {
+					await pc.addIceCandidate(candidate);
+				} catch {
+					callError = 'Could not apply a network candidate';
+				}
 			} else if (isMappedGroupPeer) {
 				pendingIceCandidatesByPeer.set(signal.from, [
 					...(pendingIceCandidatesByPeer.get(signal.from) ?? []),
@@ -1637,15 +2376,50 @@
 	onMount(() => {
 		loadGroups();
 		groupsLoaded = true;
+		loadSavedCallDevices();
+		void refreshMediaPermissions();
 		resolveTo(page.url.searchParams.get('to'));
 		resolveDraftText(page.url.searchParams.get('text'));
 		resolveAutoAnswer(page.url.searchParams.get('answer'));
+		void loadCallDevices();
+		const onDeviceChange = () => void loadCallDevices();
+		const onOffline = () => {
+			if (showCall) {
+				callState = 'reconnecting';
+				callError = 'Network offline';
+			}
+		};
+		const onOnline = () => {
+			if (showCall && activeCall) {
+				callState = 'reconnecting';
+				callError = 'Refreshing connection...';
+				lastIceRestartAt = 0;
+				void restartCallIce();
+			}
+		};
+		navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
+		window.addEventListener('offline', onOffline);
+		window.addEventListener('online', onOnline);
+		document.addEventListener('visibilitychange', onCallVisibilityChange);
+		window.addEventListener('pagehide', onCallPageHide);
+		return () => {
+			navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+			window.removeEventListener('offline', onOffline);
+			window.removeEventListener('online', onOnline);
+			document.removeEventListener('visibilitychange', onCallVisibilityChange);
+			window.removeEventListener('pagehide', onCallPageHide);
+		};
 	});
 	let loadedMessageAccount = $state(identity.current?.pk ?? '');
 	$effect(() => {
 		const pk = identity.current?.pk ?? '';
 		if (pk === loadedMessageAccount) return;
 		loadedMessageAccount = pk;
+		selectedMicrophone = '';
+		selectedCamera = '';
+		selectedSpeaker = '';
+		loadSavedCallDevices();
+		void loadCallDevices();
 		selected = '';
 		groupThreads = [];
 		processedGroupMessageIds.clear();
@@ -1730,9 +2504,96 @@
 		void activeCall;
 		attachCallMedia();
 	});
+	$effect(() => {
+		if (!showCall) return;
+		void loadCallDevices();
+	});
+	$effect(() => {
+		if (callState !== 'connected' || !callConnectedAt) return;
+
+		const updateElapsed = () => {
+			callElapsedSeconds = Math.max(0, Math.floor((Date.now() - callConnectedAt) / 1000));
+		};
+		updateElapsed();
+		const timer = setInterval(updateElapsed, 1000);
+		return () => clearInterval(timer);
+	});
+	$effect(() => {
+		if (callState !== 'connected') {
+			callQuality = 'unknown';
+			callQualityDetail = '';
+			callRttMs = null;
+			callLossPercent = null;
+			callIceState = '';
+			callTransport = '';
+			previousInboundStats.clear();
+			return;
+		}
+		void updateCallQuality();
+		const timer = setInterval(() => void updateCallQuality(), 3000);
+		return () => clearInterval(timer);
+	});
+	$effect(() => {
+		if (!showPreCall || !localStream?.getAudioTracks().length || !browser) {
+			micLevel = 0;
+			return;
+		}
+		const AudioContextConstructor = window.AudioContext;
+		if (!AudioContextConstructor) return;
+		const context = new AudioContextConstructor();
+		const analyser = context.createAnalyser();
+		analyser.fftSize = 256;
+		const source = context.createMediaStreamSource(localStream);
+		source.connect(analyser);
+		const samples = new Uint8Array(analyser.fftSize);
+		let frame = 0;
+		const updateLevel = () => {
+			analyser.getByteTimeDomainData(samples);
+			let sum = 0;
+			for (const sample of samples) {
+				const normalized = (sample - 128) / 128;
+				sum += normalized * normalized;
+			}
+			micLevel = Math.min(100, Math.round(Math.sqrt(sum / samples.length) * 180));
+			frame = requestAnimationFrame(updateLevel);
+		};
+		void context.resume();
+		updateLevel();
+		return () => {
+			cancelAnimationFrame(frame);
+			source.disconnect();
+			void context.close();
+			micLevel = 0;
+		};
+	});
+	$effect(() => {
+		if (
+			!shouldStartCallTimeout(showCall, callState)
+		)
+			return;
+
+		const timer = setTimeout(() => {
+			callError = 'No answer';
+			toasts.info('Call timed out');
+			void endCall(true, 'missed');
+		}, CALL_SETUP_TIMEOUT_MS);
+		return () => clearTimeout(timer);
+	});
+	$effect(() => {
+		if (!shouldStartReconnectTimeout(showCall, callState)) return;
+
+		const timer = setTimeout(() => {
+			callError = 'Call connection was lost';
+			toasts.info('Call ended because the connection was lost');
+			void endCall(true);
+		}, CALL_RECONNECT_TIMEOUT_MS);
+		return () => clearTimeout(timer);
+	});
 </script>
 
 <svelte:head><title>Messages · BitOS</title></svelte:head>
+
+<svelte:window onfullscreenchange={onFullscreenChange} />
 
 <div class="flex h-full">
 	<aside
@@ -1798,7 +2659,7 @@
 					{#if conversation.kind === 'group'}
 						<div class="relative shrink-0">
 							<div
-								class="mask-squircle grid size-12 place-items-center bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
+								class="grid size-12 place-items-center mask-squircle bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
 							>
 								{conversation.initials}
 							</div>
@@ -1806,15 +2667,15 @@
 								class="online-dot absolute -right-0.5 -bottom-0.5 border-2 border-[var(--surface-bg)]"
 							></span>
 						</div>
-						{:else}
-							<Avatar
-								pubkey={conversation.id}
-								name={conversation.name}
-								picture={profiles.get(conversation.id)?.picture}
-								size={48}
-								class="mask-squircle"
-							/>
-						{/if}
+					{:else}
+						<Avatar
+							pubkey={conversation.id}
+							name={conversation.name}
+							picture={profiles.get(conversation.id)?.picture}
+							size={48}
+							class="mask-squircle"
+						/>
+					{/if}
 					<div class="min-w-0 flex-1">
 						<div class="mb-0.5 flex items-center justify-between">
 							<h3 class="flex min-w-0 items-center gap-1.5 truncate text-[14.5px] font-bold">
@@ -1884,7 +2745,7 @@
 						{#if active.kind === 'group'}
 							<div class="relative shrink-0">
 								<div
-									class="mask-squircle grid size-11 place-items-center bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
+									class="grid size-11 place-items-center mask-squircle bg-primary-500 font-bold text-white shadow-[var(--glow-primary)]"
 								>
 									{active.initials}
 								</div>
@@ -1895,7 +2756,7 @@
 						{:else}
 							<a
 								href={profileHref(active.id)}
-								class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
+								class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 								aria-label={`Open ${active.name} profile`}
 							>
 								<Avatar
@@ -2219,231 +3080,239 @@
 												? 'bubble-out rounded-br-md'
 												: 'bubble-in rounded-bl-md'} px-4 py-2.5 text-[14px] leading-relaxed"
 										>
-										{#if invite}
-											<div class="min-w-[240px] space-y-3">
-												<div class="flex items-center gap-3">
-													<div
-														class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
-															? 'bg-white/20 text-white'
-															: 'bg-primary-500 text-white'}"
-													>
-														<Icon name="i-lucide-users" class="size-5" />
-													</div>
-													<div class="min-w-0 flex-1">
-														<p class="truncate text-[13px] font-bold">{invite.name}</p>
-														<p
-															class="truncate text-[11px] {msg.mine
-																? 'text-white/70'
-																: 'text-[var(--ui-text-muted)]'}"
+											{#if invite}
+												<div class="min-w-[240px] space-y-3">
+													<div class="flex items-center gap-3">
+														<div
+															class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+																? 'bg-white/20 text-white'
+																: 'bg-primary-500 text-white'}"
 														>
-															{msg.mine
-																? 'Invite sent'
-																: `Local group invite from ${shortKey(invite.from)}`}
+															<Icon name="i-lucide-users" class="size-5" />
+														</div>
+														<div class="min-w-0 flex-1">
+															<p class="truncate text-[13px] font-bold">{invite.name}</p>
+															<p
+																class="truncate text-[11px] {msg.mine
+																	? 'text-white/70'
+																	: 'text-[var(--ui-text-muted)]'}"
+															>
+																{msg.mine
+																	? 'Invite sent'
+																	: `Local group invite from ${shortKey(invite.from)}`}
+															</p>
+														</div>
+													</div>
+													{#if msg.mine}
+														<p class="text-[12px] text-white/75">
+															They can accept this invite from their BitOS messages page.
 														</p>
-													</div>
-												</div>
-												{#if msg.mine}
-													<p class="text-[12px] text-white/75">
-														They can accept this invite from their BitOS messages page.
-													</p>
-												{:else if groupThreads.some((group) => group.id === invite.id)}
-													<Button
-														color="neutral"
-														variant="soft"
-														size="sm"
-														icon="i-lucide-check"
-														disabled
-													>
-														Accepted
-													</Button>
-												{:else}
-													<Button
-														color="primary"
-														variant="solid"
-														size="sm"
-														icon="i-lucide-check"
-														onclick={() => acceptGroupInvite(invite)}
-													>
-														Accept invite
-													</Button>
-												{/if}
-											</div>
-										{:else if groupMessage}
-											<div class="min-w-[240px] space-y-3">
-												<div class="flex items-center gap-3">
-													<div
-														class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
-															? 'bg-white/20 text-white'
-															: 'bg-primary-500 text-white'}"
-													>
-														<Icon name="i-lucide-message-square" class="size-5" />
-													</div>
-													<div class="min-w-0 flex-1">
-														<p class="truncate text-[13px] font-bold">{groupMessage.name}</p>
-														<p
-															class="truncate text-[11px] {msg.mine
-																? 'text-white/70'
-																: 'text-[var(--ui-text-muted)]'}"
+													{:else if groupThreads.some((group) => group.id === invite.id)}
+														<Button
+															color="neutral"
+															variant="soft"
+															size="sm"
+															icon="i-lucide-check"
+															disabled
 														>
-															{msg.mine ? 'Group message sent' : 'Group message received'}
-														</p>
-													</div>
+															Accepted
+														</Button>
+													{:else}
+														<Button
+															color="primary"
+															variant="solid"
+															size="sm"
+															icon="i-lucide-check"
+															onclick={() => acceptGroupInvite(invite)}
+														>
+															Accept invite
+														</Button>
+													{/if}
 												</div>
-												<p
-													class="line-clamp-2 text-[12px] {msg.mine
-														? 'text-white/75'
-														: 'text-[var(--ui-text-muted)]'}"
-												>
-													{groupMessage.body}
-												</p>
-												{#if groupThreads.some((group) => group.id === groupMessage.id)}
-													<Button
-														color={msg.mine ? 'neutral' : 'primary'}
-														variant={msg.mine ? 'soft' : 'solid'}
-														size="sm"
-														icon="i-lucide-arrow-right"
-														onclick={() => selectChat(`group:${groupMessage.id}`)}
-													>
-														View group
-													</Button>
-												{:else}
+											{:else if groupMessage}
+												<div class="min-w-[240px] space-y-3">
+													<div class="flex items-center gap-3">
+														<div
+															class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+																? 'bg-white/20 text-white'
+																: 'bg-primary-500 text-white'}"
+														>
+															<Icon name="i-lucide-message-square" class="size-5" />
+														</div>
+														<div class="min-w-0 flex-1">
+															<p class="truncate text-[13px] font-bold">{groupMessage.name}</p>
+															<p
+																class="truncate text-[11px] {msg.mine
+																	? 'text-white/70'
+																	: 'text-[var(--ui-text-muted)]'}"
+															>
+																{msg.mine ? 'Group message sent' : 'Group message received'}
+															</p>
+														</div>
+													</div>
 													<p
-														class="text-[12px] {msg.mine
+														class="line-clamp-2 text-[12px] {msg.mine
 															? 'text-white/75'
 															: 'text-[var(--ui-text-muted)]'}"
 													>
-														Accept the group invite first to sync this message.
+														{groupMessage.body}
 													</p>
-												{/if}
-											</div>
-										{:else if callSignal}
-											<div class="min-w-[220px] space-y-3">
-												<div class="flex items-center gap-3">
-													<div
-														class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
-															? 'bg-white/20 text-white'
-															: 'bg-primary-500 text-white'}"
-													>
-														<Icon
-															name={callSignal.kind === 'video'
-																? 'i-lucide-video'
-																: 'i-lucide-phone'}
-															class="size-5"
-														/>
-													</div>
-													<div class="min-w-0 flex-1">
-														<p class="truncate text-[13px] font-bold">
-															{callSignal.groupId ? 'Group ' : ''}{callSignal.kind === 'video'
-																? 'video call'
-																: 'voice call'}
-														</p>
+													{#if groupThreads.some((group) => group.id === groupMessage.id)}
+														<Button
+															color={msg.mine ? 'neutral' : 'primary'}
+															variant={msg.mine ? 'soft' : 'solid'}
+															size="sm"
+															icon="i-lucide-arrow-right"
+															onclick={() => selectChat(`group:${groupMessage.id}`)}
+														>
+															View group
+														</Button>
+													{:else}
 														<p
-															class="truncate text-[11px] {msg.mine
-																? 'text-white/70'
+															class="text-[12px] {msg.mine
+																? 'text-white/75'
 																: 'text-[var(--ui-text-muted)]'}"
 														>
-															{msg.mine
-																? callSignal.type === 'log'
-																	? 'Call ended'
-																	: 'Outgoing call'
-																: callSignal.type === 'offer'
-																	? 'Incoming call'
-																	: 'Call ended'}
+															Accept the group invite first to sync this message.
 														</p>
-													</div>
+													{/if}
 												</div>
-												{#if callSignal.type === 'log'}
-													<p
-														class="text-[12px] {msg.mine
-															? 'text-white/75'
-															: 'text-[var(--ui-text-muted)]'}"
-													>
-														Duration {formatDuration(callSignal.duration)}
-													</p>
+											{:else if callSignal}
+												<div class="min-w-[220px] space-y-3">
+													<div class="flex items-center gap-3">
+														<div
+															class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+																? 'bg-white/20 text-white'
+																: 'bg-primary-500 text-white'}"
+														>
+															<Icon
+																name={callSignal.kind === 'video'
+																	? 'i-lucide-video'
+																	: 'i-lucide-phone'}
+																class="size-5"
+															/>
+														</div>
+														<div class="min-w-0 flex-1">
+															<p class="truncate text-[13px] font-bold">
+																{callSignal.groupId ? 'Group ' : ''}{callSignal.kind === 'video'
+																	? 'video call'
+																	: 'voice call'}
+															</p>
+															<p
+																class="truncate text-[11px] {msg.mine
+																	? 'text-white/70'
+																	: 'text-[var(--ui-text-muted)]'}"
+															>
+																{msg.mine
+																	? callSignal.type === 'log'
+																		? callSignal.outcome === 'missed'
+																			? 'Missed call'
+																			: callSignal.outcome === 'declined'
+																				? 'Call declined'
+																				: 'Call ended'
+																		: 'Outgoing call'
+																	: callSignal.type === 'offer'
+																		? 'Incoming call'
+																		: callSignal.outcome === 'missed'
+																			? 'Missed call'
+																			: callSignal.outcome === 'declined'
+																				? 'Call declined'
+																				: 'Call ended'}
+															</p>
+														</div>
+													</div>
+													{#if callSignal.type === 'log'}
+														<p
+															class="text-[12px] {msg.mine
+																? 'text-white/75'
+																: 'text-[var(--ui-text-muted)]'}"
+														>
+															Duration {formatDuration(callSignal.duration)}
+														</p>
+													{/if}
+													{#if !msg.mine && callSignal.type === 'offer'}
+														<Button
+															color="primary"
+															variant="solid"
+															size="sm"
+															icon="i-lucide-phone"
+															onclick={() => {
+																incomingCall = callSignal;
+																void acceptIncomingCall();
+															}}
+														>
+															Answer
+														</Button>
+													{/if}
+												</div>
+											{:else if msgMedia?.kind === 'image'}
+												<a href={msgMedia.url} target="_blank" rel="noreferrer">
+													<img
+														src={msgMedia.url}
+														alt="Message attachment"
+														class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
+													/>
+												</a>
+												{#if msgMedia.text}
+													<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
 												{/if}
-												{#if !msg.mine && callSignal.type === 'offer'}
-													<Button
-														color="primary"
-														variant="solid"
-														size="sm"
-														icon="i-lucide-phone"
-														onclick={() => {
-															incomingCall = callSignal;
-															void acceptIncomingCall();
-														}}
-													>
-														Answer
-													</Button>
-												{/if}
-											</div>
-										{:else if msgMedia?.kind === 'image'}
-											<a href={msgMedia.url} target="_blank" rel="noreferrer">
-												<img
+											{:else if msgMedia?.kind === 'video'}
+												<video
 													src={msgMedia.url}
-													alt="Message attachment"
-													class="mb-2 max-h-72 min-w-[220px] rounded-xl object-cover"
-												/>
-											</a>
-											{#if msgMedia.text}
-												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
-											{/if}
-										{:else if msgMedia?.kind === 'video'}
-											<video
-												src={msgMedia.url}
-												controls
-												class="mb-2 max-h-72 min-w-[220px] rounded-xl"
-											>
-												<track kind="captions" />
-											</video>
-											{#if msgMedia.text}
-												<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
-											{/if}
-										{:else if msgMedia}
-											<a
-												href={msgMedia.url}
-												target="_blank"
-												rel="noreferrer"
-												class="flex min-w-[220px] items-center gap-3 rounded-xl {msg.mine
-													? 'bg-white/15 hover:bg-white/20'
-													: 'bg-primary-500/10 hover:bg-primary-500/15'} p-2 transition"
-											>
-												<div
-													class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
-														? 'bg-white/20 text-white'
-														: 'bg-primary-500/10 text-primary-600 dark:text-primary-300'}"
+													controls
+													class="mb-2 max-h-72 min-w-[220px] rounded-xl"
 												>
-													<Icon name="i-lucide-file-text" class="size-5" />
-												</div>
-												<div class="min-w-0 flex-1">
-													<p class="truncate text-[13px] font-semibold">Open attachment</p>
-													<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
-												</div>
-											</a>
-											{#if msgMedia.text}
-												<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
-											{/if}
-										{:else}
-											<p class="break-words whitespace-pre-wrap">{msg.content}</p>
-										{/if}
-										<div
-											class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] {msg.mine
-												? 'text-white/60'
-												: 'text-[var(--ui-text-dimmed)]'}"
-										>
-											{#if isSecureDm(msg)}
-												<span
-													class="inline-flex items-center text-emerald-200 dark:text-emerald-300"
-													title="Secure DM"
+													<track kind="captions" />
+												</video>
+												{#if msgMedia.text}
+													<p class="break-words whitespace-pre-wrap">{msgMedia.text}</p>
+												{/if}
+											{:else if msgMedia}
+												<a
+													href={msgMedia.url}
+													target="_blank"
+													rel="noreferrer"
+													class="flex min-w-[220px] items-center gap-3 rounded-xl {msg.mine
+														? 'bg-white/15 hover:bg-white/20'
+														: 'bg-primary-500/10 hover:bg-primary-500/15'} p-2 transition"
 												>
-													<Icon name="i-lucide-shield-check" class="size-3" />
-												</span>
+													<div
+														class="grid size-10 shrink-0 place-items-center rounded-xl {msg.mine
+															? 'bg-white/20 text-white'
+															: 'bg-primary-500/10 text-primary-600 dark:text-primary-300'}"
+													>
+														<Icon name="i-lucide-file-text" class="size-5" />
+													</div>
+													<div class="min-w-0 flex-1">
+														<p class="truncate text-[13px] font-semibold">Open attachment</p>
+														<p class="truncate text-[11px] opacity-70">{msgMedia.url}</p>
+													</div>
+												</a>
+												{#if msgMedia.text}
+													<p class="mt-2 break-words whitespace-pre-wrap">{msgMedia.text}</p>
+												{/if}
+											{:else}
+												<p class="break-words whitespace-pre-wrap">{msg.content}</p>
 											{/if}
-											{new Date(msg.createdAt * 1000).toLocaleTimeString(undefined, {
-												hour: '2-digit',
-												minute: '2-digit'
-											})}
+											<div
+												class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] {msg.mine
+													? 'text-white/60'
+													: 'text-[var(--ui-text-dimmed)]'}"
+											>
+												{#if isSecureDm(msg)}
+													<span
+														class="inline-flex items-center text-emerald-200 dark:text-emerald-300"
+														title="Secure DM"
+													>
+														<Icon name="i-lucide-shield-check" class="size-3" />
+													</span>
+												{/if}
+												{new Date(msg.createdAt * 1000).toLocaleTimeString(undefined, {
+													hour: '2-digit',
+													minute: '2-digit'
+												})}
+											</div>
 										</div>
-									</div>
 									</div>
 								</div>
 							{/each}
@@ -2519,7 +3388,9 @@
 					{#if uploadingMessage}
 						<p class="mb-2 flex items-center gap-1.5 text-[11.5px] text-primary-500">
 							<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-							Uploading via {providerLabel(activeUploadProvider === 'none' ? 'server' : activeUploadProvider)}…
+							Uploading via {providerLabel(
+								activeUploadProvider === 'none' ? 'server' : activeUploadProvider
+							)}…
 						</p>
 					{/if}
 					<div class="flex items-end gap-2">
@@ -2598,7 +3469,7 @@
 					{:else}
 						<a
 							href={profileHref(active.id)}
-							class="mask-squircle mx-auto mb-3 block w-fit transition hover:ring-2 hover:ring-primary-500/30"
+							class="mx-auto mb-3 block w-fit mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 							aria-label={`Open ${active.name} profile`}
 						>
 							<Avatar
@@ -2708,7 +3579,7 @@
 										{#if member.pubkey}
 											<a
 												href={profileHref(member.pubkey)}
-												class="mask-squircle block transition hover:ring-2 hover:ring-primary-500/30"
+												class="block mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 												aria-label={`Open ${member.name} profile`}
 											>
 												<Avatar
@@ -2721,7 +3592,7 @@
 											</a>
 										{:else}
 											<div
-												class="mask-squircle grid size-9 place-items-center bg-primary-500 text-xs font-bold text-white"
+												class="grid size-9 place-items-center mask-squircle bg-primary-500 text-xs font-bold text-white"
 											>
 												{member.initials}
 											</div>
@@ -2900,14 +3771,14 @@
 		<div class="flex items-center gap-3">
 			{#if active.kind === 'group'}
 				<div
-					class="mask-squircle grid size-[52px] place-items-center bg-primary-500 font-bold text-white"
+					class="grid size-[52px] place-items-center mask-squircle bg-primary-500 font-bold text-white"
 				>
 					{active.initials}
 				</div>
 			{:else}
 				<a
 					href={profileHref(active.id)}
-					class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
+					class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 					aria-label={`Open ${active.name} profile`}
 				>
 					<Avatar
@@ -3001,7 +3872,7 @@
 							{#if member.pubkey}
 								<a
 									href={profileHref(member.pubkey)}
-									class="mask-squircle shrink-0 transition hover:ring-2 hover:ring-primary-500/30"
+									class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
 									aria-label={`Open ${member.name} profile`}
 								>
 									<Avatar
@@ -3014,7 +3885,7 @@
 								</a>
 							{:else}
 								<div
-									class="mask-squircle grid size-8 shrink-0 place-items-center bg-primary-500 text-[11px] font-bold text-white"
+									class="grid size-8 shrink-0 place-items-center mask-squircle bg-primary-500 text-[11px] font-bold text-white"
 								>
 									{member.initials}
 								</div>
@@ -3073,16 +3944,120 @@
 	{/snippet}
 </Dialog>
 
-<Dialog
+
+{#if showPreCall && preCallKind}
+	<Dialog
+		bind:open={showPreCall}
+		closeOnOverlay={false}
+		title={`Prepare ${preCallKind === 'video' ? 'video' : 'voice'} call`}
+	>
+		<div class="space-y-4">
+			{#if preCallKind === 'video'}
+				<div class="relative aspect-video overflow-hidden rounded-2xl bg-neutral-950">
+					<video use:streamSource={localStream} autoplay muted playsinline class="size-full object-cover"></video>
+					{#if !cameraEnabled}
+						<div class="absolute inset-0 grid place-items-center bg-neutral-950 text-white">
+							<Icon name="i-lucide-camera-off" class="size-10" />
+						</div>
+					{/if}
+				</div>
+			{:else}
+				<div class="grid place-items-center rounded-2xl bg-primary-500/10 py-8">
+					<Icon name="i-lucide-mic" class="size-10 text-primary-600 dark:text-primary-300" />
+				</div>
+			{/if}
+			<p class="text-center text-[12px] text-[var(--ui-text-muted)]">
+				Check your devices before calling {callTitle || (active?.name ?? 'this contact')}.
+			</p>
+			{#if callError}
+				<p class="text-center text-[12px] text-[var(--tone-error-text)]">{callError}</p>
+				<Button color="neutral" variant="soft" block onclick={() => void retryPreCallMedia()}>
+					Try permission again
+				</Button>
+			{/if}
+			{#if microphones.length}
+				<div class="space-y-1 text-left">
+					<div class="flex items-center justify-between text-[10px] font-semibold text-[var(--ui-text-muted)]">
+						<span>Microphone test</span>
+						<span>{micLevel > 3 ? 'Signal detected' : 'Speak to test'}</span>
+					</div>
+					<div class="h-2 overflow-hidden rounded-full bg-[var(--ui-border-muted)]">
+						<div
+							class="h-full rounded-full bg-emerald-500 transition-[width] duration-75"
+							style={`width: ${micLevel}%`}
+						></div>
+					</div>
+				</div>
+			{/if}
+			<div class="flex items-center justify-center gap-3 text-[10px] font-semibold">
+				<span class="text-[var(--ui-text-muted)]">Mic: <span class={permissionClass(microphonePermission)}>{permissionLabel(microphonePermission)}</span></span>
+				{#if preCallKind === 'video'}
+					<span class="text-[var(--ui-text-muted)]">Camera: <span class={permissionClass(cameraPermission)}>{permissionLabel(cameraPermission)}</span></span>
+				{/if}
+			</div>
+			<div class="grid gap-2 text-left sm:grid-cols-3">
+				{#if microphones.length}
+					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Microphone</span>
+						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedMicrophone} onchange={(event) => void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}>
+							{#each microphones as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Microphone', index)}</option>{/each}
+						</select>
+					</label>
+				{/if}
+				{#if preCallKind === 'video' && cameras.length}
+					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Camera</span>
+						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedCamera} onchange={(event) => void changeCamera((event.currentTarget as HTMLSelectElement).value)}>
+							{#each cameras as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Camera', index)}</option>{/each}
+						</select>
+					</label>
+				{/if}
+				{#if speakers.length}
+					<label class="space-y-1"><span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Speaker</span>
+						<select class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]" value={selectedSpeaker} onchange={(event) => void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}>
+							{#each speakers as device, index (device.deviceId)}<option value={device.deviceId}>{deviceLabel(device, 'Speaker', index)}</option>{/each}
+						</select>
+					</label>
+				{/if}
+			</div>
+			{#if speakers.length && supportsSpeakerOutput()}
+				<Button
+					color="neutral"
+					variant="soft"
+					block
+					icon={speakerTestPlaying ? 'i-lucide-volume-2' : 'i-lucide-volume'}
+					onclick={() => void testSpeakerOutput()}
+				>
+					{speakerTestPlaying ? 'Playing test sound...' : 'Test speaker output'}
+				</Button>
+			{/if}
+			<div class="flex justify-center gap-2">
+				<Button color="neutral" variant="soft" square icon={micEnabled ? 'i-lucide-mic' : 'i-lucide-mic-off'} aria-label="Toggle microphone" onclick={toggleMic} />
+				{#if preCallKind === 'video'}
+					<Button color="neutral" variant="soft" square icon={cameraEnabled ? 'i-lucide-camera' : 'i-lucide-camera-off'} aria-label="Toggle camera" onclick={toggleCamera} />
+				{/if}
+			</div>
+		</div>
+		{#snippet footer()}
+			<Button color="neutral" variant="subtle" onclick={cancelPreCall}>Cancel</Button>
+			<Button color="primary" icon={preCallKind === 'video' ? 'i-lucide-video' : 'i-lucide-phone'} onclick={() => void confirmPreCall()}>Start call</Button>
+		{/snippet}
+	</Dialog>
+{/if}
+
+{#if showCall && !callMinimized}
+	<Dialog
 	bind:open={showCall}
+	closeOnOverlay={false}
 	title={`${callGroupId ? 'Group ' : ''}${activeCall === 'video' ? 'Video call' : 'Voice call'}`}
->
+	>
 	{#if activeCall}
 		<div class="space-y-4 text-center">
 			<div
-				class="{activeCall === 'video'
-					? 'aspect-video'
-					: 'aspect-square max-w-52'} relative mx-auto grid w-full overflow-hidden rounded-2xl bg-neutral-950 text-white"
+				bind:this={callMediaPanel}
+				class="{callFullscreen
+					? 'h-full w-full rounded-none'
+					: activeCall === 'video'
+						? 'aspect-video'
+						: 'aspect-square max-w-52'} relative mx-auto grid w-full overflow-hidden bg-neutral-950 text-white {callFullscreen ? '' : 'rounded-2xl'}"
 			>
 				{#if activeCall === 'video'}
 					{#if remoteParticipants.length}
@@ -3095,6 +4070,7 @@
 								<div class="relative overflow-hidden bg-black">
 									<video
 										use:streamSource={participant.stream}
+										data-call-output
 										autoplay
 										playsinline
 										class="size-full object-cover"
@@ -3108,7 +4084,13 @@
 							{/each}
 						</div>
 					{:else}
-						<video bind:this={remoteVideoEl} autoplay playsinline class="size-full object-cover"
+						<video
+							bind:this={remoteVideoEl}
+							use:pictureInPictureEvents
+							data-call-output
+							autoplay
+							playsinline
+							class="size-full object-cover"
 						></video>
 					{/if}
 					<video
@@ -3130,10 +4112,10 @@
 						</div>
 					</div>
 				{/if}
-				<audio bind:this={remoteAudioEl} autoplay></audio>
+				<audio bind:this={remoteAudioEl} data-call-output autoplay></audio>
 				{#if activeCall === 'voice'}
 					{#each remoteParticipants as participant (participant.peer)}
-						<audio use:streamSource={participant.stream} autoplay></audio>
+						<audio use:streamSource={participant.stream} data-call-output autoplay></audio>
 					{/each}
 				{/if}
 			</div>
@@ -3146,11 +4128,53 @@
 							? 'Calling...'
 							: callState === 'connected'
 								? 'Connected'
-								: 'Connecting...'}
+								: callState === 'reconnecting'
+									? 'Reconnecting...'
+									: 'Connecting...'}
 					{#if callGroupId && callState !== 'incoming'}
 						- {Math.max(1, remoteParticipants.length + 1)} joined
 					{/if}
 				</p>
+				{#if callState === 'connected'}
+					<p
+						class="mt-1 font-mono text-[13px] font-semibold text-primary-600 dark:text-primary-300"
+						aria-live="polite"
+					>
+						{formatDuration(callElapsedSeconds)}
+					</p>
+					<p class="mt-1 text-[11px] font-semibold {callQualityClass()}">
+						{callQualityLabel()}{callQualityDetail ? ` - ${callQualityDetail}` : ''}
+					</p>
+					<Button
+						color="neutral"
+						variant="ghost"
+						class="mt-1 h-auto px-1 py-0 text-[10px]"
+						onclick={() => (showCallDiagnostics = !showCallDiagnostics)}
+					>
+						{showCallDiagnostics ? 'Hide diagnostics' : 'Connection details'}
+					</Button>
+					{#if showCallDiagnostics}
+						<div class="mx-auto mt-2 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 rounded-xl bg-[var(--surface-muted)] px-3 py-2 text-left text-[10px]">
+							<span class="text-[var(--ui-text-muted)]">Round trip</span>
+							<span class="font-mono font-semibold">{callRttMs === null ? '—' : `${callRttMs} ms`}</span>
+							<span class="text-[var(--ui-text-muted)]">Packet loss</span>
+							<span class="font-mono font-semibold">{callLossPercent === null ? '—' : `${callLossPercent}%`}</span>
+							<span class="text-[var(--ui-text-muted)]">ICE state</span>
+							<span class="font-mono font-semibold">{callIceState || 'checking'}</span>
+							<span class="text-[var(--ui-text-muted)]">Transport</span>
+							<span class="font-mono font-semibold">{callTransport || '—'}</span>
+							<Button
+								color="neutral"
+								variant="soft"
+								class="col-span-2 mt-1"
+								icon="i-lucide-copy"
+								onclick={() => void copyCallDiagnostics()}
+							>
+								Copy diagnostics
+							</Button>
+						</div>
+					{/if}
+				{/if}
 				{#if callError}
 					<p class="mt-2 text-[12px] text-[var(--tone-error-text)]">{callError}</p>
 				{/if}
@@ -3182,6 +4206,32 @@
 							aria-label="Camera"
 							onclick={toggleCamera}
 						/>
+						<Button
+							color={screenSharing ? 'primary' : 'neutral'}
+							variant="soft"
+							square
+							icon={screenSharing ? 'i-lucide-monitor-off' : 'i-lucide-monitor-up'}
+							aria-label={screenSharing ? 'Stop screen sharing' : 'Share screen'}
+							onclick={toggleScreenShare}
+						/>
+						<Button
+							color="neutral"
+							variant="soft"
+							square
+							icon={callFullscreen ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'}
+							aria-label={callFullscreen ? 'Exit fullscreen video' : 'Fullscreen video'}
+							onclick={toggleCallFullscreen}
+						/>
+						{#if supportsPictureInPicture()}
+							<Button
+								color={callPictureInPicture ? 'primary' : 'neutral'}
+								variant="soft"
+								square
+								icon="i-lucide-picture-in-picture-2"
+								aria-label={callPictureInPicture ? 'Close picture-in-picture' : 'Picture-in-picture'}
+								onclick={togglePictureInPicture}
+							/>
+						{/if}
 					{:else}
 						<Button
 							color="neutral"
@@ -3204,9 +4254,106 @@
 					{/if}
 				{/if}
 			</div>
+			{#if callState !== 'incoming' && (microphones.length > 1 || cameras.length > 1 || speakers.length > 1)}
+				<div class="grid gap-2 text-left sm:grid-cols-3">
+					{#if microphones.length > 1}
+						<label class="space-y-1">
+							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Mic</span>
+							<select
+								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+								value={selectedMicrophone}
+								onchange={(event) =>
+									void changeMicrophone((event.currentTarget as HTMLSelectElement).value)}
+							>
+								{#each microphones as device, index (device.deviceId)}
+									<option value={device.deviceId}>{deviceLabel(device, 'Microphone', index)}</option>
+								{/each}
+							</select>
+						</label>
+					{/if}
+					{#if activeCall === 'video' && cameras.length > 1}
+						<label class="space-y-1">
+							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Camera</span>
+							<select
+								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+								value={selectedCamera}
+								onchange={(event) =>
+									void changeCamera((event.currentTarget as HTMLSelectElement).value)}
+							>
+								{#each cameras as device, index (device.deviceId)}
+									<option value={device.deviceId}>{deviceLabel(device, 'Camera', index)}</option>
+								{/each}
+							</select>
+						</label>
+					{/if}
+					{#if speakers.length > 1}
+						<label class="space-y-1">
+							<span class="text-[10px] font-bold text-[var(--ui-text-muted)] uppercase">Speaker</span>
+							<select
+								class="w-full rounded-lg border border-[var(--ui-border)] bg-[var(--surface-bg)] px-2 py-2 text-[12px] text-[var(--ui-text)]"
+								value={selectedSpeaker}
+								onchange={(event) =>
+									void changeSpeaker((event.currentTarget as HTMLSelectElement).value)}
+							>
+								{#each speakers as device, index (device.deviceId)}
+									<option value={device.deviceId}>{deviceLabel(device, 'Speaker', index)}</option>
+								{/each}
+							</select>
+						</label>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{/if}
 	{#snippet footer()}
+		{#if callState !== 'incoming'}
+			<Button
+				color="neutral"
+				variant="subtle"
+				icon="i-lucide-minus"
+				onclick={() => (callMinimized = true)}
+			>
+				Minimize
+			</Button>
+		{/if}
 		<Button color="error" icon="i-lucide-phone-off" onclick={() => endCall()}>End call</Button>
 	{/snippet}
-</Dialog>
+	</Dialog>
+{/if}
+
+{#if showCall && callMinimized && activeCall}
+	<div
+		class="fixed right-4 bottom-4 z-50 flex items-center gap-3 rounded-2xl border border-[var(--ui-border)] bg-[var(--surface-bg)] px-4 py-3 shadow-2xl shadow-black/20"
+		role="status"
+	>
+		<div class="grid size-9 place-items-center rounded-xl bg-primary-500 text-white">
+			<Icon name={activeCall === 'video' ? 'i-lucide-video' : 'i-lucide-phone'} class="size-4" />
+		</div>
+		<div class="min-w-0">
+			<p class="max-w-40 truncate text-[12px] font-bold">{callDisplayTitle()}</p>
+			<p class="text-[11px] text-[var(--ui-text-muted)]">
+				{callState === 'connected'
+					? formatDuration(callElapsedSeconds)
+					: callState === 'reconnecting'
+						? 'Reconnecting...'
+						: 'Connecting...'}
+			</p>
+		</div>
+		<Button
+			color="neutral"
+			variant="soft"
+			square
+			icon="i-lucide-maximize-2"
+			aria-label="Restore call"
+			onclick={() => (callMinimized = false)}
+		/>
+		<Button
+			color="error"
+			variant="soft"
+			square
+			icon="i-lucide-phone-off"
+			aria-label="End call"
+			onclick={() => endCall()}
+		/>
+	</div>
+{/if}

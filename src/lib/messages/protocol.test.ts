@@ -85,6 +85,17 @@ describe('message protocol helpers', () => {
 			groupId: group.id,
 			sdp: 'v=0'
 		});
+		const missed = parseCallSignal(
+			callSignalText({
+				callId: 'call-1',
+				type: 'log',
+				kind: 'video',
+				from: BOB,
+				duration: 0,
+				outcome: 'missed'
+			})
+		);
+		expect(missed?.outcome).toBe('missed');
 	});
 
 	it('detects message media and previews attachments', () => {

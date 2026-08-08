@@ -4,6 +4,9 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { callAlerts, type IncomingCallAlert } from '$lib/stores/call-alerts.svelte';
+	import { callSignalText } from '$lib/messages/protocol';
+	import { dms } from '$lib/nostr/dms.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
 
 	function chatUrl(alert: IncomingCallAlert, answer = false) {
 		const params = new URLSearchParams({ to: alert.from });
@@ -22,8 +25,38 @@
 		void goto(chatUrl(alert));
 	}
 
-	function decline(alert: IncomingCallAlert) {
+	async function decline(alert: IncomingCallAlert) {
 		callAlerts.dismiss(alert.id);
+		const me = identity.current;
+		if (!me) return;
+		try {
+			await Promise.all([
+				dms.send(
+					alert.from,
+					callSignalText({
+						callId: alert.callId,
+						type: 'end',
+						kind: alert.kind,
+						from: me.pk,
+						groupId: alert.groupId
+					})
+				),
+				dms.send(
+					alert.from,
+					callSignalText({
+						callId: alert.callId,
+						type: 'log',
+						kind: alert.kind,
+						from: me.pk,
+						groupId: alert.groupId,
+						duration: 0,
+						outcome: 'declined'
+					})
+				)
+			]);
+		} catch {
+			// The local alert is dismissed even if signaling is temporarily unavailable.
+		}
 	}
 </script>
 
