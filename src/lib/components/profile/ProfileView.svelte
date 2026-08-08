@@ -6,7 +6,6 @@
 	 * a sticky tab bar with a scroll-reveal mini identity, an Instagram-style
 	 * media gallery, skeleton loaders and refined empty states.
 	 */
-	import { onMount } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import { npubEncode } from 'nostr-tools/nip19';
@@ -21,8 +20,10 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
+	import { relays } from '$lib/nostr/relays.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -66,6 +67,7 @@
 	let npubCopied = $state(false);
 	let stuck = $state(false);
 	let heroEl = $state<HTMLElement | undefined>(undefined);
+	let loadRequest = 0;
 
 	const posts = $derived(notes.filter((note) => !note.replyTo));
 	const replies = $derived(notes.filter((note) => !!note.replyTo));
@@ -114,28 +116,6 @@
 	const satsReceived = $derived(notes.reduce((sum, note) => sum + note.zapTotalSats, 0));
 
 	/* ----------------------------- data loading ---------------------------- */
-
-	function toFeedNote(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		created_at: number;
-		tags: string[][];
-	}): FeedNote {
-		const replyTag = ev.tags.find((tag) => tag[0] === 'e' && tag[3] === 'reply');
-		return {
-			id: ev.id,
-			pubkey: ev.pubkey,
-			content: ev.content,
-			createdAt: ev.created_at,
-			tags: ev.tags,
-			replyTo: replyTag?.[1],
-			reactions: [],
-			repostCount: 0,
-			zapCount: 0,
-			zapTotalSats: 0
-		};
-	}
 
 	function uniqueNoteEvents(
 		events: Array<{
@@ -286,6 +266,7 @@
 
 	async function loadProfile(nextPubkey: string) {
 		if (!nextPubkey || loadedFor === nextPubkey) return;
+		const request = ++loadRequest;
 		loading = true;
 		hasMoreNotes = false;
 		notes = [];
@@ -327,7 +308,7 @@
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load profile');
 		} finally {
-			loading = false;
+			if (request === loadRequest && loadedFor === nextPubkey) loading = false;
 		}
 	}
 
@@ -408,12 +389,12 @@
 		heroEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
-	onMount(() => {
-		if (pubkey) void loadProfile(pubkey);
-	});
-
 	$effect(() => {
-		if (pubkey) void loadProfile(pubkey);
+		// On a hard refresh the profile can mount before the layout restores the
+		// persisted relay list. React to that list becoming available so the first
+		// query is not permanently skipped by loadedFor.
+		const relaySignature = relays.orderedReadUrls.join(',');
+		if (pubkey && relays.ready && relaySignature) void loadProfile(pubkey);
 	});
 
 	// Scroll-reveal: stick the tab bar + fade in the compact identity once the
