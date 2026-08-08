@@ -1144,6 +1144,7 @@
 									parent={reply}
 									placeholder={`Reply to ${replyName}…`}
 									autofocus
+									initialMention={{ pubkey: reply.pubkey, name: replyName }}
 									onSubmitted={() => (replyingToCommentId = '')}
 									onCancel={() => (replyingToCommentId = '')}
 								/>

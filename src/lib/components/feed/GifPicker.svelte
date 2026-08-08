@@ -92,6 +92,7 @@
 			type="search"
 			bind:value={query}
 			oninput={onInput}
+			onclick={(e) => e.stopPropagation()}
 			placeholder="Search GIFs…"
 			class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 		/>

@@ -59,6 +59,7 @@
 		placeholder = 'Write a reply…',
 		autofocus = false,
 		focusTick = 0,
+		initialMention,
 		onSubmitted,
 		onCancel
 	}: {
@@ -67,6 +68,8 @@
 		autofocus?: boolean;
 		/** Bump this number to programmatically focus the textarea. */
 		focusTick?: number;
+		/** Pre-fill the editor with an @mention (e.g. when replying to a comment). */
+		initialMention?: { pubkey: string; name: string };
 		onSubmitted?: () => void;
 		onCancel?: () => void;
 	} = $props();
@@ -167,6 +170,12 @@
 	});
 
 	onMount(() => {
+		// Pre-fill an @mention when replying to a specific comment (e.g. tapping
+		// "Reply" on someone's comment). Tracked so it serializes to nostr:npub.
+		if (initialMention) {
+			text = `@${initialMention.name} `;
+			mentions = [{ name: initialMention.name, npub: npubEncode(initialMention.pubkey) }];
+		}
 		if (autofocus) setTimeout(() => textareaEl?.focus(), 0);
 	});
 
@@ -265,9 +274,17 @@
 				mention = null;
 				return;
 			}
-		} else if (e.key === 'Escape') {
+			return;
+		}
+		if (e.key === 'Escape') {
 			e.preventDefault();
 			cancel();
+			return;
+		}
+		// Enter (no modifier) sends; Shift+Enter inserts a new line.
+		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+			e.preventDefault();
+			void submit();
 			return;
 		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -569,6 +586,7 @@
 					disabled={!canPost}
 					class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-40"
 					aria-label="Post reply"
+					title="Enter to send · Shift+Enter for new line"
 				>
 					<Icon name={posting ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'} class="size-4 {posting ? 'animate-spin' : ''}" />
 				</button>
