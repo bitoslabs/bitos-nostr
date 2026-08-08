@@ -37,7 +37,7 @@ export const DEFAULTS: PrivacyNotificationSettingsState = {
 	comments: true,
 	followers: true,
 	dms: true,
-	mentions: false
+	mentions: true
 };
 
 const NOTIFICATION_TYPE_BY_KEY: Partial<

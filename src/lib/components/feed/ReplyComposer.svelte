@@ -64,16 +64,8 @@
 	import { media, providerLabel } from '$lib/stores/media.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { rewriteMentions } from '$lib/utils/nip27';
 	import { shortKey } from '$lib/utils/format';
-	import type { FeedNote } from '$lib/nostr/types';
-
-	type Attachment = {
-		url: string;
-		kind: 'image' | 'video' | 'file';
-		mimeType: string;
-		bytes: number;
-		source: 'upload' | 'gif';
-	};
 
 	type MentionCandidate = {
 		pubkey: string;
@@ -230,7 +222,11 @@
 			mention = null;
 			return;
 		}
-		mention = { start: at, query };
+		// Keyboard navigation also fires `keyup`; avoid replacing an unchanged
+		// mention state there, which would reset the highlighted candidate.
+		if (mention?.start !== at || mention.query !== query) {
+			mention = { start: at, query };
+		}
 	}
 
 	function selectMention(candidate: MentionCandidate) {
@@ -250,22 +246,27 @@
 		});
 	}
 
-	/** Rewrite readable `@name` mentions back to `nostr:npub1…` (NIP-27). */
-	function serializeMentions(content: string, tracked: TrackedMention[]): string {
-		let out = content;
-		for (const m of tracked) {
-			const target = `@${m.name}`;
-			let idx = out.indexOf(target);
-			while (idx >= 0) {
-				const next = out[idx + target.length];
-				if (next === undefined || /\s/.test(next)) {
-					out = out.slice(0, idx) + `nostr:${m.npub}` + out.slice(idx + target.length);
-					break;
-				}
-				idx = out.indexOf(target, idx + 1);
+	function escapeRegExp(value: string) {
+		return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	function mentionTokenRegex(name: string) {
+		return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|\\s|[^\\p{L}\\p{N}_-])`, 'iu');
+	}
+
+	function ensureMentionTracking(
+		content: string,
+		tracked: TrackedMention[],
+		candidatesList: MentionCandidate[]
+	): TrackedMention[] {
+		const map = new Map(tracked.map((m) => [m.name, m]));
+		for (const candidate of candidatesList) {
+			if (map.has(candidate.name)) continue;
+			if (mentionTokenRegex(candidate.name).test(content)) {
+				map.set(candidate.name, { name: candidate.name, npub: candidate.npub });
 			}
 		}
-		return out;
+		return [...map.values()];
 	}
 
 	function insertAtCursor(value: string) {
@@ -390,7 +391,8 @@
 		if (!canPost || posting || !me) return;
 		posting = true;
 		try {
-			const body = serializeMentions(text, mentions);
+			const allMentions = ensureMentionTracking(text, mentions, candidates);
+			const body = rewriteMentions(text, allMentions);
 			await feed.reply(parent, body, {
 				attachments: attachments.map((a) => ({
 					url: a.url,

@@ -56,3 +56,21 @@ export function extractMentionEntities(content: string): NostrEntities {
 
 	return { pubkeys: [...pubkeys], noteIds: [...noteIds] };
 }
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function rewriteMentions<T extends { name: string; npub: string }>(
+	content: string,
+	tracked: T[]
+): string {
+	let out = content;
+	for (const item of tracked) {
+		const target = `@${item.name}`;
+		if (!target) continue;
+		const regex = new RegExp(`${escapeRegExp(target)}(?=$|\\s|[^\\p{L}\\p{N}_-])`, 'gu');
+		out = out.replace(regex, `nostr:${item.npub}`);
+	}
+	return out;
+}

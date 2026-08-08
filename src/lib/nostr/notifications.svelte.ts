@@ -58,7 +58,8 @@ export function parseNotificationContent(content: string): string {
 /** A note #p-tags the active user without being a reply (standalone mention). */
 function mentionsMe(tags: string[][], me?: string): boolean {
 	if (!me) return false;
-	return tags.some((tag) => tag[0] === 'p' && tag[1] === me);
+	const target = me.toLowerCase();
+	return tags.some((tag) => tag[0] === 'p' && tag[1]?.toLowerCase() === target);
 }
 
 /** NIP-57 zap receipt amount in sats, from the `amount` (msat) tag. */
@@ -91,7 +92,11 @@ class NotificationsStore {
 
 	countByType = $derived.by(() => {
 		const counts: Record<string, number> = {};
-		for (const item of this.items) counts[item.type] = (counts[item.type] ?? 0) + 1;
+		for (const item of this.items) {
+			if (this.muted.has(item.type)) continue;
+			if (blocks.has(item.pubkey)) continue;
+			counts[item.type] = (counts[item.type] ?? 0) + 1;
+		}
 		return counts;
 	});
 

@@ -16,8 +16,11 @@
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import { shortKey } from '$lib/utils/format';
-	import StoryRing from './StoryRing.svelte';
-	import PollComposer from './PollComposer.svelte';
+import { rewriteMentions } from '$lib/utils/nip27';
+import StoryRing from './StoryRing.svelte';
+import PollComposer from './PollComposer.svelte';
+
+	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
 	let text = $state('');
 	let posting = $state(false);
@@ -116,7 +119,12 @@
 			return;
 		}
 		const query = before.slice(at + 1);
-		mention = query.length <= 40 && !/\s/.test(query) ? { start: at, query } : null;
+		const nextMention = query.length <= 40 && !/\s/.test(query) ? { start: at, query } : null;
+		// Arrow navigation also fires keyup; preserve the same mention state so
+		// the reactive result reset does not move the highlight back to the top.
+		if (mention?.start !== nextMention?.start || mention?.query !== nextMention?.query) {
+			mention = nextMention;
+		}
 	}
 
 	function selectMention(candidate: (typeof candidates)[number]) {
@@ -131,19 +139,27 @@
 		queueMicrotask(() => textareaElement()?.setSelectionRange(pos, pos));
 	}
 
-	function serializeMentions(content: string) {
-		let out = content;
-		for (const item of mentions) {
-			const target = `@${item.name}`;
-			const index = out.indexOf(target);
-			if (
-				index >= 0 &&
-				(out[index + target.length] === undefined || /\s/.test(out[index + target.length]))
-			) {
-				out = out.slice(0, index) + `nostr:${item.npub}` + out.slice(index + target.length);
+	function escapeRegExp(value: string) {
+		return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	function mentionTokenRegex(name: string) {
+		return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|\\s|[^\\p{L}\\p{N}_-])`, 'iu');
+	}
+
+	function ensureMentionTracking(
+		content: string,
+		tracked: TrackedMention[],
+		candidatesList: MentionCandidate[]
+	): TrackedMention[] {
+		const map = new Map(tracked.map((m) => [m.name, m]));
+		for (const candidate of candidatesList) {
+			if (map.has(candidate.name)) continue;
+			if (mentionTokenRegex(candidate.name).test(content)) {
+				map.set(candidate.name, { name: candidate.name, npub: candidate.npub });
 			}
 		}
-		return out;
+		return [...map.values()];
 	}
 
 	// Circular character meter (Twitter-style): fills to the soft limit, then
@@ -268,7 +284,8 @@
 		if (!canPost || posting) return;
 		posting = true;
 		try {
-			await feed.post(serializeMentions(text), { sensitive, attachments });
+			const allMentions = ensureMentionTracking(text, mentions, candidates);
+			await feed.post(rewriteMentions(text, allMentions), { sensitive, attachments });
 			text = '';
 			mentions = [];
 			mention = null;
