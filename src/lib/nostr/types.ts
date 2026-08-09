@@ -84,6 +84,8 @@ export interface NotificationItem {
 	type: 'like' | 'comment' | 'repost' | 'follow' | 'mention' | 'zap';
 	pubkey: string;
 	targetId?: string;
+	/** Whether the activity targets an original note or a comment/reply. */
+	targetKind?: 'note' | 'comment';
 	content: string;
 	createdAt: number;
 	read: boolean;
@@ -155,6 +157,10 @@ export const NOSTR_KINDS = {
 	PRIVATE_DIRECT_MESSAGE: 14,
 	REPOST: 6,
 	CONTACT_LIST: 3,
+	/** NIP-51 pinned notes list. */
+	PINNED_NOTES: 10001,
+	/** NIP-56 report event. */
+	REPORT: 1984,
 	ZAP: 9735,
 	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */

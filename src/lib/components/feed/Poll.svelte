@@ -4,7 +4,10 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 
-	let { note }: { note: FeedNote } = $props();
+	let {
+		note,
+		onVoted = () => {}
+	}: { note: FeedNote; onVoted?: (note: FeedNote) => void } = $props();
 
 	const poll = $derived(note.poll!);
 
@@ -37,7 +40,8 @@
 		if (closed || voting) return;
 		voting = optionId;
 		try {
-			await feed.votePoll(note, optionId);
+			const updatedNote = await feed.votePoll(note, optionId);
+			onVoted(updatedNote);
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {

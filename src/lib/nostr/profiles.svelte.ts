@@ -16,6 +16,10 @@ type CachedProfileRecord = {
 	fetchedAt: number;
 };
 
+type EnsureOptions = {
+	force?: boolean;
+};
+
 class ProfileStore {
 	byPubkey = $state<Record<string, Profile>>({});
 	/** newest created_at seen per pubkey, to keep the freshest metadata. */
@@ -74,47 +78,55 @@ class ProfileStore {
 		return fetchedAt > 0 && Date.now() - fetchedAt < STALE_MS;
 	}
 
+	private applyProfileEvents(events: Array<{ pubkey: string; created_at: number; content: string }>) {
+		for (const ev of events) {
+			try {
+				const data = JSON.parse(ev.content) as Partial<Profile>;
+				const seen = this.latestAt.get(ev.pubkey) ?? -1;
+				if (ev.created_at > seen) {
+					this.latestAt.set(ev.pubkey, ev.created_at);
+					this.byPubkey = { ...this.byPubkey, [ev.pubkey]: { pubkey: ev.pubkey, ...data } };
+				}
+				this.fetchedAt.set(ev.pubkey, Date.now());
+			} catch {
+				/* ignore malformed metadata */
+			}
+		}
+	}
+
 	/** Schedule a fetch for any pubkeys we don't have yet (deduped). */
-	ensure(pubkeys: string[]) {
+	ensure(pubkeys: string[], options: EnsureOptions = {}) {
 		if (!browser) return;
 		this.load();
-		const missing = pubkeys.filter((pk) => {
+		const targets = pubkeys.filter((pk) => {
 			if (!pk || this.inflight.has(pk)) return false;
-			return !this.byPubkey[pk] || !this.isFresh(pk);
+			return options.force || !this.byPubkey[pk] || !this.isFresh(pk);
 		});
-		if (!missing.length) return;
-		missing.forEach((pk) => this.inflight.add(pk));
-		const applyProfileEvents = (events: Array<{ pubkey: string; created_at: number; content: string }>) => {
-				for (const ev of events) {
-					try {
-						const data = JSON.parse(ev.content) as Partial<Profile>;
-						const seen = this.latestAt.get(ev.pubkey) ?? -1;
-						if (ev.created_at > seen) {
-							this.latestAt.set(ev.pubkey, ev.created_at);
-							this.byPubkey = { ...this.byPubkey, [ev.pubkey]: { pubkey: ev.pubkey, ...data } };
-						}
-						this.fetchedAt.set(ev.pubkey, Date.now());
-					} catch {
-						/* ignore malformed metadata */
-					}
-				}
-			};
-		queryPrimaryFirst([{ kinds: [0], authors: missing }], {
+		if (!targets.length) return;
+		targets.forEach((pk) => this.inflight.add(pk));
+		queryPrimaryFirst(
+			targets.map((pubkey) => ({ kinds: [0], authors: [pubkey], limit: 1 })),
+			{
 			onSecondary: (events) => {
-				applyProfileEvents(events);
+				this.applyProfileEvents(events);
 				this.persist();
 			}
-		})
+			}
+		)
 			.then((events) => {
-				applyProfileEvents(events);
+				this.applyProfileEvents(events);
 			})
 			.finally(() => {
-				missing.forEach((pk) => {
+				targets.forEach((pk) => {
 					this.inflight.delete(pk);
 					if (!this.fetchedAt.has(pk)) this.fetchedAt.set(pk, Date.now());
 				});
 				this.persist();
 			});
+	}
+
+	refresh(pubkeys: string[]) {
+		this.ensure(pubkeys, { force: true });
 	}
 }
 

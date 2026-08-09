@@ -7,6 +7,7 @@
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -37,28 +38,6 @@
 			}
 		}
 		return '';
-	}
-
-	function toFeedNote(ev: {
-		id: string;
-		pubkey: string;
-		content: string;
-		created_at: number;
-		tags: string[][];
-	}): FeedNote {
-		const replyTag = ev.tags.find((tag) => tag[0] === 'e' && tag[3] === 'reply');
-		return {
-			id: ev.id,
-			pubkey: ev.pubkey,
-			content: ev.content,
-			createdAt: ev.created_at,
-			tags: ev.tags,
-			replyTo: replyTag?.[1],
-			reactions: [],
-			repostCount: 0,
-			zapCount: 0,
-			zapTotalSats: 0
-		};
 	}
 
 	async function loadNote(id: string) {

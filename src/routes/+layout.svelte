@@ -9,6 +9,7 @@
 	import { media } from '$lib/stores/media.svelte';
 	import { clearAccountCaches } from '$lib/stores/account-cache';
 	import { blocks } from '$lib/stores/blocks.svelte';
+	import { mutes } from '$lib/stores/mutes.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
@@ -213,12 +214,10 @@
 
 	onMount(() => {
 		if ('serviceWorker' in navigator) {
-			void navigator.serviceWorker
-				.register('/service-worker.js', { type: 'module' })
-				.catch((e) => {
+			void navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch((e) => {
 				/* PWA support is best-effort. */
-					console.error('Failed to register service worker:', e);
-				});
+				console.error('Failed to register service worker:', e);
+			});
 		}
 		preferences.load();
 		preferences.apply();
@@ -226,6 +225,7 @@
 		media.load();
 		profiles.load();
 		blocks.load();
+		mutes.load();
 		privacyNotificationSettings.load();
 		relays.load();
 		identity.load();

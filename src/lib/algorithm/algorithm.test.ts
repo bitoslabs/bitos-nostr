@@ -3,7 +3,7 @@ import type { FeedNote } from '$lib/nostr/types';
 import { algorithmPreferences } from './preferences.svelte';
 import { applyDiversity } from './diversity';
 import { buildAffinity } from './context';
-import { rankNotes, rankNotesWithBreakdown } from './pipeline';
+import { rankNotes, rankNotesWithBreakdown, threadMultiplier } from './pipeline';
 import {
 	interactionProfile,
 	extractTags
@@ -73,19 +73,44 @@ describe('algorithm pipeline', () => {
 	});
 
 	it('breakdown exposes the dominant contributing signal', () => {
-		algorithmPreferences.config.feed.signals.recency.enabled = false;
-		algorithmPreferences.config.feed.signals.affinity.enabled = false;
-		algorithmPreferences.config.feed.signals.zaps.enabled = false;
-
 		const popular = note('zapped', 'a', 5_000_000, {
 			zapTotalSats: 100_000
 		});
-		// Re-enable zaps only for this assertion.
-		algorithmPreferences.config.feed.signals.zaps.enabled = true;
-		algorithmPreferences.config.feed.signals.engagement.enabled = false;
+		// Isolate zaps so the explanation is deterministic as new signals are
+		// added to the default configuration.
+		for (const id of Object.keys(algorithmPreferences.config.feed.signals)) {
+			algorithmPreferences.config.feed.signals[id].enabled = id === 'zaps';
+			algorithmPreferences.config.feed.signals[id].weight = id === 'zaps' ? 1 : 0;
+		}
 
 		const { breakdown } = rankNotesWithBreakdown('feed', [popular], ctx());
 		expect(breakdown.get('zapped')?.topSignal?.signalId).toBe('zaps');
+	});
+
+	it('keeps original posts ahead of replies with equivalent signals', () => {
+		for (const id of Object.keys(algorithmPreferences.config.feed.signals)) {
+			algorithmPreferences.config.feed.signals[id].enabled = id === 'engagement';
+		}
+		const original = note('original', 'alice', 9_999_000, {
+			reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+		});
+		const reply = note('reply', 'bob', 9_999_000, {
+			replyTo: 'original',
+			reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+		});
+
+		const ranked = rankNotes('feed', [reply, original], ctx());
+		expect(ranked[0].id).toBe('original');
+	});
+
+	it('applies a stronger penalty to nested replies than direct replies', () => {
+		const original = note('original', 'alice', 3);
+		const reply = note('reply', 'bob', 2, { replyTo: original.id });
+		const nested = note('nested', 'carol', 1, { replyTo: reply.id });
+		const candidates = [original, reply, nested];
+
+		expect(threadMultiplier(reply, candidates, 'feed')).toBe(0.65);
+		expect(threadMultiplier(nested, candidates, 'feed')).toBe(0.4);
 	});
 });
 

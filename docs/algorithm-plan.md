@@ -84,7 +84,7 @@ export type SignalFn = (note: FeedNote, ctx: ScoringContext) => number;  // → 
 
 | Surface | Dominant signals | Rationale |
 |---|---|---|
-| **Feed** | recency 0.35, affinity 0.25, engagement 0.25, zaps 0.15 | Trusted circle — keep it close to chronological |
+| **Feed** | recency 0.35, affinity 0.25, topics 0.15, engagement 0.10, WoT 0.10, novelty 0.05 | Quality-first personalization that stays close to chronological |
 | **Reels** | engagement 0.45, zaps 0.30, recency 0.15, affinity 0.10 (off) | Discovery-oriented; dwell folded into engagement |
 | **Discover** | engagement 0.40, wot 0.30 (quality gate), zaps 0.20, recency 0.10 | WoT is a floor, not a popularity boost |
 
@@ -163,3 +163,7 @@ chip on feed posts.
 - **Weights are user-tunable** but ship with the defaults above. Config is
   additive — missing signal keys fall back to registry defaults, so there's no
   migration on future additions.
+- Main-feed replies remain discoverable but are scored at 0.65× for direct
+  replies and 0.4× for nested replies, so original posts remain primary.
+- Engagement uses age-adjusted velocity rather than lifetime totals, preventing
+  old viral notes from permanently dominating fresh relevant notes.

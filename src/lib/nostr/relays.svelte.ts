@@ -44,6 +44,7 @@ const URL_RE = /^wss?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/i;
 
 class RelayStore {
 	list = $state<RelayRecord[]>([...DEFAULTS]);
+	ready = $state(false);
 
 	private normalizeRecord(record: RelayRecord): RelayRecord {
 		return {
@@ -112,6 +113,7 @@ class RelayStore {
 			this.list = this.normalizePrimaries([...DEFAULTS]);
 			this.persist();
 		}
+		this.ready = true;
 	};
 
 	private persist = () => {

@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { npubEncode } from 'nostr-tools/nip19';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
@@ -13,8 +15,12 @@
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
-	import StoryRing from './StoryRing.svelte';
-	import PollComposer from './PollComposer.svelte';
+	import { shortKey } from '$lib/utils/format';
+import { rewriteMentions } from '$lib/utils/nip27';
+import StoryRing from './StoryRing.svelte';
+import PollComposer from './PollComposer.svelte';
+
+	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
 	let text = $state('');
 	let posting = $state(false);
@@ -32,11 +38,16 @@
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
 	let providerInitialized = $state(false);
+	let mention = $state<{ start: number; query: string } | null>(null);
+	let mentionIndex = $state(0);
+	type TrackedMention = { name: string; npub: string };
+	let mentions = $state<TrackedMention[]>([]);
 
 	function onTextareaFocus() {
 		expanded = true;
 	}
 	function onTextareaBlur(e: FocusEvent) {
+		setTimeout(() => (mention = null), 120);
 		// Stay expanded while focus moves between controls inside the composer
 		// (e.g. tapping Upload / Provider / Post). Collapse only when focus truly
 		// leaves and there is nothing drafted.
@@ -61,6 +72,95 @@
 			? `${text.length.toLocaleString()} / ${SOFT_LIMIT.toLocaleString()}`
 			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
 	);
+
+	const candidates = $derived.by(() => {
+		const map: Record<string, { pubkey: string; name: string; picture?: string; npub: string }> =
+			{};
+		for (const pubkey of [...contacts.following, ...Object.keys(profiles.byPubkey)]) {
+			if (!pubkey || pubkey === me?.pk || map[pubkey]) continue;
+			const profile = profiles.get(pubkey);
+			map[pubkey] = {
+				pubkey,
+				name: profile?.display_name || profile?.name || shortKey(pubkey),
+				picture: profile?.picture,
+				npub: npubEncode(pubkey)
+			};
+		}
+		return Object.values(map);
+	});
+	const filteredMentions = $derived.by(() => {
+		if (!mention) return [];
+		const query = mention.query.toLowerCase().trim();
+		return (
+			query
+				? candidates.filter(
+						(c) => c.name.toLowerCase().includes(query) || c.npub.toLowerCase().includes(query)
+					)
+				: candidates
+		).slice(0, 8);
+	});
+
+	$effect(() => {
+		void filteredMentions.length;
+		mentionIndex = 0;
+	});
+
+	function textareaElement() {
+		return document.getElementById('composer-input') as HTMLTextAreaElement | null;
+	}
+
+	function syncMention() {
+		const el = textareaElement();
+		if (!el) return;
+		const before = text.slice(0, el.selectionStart ?? text.length);
+		const at = before.lastIndexOf('@');
+		if (at < 0 || (at > 0 && !/\s/.test(before[at - 1]))) {
+			mention = null;
+			return;
+		}
+		const query = before.slice(at + 1);
+		const nextMention = query.length <= 40 && !/\s/.test(query) ? { start: at, query } : null;
+		// Arrow navigation also fires keyup; preserve the same mention state so
+		// the reactive result reset does not move the highlight back to the top.
+		if (mention?.start !== nextMention?.start || mention?.query !== nextMention?.query) {
+			mention = nextMention;
+		}
+	}
+
+	function selectMention(candidate: (typeof candidates)[number]) {
+		if (!mention) return;
+		const before = text.slice(0, mention.start);
+		const after = text.slice(mention.start + 1 + mention.query.length);
+		const insert = `@${candidate.name} `;
+		text = before + insert + after;
+		mentions = [...mentions, { name: candidate.name, npub: candidate.npub }];
+		mention = null;
+		const pos = before.length + insert.length;
+		queueMicrotask(() => textareaElement()?.setSelectionRange(pos, pos));
+	}
+
+	function escapeRegExp(value: string) {
+		return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+
+	function mentionTokenRegex(name: string) {
+		return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|\\s|[^\\p{L}\\p{N}_-])`, 'iu');
+	}
+
+	function ensureMentionTracking(
+		content: string,
+		tracked: TrackedMention[],
+		candidatesList: MentionCandidate[]
+	): TrackedMention[] {
+		const map = new Map(tracked.map((m) => [m.name, m]));
+		for (const candidate of candidatesList) {
+			if (map.has(candidate.name)) continue;
+			if (mentionTokenRegex(candidate.name).test(content)) {
+				map.set(candidate.name, { name: candidate.name, npub: candidate.npub });
+			}
+		}
+		return [...map.values()];
+	}
 
 	// Circular character meter (Twitter-style): fills to the soft limit, then
 	// shifts warm → red as the post crosses the soft / hard thresholds.
@@ -184,8 +284,11 @@
 		if (!canPost || posting) return;
 		posting = true;
 		try {
-			await feed.post(text, { sensitive, attachments });
+			const allMentions = ensureMentionTracking(text, mentions, candidates);
+			await feed.post(rewriteMentions(text, allMentions), { sensitive, attachments });
 			text = '';
+			mentions = [];
+			mention = null;
 			attachments = [];
 			sensitive = false;
 			expanded = false;
@@ -198,6 +301,25 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
+		if (mention && filteredMentions.length) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				mentionIndex =
+					(mentionIndex + (e.key === 'ArrowDown' ? 1 : -1) + filteredMentions.length) %
+					filteredMentions.length;
+				return;
+			}
+			if (e.key === 'Enter' || e.key === 'Tab') {
+				e.preventDefault();
+				selectMention(filteredMentions[mentionIndex]);
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				mention = null;
+				return;
+			}
+		}
 		if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
 			e.preventDefault();
 			submit();
@@ -216,7 +338,7 @@
 			<StoryRing pubkey={me.pk} interactive={false}>
 				<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={40} />
 			</StoryRing>
-			<div class="min-w-0 flex-1">
+			<div class="relative min-w-0 flex-1">
 				<Textarea
 					id="composer-input"
 					bind:value={text}
@@ -227,8 +349,56 @@
 					onfocus={onTextareaFocus}
 					onblur={onTextareaBlur}
 					maxlength={HARD_LIMIT + 1000}
+					oninput={syncMention}
+					onclick={syncMention}
+					onkeyup={syncMention}
 					class="min-h-[56px] border-transparent bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-[var(--ui-text-dimmed)] focus:border-transparent"
 				/>
+				{#if mention && filteredMentions.length}
+					<div
+						class="absolute bottom-full left-0 z-40 mb-1 w-64 max-w-full overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] shadow-[var(--shadow-pop)]"
+						role="listbox"
+					>
+						{#each filteredMentions as candidate, i (candidate.pubkey)}
+							<button
+								type="button"
+								onpointerdown={(event) => {
+									event.preventDefault();
+									selectMention(candidate);
+								}}
+								onclick={() => selectMention(candidate)}
+								onmouseenter={() => (mentionIndex = i)}
+								class="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors {i ===
+								mentionIndex
+									? 'bg-[var(--interactive-hover-bg)]'
+									: ''}"
+								role="option"
+								aria-selected={i === mentionIndex}
+							>
+								<Avatar
+									pubkey={candidate.pubkey}
+									name={candidate.name}
+									picture={candidate.picture}
+									size={22}
+								/>
+								<span class="min-w-0 flex-1">
+									<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]"
+										>{candidate.name}</span
+									>
+									<span class="block truncate font-mono text-[10px] text-[var(--ui-text-dimmed)]"
+										>{shortKey(candidate.npub, 10, 6)}</span
+									>
+								</span>
+								{#if i === mentionIndex}
+									<Icon
+										name="i-lucide-corner-down-left"
+										class="size-3.5 text-[var(--ui-text-dimmed)]"
+									/>
+								{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
 				{#if overSoftLimit}
 					<p
 						class="mt-2 flex items-center gap-1.5 text-[11.5px] {overHardLimit
@@ -283,7 +453,7 @@
 								<button
 									type="button"
 									onclick={() => removeAttachment(i)}
-									class="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition hover:bg-black/85 focus:opacity-100 group-hover:opacity-100"
+									class="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition group-hover:opacity-100 hover:bg-black/85 focus:opacity-100"
 									aria-label="Remove attachment"
 								>
 									<Icon name="i-lucide-x" class="size-3.5" />
@@ -300,7 +470,9 @@
 				{#if uploading}
 					<p class="mt-2.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-primary-500">
 						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-						Uploading via {providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)}…
+						Uploading via {providerLabel(
+							selectedProvider === 'none' ? 'server' : selectedProvider
+						)}…
 					</p>
 				{/if}
 			</div>
@@ -432,12 +604,7 @@
 
 				{#if expanded && text.length > 0}
 					<div class="relative grid size-9 shrink-0 place-items-center" title={countLabel}>
-						<svg
-							class="size-9 -rotate-90"
-							viewBox="0 0 36 36"
-							fill="none"
-							aria-hidden="true"
-						>
+						<svg class="size-9 -rotate-90" viewBox="0 0 36 36" fill="none" aria-hidden="true">
 							<circle
 								cx="18"
 								cy="18"

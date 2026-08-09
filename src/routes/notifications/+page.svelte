@@ -3,11 +3,20 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { dayLabel, shortKey, timeAgo, timeFull } from '$lib/utils/format';
+	import {
+		cleanNotificationPreview,
+		extractNotificationMedia,
+		type ImageMeta
+	} from '$lib/utils/imeta';
+	import { parseContent } from '$lib/utils/note-content';
+	import { decode as decodeBech32 } from 'nostr-tools/nip19';
 	import type { NotificationItem } from '$lib/nostr/types';
 
 	type Filter = 'all' | 'unread' | 'mention';
@@ -38,6 +47,12 @@
 			},
 			zap: { icon: 'i-lucide-zap', color: 'var(--color-warm-500)', verb: 'sent you a zap' }
 		};
+
+	function verbFor(item: NotificationItem) {
+		if (item.type === 'like' && item.targetKind === 'comment') return 'liked your comment';
+		if (item.type === 'comment' && item.targetKind === 'comment') return 'replied to your comment';
+		return TYPE_META[item.type].verb;
+	}
 
 	const FILTER_LABELS: { key: Filter; label: string }[] = [
 		{ key: 'all', label: 'All' },
@@ -131,6 +146,36 @@
 		return profile?.display_name || profile?.name || shortKey(pubkey);
 	}
 
+	/** Whether an actor has a verified NIP-05 handle (for the badge check). */
+	function hasNip05(pubkey: string): boolean {
+		return !!profiles.get(pubkey)?.nip05;
+	}
+
+	/** Resolve inline `nostr:npub1…` / `nprofile1…` mentions to `@name` plain
+	 *  text (no links — the whole card is already a single anchor). */
+	function resolveMentions(text: string): string {
+		return parseContent(text)
+			.map((token) => {
+				if (token.type !== 'nostr') return token.value;
+				const raw = token.value.startsWith('nostr:') ? token.value.slice(6) : token.value;
+				let decoded;
+				try {
+					decoded = decodeBech32(raw);
+				} catch {
+					return shortKey(raw, 12, 6);
+				}
+				let pubkey: string | undefined;
+				if (decoded.type === 'npub') pubkey = decoded.data as string;
+				else if (decoded.type === 'nprofile') pubkey = (decoded.data as { pubkey: string }).pubkey;
+				if (pubkey) {
+					const profile = profiles.get(pubkey);
+					return '@' + (profile?.display_name || profile?.name || shortKey(pubkey));
+				}
+				return shortKey(raw, 12, 6);
+			})
+			.join('');
+	}
+
 	/** "Alice, Bob and 3 others" — unique by pubkey, capped for readout. */
 	function actorSummary(items: NotificationItem[]): { names: string; extra: number } {
 		const names: string[] = [];
@@ -145,12 +190,31 @@
 		return { names: names.join(', '), extra };
 	}
 
+	/** Cached media extraction per notification so live re-renders stay cheap.
+	 *  A plain object (not SvelteMap) on purpose: it's a memo, never rendered. */
+	const mediaCache: Record<string, ImageMeta[]> = {};
+
 	function preview(item: NotificationItem) {
 		if (item.type === 'like') return item.content || '❤️';
 		if (item.type === 'follow') return '';
 		if (item.type === 'zap') return item.content || '';
-		const body = item.content.trim().replace(/\s+/g, ' ');
+		// Strip image/video URLs (and any imeta-referenced media) so the preview
+		// reads as prose, then resolve inline mentions to readable @names.
+		const body = resolveMentions(
+			cleanNotificationPreview({
+				content: item.content,
+				tags: item.raw?.tags ?? []
+			})
+		);
 		return body.length > 140 ? `${body.slice(0, 140).trimEnd()}…` : body;
+	}
+
+	function mediaFor(item: NotificationItem): ImageMeta[] {
+		const cached = mediaCache[item.id];
+		if (cached) return cached;
+		const parsed = item.raw ? extractNotificationMedia(item.raw) : [];
+		mediaCache[item.id] = parsed;
+		return parsed;
 	}
 
 	function targetLink(item: NotificationItem) {
@@ -390,7 +454,7 @@
 										href={targetLink(item)}
 										onclick={() => openRow(item)}
 										class="flex items-start gap-3 p-4 pr-14"
-										aria-label="{actorName(item.pubkey)} {meta.verb}"
+										aria-label="{actorName(item.pubkey)} {verbFor(item)}"
 									>
 										<div class="relative shrink-0">
 											{#if row.kind === 'group'}
@@ -398,7 +462,8 @@
 												<div class="flex -space-x-3">
 													{#each actors as g, i (g.id)}
 														<div
-															class="relative z-{10 - i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+															class="relative z-{10 -
+																i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
 														>
 															<Avatar
 																pubkey={g.pubkey}
@@ -448,10 +513,22 @@
 																and {extra} other{extra > 1 ? 's' : ''}</span
 															>
 														{/if}
-														<span class="text-[var(--ui-text-muted)]"> {meta.verb}</span>
+														<span class="text-[var(--ui-text-muted)]"> {verbFor(row.first)}</span>
 													{:else}
 														<span class="font-bold">{actorName(item.pubkey)}</span>
-														<span class="text-[var(--ui-text-muted)]"> {meta.verb}</span>
+														{#if hasNip05(item.pubkey)}
+															<Icon
+																name="i-lucide-badge-check"
+																class="size-3.5 shrink-0 text-primary-500"
+															/>
+														{/if}
+														{#if identity.current?.pk === item.pubkey}
+															<span
+																class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
+																>you</span
+															>
+														{/if}
+														<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
 														{#if item.type === 'zap' && item.amountSats}
 															<span
 																class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
@@ -490,6 +567,19 @@
 											{/if}
 										</div>
 									</a>
+
+									{#if row.kind === 'single' && mediaFor(item).length}
+										{@const media = mediaFor(item)}
+										<!-- Media is a sibling of the row <a> so its zoom buttons don't nest
+										     inside the link (matches PostCard's separation pattern). -->
+										<div class="pr-4 pb-4 pl-[72px]">
+											<NotificationMedia
+												{media}
+												tags={item.raw?.tags ?? []}
+												content={item.content}
+											/>
+										</div>
+									{/if}
 
 									<!-- Overflow actions (sibling of <a>, so no nested interactives) -->
 									<div class="absolute top-2.5 right-2.5 z-20 shrink-0">

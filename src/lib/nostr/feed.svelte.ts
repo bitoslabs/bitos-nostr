@@ -10,9 +10,12 @@ import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
+import { mutes } from '$lib/stores/mutes.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
+import { toFeedNote } from './feed-note';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
+import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
 
 const INITIAL_LIMIT = 150;
@@ -39,7 +42,8 @@ function isReaction(content: string): boolean {
 /** A kind-1 note that replies to a story (kind 30315) — kept out of the global feed. */
 function isStoryReply(ev: { tags: string[][] }): boolean {
 	const hasStoryA = ev.tags.some(
-		(t) => t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith(`${NOSTR_KINDS.STORY_STATUS}:`)
+		(t) =>
+			t[0] === 'a' && typeof t[1] === 'string' && t[1].startsWith(`${NOSTR_KINDS.STORY_STATUS}:`)
 	);
 	if (!hasStoryA) return false;
 	return ev.tags.some((t) => t[0] === 'e');
@@ -54,7 +58,9 @@ export function visibleInsertIndex(
 	const preferNewestOnEqual = options.preferNewestOnEqual ?? false;
 	while (
 		idx < notes.length &&
-		(preferNewestOnEqual ? notes[idx].createdAt > note.createdAt : notes[idx].createdAt >= note.createdAt)
+		(preferNewestOnEqual
+			? notes[idx].createdAt > note.createdAt
+			: notes[idx].createdAt >= note.createdAt)
 	) {
 		idx++;
 	}
@@ -191,7 +197,7 @@ class FeedStore {
 		},
 		options: { queueIfLive?: boolean; preferNewestOnEqual?: boolean } = {}
 	) {
-		if (blocks.has(ev.pubkey)) return;
+		if (blocks.has(ev.pubkey) || mutes.has(ev.pubkey)) return;
 		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
@@ -288,7 +294,10 @@ class FeedStore {
 	}
 
 	private bufferReaction(target: string, ev: ReactionEvent) {
-		if (this.bufferedReactions.size >= MAX_BUFFERED_REACTIONS && !this.bufferedReactions.has(target)) {
+		if (
+			this.bufferedReactions.size >= MAX_BUFFERED_REACTIONS &&
+			!this.bufferedReactions.has(target)
+		) {
 			this.bufferedReactions.delete(this.bufferedReactions.keys().next().value!);
 		}
 		const buffered = this.bufferedReactions.get(target) ?? [];
@@ -531,6 +540,29 @@ class FeedStore {
 		this.insertVisible(note);
 	}
 
+	/** Reload a note's threaded replies and their reactions from the relays. */
+	async refreshReplies(noteId: string) {
+		if (!browser) return;
+		const replyEvents = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [noteId], limit: 300 }
+		]);
+		const replies = replyEvents
+			.map(toFeedNote)
+			.filter(
+				(reply) =>
+					reply.replyTo === noteId ||
+					reply.tags.some((tag) => tag[0] === 'e' && tag[1] === noteId && tag[3] === 'root')
+			);
+		const replyIds = replies.map((reply) => reply.id);
+		const reactions = replyIds.length
+			? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 1000 }])
+			: [];
+		const hydrated = applyActivityToNotes(replies, reactions, identity.current?.pk);
+		for (const reply of hydrated) this.upsertNote(reply);
+		profiles.ensure(hydrated.map((reply) => reply.pubkey));
+		return hydrated.length;
+	}
+
 	async deleteNote(note: FeedNote) {
 		if (!browser) return;
 		const id = identity.current;
@@ -590,6 +622,11 @@ class FeedStore {
 				tags.push(['imeta', ...imeta]);
 			}
 		}
+		// NIP-27: back every inline `nostr:` mention with matching p / e tags so
+		// the referenced profiles / notes are notified.
+		const { pubkeys, noteIds } = extractMentionEntities(body);
+		for (const pubkey of pubkeys) tags.push(['p', pubkey]);
+		for (const eventId of noteIds) tags.push(['e', eventId]);
 		if (!body) throw new Error('Nothing to post');
 		if (body.length > MAX_TEXT_NOTE_CHARS) {
 			throw new Error(
@@ -647,12 +684,12 @@ class FeedStore {
 	 * option id and which references the poll note via an `e` tag. Re-voting is
 	 * allowed; the latest vote per pubkey wins.
 	 */
-	async votePoll(note: FeedNote, optionId: string): Promise<void> {
-		if (!browser) return;
+	async votePoll(note: FeedNote, optionId: string): Promise<FeedNote> {
+		if (!browser) return note;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
 		if (!note.poll?.options.some((o) => o.id === optionId)) throw new Error('Invalid option');
-		if (note.poll.myVote === optionId) return; // already voted this option
+		if (note.poll.myVote === optionId) return note; // already voted this option
 		const event = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.REACTION,
@@ -673,16 +710,39 @@ class FeedStore {
 			content: optionId,
 			created_at: event.created_at
 		});
+
+		// Search/profile pages render notes outside this store. Return the same
+		// optimistic update so those cards can update immediately as well.
+		const previousVote = note.poll.myVote;
+		const votes = { ...note.poll.votes };
+		if (previousVote) votes[previousVote] = Math.max(0, (votes[previousVote] ?? 0) - 1);
+		votes[optionId] = (votes[optionId] ?? 0) + 1;
+		return {
+			...note,
+			poll: {
+				...note.poll,
+				votes,
+				totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
+				myVote: optionId
+			}
+		};
 	}
 
 	/** Publish a kind-1 reply to an existing note using NIP-10 style tags. */
-	async reply(note: FeedNote, content: string): Promise<string> {
+	async reply(
+		note: FeedNote,
+		content: string,
+		options: { attachments?: PostMediaAttachment[]; extraPubkeys?: string[] } = {}
+	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
 		const text = content.trim();
-		if (!text) throw new Error('Nothing to reply');
-		if (text.length > MAX_TEXT_NOTE_CHARS) {
+		const attachments = (options.attachments ?? []).filter((attachment) => attachment?.url);
+		const attachmentLines = attachments.map((attachment) => attachment.url.trim()).filter(Boolean);
+		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
+		if (!body) throw new Error('Nothing to reply');
+		if (body.length > MAX_TEXT_NOTE_CHARS) {
 			throw new Error(`Replies are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
 		}
 
@@ -690,18 +750,39 @@ class FeedStore {
 			note.tags.find((tag) => tag[0] === 'e' && tag[3] === 'root')?.[1] ?? note.replyTo ?? note.id;
 		const taggedPubkeys = [
 			note.pubkey,
-			...note.tags.filter((tag) => tag[0] === 'p' && tag[1]).map((tag) => tag[1])
-		].filter((pubkey, index, all) => all.indexOf(pubkey) === index);
+			...note.tags.filter((tag) => tag[0] === 'p' && tag[1]).map((tag) => tag[1]),
+			...(options.extraPubkeys ?? [])
+		].filter((pubkey, index, all) => pubkey && all.indexOf(pubkey) === index);
+
+		const tags: string[][] = [
+			['e', rootId, '', 'root'],
+			['e', note.id, '', 'reply'],
+			...taggedPubkeys.map((pubkey) => ['p', pubkey])
+		];
+		for (const attachment of attachments) {
+			if (attachment.kind === 'image' || attachment.kind === 'video') {
+				const imeta = [`url ${attachment.url}`];
+				if (attachment.mimeType) imeta.push(`m ${attachment.mimeType}`);
+				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
+				tags.push(['imeta', ...imeta]);
+			}
+		}
+		// NIP-27: tag profiles / notes referenced by inline `nostr:` mentions,
+		// skipping the thread's own root / reply ids to avoid duplicate e-tags.
+		const { pubkeys, noteIds } = extractMentionEntities(body);
+		for (const pubkey of pubkeys) {
+			if (!taggedPubkeys.includes(pubkey)) tags.push(['p', pubkey]);
+		}
+		for (const eventId of noteIds) {
+			if (eventId !== rootId && eventId !== note.id) tags.push(['e', eventId]);
+		}
+
 		const event = finalizeEvent(
 			{
 				kind: NOSTR_KINDS.TEXT_NOTE,
-				content: text,
+				content: body,
 				created_at: Math.floor(Date.now() / 1000),
-				tags: [
-					['e', rootId, '', 'root'],
-					['e', note.id, '', 'reply'],
-					...taggedPubkeys.map((pubkey) => ['p', pubkey])
-				]
+				tags
 			},
 			hexToBytes(id.sk)
 		);
@@ -744,7 +825,7 @@ class FeedStore {
 				content: emoji,
 				created_at: Math.floor(Date.now() / 1000),
 				tags: [
-					['e', note.id],
+					['e', note.id, '', note.replyTo ? 'reply' : ''],
 					['p', note.pubkey]
 				]
 			},
