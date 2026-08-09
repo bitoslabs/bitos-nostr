@@ -198,6 +198,23 @@
 			{#each publicAuthors as author (author.pubkey)}
 				{@render storyCard(author)}
 			{/each}
+			{#if stories.publicHasMore}
+				<button
+					type="button"
+					onclick={() => stories.loadMorePublic()}
+					disabled={stories.publicLoading || stories.loading}
+					class="flex h-[200px] w-[112px] shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-[var(--ui-border)] px-3 text-center text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500/40 hover:text-primary-500 disabled:cursor-wait disabled:opacity-60"
+					aria-label="Load more public stories"
+				>
+					{#if stories.publicLoading}
+						<Icon name="i-lucide-loader-circle" class="size-5 animate-spin text-accent-500" />
+						Loading more
+					{:else}
+						<Icon name="i-lucide-plus" class="size-5 text-accent-500" />
+						Load more
+					{/if}
+				</button>
+			{/if}
 		{/if}
 
 		{#if storyAuthors.length === 0 && !stories.loading}
