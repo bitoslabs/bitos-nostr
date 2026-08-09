@@ -98,6 +98,22 @@ describe('message protocol helpers', () => {
 		expect(missed?.outcome).toBe('missed');
 	});
 
+	it('round-trips ephemeral call state (raise hand)', () => {
+		const parsed = parseCallSignal(
+			callSignalText({
+				callId: 'call-2',
+				type: 'state',
+				kind: 'voice',
+				from: ALICE,
+				groupId: group.id,
+				state: 'hand-up'
+			})
+		);
+		expect(parsed?.type).toBe('state');
+		expect(parsed?.state).toBe('hand-up');
+		expect(parsed?.groupId).toBe(group.id);
+	});
+
 	it('detects message media and previews attachments', () => {
 		expect(mediaFromMessage('see https://cdn.example.com/photo.png')?.kind).toBe('image');
 		expect(mediaFromMessage('clip https://cdn.example.com/video.mp4')?.kind).toBe('video');

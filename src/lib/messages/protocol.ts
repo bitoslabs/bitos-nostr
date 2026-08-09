@@ -74,8 +74,9 @@ export type GroupControlPayload = GroupInvite & {
 	members?: string[];
 };
 
-export type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log';
+export type CallSignalType = 'offer' | 'answer' | 'ice' | 'end' | 'log' | 'state';
 export type CallOutcome = 'ended' | 'missed' | 'declined';
+export type CallHandState = 'hand-up' | 'hand-down';
 export type CallSignal = {
 	callId: string;
 	type: CallSignalType;
@@ -86,6 +87,8 @@ export type CallSignal = {
 	candidate?: string;
 	duration?: number;
 	outcome?: CallOutcome;
+	/** Ephemeral in-call state (e.g. raised hand). Only for `type: 'state'`. */
+	state?: CallHandState;
 };
 
 export const GROUPS_KEY_PREFIX = 'bitos:message-groups';
@@ -279,6 +282,7 @@ export function callSignalText(signal: CallSignal) {
 	if (signal.candidate) params.set('candidate', signal.candidate);
 	if (typeof signal.duration === 'number') params.set('duration', String(signal.duration));
 	if (signal.outcome) params.set('outcome', signal.outcome);
+	if (signal.state) params.set('state', signal.state);
 	return [
 		`${signal.kind === 'video' ? 'Video' : 'Voice'} call signal on BitOS.`,
 		'Open BitOS Messages to continue the call.',
@@ -298,7 +302,7 @@ export function parseCallSignal(content: string): CallSignal | null {
 		if (
 			!callIdValue ||
 			!type ||
-			!['offer', 'answer', 'ice', 'end', 'log'].includes(type) ||
+			!['offer', 'answer', 'ice', 'end', 'log', 'state'].includes(type) ||
 			!kind ||
 			!['voice', 'video'].includes(kind) ||
 			!from ||
@@ -317,6 +321,9 @@ export function parseCallSignal(content: string): CallSignal | null {
 			duration: Number(params.get('duration') ?? 0) || undefined,
 			outcome: ['ended', 'missed', 'declined'].includes(params.get('outcome') ?? '')
 				? (params.get('outcome') as CallOutcome)
+				: undefined,
+			state: ['hand-up', 'hand-down'].includes(params.get('state') ?? '')
+				? (params.get('state') as CallHandState)
 				: undefined
 		};
 	} catch {

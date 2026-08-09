@@ -55,6 +55,13 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { confirms } from '$lib/stores/confirms.svelte';
+	import { callSettings } from '$lib/stores/call-settings.svelte';
+	import {
+		playConnectedTone,
+		playOutgoingTone,
+		playRingtone,
+		stopRingtone
+	} from '$lib/calls/ringtone';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 	import { canReceiveNewCall, canStartNewCall } from '$lib/messages/call-admission';
 	import {
@@ -163,6 +170,24 @@
 	let remoteAudioEl: HTMLAudioElement | undefined = $state();
 	let callMediaPanel: HTMLDivElement | undefined = $state();
 	let callFullscreen = $state(false);
+	// Self-view (local video) drag-to-reposition state.
+	let selfViewPos = $state<{ x: number; y: number } | null>(null);
+	let selfViewDrag = $state<{ ox: number; oy: number } | null>(null);
+	// Background blur (soft-focus privacy filter) state.
+	let backgroundBlurred = $state(false);
+	let blurCanvas: HTMLCanvasElement | null = null;
+	let blurCtx: CanvasRenderingContext2D | null = null;
+	let blurStream: MediaStream | null = null;
+	let blurVideo: HTMLVideoElement | null = null;
+	let blurAnimFrame: number | null = null;
+	// Raise-hand (group calls) state.
+	let raisedHands = $state<Set<string>>(new Set());
+	let selfHandRaised = $state(false);
+	// Pre-call network heads-up.
+	let networkWarning = $state('');
+	// Push-to-talk (hold Space) + first-time shortcuts hint.
+	let pushToTalkActive = false;
+	let showShortcutsHint = $state(false);
 	const processedGroupMessageIds = new Set<string>();
 	const processedGroupControlIds = new Set<string>();
 	const processedCallSignalIds = new Set<string>();
@@ -487,6 +512,11 @@
 		remoteStreamsByPeer.delete(peer);
 		pendingIceCandidatesByPeer.delete(peer);
 		remoteParticipants = remoteParticipants.filter((participant) => participant.peer !== peer);
+		if (raisedHands.has(peer)) {
+			const next = new Set(raisedHands);
+			next.delete(peer);
+			raisedHands = next;
+		}
 		if (!peerConnections.size) {
 			callState = 'reconnecting';
 			callError = 'All group participants disconnected';
@@ -516,6 +546,8 @@
 		closePeerConnection();
 		stopLocalMedia();
 		stopScreenStream();
+		stopBlur();
+		stopRingtone();
 		remoteStream = null;
 		pendingIceCandidates = [];
 		activeCall = null;
@@ -543,6 +575,12 @@
 		cameraEnabled = true;
 		showCall = false;
 		callMinimized = false;
+		backgroundBlurred = false;
+		raisedHands = new Set();
+		selfHandRaised = false;
+		resetSelfView();
+		networkWarning = '';
+		pushToTalkActive = false;
 		attachCallMedia();
 	}
 
@@ -1192,6 +1230,247 @@
 		} catch (e) {
 			callError = mediaErrorMessage(e, 'video');
 			toasts.error(callError);
+		}
+	}
+
+	/* ---------- Self-view drag-to-reposition ---------- */
+	function selfViewDown(e: PointerEvent) {
+		const panel = callMediaPanel?.getBoundingClientRect();
+		if (!panel) return;
+		const target = e.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		selfViewDrag = { ox: e.clientX - rect.left, oy: e.clientY - rect.top };
+		try {
+			target.setPointerCapture(e.pointerId);
+		} catch {
+			/* pointer capture may be unavailable */
+		}
+	}
+
+	function selfViewMove(e: PointerEvent) {
+		if (!selfViewDrag || !callMediaPanel) return;
+		const panel = callMediaPanel.getBoundingClientRect();
+		const target = e.currentTarget as HTMLElement;
+		const w = target.offsetWidth;
+		const h = target.offsetHeight;
+		const margin = 8;
+		let x = e.clientX - panel.left - selfViewDrag.ox;
+		let y = e.clientY - panel.top - selfViewDrag.oy;
+		x = Math.max(margin, Math.min(x, panel.width - w - margin));
+		y = Math.max(margin, Math.min(y, panel.height - h - margin));
+		selfViewPos = { x, y };
+	}
+
+	function selfViewUp(e: PointerEvent) {
+		selfViewDrag = null;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch {
+			/* noop */
+		}
+	}
+
+	function resetSelfView() {
+		selfViewPos = null;
+		selfViewDrag = null;
+	}
+
+	/* ---------- Background blur (soft-focus privacy filter) ---------- */
+	function stopBlur() {
+		if (blurAnimFrame) cancelAnimationFrame(blurAnimFrame);
+		blurAnimFrame = null;
+		blurStream?.getTracks().forEach((track) => track.stop());
+		blurStream = null;
+		blurCanvas = null;
+		blurCtx = null;
+		if (blurVideo) blurVideo.srcObject = null;
+	}
+
+	async function toggleBackgroundBlur() {
+		if (activeCall !== 'video' || !browser) return;
+		const camera = localStream?.getVideoTracks()[0];
+		if (!camera) return;
+		if (backgroundBlurred) {
+			stopBlur();
+			for (const pc of callPeerConnections()) {
+				const sender = pc.getSenders().find((item) => item.track?.kind === 'video');
+				if (sender) await sender.replaceTrack(camera);
+			}
+			backgroundBlurred = false;
+			return;
+		}
+		try {
+			if (!blurVideo) {
+				blurVideo = document.createElement('video');
+				blurVideo.muted = true;
+				blurVideo.playsInline = true;
+			}
+			blurVideo.srcObject = new MediaStream([camera]);
+			await blurVideo.play();
+			blurCanvas = document.createElement('canvas');
+			blurCanvas.width = 640;
+			blurCanvas.height = 360;
+			const ctx = blurCanvas.getContext('2d');
+			if (!ctx || typeof blurCanvas.captureStream !== 'function') {
+				stopBlur();
+				toasts.info('Background blur is not supported in this browser');
+				return;
+			}
+			blurCtx = ctx;
+			const draw = () => {
+				if (!blurCtx || !blurVideo || !blurCanvas) return;
+				blurCtx.save();
+				blurCtx.filter = 'blur(10px)';
+				blurCtx.drawImage(blurVideo, 0, 0, blurCanvas.width, blurCanvas.height);
+				blurCtx.restore();
+				blurAnimFrame = requestAnimationFrame(draw);
+			};
+			draw();
+			blurStream = blurCanvas.captureStream(24);
+			const blurTrack = blurStream.getVideoTracks()[0];
+			if (!blurTrack) {
+				stopBlur();
+				return;
+			}
+			for (const pc of callPeerConnections()) {
+				const sender = pc.getSenders().find((item) => item.track?.kind === 'video');
+				if (sender) await sender.replaceTrack(blurTrack);
+			}
+			backgroundBlurred = true;
+		} catch {
+			stopBlur();
+			callError = 'Could not enable background blur';
+			toasts.error(callError);
+		}
+	}
+
+	/* ---------- Raise hand (group calls) ---------- */
+	async function broadcastCallState(state: 'hand-up' | 'hand-down') {
+		const me = identity.current;
+		const group = groupThreads.find((thread) => thread.id === callGroupId);
+		if (!me || !group || !callId || !activeCall) return;
+		const recipients = groupCallRecipients(group);
+		await Promise.allSettled(
+			recipients.map((peer) =>
+				sendCallSignal(peer, {
+					callId,
+					type: 'state',
+					kind: activeCall as CallKind,
+					from: me.pk,
+					groupId: callGroupId || undefined,
+					state
+				})
+			)
+		);
+	}
+
+	async function toggleRaiseHand() {
+		if (!callGroupId || callState !== 'connected') return;
+		selfHandRaised = !selfHandRaised;
+		const next = new Set(raisedHands);
+		const me = identity.current?.pk;
+		if (selfHandRaised && me) next.add(me);
+		else if (me) next.delete(me);
+		raisedHands = next;
+		await broadcastCallState(selfHandRaised ? 'hand-up' : 'hand-down');
+		toasts.info(selfHandRaised ? 'You raised your hand' : 'Hand lowered');
+	}
+
+	function applyCallStateSignal(from: string, state: 'hand-up' | 'hand-down' | undefined) {
+		const next = new Set(raisedHands);
+		if (state === 'hand-up') {
+			if (!next.has(from)) {
+				next.add(from);
+				toasts.info(`${displayNameForPubkey(from)} raised their hand`);
+			}
+		} else if (state === 'hand-down') {
+			next.delete(from);
+		}
+		raisedHands = next;
+	}
+
+	/* ---------- Pre-call network heads-up ---------- */
+	type NetworkInfo = {
+		effectiveType?: string;
+		downlink?: number;
+		rtt?: number;
+	};
+
+	function refreshNetworkWarning() {
+		if (!browser) {
+			networkWarning = '';
+			return;
+		}
+		const conn = (navigator as unknown as { connection?: NetworkInfo }).connection;
+		if (!conn) {
+			networkWarning = '';
+			return;
+		}
+		const slowTypes = ['slow-2g', '2g'];
+		if (conn.effectiveType && slowTypes.includes(conn.effectiveType)) {
+			networkWarning = `Slow network (${conn.effectiveType}) — call quality may be poor.`;
+			return;
+		}
+		const rtt = typeof conn.rtt === 'number' ? conn.rtt : 0;
+		const downlink = typeof conn.downlink === 'number' ? conn.downlink : 0;
+		if (rtt > 0 && rtt > 600) {
+			networkWarning = `High latency (~${Math.round(rtt)} ms) detected — call may lag.`;
+			return;
+		}
+		if (downlink > 0 && downlink < 0.5) {
+			networkWarning = 'Low bandwidth detected — video may be choppy.';
+			return;
+		}
+		networkWarning = '';
+	}
+
+	/* ---------- Keyboard shortcuts ---------- */
+	function isTypingTarget() {
+		if (!browser) return false;
+		const el = document.activeElement as HTMLElement | null;
+		if (!el) return false;
+		const tag = el.tagName;
+		return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+	}
+
+	function onCallKeydown(e: KeyboardEvent) {
+		if (!showCall || !activeCall) return;
+		if (e.key === 'Escape') {
+			if (callFullscreen) {
+				void toggleCallFullscreen();
+				return;
+			}
+			if (!callMinimized) callMinimized = true;
+			return;
+		}
+		if (isTypingTarget() || e.repeat) return;
+		const key = e.key.toLowerCase();
+		if (key === 'm') {
+			e.preventDefault();
+			toggleMic();
+		} else if (key === 'v') {
+			e.preventDefault();
+			if (activeCall === 'video') toggleCamera();
+			else void switchToVideo();
+		} else if (key === 'h' && callGroupId) {
+			e.preventDefault();
+			void toggleRaiseHand();
+		} else if (key === 'b' && activeCall === 'video') {
+			e.preventDefault();
+			void toggleBackgroundBlur();
+		} else if (e.code === 'Space') {
+			e.preventDefault();
+			if (!micEnabled) {
+				toggleMic();
+				pushToTalkActive = true;
+			}
+		}
+	}
+
+	function onCallKeyup(e: KeyboardEvent) {
+		if (e.code === 'Space' && pushToTalkActive) {
+			pushToTalkActive = false;
+			if (micEnabled) toggleMic();
 		}
 	}
 
@@ -1999,6 +2278,7 @@
 			callTitle = activeGroup.name;
 			callError = '';
 			showPreCall = true;
+			refreshNetworkWarning();
 			try {
 				await ensureLocalMedia(kind);
 				await refreshMediaPermissions();
@@ -2018,6 +2298,7 @@
 		callTitle = '';
 		callError = '';
 		showPreCall = true;
+		refreshNetworkWarning();
 		try {
 			await ensureLocalMedia(kind);
 			await refreshMediaPermissions();
@@ -2264,6 +2545,10 @@
 			return;
 		}
 		if (signal.callId !== callId) return;
+		if (signal.type === 'state') {
+			applyCallStateSignal(signal.from, signal.state);
+			return;
+		}
 		const groupPeerConnection = signal.groupId
 			? (peerConnections.get(signal.from) ?? (signal.from === callPeer ? peerConnection : null))
 			: null;
@@ -2588,11 +2873,42 @@
 		}, CALL_RECONNECT_TIMEOUT_MS);
 		return () => clearTimeout(timer);
 	});
+	// Ringtone / connection cues — driven entirely by call state + the sound setting.
+	$effect(() => {
+		const sounds = callSettings.state.sounds;
+		const state = callState;
+		if (!sounds) {
+			stopRingtone();
+			return;
+		}
+		if (state === 'incoming') {
+			playRingtone();
+		} else {
+			stopRingtone();
+			if (state === 'outgoing') playOutgoingTone();
+			else if (state === 'connected') playConnectedTone();
+		}
+	});
+	// First-run keyboard-shortcut hint.
+	$effect(() => {
+		if (showCall && activeCall && callSettings.state.shortcutsHint) {
+			showShortcutsHint = true;
+			const timer = setTimeout(() => {
+				showShortcutsHint = false;
+				callSettings.dismissShortcutsHint();
+			}, 6500);
+			return () => clearTimeout(timer);
+		}
+	});
 </script>
 
 <svelte:head><title>Messages · BitOS</title></svelte:head>
 
-<svelte:window onfullscreenchange={onFullscreenChange} />
+<svelte:window
+	onfullscreenchange={onFullscreenChange}
+	onkeydown={onCallKeydown}
+	onkeyup={onCallKeyup}
+/>
 
 <div class="flex h-full">
 	<aside
@@ -3225,13 +3541,35 @@
 														</div>
 													</div>
 													{#if callSignal.type === 'log'}
-														<p
-															class="text-[12px] {msg.mine
-																? 'text-white/75'
-																: 'text-[var(--ui-text-muted)]'}"
-														>
-															Duration {formatDuration(callSignal.duration)}
-														</p>
+														{@const isMissed = callSignal.outcome === 'missed'}
+														{@const isDeclined = callSignal.outcome === 'declined'}
+														<div class="flex items-center gap-2">
+															<span
+																class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold {isMissed
+																	? 'bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]'
+																	: isDeclined
+																		? 'bg-amber-500/15 text-amber-600 dark:text-amber-300'
+																		: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'}"
+															>
+																<Icon
+																	name={isMissed
+																		? 'i-lucide-phone-missed'
+																		: isDeclined
+																			? 'i-lucide-phone-off'
+																			: 'i-lucide-phone'}
+																	class="size-3"
+																/>
+																{isMissed ? 'Missed' : isDeclined ? 'Declined' : 'Ended'}
+															</span>
+															{#if !isMissed && !isDeclined && callSignal.duration}
+																<span
+																	class="text-[12px] font-semibold {msg.mine
+																		? 'text-white/75'
+																		: 'text-[var(--ui-text-muted)]'}"
+																	>{formatDuration(callSignal.duration)}</span
+																>
+															{/if}
+														</div>
 													{/if}
 													{#if !msg.mine && callSignal.type === 'offer'}
 														<Button
@@ -4011,6 +4349,15 @@
 			<p class="text-center text-[12px] text-[var(--ui-text-muted)]">
 				Check your devices before calling {callTitle || (active?.name ?? 'this contact')}.
 			</p>
+			{#if networkWarning}
+				<div
+					class="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-left text-[11px] font-semibold text-amber-700 dark:text-amber-300"
+					role="status"
+				>
+					<Icon name="i-lucide-wifi" class="mt-0.5 size-3.5 shrink-0" />
+					<span>{networkWarning}</span>
+				</div>
+			{/if}
 			{#if callError}
 				<p class="text-center text-[12px] text-[var(--tone-error-text)]">{callError}</p>
 				<Button color="neutral" variant="soft" block onclick={() => void retryPreCallMedia()}>
@@ -4166,6 +4513,32 @@
 		title={`${callGroupId ? 'Group ' : ''}${activeCall === 'video' ? 'Video call' : 'Voice call'}`}
 	>
 		{#if activeCall}
+			{#if showShortcutsHint}
+				<div
+					class="flex items-center justify-center gap-2 rounded-xl bg-primary-500/10 px-3 py-2 text-[11px] font-semibold text-primary-700 dark:text-primary-300"
+					role="status"
+				>
+					<Icon name="i-lucide-keyboard" class="size-3.5 shrink-0" />
+					<span class="hidden sm:inline"
+						><kbd class="rounded bg-white/60 px-1 dark:bg-black/30">M</kbd> mic ·
+						<kbd class="rounded bg-white/60 px-1 dark:bg-black/30">V</kbd>
+						camera · <kbd class="rounded bg-white/60 px-1 dark:bg-black/30">Space</kbd> push-to-talk
+						· <kbd class="rounded bg-white/60 px-1 dark:bg-black/30">Esc</kbd> minimize</span
+					>
+					<span class="sm:hidden">Mic · Camera · Hold Space to talk</span>
+					<button
+						type="button"
+						class="ml-1 shrink-0 text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
+						aria-label="Dismiss shortcut hint"
+						onclick={() => {
+							showShortcutsHint = false;
+							callSettings.dismissShortcutsHint();
+						}}
+					>
+						<Icon name="i-lucide-x" class="size-3.5" />
+					</button>
+				</div>
+			{/if}
 			<div class="space-y-4 text-center">
 				<div
 					bind:this={callMediaPanel}
@@ -4202,6 +4575,15 @@
 											<span class="size-1.5 rounded-full bg-emerald-400"></span>
 											{participant.name}
 										</div>
+										{#if raisedHands.has(participant.peer)}
+											<div
+												class="absolute top-2 left-2 grid size-7 place-items-center rounded-full bg-amber-400 text-[13px] text-white shadow-lg ring-2 ring-black/30"
+												aria-label="{participant.name} raised their hand"
+												title="{participant.name} raised their hand"
+											>
+												✋
+											</div>
+										{/if}
 									</div>
 								{/each}
 							</div>
@@ -4216,7 +4598,17 @@
 							></video>
 						{/if}
 						<div
-							class="absolute right-3 bottom-3 overflow-hidden rounded-2xl border-2 border-white/25 bg-black shadow-xl shadow-black/40"
+							class="absolute z-10 overflow-hidden rounded-2xl border-2 border-white/25 bg-black shadow-xl shadow-black/40 {selfViewPos
+								? 'cursor-grab touch-none'
+								: 'right-3 bottom-3 cursor-grab touch-none'} {selfViewDrag
+								? 'cursor-grabbing'
+								: ''}"
+							style={selfViewPos ? `left:${selfViewPos.x}px; top:${selfViewPos.y}px` : ''}
+							role="region"
+							aria-label="Your video preview — drag to reposition"
+							onpointerdown={selfViewDown}
+							onpointermove={selfViewMove}
+							onpointerup={selfViewUp}
 						>
 							<video
 								bind:this={localVideoEl}
@@ -4226,8 +4618,8 @@
 								class="aspect-video w-28 object-cover"
 							></video>
 							<span
-								class="pointer-events-none absolute bottom-1 left-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] font-semibold text-white"
-								>You</span
+								class="pointer-events-none absolute bottom-1 left-1.5 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] font-semibold text-white"
+								>{selfHandRaised ? '✋ ' : ''}You</span
 							>
 						</div>
 					{:else}
@@ -4315,7 +4707,7 @@
 						>
 							{formatDuration(callElapsedSeconds)}
 						</p>
-						<p class="mt-1 text-[11px] font-semibold {callQualityClass()}">
+						<p class="mt-1 text-[11px] font-semibold {callQualityClass()}" aria-live="polite">
 							{callQualityLabel()}{callQualityDetail ? ` - ${callQualityDetail}` : ''}
 						</p>
 						<Button
@@ -4326,6 +4718,19 @@
 						>
 							{showCallDiagnostics ? 'Hide diagnostics' : 'Connection details'}
 						</Button>
+						<button
+							type="button"
+							title={callSettings.state.sounds ? 'Mute call sounds' : 'Enable call sounds'}
+							aria-label={callSettings.state.sounds ? 'Mute call sounds' : 'Enable call sounds'}
+							onclick={callSettings.toggleSounds}
+							class="mt-1 inline-flex h-auto items-center gap-1 rounded-md px-1 py-0 text-[10px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text)]"
+						>
+							<Icon
+								name={callSettings.state.sounds ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
+								class="size-3.5"
+							/>
+							{callSettings.state.sounds ? 'Sound on' : 'Muted'}
+						</button>
 						{#if showCallDiagnostics}
 							<div
 								class="mx-auto mt-2 grid max-w-sm grid-cols-2 gap-x-4 gap-y-1 rounded-xl bg-[var(--surface-muted)] px-3 py-2 text-left text-[10px]"
@@ -4356,6 +4761,15 @@
 					{/if}
 					{#if callError}
 						<p class="mt-2 text-[12px] text-[var(--tone-error-text)]">{callError}</p>
+					{/if}
+					{#if callState === 'reconnecting'}
+						<button
+							type="button"
+							onclick={() => void restartCallIce()}
+							class="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary-500/15 px-3 py-1.5 text-[11px] font-semibold text-primary-700 transition hover:bg-primary-500/25 dark:text-primary-300"
+						>
+							<Icon name="i-lucide-refresh-cw" class="size-3.5" /> Retry connection
+						</button>
 					{/if}
 				</div>
 				<div class="flex flex-wrap items-center justify-center gap-2.5">
@@ -4415,6 +4829,20 @@
 							</button>
 							<button
 								type="button"
+								title={backgroundBlurred ? 'Disable background blur' : 'Blur background'}
+								aria-label={backgroundBlurred ? 'Disable background blur' : 'Blur background'}
+								onclick={toggleBackgroundBlur}
+								class="call-orb size-12 {backgroundBlurred
+									? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
+									: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'}"
+							>
+								<Icon
+									name={backgroundBlurred ? 'i-lucide-aperture' : 'i-lucide-sparkles'}
+									class="size-5"
+								/>
+							</button>
+							<button
+								type="button"
 								title={callFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
 								aria-label={callFullscreen ? 'Exit fullscreen video' : 'Fullscreen video'}
 								onclick={toggleCallFullscreen}
@@ -4449,6 +4877,19 @@
 								class="call-orb size-12 bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]"
 							>
 								<Icon name="i-lucide-video" class="size-5" />
+							</button>
+						{/if}
+						{#if callGroupId && callState === 'connected'}
+							<button
+								type="button"
+								title={selfHandRaised ? 'Lower hand' : 'Raise hand'}
+								aria-label={selfHandRaised ? 'Lower hand' : 'Raise hand'}
+								onclick={toggleRaiseHand}
+								class="call-orb size-12 {selfHandRaised
+									? 'bg-amber-400 text-white shadow-[0_4px_16px_-4px_rgba(245,158,11,0.6)]'
+									: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'}"
+							>
+								<span class="text-base leading-none">✋</span>
 							</button>
 						{/if}
 						{#if callGroupId}

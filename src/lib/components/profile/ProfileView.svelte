@@ -276,7 +276,7 @@
 		repostedNotes = [];
 		activeTab = 'posts';
 		bioExpanded = false;
-		profiles.ensure([nextPubkey]);
+		profiles.refresh([nextPubkey]);
 		try {
 			void loadPinnedNotes(nextPubkey).catch((error) => {
 				if (loadedFor === nextPubkey)
@@ -287,7 +287,6 @@
 					toasts.error((error as Error).message || 'Could not load profile activity');
 			});
 			const currentLoad = nextPubkey;
-			void queryPrimaryFirst([{ kinds: [NOSTR_KINDS.METADATA], authors: [nextPubkey], limit: 1 }]);
 			const primaryEvents = await queryPrimaryFirst(
 				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_PAGE_LIMIT }],
 				{

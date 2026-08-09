@@ -4,9 +4,15 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { callAlerts, type IncomingCallAlert } from '$lib/stores/call-alerts.svelte';
-	import { callSignalText } from '$lib/messages/protocol';
+	import { callSettings } from '$lib/stores/call-settings.svelte';
+	import { playRingtone, stopRingtone } from '$lib/calls/ringtone';
+	import { callSignalText, type CallOutcome } from '$lib/messages/protocol';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+
+	const MISS_AFTER_MS = 30_000;
+	let now = $state(Date.now());
+	let autoMissed = false;
 
 	function chatUrl(alert: IncomingCallAlert, answer = false) {
 		const params = new URLSearchParams({ to: alert.from });
@@ -25,7 +31,7 @@
 		void goto(chatUrl(alert));
 	}
 
-	async function decline(alert: IncomingCallAlert) {
+	async function decline(alert: IncomingCallAlert, outcome: CallOutcome = 'declined') {
 		callAlerts.dismiss(alert.id);
 		const me = identity.current;
 		if (!me) return;
@@ -50,7 +56,7 @@
 						from: me.pk,
 						groupId: alert.groupId,
 						duration: 0,
-						outcome: 'declined'
+						outcome
 					})
 				)
 			]);
@@ -58,10 +64,38 @@
 			// The local alert is dismissed even if signaling is temporarily unavailable.
 		}
 	}
+
+	// Countdown to auto-miss + looping ringtone while an incoming call is visible.
+	$effect(() => {
+		const alert = callAlerts.latest;
+		if (!alert) {
+			stopRingtone();
+			autoMissed = false;
+			return;
+		}
+		if (callSettings.state.sounds) playRingtone();
+		const tick = setInterval(() => {
+			now = Date.now();
+			const remaining = MISS_AFTER_MS - (now - alert.createdAt * 1000);
+			if (remaining <= 0 && !autoMissed) {
+				autoMissed = true;
+				void decline(alert, 'missed');
+			}
+		}, 250);
+		return () => {
+			clearInterval(tick);
+			stopRingtone();
+		};
+	});
+
+	function remainingSeconds(alert: IncomingCallAlert) {
+		return Math.max(0, Math.ceil((MISS_AFTER_MS - (now - alert.createdAt * 1000)) / 1000));
+	}
 </script>
 
 {#if callAlerts.latest}
 	{@const alert = callAlerts.latest}
+	{@const remaining = remainingSeconds(alert)}
 	<div
 		class="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-3 sm:justify-end sm:px-5"
 	>
@@ -127,6 +161,18 @@
 							style={`height: ${30 + ((i * 37) % 70)}%; animation-delay: ${(i % 7) * 0.09}s`}
 						></span>
 					{/each}
+				</div>
+				<!-- Auto-miss countdown -->
+				<div class="mt-2">
+					<div class="h-1 overflow-hidden rounded-full bg-[var(--ui-border-muted)]">
+						<div
+							class="h-full rounded-full bg-primary-400 transition-[width] duration-200 ease-linear"
+							style={`width: ${(remaining / (MISS_AFTER_MS / 1000)) * 100}%`}
+						></div>
+					</div>
+					<p class="mt-1 text-center text-[10px] font-semibold text-[var(--ui-text-dimmed)]">
+						Auto-miss in {remaining}s
+					</p>
 				</div>
 			</div>
 			<div class="flex gap-2 px-4 pb-4">
