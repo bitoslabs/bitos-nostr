@@ -135,6 +135,7 @@
 	let replyOpen = $state(false);
 	let replyFocusTick = $state(0);
 	let showAllReplies = $state(false);
+	let refreshingComments = $state(false);
 	let replyingToCommentId = $state('');
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
@@ -510,6 +511,19 @@
 			await feed.react(reply, '❤️');
 		} catch (e) {
 			toasts.error((e as Error).message);
+		}
+	}
+
+	async function refreshComments() {
+		if (refreshingComments) return;
+		refreshingComments = true;
+		try {
+			await feed.refreshReplies(note.id);
+			toasts.success('Comments refreshed');
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not refresh comments');
+		} finally {
+			refreshingComments = false;
 		}
 	}
 
@@ -986,6 +1000,22 @@
 
 	{#if directReplies.length}
 		<div class="mx-4 mb-3 space-y-3 rounded-xl bg-[var(--ui-bg-muted)] p-3">
+			<div class="flex items-center justify-between">
+				<span class="text-[11px] font-bold text-[var(--ui-text-dimmed)] uppercase">Comments</span>
+				<button
+					type="button"
+					onclick={refreshComments}
+					disabled={refreshingComments}
+					class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:cursor-not-allowed disabled:opacity-60"
+					aria-label="Refresh comments"
+				>
+					<Icon
+						name="i-lucide-refresh-cw"
+						class="size-3.5 {refreshingComments ? 'animate-spin' : ''}"
+					/>
+					Refresh
+				</button>
+			</div>
 			{#each visibleReplies as reply (reply.id)}
 				{@const replyProfile = profiles.get(reply.pubkey)}
 				{@const replyName =

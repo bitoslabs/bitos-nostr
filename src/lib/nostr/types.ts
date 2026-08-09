@@ -84,6 +84,8 @@ export interface NotificationItem {
 	type: 'like' | 'comment' | 'repost' | 'follow' | 'mention' | 'zap';
 	pubkey: string;
 	targetId?: string;
+	/** Whether the activity targets an original note or a comment/reply. */
+	targetKind?: 'note' | 'comment';
 	content: string;
 	createdAt: number;
 	read: boolean;

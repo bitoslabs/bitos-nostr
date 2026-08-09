@@ -35,6 +35,16 @@ function isPositiveReaction(content: string): boolean {
 	return content !== '-';
 }
 
+function replyTarget(tags: string[][]): { id: string | undefined; kind: 'note' | 'comment' } {
+	const eventTags = tags.filter((tag) => tag[0] === 'e' && tag[1]);
+	const rootTag = eventTags.find((tag) => tag[3] === 'root');
+	const root = rootTag?.[1] ?? eventTags[0]?.[1];
+	const reply = eventTags.find((tag) => tag[3] === 'reply')?.[1];
+	return reply && (!rootTag || reply !== root)
+		? { id: reply, kind: 'comment' }
+		: { id: root, kind: 'note' };
+}
+
 export function parseNotificationContent(content: string): string {
 	const text = content.trim();
 	if (!text) return '';
@@ -222,12 +232,16 @@ class NotificationsStore {
 			);
 		}
 		if (ev.kind === NOSTR_KINDS.REACTION && isPositiveReaction(ev.content)) {
-			const targetId = eventTarget(ev.tags);
-			return this.makeItem(ev, 'like', targetId, ev.content || '❤️');
+			const target = replyTarget(ev.tags);
+			return this.makeItem(ev, 'like', target.id, ev.content || '❤️', {
+				targetKind: target.kind
+			});
 		}
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && isReply(ev.tags)) {
-			const targetId = eventTarget(ev.tags);
-			return this.makeItem(ev, 'comment', targetId, parseNotificationContent(ev.content));
+			const target = replyTarget(ev.tags);
+			return this.makeItem(ev, 'comment', target.id, parseNotificationContent(ev.content), {
+				targetKind: target.kind
+			});
 		}
 		// A note that mentions you via #p but isn't part of a reply thread.
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && mentionsMe(ev.tags, identity.current?.pk)) {
@@ -248,7 +262,7 @@ class NotificationsStore {
 		type: NotificationItem['type'],
 		targetId: string | undefined,
 		content: string,
-		extra: Partial<Pick<NotificationItem, 'amountSats'>> = {}
+		extra: Partial<Pick<NotificationItem, 'amountSats' | 'targetKind'>> = {}
 	): NotificationItem {
 		return {
 			id: ev.id,

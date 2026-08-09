@@ -10,7 +10,11 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { dayLabel, shortKey, timeAgo, timeFull } from '$lib/utils/format';
-	import { cleanNotificationPreview, extractNotificationMedia, type ImageMeta } from '$lib/utils/imeta';
+	import {
+		cleanNotificationPreview,
+		extractNotificationMedia,
+		type ImageMeta
+	} from '$lib/utils/imeta';
 	import { parseContent } from '$lib/utils/note-content';
 	import { decode as decodeBech32 } from 'nostr-tools/nip19';
 	import type { NotificationItem } from '$lib/nostr/types';
@@ -43,6 +47,12 @@
 			},
 			zap: { icon: 'i-lucide-zap', color: 'var(--color-warm-500)', verb: 'sent you a zap' }
 		};
+
+	function verbFor(item: NotificationItem) {
+		if (item.type === 'like' && item.targetKind === 'comment') return 'liked your comment';
+		if (item.type === 'comment' && item.targetKind === 'comment') return 'replied to your comment';
+		return TYPE_META[item.type].verb;
+	}
 
 	const FILTER_LABELS: { key: Filter; label: string }[] = [
 		{ key: 'all', label: 'All' },
@@ -156,8 +166,7 @@
 				}
 				let pubkey: string | undefined;
 				if (decoded.type === 'npub') pubkey = decoded.data as string;
-				else if (decoded.type === 'nprofile')
-					pubkey = (decoded.data as { pubkey: string }).pubkey;
+				else if (decoded.type === 'nprofile') pubkey = (decoded.data as { pubkey: string }).pubkey;
 				if (pubkey) {
 					const profile = profiles.get(pubkey);
 					return '@' + (profile?.display_name || profile?.name || shortKey(pubkey));
@@ -445,7 +454,7 @@
 										href={targetLink(item)}
 										onclick={() => openRow(item)}
 										class="flex items-start gap-3 p-4 pr-14"
-										aria-label="{actorName(item.pubkey)} {meta.verb}"
+										aria-label="{actorName(item.pubkey)} {verbFor(item)}"
 									>
 										<div class="relative shrink-0">
 											{#if row.kind === 'group'}
@@ -453,7 +462,8 @@
 												<div class="flex -space-x-3">
 													{#each actors as g, i (g.id)}
 														<div
-															class="relative z-{10 - i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+															class="relative z-{10 -
+																i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
 														>
 															<Avatar
 																pubkey={g.pubkey}
@@ -503,16 +513,22 @@
 																and {extra} other{extra > 1 ? 's' : ''}</span
 															>
 														{/if}
-														<span class="text-[var(--ui-text-muted)]"> {meta.verb}</span>
+														<span class="text-[var(--ui-text-muted)]"> {verbFor(row.first)}</span>
 													{:else}
 														<span class="font-bold">{actorName(item.pubkey)}</span>
 														{#if hasNip05(item.pubkey)}
-															<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
+															<Icon
+																name="i-lucide-badge-check"
+																class="size-3.5 shrink-0 text-primary-500"
+															/>
 														{/if}
 														{#if identity.current?.pk === item.pubkey}
-															<span class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase">you</span>
+															<span
+																class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
+																>you</span
+															>
 														{/if}
-														<span class="text-[var(--ui-text-muted)]"> {meta.verb}</span>
+														<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
 														{#if item.type === 'zap' && item.amountSats}
 															<span
 																class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
@@ -556,9 +572,9 @@
 										{@const media = mediaFor(item)}
 										<!-- Media is a sibling of the row <a> so its zoom buttons don't nest
 										     inside the link (matches PostCard's separation pattern). -->
-										<div class="pl-[72px] pr-4 pb-4">
+										<div class="pr-4 pb-4 pl-[72px]">
 											<NotificationMedia
-												media={media}
+												{media}
 												tags={item.raw?.tags ?? []}
 												content={item.content}
 											/>

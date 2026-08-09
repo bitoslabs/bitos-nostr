@@ -13,6 +13,7 @@ import { blocks } from '$lib/stores/blocks.svelte';
 import { mutes } from '$lib/stores/mutes.svelte';
 import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
+import { toFeedNote } from './feed-note';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
@@ -539,6 +540,29 @@ class FeedStore {
 		this.insertVisible(note);
 	}
 
+	/** Reload a note's threaded replies and their reactions from the relays. */
+	async refreshReplies(noteId: string) {
+		if (!browser) return;
+		const replyEvents = await queryPrimaryFirst([
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [noteId], limit: 300 }
+		]);
+		const replies = replyEvents
+			.map(toFeedNote)
+			.filter(
+				(reply) =>
+					reply.replyTo === noteId ||
+					reply.tags.some((tag) => tag[0] === 'e' && tag[1] === noteId && tag[3] === 'root')
+			);
+		const replyIds = replies.map((reply) => reply.id);
+		const reactions = replyIds.length
+			? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 1000 }])
+			: [];
+		const hydrated = applyActivityToNotes(replies, reactions, identity.current?.pk);
+		for (const reply of hydrated) this.upsertNote(reply);
+		profiles.ensure(hydrated.map((reply) => reply.pubkey));
+		return hydrated.length;
+	}
+
 	async deleteNote(note: FeedNote) {
 		if (!browser) return;
 		const id = identity.current;
@@ -801,7 +825,7 @@ class FeedStore {
 				content: emoji,
 				created_at: Math.floor(Date.now() / 1000),
 				tags: [
-					['e', note.id],
+					['e', note.id, '', note.replyTo ? 'reply' : ''],
 					['p', note.pubkey]
 				]
 			},
