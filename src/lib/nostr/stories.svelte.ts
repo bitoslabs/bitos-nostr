@@ -25,6 +25,8 @@ import { extractHashtagTags } from '$lib/utils/note-content';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
 const MAX_PER_AUTHOR = 12;
+const MIN_FOLLOWING_STORY_AUTHORS = 10;
+const PUBLIC_FALLBACK_LIMIT = 20;
 const SEEN_KEY = 'bitos:seen-stories';
 const VIEWED_KEY = 'bitos:story-views';
 const IMG_RE = /https?:\/\/[^\s<>"')]+?\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#][^\s<>"')]*)?/i;
@@ -46,6 +48,8 @@ export interface StorySlide {
 
 export interface StoryAuthor {
 	pubkey: string;
+	/** True when this author came from the public discovery fallback. */
+	isPublicDiscovery?: boolean;
 	/** Newest-first. */
 	slides: StorySlide[];
 	latestAt: number;
@@ -151,6 +155,7 @@ class StoriesStore {
 	private slidesByAuthor = new Map<string, Map<string, StorySlide>>();
 	private seenAt = new Map<string, number>();
 	private unsub: (() => void) | null = null;
+	private publicFallbackFetched = false;
 
 	/** Per-slide engagement: likes (❤️), views (👁️), and replies. */
 	interactions = $state<Record<string, StoryInteraction>>({});
@@ -175,6 +180,7 @@ class StoriesStore {
 		this.stop();
 		this.authors = [];
 		this.slidesByAuthor.clear();
+		this.publicFallbackFetched = false;
 		this.loadSeen();
 		this.loadViewed();
 		this.loading = true;
@@ -230,9 +236,33 @@ class StoriesStore {
 				}
 			);
 			applyStoryEvents(events);
+			await this.fetchPublicFallbackIfNeeded();
 		} finally {
 			this.loading = false;
 		}
+	}
+
+	/** Fill an otherwise sparse following story bar with a small public sample. */
+	private async fetchPublicFallbackIfNeeded() {
+		if (this.publicFallbackFetched) return;
+		const me = identity.current?.pk?.toLowerCase();
+		if (!me) return;
+
+		const followingStoryAuthors = this.authors.filter((author) => author.pubkey !== me);
+		if (followingStoryAuthors.length >= MIN_FOLLOWING_STORY_AUTHORS) return;
+
+		this.publicFallbackFetched = true;
+		const applyStoryEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+			for (const ev of events) this.ingest(ev);
+			profiles.ensure(events.map((e) => e.pubkey));
+		};
+		const events = await queryPrimaryFirst(
+			[{ kinds: [NOSTR_KINDS.STORY_STATUS], limit: PUBLIC_FALLBACK_LIMIT }],
+			{
+				onSecondary: (mergedEvents) => applyStoryEvents(mergedEvents)
+			}
+		);
+		applyStoryEvents(events);
 	}
 
 	private ingest(ev: Event) {
@@ -278,6 +308,7 @@ class StoriesStore {
 			const seen = this.seenAt.get(pubkey) ?? 0;
 			result.push({
 				pubkey,
+				isPublicDiscovery: !!me && pubkey !== me && !contacts.followingSet.has(pubkey),
 				slides,
 				latestAt: slides[0].createdAt,
 				hasUnseen: slides.some((s) => s.createdAt > seen)
