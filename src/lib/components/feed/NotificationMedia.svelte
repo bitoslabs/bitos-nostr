@@ -73,7 +73,11 @@
 </script>
 
 {#if media.length}
-	<div class="grid {gridClass(visible.length)} gap-0.5 overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]">
+	<div
+		class="grid {gridClass(
+			visible.length
+		)} gap-0.5 overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]"
+	>
 		{#each visible as item, i (item.url)}
 			{@const ph = placeholderFor(item)}
 			{@const isFailed = failed[item.url]}
@@ -105,7 +109,22 @@
 				{/if}
 
 				<!-- Real media: thumb first (faster), fades in over the placeholder -->
-				{#if !isFailed}
+				{#if !isFailed && item.kind === 'video'}
+					<video
+						src={item.url}
+						poster={item.thumb}
+						muted
+						autoplay
+						loop
+						playsinline
+						preload="metadata"
+						class="absolute inset-0 size-full object-cover transition duration-500 group-hover:scale-[1.03] {isLoaded
+							? 'opacity-100'
+							: 'opacity-0'}"
+						onloadeddata={() => (loaded = { ...loaded, [item.url]: true })}
+						onerror={() => (failed = { ...failed, [item.url]: true })}
+					></video>
+				{:else if !isFailed}
 					<img
 						src={item.thumb ?? item.url}
 						alt={item.alt ?? 'Notification media'}
@@ -152,7 +171,7 @@
 
 				{#if item.dim && isLoaded && !covered}
 					<span
-						class="absolute top-2 right-2 rounded-md bg-black/45 px-1.5 py-0.5 text-[9.5px] font-semibold tabular-nums text-white/90 backdrop-blur-sm"
+						class="absolute top-2 right-2 rounded-md bg-black/45 px-1.5 py-0.5 text-[9.5px] font-semibold text-white/90 tabular-nums backdrop-blur-sm"
 					>
 						{item.dim.w}×{item.dim.h}
 					</span>
@@ -169,7 +188,9 @@
 
 				<!-- "+N more" overlay on the last visible tile -->
 				{#if showMore && !covered}
-					<span class="absolute inset-0 grid place-items-center bg-black/55 text-lg font-extrabold text-white">
+					<span
+						class="absolute inset-0 grid place-items-center bg-black/55 text-lg font-extrabold text-white"
+					>
 						+{hiddenCount}
 					</span>
 				{/if}

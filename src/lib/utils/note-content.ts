@@ -78,3 +78,7 @@ export function parseContent(content: string): ContentToken[] {
 	if (lastIndex < content.length) tokens.push({ type: 'text', value: content.slice(lastIndex) });
 	return tokens;
 }
+
+export function isEventReference(value: string): boolean {
+	return /^nostr:(?:note1|nevent1)/iu.test(value);
+}
