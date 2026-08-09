@@ -17,6 +17,7 @@ import { hexToBytes } from './hex';
 import { NOSTR_KINDS, type Conversation, type DirectMessage, type Event } from './types';
 
 const STORAGE_KEY_PREFIX = 'bitos:dm-conversations';
+const REMOVED_KEY_PREFIX = 'bitos:dm-removed';
 const MAX_CACHED_CONVERSATIONS = 80;
 const MAX_CACHED_MESSAGES_PER_CONVERSATION = 80;
 const PERSIST_DEBOUNCE_MS = 250;
@@ -26,6 +27,7 @@ class DMStore {
 	loading = $state(false);
 	connected = $state(false);
 	private loadedFor = '';
+	private removedPeers = new Set<string>();
 	private unsub: (() => void) | null = null;
 	private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -38,6 +40,7 @@ class DMStore {
 
 	/** Conversation for a given peer (creates an empty placeholder if absent). */
 	forPeer = (peer: string): Conversation => {
+		if (this.removedPeers.delete(peer)) this.persistRemoved();
 		const existing = this.conversations.find((c) => c.peer === peer);
 		if (existing) return existing;
 		const created: Conversation = { peer, unread: 0, messages: [] };
@@ -78,6 +81,7 @@ class DMStore {
 		}
 		this.flushPersist();
 		this.conversations = [];
+		this.removedPeers.clear();
 		this.loadedFor = '';
 		this.loading = false;
 		this.connected = false;
@@ -157,6 +161,7 @@ class DMStore {
 	}
 
 	private attach(msg: DirectMessage) {
+		if (this.removedPeers.has(msg.peer) && !msg.mine) return;
 		const next = this.conversations.map((c) => ({ ...c, messages: [...c.messages] }));
 		let conv = next.find((c) => c.peer === msg.peer);
 		if (!conv) {
@@ -180,8 +185,20 @@ class DMStore {
 		this.schedulePersist();
 	}
 
+	/** Remove a conversation from the local chat list and cache. */
+	remove(peer: string) {
+		this.conversations = this.conversations.filter((conversation) => conversation.peer !== peer);
+		this.removedPeers.add(peer);
+		this.schedulePersist();
+		this.persistRemoved();
+	}
+
 	private storageKey(pk = identity.current?.pk) {
 		return pk ? `${STORAGE_KEY_PREFIX}:${pk}` : '';
+	}
+
+	private removedStorageKey(pk = identity.current?.pk) {
+		return pk ? `${REMOVED_KEY_PREFIX}:${pk}` : '';
 	}
 
 	private isConversation(value: unknown): value is Conversation {
@@ -213,6 +230,20 @@ class DMStore {
 			profiles.ensure(this.conversations.map((conversation) => conversation.peer));
 		} catch {
 			/* ignore malformed cache */
+		}
+		try {
+			const rawRemoved = localStorage.getItem(this.removedStorageKey(pk));
+			const parsedRemoved = rawRemoved ? (JSON.parse(rawRemoved) as unknown) : [];
+			if (Array.isArray(parsedRemoved)) {
+				this.removedPeers = new Set(
+					parsedRemoved.filter((peer): peer is string => typeof peer === 'string')
+				);
+				this.conversations = this.conversations.filter(
+					(conversation) => !this.removedPeers.has(conversation.peer)
+				);
+			}
+		} catch {
+			/* ignore malformed removed-chat cache */
 		}
 	}
 
@@ -247,6 +278,13 @@ class DMStore {
 		localStorage.setItem(key, JSON.stringify(snapshot));
 	}
 
+	private persistRemoved() {
+		if (!browser) return;
+		const key = this.removedStorageKey();
+		if (!key) return;
+		localStorage.setItem(key, JSON.stringify([...this.removedPeers]));
+	}
+
 	/** Encrypt + publish a DM to `peer`. */
 	async send(peer: string, text: string): Promise<void> {
 		if (!browser) return;
@@ -279,10 +317,7 @@ class DMStore {
 				kind: NOSTR_KINDS.DIRECT_MESSAGE,
 				content: ciphertext,
 				created_at: createdAt,
-				tags: [
-					['p', peer],
-					['-']
-				]
+				tags: [['p', peer], ['-']]
 			},
 			hexToBytes(me.sk)
 		);
