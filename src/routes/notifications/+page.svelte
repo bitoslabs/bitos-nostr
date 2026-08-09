@@ -177,17 +177,17 @@
 	}
 
 	/** "Alice, Bob and 3 others" — unique by pubkey, capped for readout. */
-	function actorSummary(items: NotificationItem[]): { names: string; extra: number } {
-		const names: string[] = [];
+	function actorSummary(items: NotificationItem[]): { actors: NotificationItem[]; extra: number } {
+		const actors: NotificationItem[] = [];
 		const seen: string[] = [];
 		for (const item of items) {
 			if (seen.includes(item.pubkey)) continue;
 			seen.push(item.pubkey);
-			names.push(actorName(item.pubkey));
-			if (names.length === 2) break;
+			actors.push(item);
+			if (actors.length === 2) break;
 		}
-		const extra = items.length - names.length;
-		return { names: names.join(', '), extra };
+		const extra = items.length - actors.length;
+		return { actors, extra };
 	}
 
 	/** Cached media extraction per notification so live re-renders stay cheap.
@@ -217,8 +217,14 @@
 		return parsed;
 	}
 
-	function targetLink(item: NotificationItem) {
-		return item.targetId ? `/note/${item.targetId}` : `/profile/${item.pubkey}`;
+	function profileLink(pubkey: string) {
+		return `/profile/${pubkey}`;
+	}
+
+	/** Link the notification body to the note/event that caused it, when available. */
+	function sourceLink(item: NotificationItem) {
+		const sourceId = item.targetId ?? (item.type === 'mention' ? item.id : undefined);
+		return sourceId ? `/note/${sourceId}` : undefined;
 	}
 
 	async function copyTarget(item: NotificationItem) {
@@ -450,20 +456,18 @@
 										></span>
 									{/if}
 
-									<a
-										href={targetLink(item)}
-										onclick={() => openRow(item)}
-										class="flex items-start gap-3 p-4 pr-14"
-										aria-label="{actorName(item.pubkey)} {verbFor(item)}"
-									>
+									<div class="flex items-start gap-3 p-4 pr-14">
 										<div class="relative shrink-0">
 											{#if row.kind === 'group'}
 												{@const actors = row.items.slice(0, 3)}
 												<div class="flex -space-x-3">
 													{#each actors as g, i (g.id)}
-														<div
+														<a
+															href={profileLink(g.pubkey)}
+															onclick={() => openRow(g)}
 															class="relative z-{10 -
 																i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+															aria-label={`View ${actorName(g.pubkey)}'s profile`}
 														>
 															<Avatar
 																pubkey={g.pubkey}
@@ -472,7 +476,7 @@
 																size={40}
 																class="mask-squircle"
 															/>
-														</div>
+														</a>
 													{/each}
 												</div>
 												<span
@@ -482,8 +486,11 @@
 													<Icon name={meta.icon} class="size-3" />
 												</span>
 											{:else}
-												<div
+												<a
+													href={profileLink(item.pubkey)}
+													onclick={() => openRow(item)}
 													class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+													aria-label={`View ${actorName(item.pubkey)}'s profile`}
 												>
 													<Avatar
 														pubkey={item.pubkey}
@@ -492,7 +499,7 @@
 														size={44}
 														class="mask-squircle"
 													/>
-												</div>
+												</a>
 												<span
 													class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
 													style="background:{meta.color}"
@@ -506,16 +513,39 @@
 											<div class="flex min-w-0 items-start justify-between gap-3">
 												<p class="min-w-0 text-[14px] leading-snug">
 													{#if row.kind === 'group'}
-														{@const { names, extra } = actorSummary(row.items)}
-														<span class="font-bold">{names}</span>
+														{@const { actors: summaryActors, extra } = actorSummary(row.items)}
+														{#each summaryActors as actor, i (actor.id)}
+															<a
+																href={profileLink(actor.pubkey)}
+																onclick={() => openRow(actor)}
+																class="font-bold hover:text-primary-500"
+																>{actorName(actor.pubkey)}</a
+															>
+															{#if i === 0 && summaryActors.length > 1}<span class="font-bold"
+																	>,
+																</span>{/if}
+														{/each}
 														{#if extra > 0}
 															<span class="font-bold">
 																and {extra} other{extra > 1 ? 's' : ''}</span
 															>
 														{/if}
-														<span class="text-[var(--ui-text-muted)]"> {verbFor(row.first)}</span>
+														{#if sourceLink(row.first)}
+															<a
+																href={sourceLink(row.first)}
+																onclick={() => openRow(row.first)}
+																class="text-[var(--ui-text-muted)] hover:text-primary-500"
+																>{verbFor(row.first)}</a
+															>
+														{:else}
+															<span class="text-[var(--ui-text-muted)]"> {verbFor(row.first)}</span>
+														{/if}
 													{:else}
-														<span class="font-bold">{actorName(item.pubkey)}</span>
+														<a
+															href={profileLink(item.pubkey)}
+															onclick={() => openRow(item)}
+															class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
+														>
 														{#if hasNip05(item.pubkey)}
 															<Icon
 																name="i-lucide-badge-check"
@@ -528,7 +558,16 @@
 																>you</span
 															>
 														{/if}
-														<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
+														{#if sourceLink(item)}
+															<a
+																href={sourceLink(item)}
+																onclick={() => openRow(item)}
+																class="text-[var(--ui-text-muted)] hover:text-primary-500"
+																>{verbFor(item)}</a
+															>
+														{:else}
+															<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
+														{/if}
 														{#if item.type === 'zap' && item.amountSats}
 															<span
 																class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
@@ -553,24 +592,38 @@
 											</div>
 
 											{#if preview(item)}
-												<p
-													class="mt-1 line-clamp-2 text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)]"
-												>
-													{preview(item)}
-												</p>
+												{#if sourceLink(item)}
+													<a
+														href={sourceLink(item)}
+														onclick={() => openRow(item)}
+														class="mt-1 line-clamp-2 block text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)] hover:text-primary-500"
+													>
+														{preview(item)}
+													</a>
+												{:else}
+													<p
+														class="mt-1 line-clamp-2 text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)]"
+													>
+														{preview(item)}
+													</p>
+												{/if}
 											{/if}
 
-											{#if item.targetId}
-												<p class="mt-2 font-mono text-[10.5px] text-[var(--ui-text-dimmed)]">
-													{shortKey(item.targetId, 8, 6)}
-												</p>
+											{#if sourceLink(item)}
+												<a
+													href={sourceLink(item)}
+													onclick={() => openRow(item)}
+													class="mt-2 block font-mono text-[10.5px] text-[var(--ui-text-dimmed)] hover:text-primary-500"
+												>
+													{shortKey(item.targetId ?? item.id, 8, 6)}
+												</a>
 											{/if}
 										</div>
-									</a>
+									</div>
 
 									{#if row.kind === 'single' && mediaFor(item).length}
 										{@const media = mediaFor(item)}
-										<!-- Media is a sibling of the row <a> so its zoom buttons don't nest
+										<!-- Media is a sibling of the row content so its zoom buttons don't nest
 										     inside the link (matches PostCard's separation pattern). -->
 										<div class="pr-4 pb-4 pl-[72px]">
 											<NotificationMedia
@@ -581,7 +634,7 @@
 										</div>
 									{/if}
 
-									<!-- Overflow actions (sibling of <a>, so no nested interactives) -->
+									<!-- Overflow actions stay outside the row links, so there are no nested interactives. -->
 									<div class="absolute top-2.5 right-2.5 z-20 shrink-0">
 										<button
 											type="button"
