@@ -33,9 +33,15 @@
 	import type { FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { extractNotificationMedia } from '$lib/utils/imeta';
-	import { parseContent, splitTrailingPunctuation, hostFromUrl } from '$lib/utils/note-content';
+	import {
+		isEventReference,
+		parseContent,
+		splitTrailingPunctuation,
+		hostFromUrl
+	} from '$lib/utils/note-content';
 	import CommentBody from './CommentBody.svelte';
 	import MentionLink from './MentionLink.svelte';
+	import NostrEventPreview from './NostrEventPreview.svelte';
 	import Poll from './Poll.svelte';
 
 	type MediaAttachment = {
@@ -723,7 +729,7 @@
 
 	<!-- Body -->
 	<div class="px-4 pb-3">
-		<p class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
+		<div class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
 			{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
 				{#if token.type === 'text'}
 					{token.value}
@@ -735,7 +741,11 @@
 						{token.value}
 					</a>
 				{:else if token.type === 'nostr'}
-					<MentionLink value={token.value} />
+					{#if isEventReference(token.value)}
+						<NostrEventPreview value={token.value} />
+					{:else}
+						<MentionLink value={token.value} />
+					{/if}
 				{:else}
 					<a
 						href={token.value}
@@ -747,7 +757,7 @@
 					</a>
 				{/if}
 			{/each}
-		</p>
+		</div>
 		{#if isLong}
 			<button
 				type="button"

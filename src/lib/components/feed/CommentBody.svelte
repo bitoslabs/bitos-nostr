@@ -12,8 +12,9 @@
 	 *  - honours content-warning / sensitive tags with a tap-to-reveal cover
 	 */
 	import MentionLink from './MentionLink.svelte';
+	import NostrEventPreview from './NostrEventPreview.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
-	import { parseContent } from '$lib/utils/note-content';
+	import { isEventReference, parseContent } from '$lib/utils/note-content';
 	import { extractNotificationMedia, cleanNotificationPreview } from '$lib/utils/imeta';
 
 	let {
@@ -28,8 +29,10 @@
 </script>
 
 {#if tokens.length}
-	<p
-		class="mt-0.5 {compact ? 'text-[12.5px]' : 'text-[13px]'} leading-relaxed break-words whitespace-pre-wrap"
+	<div
+		class="mt-0.5 {compact
+			? 'text-[12.5px]'
+			: 'text-[13px]'} leading-relaxed break-words whitespace-pre-wrap"
 	>
 		{#each tokens as token, i (`${i}:${token.type}:${token.value}`)}
 			{#if token.type === 'text'}
@@ -42,7 +45,11 @@
 					{token.value}
 				</a>
 			{:else if token.type === 'nostr'}
-				<MentionLink value={token.value} />
+				{#if isEventReference(token.value)}
+					<NostrEventPreview value={token.value} {compact} />
+				{:else}
+					<MentionLink value={token.value} />
+				{/if}
 			{:else}
 				<a
 					href={token.value}
@@ -54,11 +61,11 @@
 				</a>
 			{/if}
 		{/each}
-	</p>
+	</div>
 {/if}
 
 {#if media.length}
 	<div class="mt-2 max-w-[360px]">
-		<NotificationMedia media={media} {tags} {content} />
+		<NotificationMedia {media} {tags} {content} />
 	</div>
 {/if}

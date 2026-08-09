@@ -19,20 +19,42 @@
 
 	const noteId = $derived(resolveNoteId(page.params.id));
 	const noteSource = $derived(page.url.searchParams.get('from'));
+	const requestedReturnTo = $derived(page.url.searchParams.get('returnTo'));
+	const safeReturnTo = $derived(
+		requestedReturnTo?.startsWith('/') && !requestedReturnTo.startsWith('//')
+			? requestedReturnTo
+			: ''
+	);
 	const backHref = $derived(
-		noteSource === 'reels' ? '/reels' : noteSource === 'discover' ? '/discover' : '/notifications'
+		safeReturnTo ||
+			(noteSource === 'reels'
+				? '/reels'
+				: noteSource === 'discover'
+					? '/discover'
+					: '/notifications')
 	);
 	const backLabel = $derived(
-		noteSource === 'reels' ? 'Reels' : noteSource === 'discover' ? 'Discover' : 'Notifications'
+		safeReturnTo
+			? safeReturnTo.startsWith('/profile')
+				? 'Profile'
+				: safeReturnTo.startsWith('/notifications')
+					? 'Notifications'
+					: 'Back'
+			: noteSource === 'reels'
+				? 'Reels'
+				: noteSource === 'discover'
+					? 'Discover'
+					: 'Notifications'
 	);
 
 	function resolveNoteId(value: string | undefined) {
 		if (!value) return '';
 		if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
-		if (value.startsWith('note1')) {
+		if (value.startsWith('note1') || value.startsWith('nevent1')) {
 			try {
 				const decoded = decode(value);
 				if (decoded.type === 'note') return decoded.data as string;
+				if (decoded.type === 'nevent') return (decoded.data as { id: string }).id;
 			} catch {
 				return '';
 			}
@@ -46,7 +68,9 @@
 		loadedFor = id;
 		try {
 			const currentLoad = id;
-			const applyNoteEvent = async (event?: Awaited<ReturnType<typeof queryPrimaryFirst>>[number]) => {
+			const applyNoteEvent = async (
+				event?: Awaited<ReturnType<typeof queryPrimaryFirst>>[number]
+			) => {
 				if (!event) {
 					note = null;
 					return;
@@ -59,7 +83,11 @@
 						{
 							onSecondary: (mergedActivity) => {
 								if (loadedFor !== currentLoad) return;
-								const [nextHydrated] = applyActivityToNotes([toFeedNote(event)], mergedActivity, identity.current?.pk);
+								const [nextHydrated] = applyActivityToNotes(
+									[toFeedNote(event)],
+									mergedActivity,
+									identity.current?.pk
+								);
 								note = nextHydrated;
 								feed.upsertNote(nextHydrated);
 							}
@@ -105,11 +133,14 @@
 			profiles.ensure(hydratedReplies.map((reply) => reply.pubkey));
 			for (const reply of hydratedReplies) feed.upsertNote(reply);
 		};
-		const events = await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [id], limit: 200 }], {
-			onSecondary: (mergedEvents) => {
-				void applyReplies(mergedEvents);
+		const events = await queryPrimaryFirst(
+			[{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [id], limit: 200 }],
+			{
+				onSecondary: (mergedEvents) => {
+					void applyReplies(mergedEvents);
+				}
 			}
-		});
+		);
 		await applyReplies(events);
 	}
 

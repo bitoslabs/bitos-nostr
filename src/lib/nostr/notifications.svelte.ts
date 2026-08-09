@@ -245,7 +245,15 @@ class NotificationsStore {
 		}
 		// A note that mentions you via #p but isn't part of a reply thread.
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && mentionsMe(ev.tags, identity.current?.pk)) {
-			return this.makeItem(ev, 'mention', undefined, parseNotificationContent(ev.content));
+			// NIP-27 quote/mention notes commonly carry the referenced note in an
+			// `e` tag. Open that origin from the notification instead of opening
+			// the notification event itself.
+			return this.makeItem(
+				ev,
+				'mention',
+				eventTarget(ev.tags),
+				parseNotificationContent(ev.content)
+			);
 		}
 		if (ev.kind === NOSTR_KINDS.CONTACT_LIST) {
 			return this.makeItem(ev, 'follow', undefined, ev.content);
