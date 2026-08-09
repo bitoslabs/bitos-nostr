@@ -116,7 +116,27 @@
 			return;
 		}
 		const ctx = buildScoringContext('feed', candidates);
-		rankedFeed = rankNotesWithBreakdown('feed', candidates, ctx);
+		const nextRanking = rankNotesWithBreakdown('feed', candidates, ctx);
+
+		// Keep cards that are already on screen in the current window when an
+		// interaction changes the ranking inputs. A like updates the note and a
+		// reply adds another candidate; allowing either update to immediately
+		// reorder the first page makes the card the user just acted on appear to
+		// disappear. New candidates still participate in ranking after the stable
+		// visible window.
+		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
+		if (visibleIds.size) {
+			const stableVisible = rankedFeed.notes.filter(
+				(note) => visibleIds.has(note.id) && nextRanking.notes.some((next) => next.id === note.id)
+			);
+			const stableIds = new Set(stableVisible.map((note) => note.id));
+			nextRanking.notes = [
+				...stableVisible,
+				...nextRanking.notes.filter((note) => !stableIds.has(note.id))
+			];
+		}
+
+		rankedFeed = nextRanking;
 	}
 
 	function scheduleRank(reason: 'hard' | 'soft' = 'soft') {
