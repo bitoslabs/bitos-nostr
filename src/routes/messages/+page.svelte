@@ -8,6 +8,9 @@
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
+	import Popover from '$lib/components/ui/Popover.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import {
 		GROUPS_KEY_PREFIX,
 		GROUP_CONTROL_PROCESSED_KEY_PREFIX,
@@ -46,6 +49,7 @@
 		GroupThread
 	} from '$lib/messages/protocol';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import type { Conversation, DirectMessage } from '$lib/nostr/types';
@@ -56,6 +60,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { confirms } from '$lib/stores/confirms.svelte';
 	import { callSettings } from '$lib/stores/call-settings.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import {
 		playConnectedTone,
 		playOutgoingTone,
@@ -111,6 +116,7 @@
 	let filter = $state<ChatFilter>('all');
 	let query = $state('');
 	let showNew = $state(false);
+	let showHelp = $state(false);
 	let showDetails = $state(false);
 	let newMode = $state<ChatKind>('dm');
 	let newPeerInput = $state('');
@@ -1609,6 +1615,7 @@
 	}
 
 	function selectChat(key: string) {
+		popovers.close();
 		if (selected === key) return;
 		selected = key;
 		if (key.startsWith('group:')) {
@@ -1617,6 +1624,41 @@
 			return;
 		}
 		dms.markRead(key);
+	}
+
+	async function removeDmChat(peer: string) {
+		const conversation = dms.conversations.find((item) => item.peer === peer);
+		if (!conversation) return;
+		const name = displayNameForPubkey(peer);
+		if (
+			!(await confirms.danger({
+				title: `Remove ${name} from chats?`,
+				message:
+					'This removes the conversation and its cached messages from this device. It does not delete messages from Nostr.',
+				confirmLabel: 'Remove chat',
+				icon: 'i-lucide-message-square-off'
+			}))
+		)
+			return;
+		dms.remove(peer);
+		popovers.close();
+		if (selected === peer) selected = '';
+		toasts.success('Chat removed from this device');
+	}
+
+	async function toggleContact(peer: string) {
+		try {
+			if (contacts.isFollowing(peer)) {
+				await contacts.unfollow(peer);
+				toasts.success('Removed from contacts');
+			} else {
+				await contacts.follow(peer);
+				toasts.success('Added to contacts');
+			}
+			popovers.close();
+		} catch (error) {
+			toasts.error((error as Error).message);
+		}
 	}
 
 	function addGroupMessageById(groupId: string, message: Omit<GroupMessage, 'id' | 'createdAt'>) {
@@ -2928,14 +2970,25 @@
 						{unreadTotal} unread - {dms.conversations.length} encrypted - {groupThreads.length} groups
 					</p>
 				</div>
-				<button
-					type="button"
-					onclick={() => (showNew = true)}
-					class="grid size-10 place-items-center rounded-xl bg-primary-500 text-white shadow-[var(--glow-primary)] transition-all hover:scale-105 hover:bg-primary-600 active:scale-95"
-					aria-label="New chat"
-				>
-					<Icon name="i-lucide-square-pen" class="size-4" />
-				</button>
+				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						onclick={() => (showHelp = true)}
+						class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500"
+						aria-label="Messages help"
+						title="Messages help"
+					>
+						<Icon name="i-lucide-circle-help" class="size-4" />
+					</button>
+					<button
+						type="button"
+						onclick={() => (showNew = true)}
+						class="grid size-10 place-items-center rounded-xl bg-primary-500 text-white shadow-[var(--glow-primary)] transition-all hover:scale-105 hover:bg-primary-600 active:scale-95"
+						aria-label="New chat"
+					>
+						<Icon name="i-lucide-square-pen" class="size-4" />
+					</button>
+				</div>
 			</div>
 			<Input
 				bind:value={query}
@@ -2963,76 +3016,112 @@
 
 		<div class="min-h-0 flex-1 overflow-y-auto">
 			{#each filtered as conversation (conversation.key)}
-				<button
-					type="button"
-					onclick={() => selectChat(conversation.key)}
-					class="chat-item flex w-full cursor-pointer items-start gap-3 px-4 py-3.5 text-left {selected ===
-					conversation.key
+				<div
+					class="chat-item relative flex w-full items-stretch {selected === conversation.key
 						? 'active'
 						: ''}"
 				>
-					{#if conversation.kind === 'group'}
-						<div class="relative shrink-0">
-							<div
-								class="grid size-12 place-items-center mask-squircle bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
-							>
-								{conversation.initials}
+					<button
+						type="button"
+						onclick={() => selectChat(conversation.key)}
+						class="flex min-w-0 flex-1 cursor-pointer items-start gap-3 px-4 py-3.5 text-left"
+					>
+						{#if conversation.kind === 'group'}
+							<div class="relative shrink-0">
+								<div
+									class="grid size-12 place-items-center mask-squircle bg-primary-500 text-sm font-bold text-white shadow-[var(--glow-primary)]"
+								>
+									{conversation.initials}
+								</div>
+								<span
+									class="online-dot absolute -right-0.5 -bottom-0.5 border-2 border-[var(--surface-bg)]"
+								></span>
 							</div>
-							<span
-								class="online-dot absolute -right-0.5 -bottom-0.5 border-2 border-[var(--surface-bg)]"
-							></span>
-						</div>
-					{:else}
-						<Avatar
-							pubkey={conversation.id}
-							name={conversation.name}
-							picture={profiles.get(conversation.id)?.picture}
-							size={48}
-							class="mask-squircle"
-						/>
-					{/if}
-					<div class="min-w-0 flex-1">
-						<div class="mb-0.5 flex items-center justify-between">
-							<h3 class="flex min-w-0 items-center gap-1.5 truncate text-[14.5px] font-bold">
-								<span class="truncate">{conversation.name}</span>
-								{#if conversation.kind === 'group'}
-									<Icon
-										name="i-lucide-users"
-										class="size-3 shrink-0 text-[var(--ui-text-dimmed)]"
-									/>
-								{/if}
-							</h3>
-							<span class="ml-2 shrink-0 text-[11px] text-[var(--ui-text-muted)]">
-								{conversation.time}
-							</span>
-						</div>
-						<div class="flex items-center justify-between">
-							<p class="truncate text-[13px] text-[var(--ui-text-muted)]">
-								{#if conversation.kind === 'dm' && isSecureDm(dms.conversations.find((dm) => dm.peer === conversation.id)?.lastMessage)}
+						{:else}
+							<Avatar
+								pubkey={conversation.id}
+								name={conversation.name}
+								picture={profiles.get(conversation.id)?.picture}
+								size={48}
+								class="mask-squircle"
+							/>
+						{/if}
+						<div class="min-w-0 flex-1">
+							<div class="mb-0.5 flex items-center justify-between">
+								<h3 class="flex min-w-0 items-center gap-1.5 truncate text-[14.5px] font-bold">
+									<span class="truncate">{conversation.name}</span>
+									{#if conversation.kind === 'group'}
+										<Icon
+											name="i-lucide-users"
+											class="size-3 shrink-0 text-[var(--ui-text-dimmed)]"
+										/>
+									{/if}
+								</h3>
+								<span class="ml-2 shrink-0 text-[11px] text-[var(--ui-text-muted)]">
+									{conversation.time}
+								</span>
+							</div>
+							<div class="flex items-center justify-between">
+								<p class="truncate text-[13px] text-[var(--ui-text-muted)]">
+									{#if conversation.kind === 'dm' && isSecureDm(dms.conversations.find((dm) => dm.peer === conversation.id)?.lastMessage)}
+										<span
+											class="mr-1 inline-flex items-center align-middle text-emerald-600 dark:text-emerald-300"
+											title="Last message used Secure DM (NIP-17)"
+										>
+											<Icon name="i-lucide-shield-check" class="size-3.5" />
+										</span>
+									{/if}
+									{#if conversation.previewPrefix}
+										<span class="font-semibold text-[var(--ui-text)]"
+											>{conversation.previewPrefix}</span
+										>
+									{/if}
+									{conversation.preview}
+								</p>
+								{#if conversation.unread}
 									<span
-										class="mr-1 inline-flex items-center align-middle text-emerald-600 dark:text-emerald-300"
-										title="Last message used Secure DM (NIP-17)"
+										class="ml-2 grid size-5 shrink-0 place-items-center rounded-full bg-primary-500 text-[10px] font-bold text-white"
 									>
-										<Icon name="i-lucide-shield-check" class="size-3.5" />
+										{conversation.unread}
 									</span>
 								{/if}
-								{#if conversation.previewPrefix}
-									<span class="font-semibold text-[var(--ui-text)]"
-										>{conversation.previewPrefix}</span
-									>
-								{/if}
-								{conversation.preview}
-							</p>
-							{#if conversation.unread}
-								<span
-									class="ml-2 grid size-5 shrink-0 place-items-center rounded-full bg-primary-500 text-[10px] font-bold text-white"
-								>
-									{conversation.unread}
-								</span>
-							{/if}
+							</div>
 						</div>
-					</div>
-				</button>
+					</button>
+					{#if conversation.kind === 'dm'}
+						<Popover
+							id={`messages-chat-menu-${conversation.key}`}
+							placement="bottom-end"
+							width="sm"
+							rootClass="shrink-0 self-start pt-2 pr-2"
+							triggerClass="grid size-8 place-items-center rounded-lg text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+							label={`Options for ${conversation.name}`}
+						>
+							{#snippet trigger()}
+								<Icon name="i-lucide-ellipsis-vertical" class="size-4" />
+							{/snippet}
+							<MenuItem href={profileHref(conversation.id)} icon="i-lucide-user-round">
+								Profile
+							</MenuItem>
+							<MenuItem
+								icon={contacts.isFollowing(conversation.id)
+									? 'i-lucide-user-minus'
+									: 'i-lucide-user-plus'}
+								onclick={() => void toggleContact(conversation.id)}
+							>
+								{contacts.isFollowing(conversation.id) ? 'Remove contact' : 'Add contact'}
+							</MenuItem>
+							<MenuDivider />
+							<MenuItem
+								tone="danger"
+								icon="i-lucide-trash-2"
+								onclick={() => void removeDmChat(conversation.id)}
+							>
+								Remove chat
+							</MenuItem>
+						</Popover>
+					{/if}
+				</div>
 			{/each}
 			{#if !filtered.length}
 				<p class="px-4 py-10 text-center text-[12.5px] text-[var(--ui-text-dimmed)]">
@@ -4280,8 +4369,57 @@
 			>
 				Delete group
 			</Button>
+		{:else if active}
+			<Button
+				color="primary"
+				variant="soft"
+				icon={contacts.isFollowing(active.id) ? 'i-lucide-user-minus' : 'i-lucide-user-plus'}
+				onclick={() => void toggleContact(active.id)}
+			>
+				{contacts.isFollowing(active.id) ? 'Remove contact' : 'Add contact'}
+			</Button>
+			<Button
+				color="error"
+				variant="subtle"
+				icon="i-lucide-trash-2"
+				onclick={() => void removeDmChat(active.id)}
+			>
+				Remove chat
+			</Button>
 		{/if}
 		<Button color="neutral" variant="subtle" onclick={() => (showDetails = false)}>Close</Button>
+	{/snippet}
+</Dialog>
+
+<Dialog bind:open={showHelp} title="Messages help">
+	<div class="space-y-4 text-[13px] text-[var(--ui-text-muted)]">
+		<div class="flex gap-3">
+			<Icon name="i-lucide-message-square-plus" class="mt-0.5 size-4 shrink-0 text-primary-500" />
+			<p>
+				<span class="font-semibold text-[var(--ui-text)]">Start a chat</span> with the compose button.
+				Use an npub or a 64-character hex public key.
+			</p>
+		</div>
+		<div class="flex gap-3">
+			<Icon name="i-lucide-ellipsis-vertical" class="mt-0.5 size-4 shrink-0 text-primary-500" />
+			<p>
+				Open a chat's options menu to view the profile, add or remove a contact, or remove the chat
+				from this device.
+			</p>
+		</div>
+		<div class="flex gap-3">
+			<Icon
+				name="i-lucide-shield-check"
+				class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-300"
+			/>
+			<p>
+				Messages prefer encrypted Secure DMs (NIP-17) and can fall back to legacy NIP-04 when
+				needed.
+			</p>
+		</div>
+	</div>
+	{#snippet footer()}
+		<Button color="neutral" variant="subtle" onclick={() => (showHelp = false)}>Close</Button>
 	{/snippet}
 </Dialog>
 

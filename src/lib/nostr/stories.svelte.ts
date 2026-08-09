@@ -156,6 +156,9 @@ class StoriesStore {
 	private seenAt = new Map<string, number>();
 	private unsub: (() => void) | null = null;
 	private publicFallbackFetched = false;
+	publicLoading = $state(false);
+	publicHasMore = $state(false);
+	private publicNextUntil: number | null = null;
 
 	/** Per-slide engagement: likes (❤️), views (👁️), and replies. */
 	interactions = $state<Record<string, StoryInteraction>>({});
@@ -181,6 +184,9 @@ class StoriesStore {
 		this.authors = [];
 		this.slidesByAuthor.clear();
 		this.publicFallbackFetched = false;
+		this.publicLoading = false;
+		this.publicHasMore = false;
+		this.publicNextUntil = null;
 		this.loadSeen();
 		this.loadViewed();
 		this.loading = true;
@@ -253,6 +259,7 @@ class StoriesStore {
 
 		this.publicFallbackFetched = true;
 		const applyStoryEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+			this.updatePublicCursor(events);
 			for (const ev of events) this.ingest(ev);
 			profiles.ensure(events.map((e) => e.pubkey));
 		};
@@ -263,6 +270,49 @@ class StoriesStore {
 			}
 		);
 		applyStoryEvents(events);
+	}
+
+	private updatePublicCursor(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
+		const storyEvents = events.filter((event) => event.kind === NOSTR_KINDS.STORY_STATUS);
+		if (!storyEvents.length) return;
+		const oldest = Math.min(...storyEvents.map((event) => event.created_at));
+		if (this.publicNextUntil === null || oldest - 1 < this.publicNextUntil) {
+			this.publicNextUntil = oldest - 1;
+		}
+		this.publicHasMore = storyEvents.length >= PUBLIC_FALLBACK_LIMIT;
+	}
+
+	async loadMorePublic() {
+		if (this.publicLoading || !this.publicHasMore || this.publicNextUntil === null) return;
+		this.publicLoading = true;
+		try {
+			const applyStoryEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
+				this.updatePublicCursor(events);
+				for (const ev of events) this.ingest(ev);
+				profiles.ensure(events.map((e) => e.pubkey));
+			};
+			const events = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.STORY_STATUS],
+						until: this.publicNextUntil,
+						limit: PUBLIC_FALLBACK_LIMIT
+					}
+				],
+				{
+					onSecondary: (mergedEvents) => applyStoryEvents(mergedEvents)
+				}
+			);
+			applyStoryEvents(events);
+			if (
+				events.filter((event) => event.kind === NOSTR_KINDS.STORY_STATUS).length <
+				PUBLIC_FALLBACK_LIMIT
+			) {
+				this.publicHasMore = false;
+			}
+		} finally {
+			this.publicLoading = false;
+		}
 	}
 
 	private ingest(ev: Event) {
