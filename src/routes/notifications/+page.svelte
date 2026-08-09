@@ -4,7 +4,7 @@
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
-	import NostrEventPreview from '$lib/components/feed/NostrEventPreview.svelte';
+	import OriginNotePreview from '$lib/components/feed/OriginNotePreview.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -611,17 +611,7 @@
 											{/if}
 
 											{#if item.targetId && ['like', 'comment', 'mention', 'repost'].includes(item.type)}
-												<NostrEventPreview eventId={item.targetId} compact inline />
-											{/if}
-
-											{#if sourceLink(item)}
-												<a
-													href={sourceLink(item)}
-													onclick={() => openRow(item)}
-													class="mt-2 block font-mono text-[10.5px] text-[var(--ui-text-dimmed)] hover:text-primary-500"
-												>
-													{shortKey(item.targetId ?? item.id, 8, 6)}
-												</a>
+												<OriginNotePreview noteId={item.targetId} />
 											{/if}
 										</div>
 									</div>
