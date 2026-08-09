@@ -367,6 +367,49 @@
 			></button>
 		</div>
 
+		<!-- Optional public-only discovery relay layer -->
+		<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
+			<Icon name="i-lucide-radio-tower" class="size-5 text-primary-500" />
+			<div class="min-w-0 flex-1">
+				<p class="text-[13px] font-bold text-[var(--ui-text)]">Relay discovery</p>
+				<p class="text-[11px] text-[var(--ui-text-muted)]">
+					Enrich For You with public notes from curated relays outside your settings. Read-only; never publishes there.
+				</p>
+			</div>
+			<button
+				type="button"
+				class="toggle {algorithmPreferences.relayDiscovery.feed ? 'on' : ''}"
+				aria-label="Relay discovery"
+				aria-pressed={algorithmPreferences.relayDiscovery.feed}
+				onclick={() =>
+					algorithmPreferences.setRelayDiscovery('feed', !algorithmPreferences.relayDiscovery.feed)}
+			></button>
+		</div>
+		{#each (['discover', 'reels'] as const) as discoverySurface}
+			<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
+				<Icon name={discoverySurface === 'discover' ? 'i-lucide-compass' : 'i-lucide-clapperboard'} class="size-5 text-primary-500" />
+				<div class="min-w-0 flex-1">
+					<p class="text-[13px] font-bold text-[var(--ui-text)]">
+						{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Reels relay discovery'}
+					</p>
+					<p class="text-[11px] text-[var(--ui-text-muted)]">
+						Add public candidates from curated relays without changing your relay settings.
+					</p>
+				</div>
+				<button
+					type="button"
+					class="toggle {algorithmPreferences.relayDiscovery[discoverySurface] ? 'on' : ''}"
+					aria-label={`${discoverySurface} relay discovery`}
+					aria-pressed={algorithmPreferences.relayDiscovery[discoverySurface]}
+					onclick={() =>
+						algorithmPreferences.setRelayDiscovery(
+							discoverySurface,
+							!algorithmPreferences.relayDiscovery[discoverySurface]
+						)}
+				></button>
+			</div>
+		{/each}
+
 		<!-- Clear learned interactions -->
 		<button
 			type="button"

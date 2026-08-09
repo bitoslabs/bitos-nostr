@@ -9,7 +9,8 @@
 	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryParallelProgressive, queryPrimaryFirst } from '$lib/nostr/pool';
+	import { queryParallelProgressive, queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
+	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { NOSTR_KINDS, type Event, type FeedNote } from '$lib/nostr/types';
@@ -61,11 +62,23 @@
 	let relayFeedSignature = $state('');
 	let relayFeedRevision = 0;
 	let relayFeedHasResult = $state(false);
+	let discoveryNotes = $state<FeedNote[]>([]);
+	let discoverySignature = $state('');
+	let discoveryRevision = 0;
 	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const normalizedSearch = $derived(searchQuery.trim().toLowerCase());
 	const useRelayFeed = $derived(!!activeTag || normalizedSearch.length >= 2);
 	// Keep local matches visible while the remote search is in flight.
-	const baseNotes = $derived(useRelayFeed && relayFeedHasResult ? relayFeedNotes : feed.notes);
+	const discoveryActive = $derived(
+		algorithmPreferences.relayDiscovery.feed && feedMode === 'foryou' && !useRelayFeed
+	);
+	const baseNotes = $derived(
+		useRelayFeed && relayFeedHasResult
+			? relayFeedNotes
+			: discoveryActive
+				? mergeDiscoveryNotes(feed.notes, discoveryNotes)
+				: feed.notes
+	);
 	const selectedFilterOptions = $derived(
 		filterOptions.filter((option) => activeFilters.includes(option.key))
 	);
@@ -126,9 +139,14 @@
 		// visible window.
 		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
 		if (visibleIds.size) {
-			const stableVisible = rankedFeed.notes.filter(
-				(note) => visibleIds.has(note.id) && nextRanking.notes.some((next) => next.id === note.id)
-			);
+			// Keep the current order for cards already on screen, but take the
+			// note objects from the new ranking. The feed store updates reactions
+			// optimistically; reusing rankedFeed's old objects here would restore
+			// the pre-like state after every ranking pass.
+			const nextById = new Map(nextRanking.notes.map((note) => [note.id, note]));
+			const stableVisible = rankedFeed.notes
+				.filter((note) => visibleIds.has(note.id) && nextById.has(note.id))
+				.map((note) => nextById.get(note.id)!);
 			const stableIds = new Set(stableVisible.map((note) => note.id));
 			nextRanking.notes = [
 				...stableVisible,
@@ -294,6 +312,17 @@
 			.sort((a, b) => b.created_at - a.created_at);
 	}
 
+	function mergeDiscoveryNotes(configured: FeedNote[], discovered: FeedNote[]) {
+		const seen = new Set<string>();
+		const merged: FeedNote[] = [];
+		for (const note of [...configured, ...discovered]) {
+			if (seen.has(note.id)) continue;
+			seen.add(note.id);
+			merged.push(note);
+		}
+		return merged.sort((a, b) => b.createdAt - a.createdAt);
+	}
+
 	function relayFilters(): Filter[] {
 		const filters: Filter[] = [];
 		if (activeTag) {
@@ -387,6 +416,41 @@
 		}
 	}
 
+	async function loadDiscoveryFeed() {
+		const urls = DISCOVERY_RELAY_URLS.filter((url) => !relays.urls.includes(url));
+		if (!urls.length) {
+			discoverySignature = '';
+			discoveryRevision += 1;
+			discoveryNotes = [];
+			return;
+		}
+		const signature = urls.join('|');
+		discoverySignature = signature;
+		discoveryRevision += 1;
+		const revision = discoveryRevision;
+		try {
+			const events = await queryUrls(urls, [
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: RELAY_RESULT_LIMIT }
+			]);
+			if (discoverySignature !== signature || revision !== discoveryRevision) return;
+			const notes = uniqueTimelineEvents(events).map((event) => ({
+				...toFeedNote(event),
+				source: 'discovery' as const
+			}));
+			const ids = notes.map((note) => note.id);
+			const activity = ids.length
+				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }])
+				: [];
+			if (discoverySignature !== signature || revision !== discoveryRevision) return;
+			discoveryNotes = applyActivityToNotes(notes, activity, identity.current?.pk);
+			profiles.ensure(notes.map((note) => note.pubkey));
+		} catch {
+			// Discovery is optional. The configured relay feed remains unaffected.
+		} finally {
+			// Discovery is intentionally best-effort and has no blocking loading UI.
+		}
+	}
+
 	function showNewNotes() {
 		const incomingIds = new Set(feed.pendingNotes.map((note) => note.id));
 		const count = feed.revealPending();
@@ -422,10 +486,23 @@
 	}
 
 	function handleNoteChange(next: FeedNote) {
+		if (next.source === 'discovery') {
+			discoveryNotes = discoveryNotes.map((note) => (note.id === next.id ? next : note));
+			return;
+		}
 		if (relayFeedNotes.some((note) => note.id === next.id)) {
 			relayFeedNotes = relayFeedNotes.map((note) => (note.id === next.id ? next : note));
 		} else {
 			feed.upsertNote(next);
+			// Keep the ranked snapshot's card data live while smooth ranking is
+			// waiting to run. This updates the heart/count immediately without
+			// allowing an interaction to reorder the visible cards.
+			if (rankedFeed.notes.some((note) => note.id === next.id)) {
+				rankedFeed = {
+					...rankedFeed,
+					notes: rankedFeed.notes.map((note) => (note.id === next.id ? next : note))
+				};
+			}
 		}
 	}
 
@@ -477,12 +554,29 @@
 		if (remaining < 900) loadMoreNotes();
 	}
 
+	function handleNoteHide(id: string) {
+		discoveryNotes = discoveryNotes.filter((note) => note.id !== id);
+	}
+
 	$effect(() => {
 		feedPreferences.load();
 		const signature = `${activeFilters.slice().sort().join(',')}:${activeTag}:${normalizedSearch}`;
 		if (signature === lastViewSignature) return;
 		lastViewSignature = signature;
 		renderedCount = INITIAL_RENDER_COUNT;
+	});
+
+	$effect(() => {
+		void algorithmPreferences.relayDiscovery.feed;
+		void discoveryActive;
+		void relays.urls;
+		if (!discoveryActive) {
+			discoveryNotes = [];
+			discoverySignature = '';
+			discoveryRevision += 1;
+			return;
+		}
+		void loadDiscoveryFeed();
 	});
 
 	$effect(() => {
@@ -866,6 +960,7 @@
 								index={i}
 								onInteract={handleInteract}
 								onNoteChange={handleNoteChange}
+								onNoteHide={handleNoteHide}
 							/>
 						{/each}
 					</div>
@@ -957,6 +1052,7 @@
 							{note}
 							index={i}
 							onNoteChange={handleNoteChange}
+							onNoteHide={handleNoteHide}
 							rankTag={rankTagFor(note)}
 							onExplain={() => openExplainer(note)}
 							onInteract={handleInteract}

@@ -44,6 +44,8 @@ export interface AlgorithmPreferences {
 	feed: SurfaceConfig;
 	reels: SurfaceConfig;
 	discover: SurfaceConfig;
+	/** Optional public-only discovery per surface. */
+	relayDiscovery: Record<SurfaceId, boolean>;
 }
 
 /** Named preset that applies a full SurfaceConfig in one tap. */

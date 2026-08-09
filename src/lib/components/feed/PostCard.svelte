@@ -49,6 +49,7 @@
 		note,
 		index = 0,
 		onNoteChange,
+		onNoteHide,
 		rankTag,
 		onExplain,
 		onInteract
@@ -56,6 +57,7 @@
 		note: FeedNote;
 		index?: number;
 		onNoteChange?: (note: FeedNote) => void;
+		onNoteHide?: (id: string) => void;
 		rankTag?: { label: string; icon: string; color: string };
 		onExplain?: () => void;
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
@@ -137,16 +139,24 @@
 	let showAllReplies = $state(false);
 	let refreshingComments = $state(false);
 	let replyingToCommentId = $state('');
+	let optimisticReplies = $state<FeedNote[]>([]);
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
 	const sensitiveReason = $derived(sensitiveMediaReason());
 	const shouldCoverMedia = $derived(!!sensitiveReason);
+	const allReplies = $derived.by(() => {
+		const byId = new Map(feed.notes.map((reply) => [reply.id, reply]));
+		for (const reply of optimisticReplies) byId.set(reply.id, reply);
+		return [...byId.values()];
+	});
 	const directReplies = $derived(
-		feed.notes
+		allReplies
 			.filter((reply) => reply.replyTo === note.id && reply.id !== note.id)
 			.sort((a, b) => a.createdAt - b.createdAt)
 	);
-	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(0, 2));
+	// Keep chronological order, but show the newest comments while collapsed so
+	// a freshly submitted reply is visible immediately under the note.
+	const visibleReplies = $derived(showAllReplies ? directReplies : directReplies.slice(-2));
 	const hiddenReplyCount = $derived(Math.max(0, directReplies.length - visibleReplies.length));
 	const saved = $derived(bookmarks.has(note.id));
 	const deleteTargetLabel = $derived(pendingDelete?.id === note.id ? 'note' : 'comment');
@@ -215,9 +225,16 @@
 	}
 
 	function childReplies(replyId: string) {
-		return feed.notes
+		return allReplies
 			.filter((reply) => reply.replyTo === replyId)
 			.sort((a, b) => a.createdAt - b.createdAt);
+	}
+
+	function addOptimisticReply(reply: FeedNote) {
+		optimisticReplies = [
+			...optimisticReplies.filter((existing) => existing.id !== reply.id),
+			reply
+		];
 	}
 
 	async function copyText(value: string, label: string) {
@@ -366,6 +383,7 @@
 
 	function hideNote() {
 		feed.hideNote(note.id);
+		onNoteHide?.(note.id);
 		toasts.info('Note hidden');
 		popovers.close();
 	}
@@ -375,6 +393,7 @@
 	function notInterested() {
 		interactionProfile.dismissNote(note.id);
 		feed.hideNote(note.id);
+		onNoteHide?.(note.id);
 		toasts.success("Got it — we'll show less like this");
 		popovers.close();
 	}
@@ -571,6 +590,13 @@
 					<span class="truncate font-mono">{shortKey(note.pubkey, 8, 6)}</span>
 					<span>·</span>
 					<time class="shrink-0" title={timeFull(note.createdAt)}>{timeAgo(note.createdAt)}</time>
+					{#if note.source === 'discovery'}
+						<span>·</span>
+						<span
+							class="shrink-0 text-primary-500"
+							title="Found through an optional discovery relay">discovery</span
+						>
+					{/if}
 				</p>
 			</div>
 		</a>
@@ -1186,7 +1212,10 @@
 									placeholder={`Reply to ${replyName}…`}
 									autofocus
 									initialMention={{ pubkey: reply.pubkey, name: replyName }}
-									onSubmitted={() => (replyingToCommentId = '')}
+									onSubmitted={(reply) => {
+										addOptimisticReply(reply);
+										replyingToCommentId = '';
+									}}
 									onCancel={() => (replyingToCommentId = '')}
 								/>
 							</div>
@@ -1221,7 +1250,10 @@
 			placeholder="Reply to this note…"
 			autofocus={replyOpen}
 			focusTick={replyFocusTick}
-			onSubmitted={() => (replyOpen = false)}
+			onSubmitted={(reply) => {
+				addOptimisticReply(reply);
+				replyOpen = false;
+			}}
 		/>
 	</div>
 	<!-- Like confetti burst overlay -->

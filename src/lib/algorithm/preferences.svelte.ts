@@ -68,11 +68,13 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 export const DEFAULTS: AlgorithmPreferences = {
 	feed: structuredClone(DEFAULT_SURFACE_CONFIG.feed),
 	reels: structuredClone(DEFAULT_SURFACE_CONFIG.reels),
-	discover: structuredClone(DEFAULT_SURFACE_CONFIG.discover)
+	discover: structuredClone(DEFAULT_SURFACE_CONFIG.discover),
+	relayDiscovery: { feed: false, reels: false, discover: false }
 };
 
 class AlgorithmPreferencesStore {
 	config = $state<AlgorithmPreferences>(structuredClone(DEFAULTS));
+	relayDiscovery = $state({ feed: false, reels: false, discover: false });
 	recencyHalfLifeSeconds = $state(DEFAULT_RECENCY_HALF_LIFE_SECONDS);
 	loaded = $state(false);
 	/** Bumps whenever the WoT second-hop cache refreshes, so ranked surfaces that
@@ -92,14 +94,23 @@ class AlgorithmPreferencesStore {
 			const raw = localStorage.getItem(ALGORITHM_STORAGE_KEY);
 			if (raw) {
 				const parsed = JSON.parse(raw) as Partial<AlgorithmPreferences> & {
+					discoveryEnabled?: boolean;
 					recencyHalfLifeSeconds?: number;
-				smoothRanking?: boolean;
+					smoothRanking?: boolean;
 				};
-				this.config = {
-					feed: this.mergeSurface('feed', parsed.feed),
-					reels: this.mergeSurface('reels', parsed.reels),
-					discover: this.mergeSurface('discover', parsed.discover)
-				};
+					const legacyDiscovery = parsed.discoveryEnabled === true;
+					const relayDiscovery = parsed.relayDiscovery ?? {
+						feed: legacyDiscovery,
+						reels: false,
+						discover: false
+					};
+					this.config = {
+						feed: this.mergeSurface('feed', parsed.feed),
+						reels: this.mergeSurface('reels', parsed.reels),
+						discover: this.mergeSurface('discover', parsed.discover),
+						relayDiscovery
+					};
+					this.relayDiscovery = relayDiscovery;
 				if (
 					Number.isFinite(parsed.recencyHalfLifeSeconds) &&
 					(parsed.recencyHalfLifeSeconds as number) > 0
@@ -130,6 +141,7 @@ class AlgorithmPreferencesStore {
 			ALGORITHM_STORAGE_KEY,
 			JSON.stringify({
 				...this.config,
+				relayDiscovery: this.relayDiscovery,
 				recencyHalfLifeSeconds: this.recencyHalfLifeSeconds,
 				smoothRanking: this.smoothRanking
 			})
@@ -169,6 +181,11 @@ class AlgorithmPreferencesStore {
 		this.persist();
 	};
 
+	setRelayDiscovery = (surface: SurfaceId, enabled: boolean) => {
+		this.relayDiscovery = { ...this.relayDiscovery, [surface]: enabled };
+		this.persist();
+	};
+
 	setRecencyHalfLife = (seconds: number) => {
 		this.recencyHalfLifeSeconds = Math.max(600, Math.round(seconds));
 		this.persist();
@@ -188,6 +205,7 @@ class AlgorithmPreferencesStore {
 	/** Restore everything (all three surfaces + freshness). */
 	resetAll = () => {
 		this.config = structuredClone(DEFAULTS);
+		this.relayDiscovery = { feed: false, reels: false, discover: false };
 		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
 		this.smoothRanking = true;
 		this.persist();

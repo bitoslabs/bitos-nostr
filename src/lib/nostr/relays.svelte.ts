@@ -40,6 +40,17 @@ export const RECOMMENDED: RecommendedRelay[] = [
 	{ url: 'wss://nostr.mom', name: 'nostr.mom', description: 'Open community relay' }
 ];
 
+/**
+ * Read-only discovery sources. These are intentionally separate from the
+ * user's relay list: they can enrich For You without changing settings or
+ * becoming publish targets.
+ */
+export const DISCOVERY_RELAY_URLS = [
+	'wss://relay.primal.net',
+	'wss://cache2.primal.net/v1',
+	'wss://relay.nostr.band'
+] as const;
+
 const URL_RE = /^wss?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/i;
 
 class RelayStore {

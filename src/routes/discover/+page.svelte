@@ -7,7 +7,8 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { algorithmPreferences, getWotSet } from '$lib/algorithm';
-	import { queryPrimaryFirst } from '$lib/nostr/pool';
+	import { queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
+	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -24,9 +25,11 @@
 		content: string;
 		createdAt: number;
 		sensitiveReason: string;
+		source?: 'configured' | 'discovery';
 	};
 	type DiscoverCache = {
 		savedAt: number;
+		discoveryEnabled?: boolean;
 		trendTags: TrendTag[];
 		creators: Creator[];
 		mediaItems: MediaItem[];
@@ -36,6 +39,7 @@
 		queries: Array<{
 			query: string;
 			savedAt: number;
+			discoveryEnabled?: boolean;
 			data: Omit<DiscoverCache, 'savedAt'>;
 		}>;
 	};
@@ -49,8 +53,8 @@
 	const imagePathPattern =
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
-	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v1';
-	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v1';
+	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v2';
+	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v2';
 	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
 	const DISCOVER_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 	const MAX_CACHED_SEARCHES = 5;
@@ -66,6 +70,8 @@
 	const SEARCH_DEBOUNCE_MS = 350;
 
 	let loading = $state(true);
+	let refreshingRelays = $state(false);
+	let lastRelayRefreshAt = $state(0);
 	let query = $state('');
 	let trendTags = $state<TrendTag[]>([]);
 	let creators = $state<Creator[]>([]);
@@ -221,9 +227,34 @@
 		return merged.slice(0, MAX_CACHED_MEDIA);
 	}
 
+	function discoveryUrls() {
+		if (!algorithmPreferences.relayDiscovery.discover) return [];
+		return DISCOVERY_RELAY_URLS.filter((url) => !relays.urls.includes(url));
+	}
+
+	function mergeEvents(
+		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		discovered: Awaited<ReturnType<typeof queryUrls>>
+	) {
+		const seen = new Set<string>();
+		return [...configured, ...discovered].filter((event) => {
+			if (seen.has(event.id)) return false;
+			seen.add(event.id);
+			return true;
+		});
+	}
+
+	function discoveryOnlyIds(
+		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		discovered: Awaited<ReturnType<typeof queryUrls>>
+	) {
+		const configuredIds = new Set(configured.map((event) => event.id));
+		return new Set(discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id));
+	}
+
 	function buildDiscoverData(
 		events: Array<{ id: string; pubkey: string; content: string; created_at: number; tags: string[][] }>,
-		options: { mediaLimit?: number } = {}
+		options: { mediaLimit?: number; discoveryIds?: Set<string> } = {}
 	) {
 		const seen: Record<string, true> = {};
 		const tags: Record<string, number> = {};
@@ -269,7 +300,8 @@
 					pubkey: event.pubkey,
 					content: event.content,
 					createdAt: event.created_at,
-					sensitiveReason: reason
+					sensitiveReason: reason,
+					source: options.discoveryIds?.has(event.id) ? 'discovery' : 'configured'
 				});
 			}
 		}
@@ -298,7 +330,8 @@
 				...item,
 				kind: item.kind ?? 'image',
 				createdAt: item.createdAt ?? 0,
-				sensitiveReason: item.sensitiveReason ?? ''
+				sensitiveReason: item.sensitiveReason ?? '',
+				source: item.source ?? 'configured'
 			}));
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		profiles.ensure(creators.map((creator) => creator.pubkey));
@@ -318,6 +351,7 @@
 			if (!raw) return false;
 			const cached = JSON.parse(raw) as DiscoverCache;
 			if (!cached?.savedAt || Date.now() - cached.savedAt > DISCOVER_CACHE_TTL_MS) return false;
+			if (cached.discoveryEnabled && !algorithmPreferences.relayDiscovery.discover) return false;
 			if (!Array.isArray(cached.trendTags) || !Array.isArray(cached.creators)) return false;
 			applyDiscoverData(cached);
 			return true;
@@ -328,7 +362,14 @@
 
 	function saveDiscoverCache(data: Omit<DiscoverCache, 'savedAt'>) {
 		try {
-			localStorage.setItem(DISCOVER_CACHE_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
+			localStorage.setItem(
+				DISCOVER_CACHE_KEY,
+				JSON.stringify({
+					...data,
+					discoveryEnabled: algorithmPreferences.relayDiscovery.discover,
+					savedAt: Date.now()
+				})
+			);
 		} catch {
 			/* Ignore quota/private-mode failures; cache is only a performance hint. */
 		}
@@ -342,6 +383,7 @@
 			if (!Array.isArray(cached?.queries)) return null;
 			const entry = cached.queries.find((item) => item.query === queryValue);
 			if (!entry?.savedAt || Date.now() - entry.savedAt > DISCOVER_SEARCH_CACHE_TTL_MS) return null;
+			if (entry.discoveryEnabled && !algorithmPreferences.relayDiscovery.discover) return null;
 			return entry.data;
 		} catch {
 			return null;
@@ -353,7 +395,12 @@
 			const raw = localStorage.getItem(DISCOVER_SEARCH_CACHE_KEY);
 			const cached = raw ? (JSON.parse(raw) as DiscoverSearchCache) : { savedAt: 0, queries: [] };
 			const nextQueries = [
-				{ query: queryValue, data, savedAt: Date.now() },
+				{
+					query: queryValue,
+					data,
+					discoveryEnabled: algorithmPreferences.relayDiscovery.discover,
+					savedAt: Date.now()
+				},
 				...((cached.queries ?? []).filter((item) => item.query !== queryValue) as Array<{
 					query: string;
 					data: Omit<DiscoverCache, 'savedAt'>;
@@ -373,22 +420,36 @@
 
 	async function loadDiscover(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
+		refreshingRelays = true;
 		try {
+			const filters = [{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }];
+			let discovered: Awaited<ReturnType<typeof queryUrls>> = [];
 			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
-				const { data, sortedEvents } = buildDiscoverData(events);
+				const combined = mergeEvents(events, discovered);
+				const { data, sortedEvents } = buildDiscoverData(combined, {
+				discoveryIds: discoveryOnlyIds(events, discovered)
+				});
 				applyDiscoverData(data);
 				oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
-				hasMoreMedia = events.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
+				hasMoreMedia = combined.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
 				saveDiscoverCache(data);
 			};
+			const discoveryPromise = queryUrls(discoveryUrls(), filters).then((events) => {
+				discovered = events;
+				if (events.length) applyResults(primaryEvents);
+				return events;
+			});
+			let primaryEvents: Awaited<ReturnType<typeof queryPrimaryFirst>> = [];
 			const events = await queryPrimaryFirst(
-				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }],
+				filters,
 				{
 					onSecondary: (mergedEvents) => {
 						applyResults(mergedEvents);
 					}
 				}
 			);
+			primaryEvents = events;
+			await discoveryPromise;
 			applyResults(events);
 		} catch (e) {
 			if (!options.background) {
@@ -396,6 +457,8 @@
 			}
 		} finally {
 			loading = false;
+			refreshingRelays = false;
+			lastRelayRefreshAt = Math.floor(Date.now() / 1000);
 		}
 	}
 
@@ -550,18 +613,30 @@
 					'#t': [queryTag || term.toLowerCase()]
 				} as Filter
 			];
+			let discovered: Awaited<ReturnType<typeof queryUrls>> = [];
 			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
 				if (searchToken !== relaySearchToken) return;
-				relaySearchData = buildDiscoverData(events, { mediaLimit: MAX_CACHED_MEDIA }).data;
+				relaySearchData = buildDiscoverData(mergeEvents(events, discovered), {
+					mediaLimit: MAX_CACHED_MEDIA,
+					discoveryIds: discoveryOnlyIds(events, discovered)
+				}).data;
 				saveDiscoverSearchCache(term, relaySearchData);
 				profiles.ensure(relaySearchData.creators.map((creator) => creator.pubkey));
 				profiles.ensure(relaySearchData.mediaItems.map((item) => item.pubkey));
 			};
+			const discoveryPromise = queryUrls(discoveryUrls(), filters).then((events) => {
+				discovered = events;
+				applyResults(primaryEvents);
+				return events;
+			});
+			let primaryEvents: Awaited<ReturnType<typeof queryPrimaryFirst>> = [];
 			const events = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
 					applyResults(mergedEvents);
 				}
 			});
+			primaryEvents = events;
+			await discoveryPromise;
 			applyResults(events);
 		} catch (e) {
 			if (searchToken !== relaySearchToken) return;
@@ -611,6 +686,15 @@
 				<p class="mt-1.5 text-[13px] text-[var(--ui-text-muted)]">
 					Real notes, tags, creators, and media from your relays
 				</p>
+				<div class="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+					{#if refreshingRelays}
+						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
+						<span>Refreshing relays…</span>
+					{:else if lastRelayRefreshAt}
+						<Icon name="i-lucide-check-circle-2" class="size-3.5 text-primary-500" />
+						<span>Updated {timeAgo(lastRelayRefreshAt)}</span>
+					{/if}
+				</div>
 			</div>
 			<button
 				type="button"
@@ -806,6 +890,9 @@
 											class="size-3.5"
 										/>
 										<span class="truncate">{name}</span>
+										{#if item.source === 'discovery'}
+											<span class="shrink-0 rounded-full bg-primary-500/80 px-1.5 py-0.5 text-[9px] uppercase">discovery</span>
+										{/if}
 									</div>
 									<p class="line-clamp-3 text-[12px] font-semibold">{item.content}</p>
 								</div>

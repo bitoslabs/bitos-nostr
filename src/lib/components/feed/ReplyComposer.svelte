@@ -66,12 +66,17 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import { shortKey } from '$lib/utils/format';
+	import type { FeedNote } from '$lib/nostr/types';
+	import type { UploadedMedia } from '$lib/media/uploaders';
 
 	type MentionCandidate = {
 		pubkey: string;
 		name: string;
 		picture?: string;
 		npub: string;
+	};
+	type Attachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'> & {
+		source?: string;
 	};
 
 	let {
@@ -90,7 +95,7 @@
 		focusTick?: number;
 		/** Pre-fill the editor with an @mention (e.g. when replying to a comment). */
 		initialMention?: { pubkey: string; name: string };
-		onSubmitted?: () => void;
+		onSubmitted?: (reply: FeedNote) => void;
 		onCancel?: () => void;
 	} = $props();
 
@@ -393,7 +398,7 @@
 		try {
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
 			const body = rewriteMentions(text, allMentions);
-			await feed.reply(parent, body, {
+			const reply = await feed.reply(parent, body, {
 				attachments: attachments.map((a) => ({
 					url: a.url,
 					kind: a.kind,
@@ -402,7 +407,7 @@
 				}))
 			});
 			reset();
-			onSubmitted?.();
+			onSubmitted?.(reply);
 			toasts.success('Reply posted');
 		} catch (e) {
 			toasts.error((e as Error).message);
