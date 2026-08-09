@@ -6,10 +6,29 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 	import NotificationMedia from './NotificationMedia.svelte';
 	import { cleanNotificationPreview, extractNotificationMedia } from '$lib/utils/imeta';
+
+	const eventCache = new Map<string, Event>();
+	const eventRequests = new Map<string, Promise<Event | null>>();
+
+	function loadEvent(id: string): Promise<Event | null> {
+		const cached = eventCache.get(id);
+		if (cached) return Promise.resolve(cached);
+		const pending = eventRequests.get(id);
+		if (pending) return pending;
+		const request = queryPrimaryFirst([{ ids: [id], limit: 1 }])
+			.then((events) => {
+				const found = events[0] ?? null;
+				if (found) eventCache.set(id, found);
+				return found;
+			})
+			.finally(() => eventRequests.delete(id));
+		eventRequests.set(id, request);
+		return request;
+	}
 
 	let { value, compact = false }: { value: string; compact?: boolean } = $props();
 	const raw = $derived(value.startsWith('nostr:') ? value.slice(6) : value);
@@ -34,10 +53,10 @@
 			return;
 		}
 		let active = true;
-		void queryOnce([{ ids: [noteId] }])
-			.then((events) => {
+		void loadEvent(noteId)
+			.then((found) => {
 				if (!active) return;
-				event = events[0] ?? null;
+				event = found;
 				loading = false;
 				if (event) profiles.ensure([event.pubkey]);
 			})
