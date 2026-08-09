@@ -10,9 +10,14 @@
 	const me = $derived(identity.current);
 
 	// Authors excluding the current user (their tile is rendered separately).
-	const otherAuthors = $derived(stories.authors.filter((a) => a.pubkey !== me?.pk?.toLowerCase()));
+	const otherAuthors = $derived(
+		stories.authors.filter((a) => a.pubkey !== me?.pk?.toLowerCase() && !a.isPublicDiscovery)
+	);
+	const publicAuthors = $derived(stories.authors.filter((a) => a.isPublicDiscovery));
 	const myAuthor = $derived(stories.authors.find((a) => a.pubkey === me?.pk?.toLowerCase()));
-	const storyAuthors = $derived(myAuthor ? [myAuthor, ...otherAuthors] : otherAuthors);
+	const storyAuthors = $derived(
+		myAuthor ? [myAuthor, ...otherAuthors, ...publicAuthors] : [...otherAuthors, ...publicAuthors]
+	);
 	let viewing = $state<StoryAuthor | null>(null);
 	let composing = $state(false);
 
@@ -43,7 +48,9 @@
 	function previewStyle(author?: StoryAuthor) {
 		const slide = latestSlide(author);
 		if (slide?.imageUrl) return '';
-		return slide?.bg ?? 'linear-gradient(135deg, var(--ui-color-primary-500), var(--color-accent-500))';
+		return (
+			slide?.bg ?? 'linear-gradient(135deg, var(--ui-color-primary-500), var(--color-accent-500))'
+		);
 	}
 
 	// Signature FB/IG gradient ring for unseen, muted ring for seen.
@@ -59,7 +66,63 @@
 	const myPicture = $derived(myProfile?.picture);
 </script>
 
-<div class="overflow-hidden border-[var(--ui-border-muted)] bg-[var(--ui-bg)] py-4 px-0.5">
+{#snippet storyCard(author: StoryAuthor)}
+	<button
+		type="button"
+		onclick={() => openAuthor(author)}
+		class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
+	>
+		{#if latestSlide(author)?.imageUrl}
+			<img
+				src={latestSlide(author)?.imageUrl}
+				alt=""
+				class="absolute inset-0 size-full object-cover object-center transition duration-300 group-hover:scale-105"
+				loading="lazy"
+			/>
+		{:else}
+			<div
+				class="absolute inset-0 transition duration-300 group-hover:scale-[1.03]"
+				style="background:{previewStyle(author)}"
+			>
+				<div class="flex h-full items-center justify-center p-3 pb-7">
+					<p
+						class="line-clamp-4 text-center text-[14px] leading-snug font-bold break-words text-white [text-shadow:0_1px_4px_rgba(0,0,0,0.45)]"
+					>
+						{noteFor(author) || nameFor(author.pubkey)}
+					</p>
+				</div>
+			</div>
+		{/if}
+
+		<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
+
+		<div class="absolute top-3 left-3 mask-squircle p-[2.5px] {ringClass(author)}">
+			<div class="mask-squircle bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
+				<Avatar
+					pubkey={author.pubkey}
+					name={nameFor(author.pubkey)}
+					picture={profiles.get(author.pubkey)?.picture}
+					size={34}
+				/>
+			</div>
+		</div>
+
+		{#if author.isPublicDiscovery}
+			<span
+				class="absolute top-3 right-2 rounded-full bg-black/45 px-1.5 py-0.5 text-[9px] font-bold text-white"
+				>Public</span
+			>
+		{/if}
+
+		<span
+			class="absolute inset-x-3 bottom-3 truncate text-left text-[13px] font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
+		>
+			{nameFor(author.pubkey)}
+		</span>
+	</button>
+{/snippet}
+
+<div class="overflow-hidden border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-0.5 py-4">
 	<div
 		class="flex [scrollbar-width:none] gap-2.5 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden"
 	>
@@ -82,9 +145,7 @@
 							class="size-full object-cover transition duration-300 group-hover:scale-105"
 						/>
 					{:else}
-						<div
-							class="size-full bg-gradient-to-br from-primary-500/80 to-accent-500/80"
-						></div>
+						<div class="size-full bg-gradient-to-br from-primary-500/80 to-accent-500/80"></div>
 						{#if me}
 							<div class="absolute inset-0 grid place-items-center">
 								<Avatar
@@ -101,7 +162,7 @@
 
 				<!-- Create button overlapping the boundary -->
 				<span
-					class="absolute right-0 bottom-[36%] left-0 mx-auto grid size-9 place-items-center rounded-full bg-primary-500 text-white ring-4 ring-[var(--ui-bg-elevated)] shadow-[var(--glow-primary)] transition group-hover:scale-105 group-hover:bg-primary-600"
+					class="absolute right-0 bottom-[36%] left-0 mx-auto grid size-9 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] ring-4 ring-[var(--ui-bg-elevated)] transition group-hover:scale-105 group-hover:bg-primary-600"
 				>
 					<Icon name="i-lucide-plus" class="size-5" />
 				</span>
@@ -116,46 +177,28 @@
 		</div>
 
 		<!-- Story authors: your current story first, then following -->
-		{#each storyAuthors as author (author.pubkey)}
-			<button
-				type="button"
-				onclick={() => openAuthor(author)}
-				class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
-			>
-				{#if latestSlide(author)?.imageUrl}
-					<img
-						src={latestSlide(author)?.imageUrl}
-						alt=""
-						class="absolute inset-0 size-full object-cover object-center transition duration-300 group-hover:scale-105"
-						loading="lazy"
-					/>
-				{:else}
-					<div class="absolute inset-0 transition duration-300 group-hover:scale-[1.03]" style="background:{previewStyle(author)}"><div class="flex h-full items-center justify-center p-3 pb-7"><p class="line-clamp-4 text-center text-[14px] leading-snug font-bold break-words text-white [text-shadow:0_1px_4px_rgba(0,0,0,0.45)]">{noteFor(author) || nameFor(author.pubkey)}</p></div></div>
-				{/if}
+		{#if myAuthor}
+			{@render storyCard(myAuthor)}
+		{/if}
 
-				<!-- Legibility gradient -->
-				<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
-
-				<!-- Avatar with gradient ring (top-left) -->
-				<div class="absolute top-3 left-3 mask-squircle p-[2.5px] {ringClass(author)}">
-					<div class="mask-squircle bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
-						<Avatar
-							pubkey={author.pubkey}
-							name={nameFor(author.pubkey)}
-							picture={profiles.get(author.pubkey)?.picture}
-							size={34}
-						/>
-					</div>
-				</div>
-
-				<!-- Name (bottom-left) -->
-				<span
-					class="absolute inset-x-3 bottom-3 truncate text-left text-[13px] font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
-				>
-					{nameFor(author.pubkey)}
-				</span>
-			</button>
+		{#each otherAuthors as author (author.pubkey)}
+			{@render storyCard(author)}
 		{/each}
+
+		{#if publicAuthors.length}
+			<div class="flex h-[200px] shrink-0 items-center px-1" aria-hidden="true">
+				<div class="h-3/4 w-px bg-[var(--ui-border-muted)]"></div>
+			</div>
+			<div class="flex h-[200px] w-[112px] shrink-0 flex-col justify-center gap-2 px-1 text-center">
+				<Icon name="i-lucide-compass" class="mx-auto size-5 text-accent-500" />
+				<span class="text-[11px] leading-tight font-bold text-[var(--ui-text-muted)]"
+					>Public stories</span
+				>
+			</div>
+			{#each publicAuthors as author (author.pubkey)}
+				{@render storyCard(author)}
+			{/each}
+		{/if}
 
 		{#if storyAuthors.length === 0 && !stories.loading}
 			<button
