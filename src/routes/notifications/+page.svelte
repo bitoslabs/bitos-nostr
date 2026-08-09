@@ -4,6 +4,7 @@
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
+	import NostrEventPreview from '$lib/components/feed/NostrEventPreview.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -607,6 +608,10 @@
 														{preview(item)}
 													</p>
 												{/if}
+											{/if}
+
+											{#if item.targetId && ['like', 'comment', 'mention', 'repost'].includes(item.type)}
+												<NostrEventPreview eventId={item.targetId} compact inline />
 											{/if}
 
 											{#if sourceLink(item)}
