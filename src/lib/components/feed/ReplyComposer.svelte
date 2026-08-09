@@ -95,7 +95,7 @@
 		focusTick?: number;
 		/** Pre-fill the editor with an @mention (e.g. when replying to a comment). */
 		initialMention?: { pubkey: string; name: string };
-		onSubmitted?: () => void;
+		onSubmitted?: (reply: FeedNote) => void;
 		onCancel?: () => void;
 	} = $props();
 
@@ -398,7 +398,7 @@
 		try {
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
 			const body = rewriteMentions(text, allMentions);
-			await feed.reply(parent, body, {
+			const reply = await feed.reply(parent, body, {
 				attachments: attachments.map((a) => ({
 					url: a.url,
 					kind: a.kind,
@@ -407,7 +407,7 @@
 				}))
 			});
 			reset();
-			onSubmitted?.();
+			onSubmitted?.(reply);
 			toasts.success('Reply posted');
 		} catch (e) {
 			toasts.error((e as Error).message);

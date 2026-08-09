@@ -737,7 +737,7 @@ class FeedStore {
 		note: FeedNote,
 		content: string,
 		options: { attachments?: PostMediaAttachment[]; extraPubkeys?: string[] } = {}
-	): Promise<string> {
+	): Promise<FeedNote> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
@@ -794,7 +794,7 @@ class FeedStore {
 		);
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
-		return event.id;
+		return toFeedNote(event);
 	}
 
 	/** React to a note with a ❤️ (kind 7). */
