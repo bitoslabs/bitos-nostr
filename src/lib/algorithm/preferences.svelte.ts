@@ -68,11 +68,13 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 export const DEFAULTS: AlgorithmPreferences = {
 	feed: structuredClone(DEFAULT_SURFACE_CONFIG.feed),
 	reels: structuredClone(DEFAULT_SURFACE_CONFIG.reels),
-	discover: structuredClone(DEFAULT_SURFACE_CONFIG.discover)
+	discover: structuredClone(DEFAULT_SURFACE_CONFIG.discover),
+	discoveryEnabled: false
 };
 
 class AlgorithmPreferencesStore {
 	config = $state<AlgorithmPreferences>(structuredClone(DEFAULTS));
+	discoveryEnabled = $state(false);
 	recencyHalfLifeSeconds = $state(DEFAULT_RECENCY_HALF_LIFE_SECONDS);
 	loaded = $state(false);
 	/** Bumps whenever the WoT second-hop cache refreshes, so ranked surfaces that
@@ -98,8 +100,10 @@ class AlgorithmPreferencesStore {
 				this.config = {
 					feed: this.mergeSurface('feed', parsed.feed),
 					reels: this.mergeSurface('reels', parsed.reels),
-					discover: this.mergeSurface('discover', parsed.discover)
+					discover: this.mergeSurface('discover', parsed.discover),
+					discoveryEnabled: parsed.discoveryEnabled === true
 				};
+				this.discoveryEnabled = parsed.discoveryEnabled === true;
 				if (
 					Number.isFinite(parsed.recencyHalfLifeSeconds) &&
 					(parsed.recencyHalfLifeSeconds as number) > 0
@@ -130,6 +134,7 @@ class AlgorithmPreferencesStore {
 			ALGORITHM_STORAGE_KEY,
 			JSON.stringify({
 				...this.config,
+				discoveryEnabled: this.discoveryEnabled,
 				recencyHalfLifeSeconds: this.recencyHalfLifeSeconds,
 				smoothRanking: this.smoothRanking
 			})
@@ -169,6 +174,11 @@ class AlgorithmPreferencesStore {
 		this.persist();
 	};
 
+	setDiscoveryEnabled = (enabled: boolean) => {
+		this.discoveryEnabled = enabled;
+		this.persist();
+	};
+
 	setRecencyHalfLife = (seconds: number) => {
 		this.recencyHalfLifeSeconds = Math.max(600, Math.round(seconds));
 		this.persist();
@@ -188,6 +198,7 @@ class AlgorithmPreferencesStore {
 	/** Restore everything (all three surfaces + freshness). */
 	resetAll = () => {
 		this.config = structuredClone(DEFAULTS);
+		this.discoveryEnabled = false;
 		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
 		this.smoothRanking = true;
 		this.persist();

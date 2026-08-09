@@ -49,6 +49,7 @@
 		note,
 		index = 0,
 		onNoteChange,
+		onNoteHide,
 		rankTag,
 		onExplain,
 		onInteract
@@ -56,6 +57,7 @@
 		note: FeedNote;
 		index?: number;
 		onNoteChange?: (note: FeedNote) => void;
+		onNoteHide?: (id: string) => void;
 		rankTag?: { label: string; icon: string; color: string };
 		onExplain?: () => void;
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
@@ -366,6 +368,7 @@
 
 	function hideNote() {
 		feed.hideNote(note.id);
+		onNoteHide?.(note.id);
 		toasts.info('Note hidden');
 		popovers.close();
 	}
@@ -375,6 +378,7 @@
 	function notInterested() {
 		interactionProfile.dismissNote(note.id);
 		feed.hideNote(note.id);
+		onNoteHide?.(note.id);
 		toasts.success("Got it — we'll show less like this");
 		popovers.close();
 	}
@@ -571,6 +575,10 @@
 					<span class="truncate font-mono">{shortKey(note.pubkey, 8, 6)}</span>
 					<span>·</span>
 					<time class="shrink-0" title={timeFull(note.createdAt)}>{timeAgo(note.createdAt)}</time>
+					{#if note.source === 'discovery'}
+						<span>·</span>
+						<span class="shrink-0 text-primary-500" title="Found through an optional discovery relay">discovery</span>
+					{/if}
 				</p>
 			</div>
 		</a>

@@ -166,6 +166,13 @@ export function queryOnce(filters: Filter[]): Promise<Event[]> {
 	return runQuery(urls, filters);
 }
 
+/** Query explicit read-only relay URLs without changing the user's relay
+ * settings. Used by the optional discovery layer for public feed candidates. */
+export function queryUrls(urls: string[], filters: Filter[]): Promise<Event[]> {
+	if (!browser) return Promise.resolve([]);
+	return runQuery([...new Set(urls)], filters);
+}
+
 /** Query the primary read relay first, then merge secondary relays in the background. */
 export async function queryPrimaryFirst(
 	filters: Filter[],

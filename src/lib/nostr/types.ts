@@ -49,6 +49,9 @@ export interface FeedNote {
 	repostCount: number;
 	zapCount: number;
 	zapTotalSats: number;
+	/** Where this note entered the current view. Discovery notes are read-only
+	 * candidates from curated relays outside the user's configured relay list. */
+	source?: 'configured' | 'discovery';
 	/** Present when this note is a poll (kind 1 with `poll_option` tags). */
 	poll?: PollData;
 }

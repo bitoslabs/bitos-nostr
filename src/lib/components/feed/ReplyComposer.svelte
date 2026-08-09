@@ -66,12 +66,17 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import { shortKey } from '$lib/utils/format';
+	import type { FeedNote } from '$lib/nostr/types';
+	import type { UploadedMedia } from '$lib/media/uploaders';
 
 	type MentionCandidate = {
 		pubkey: string;
 		name: string;
 		picture?: string;
 		npub: string;
+	};
+	type Attachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'> & {
+		source?: string;
 	};
 
 	let {
