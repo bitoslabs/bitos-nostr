@@ -20,6 +20,33 @@ import type { ScoringContext, ScoreBreakdown, SurfaceId } from './types';
 
 type Scored<T extends FeedNote> = { note: T; score: number };
 
+/**
+ * Main-feed thread treatment. Replies remain discoverable, but original posts
+ * should own the top-level feed. A nested reply gets a progressively smaller
+ * multiplier instead of being removed outright.
+ */
+export function threadMultiplier<T extends FeedNote>(
+	note: T,
+	candidates: Pick<FeedNote, 'id' | 'replyTo'>[],
+	surface: SurfaceId
+): number {
+	if (surface !== 'feed' || !note.replyTo) return 1;
+
+	const parentById = new Map(candidates.map((candidate) => [candidate.id, candidate.replyTo]));
+	let depth = 1;
+	let parentId: string | undefined = note.replyTo;
+	const seen = new Set<string>();
+	while (parentId && !seen.has(parentId) && depth < 3) {
+		seen.add(parentId);
+		const grandParent = parentById.get(parentId);
+		if (!grandParent) break;
+		depth++;
+		parentId = grandParent;
+	}
+
+	return depth === 1 ? 0.65 : 0.4;
+}
+
 /** Rank candidates for a surface, returning just the reordered notes. */
 export function rankNotes<T extends FeedNote>(
 	surface: SurfaceId,
@@ -52,7 +79,7 @@ export function rankNotes<T extends FeedNote>(
 			score += (fn(note, ctx) * state.weight) / totalWeight;
 		}
 		// Soft negative-feedback multiplier (muted author/tag) — pushes down, never hides.
-		score *= negativePenalty(note);
+		score *= threadMultiplier(note, candidates, surface) * negativePenalty(note);
 		return { note, score };
 	});
 
@@ -101,8 +128,8 @@ export function rankNotesWithBreakdown<T extends FeedNote>(
 			const label = SIGNAL_BY_ID[id]?.label ?? id;
 			contributions.push({ signalId: id, label, contribution, raw });
 		}
-		// Reflect the negative-feedback multiplier in the final score.
-		score *= negativePenalty(note);
+		// Reflect thread position and negative feedback in the final score.
+		score *= threadMultiplier(note, candidates, surface) * negativePenalty(note);
 		contributions.sort((a, b) => b.contribution - a.contribution);
 		const top = contributions[0];
 		return {

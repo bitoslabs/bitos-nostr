@@ -30,11 +30,15 @@ export const DEFAULT_SURFACE_CONFIG: Record<SurfaceId, SurfaceConfig> = {
 		enabled: true,
 		diversityEnabled: true,
 		signals: signals({
-			recency: { enabled: true, weight: 0.3 },
-			affinity: { enabled: true, weight: 0.22 },
-			topics: { enabled: true, weight: 0.13 },
-			engagement: { enabled: true, weight: 0.2 },
-			zaps: { enabled: true, weight: 0.15 }
+			recency: { enabled: true, weight: 0.35 },
+			affinity: { enabled: true, weight: 0.25 },
+			topics: { enabled: true, weight: 0.15 },
+			engagement: { enabled: true, weight: 0.1 },
+			wot: { enabled: true, weight: 0.1 },
+			novelty: { enabled: true, weight: 0.05 },
+			// Available as an advanced signal, but not allowed to dominate the
+			// default feed because payment volume is a poor proxy for relevance.
+			zaps: { enabled: false, weight: 0 }
 		})
 	},
 	reels: {
