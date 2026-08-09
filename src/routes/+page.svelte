@@ -54,6 +54,7 @@
 	let searchOpen = $state(false);
 	let renderedCount = $state(INITIAL_RENDER_COUNT);
 	let promotedNewIds = $state<Set<string>>(new Set());
+	let promotedNewNotes = $state<Map<string, FeedNote>>(new Map());
 	let lastViewSignature = $state('');
 	let relayFeedNotes = $state<FeedNote[]>([]);
 	let relayFeedLoading = $state(false);
@@ -72,13 +73,20 @@
 	const discoveryActive = $derived(
 		algorithmPreferences.relayDiscovery.feed && feedMode === 'foryou' && !useRelayFeed
 	);
-	const baseNotes = $derived(
-		useRelayFeed && relayFeedHasResult
-			? relayFeedNotes
-			: discoveryActive
-				? mergeDiscoveryNotes(feed.notes, discoveryNotes)
-				: feed.notes
-	);
+	const baseNotes = $derived.by(() => {
+		const candidates =
+			useRelayFeed && relayFeedHasResult
+				? relayFeedNotes
+				: discoveryActive
+					? mergeDiscoveryNotes(feed.notes, discoveryNotes)
+					: feed.notes;
+		const seen = new Set<string>();
+		return candidates.filter((note) => {
+			if (seen.has(note.id)) return false;
+			seen.add(note.id);
+			return true;
+		});
+	});
 	const selectedFilterOptions = $derived(
 		filterOptions.filter((option) => activeFilters.includes(option.key))
 	);
@@ -205,6 +213,7 @@
 	const hasMoreRenderedNotes = $derived(renderedCount < rankedNotesWithoutNew.length);
 	const newlyRevealedNotes = $derived(
 		filteredNotes
+			.map((note) => promotedNewNotes.get(note.id) ?? note)
 			.filter((note) => promotedNewIds.has(note.id))
 			.sort((a, b) => b.createdAt - a.createdAt)
 	);
@@ -439,7 +448,9 @@
 			}));
 			const ids = notes.map((note) => note.id);
 			const activity = ids.length
-				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }])
+				? await queryPrimaryFirst([
+						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
+					])
 				: [];
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;
 			discoveryNotes = applyActivityToNotes(notes, activity, identity.current?.pk);
@@ -456,6 +467,13 @@
 		const count = feed.revealPending();
 		if (!count) return;
 		promotedNewIds = new Set([...promotedNewIds, ...incomingIds]);
+		promotedNewNotes = new Map([
+			...promotedNewNotes,
+			...[...incomingIds]
+				.map((id) => feed.getNote(id))
+				.filter((note): note is FeedNote => !!note)
+				.map((note) => [note.id, note] as const)
+		]);
 		renderedCount = INITIAL_RENDER_COUNT;
 		// Reveal merges new notes into the candidate pool → re-rank immediately.
 		computeRanking(filteredNotes);
@@ -467,6 +485,7 @@
 
 	function dismissNewNotes() {
 		promotedNewIds = new Set();
+		promotedNewNotes = new Map();
 		renderedCount = INITIAL_RENDER_COUNT;
 	}
 
@@ -486,6 +505,9 @@
 	}
 
 	function handleNoteChange(next: FeedNote) {
+		if (promotedNewIds.has(next.id)) {
+			promotedNewNotes = new Map(promotedNewNotes).set(next.id, next);
+		}
 		if (next.source === 'discovery') {
 			discoveryNotes = discoveryNotes.map((note) => (note.id === next.id ? next : note));
 			return;

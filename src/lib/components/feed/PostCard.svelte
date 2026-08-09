@@ -462,7 +462,10 @@
 		try {
 			const wasLiked = liked;
 			await feed.react(note, '❤️');
-			if (onNoteChange) onNoteChange(nextLocalReaction(note, wasLiked));
+			// feed.react applies the optimistic event to the authoritative store.
+			// Read it back instead of rebuilding from a potentially stale card prop;
+			// this matters for notes rendered in the New posts section.
+			if (onNoteChange) onNoteChange(feed.getNote(note.id) ?? nextLocalReaction(note, wasLiked));
 			if (!wasLiked) {
 				onInteract?.(note, 'react', true);
 				burst = true;

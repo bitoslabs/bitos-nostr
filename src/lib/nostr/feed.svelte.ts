@@ -349,6 +349,11 @@ class FeedStore {
 		return undefined;
 	}
 
+	/** Read the current optimistic note state after a local interaction. */
+	getNote(id: string): FeedNote | undefined {
+		return this.noteById(id);
+	}
+
 	/** Apply a note update to whichever list holds it (visible + pending). */
 	private updateNote(id: string, updater: (n: FeedNote) => FeedNote) {
 		const idx = this.byId.get(id);
