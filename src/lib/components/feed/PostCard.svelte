@@ -32,6 +32,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { extractNotificationMedia } from '$lib/utils/imeta';
 	import { parseContent, splitTrailingPunctuation, hostFromUrl } from '$lib/utils/note-content';
 	import CommentBody from './CommentBody.svelte';
 	import MentionLink from './MentionLink.svelte';
@@ -116,7 +117,7 @@
 		isLong && !expanded ? `${note.content.slice(0, longTextLimit).trimEnd()}…` : note.content
 	);
 	const contentTokens = $derived(parseContent(visibleContent));
-	const mediaAttachments = $derived(extractMedia(note.content));
+	const mediaAttachments = $derived(extractMedia(note.content, note.tags));
 	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
 	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
 	const firstAttachment = $derived(mediaAttachments[0]);
@@ -175,7 +176,7 @@
 	}
 
 	function shouldHideImage(url: string) {
-		return !isMediaRevealed(url);
+		return shouldCoverMedia && !isMediaRevealed(url);
 	}
 
 	function shouldHideVideo(url: string) {
@@ -355,9 +356,23 @@
 		failedMedia = { ...failedMedia, [url]: true };
 	}
 
-	function extractMedia(content: string) {
+	function extractMedia(content: string, tags: string[][] = []) {
 		const seen: string[] = [];
 		const attachments: MediaAttachment[] = [];
+
+		// NIP-92 imeta tags can describe media even when the URL has no
+		// recognizable file extension. Keep the main card in sync with the
+		// richer notification/comment media renderer.
+		for (const item of extractNotificationMedia({ content, tags })) {
+			if (item.kind !== 'image' && item.kind !== 'gif' && item.kind !== 'video') continue;
+			seen.push(item.url);
+			attachments.push({
+				type: item.kind === 'video' ? 'video' : 'image',
+				url: item.url,
+				host: hostFromUrl(item.url)
+			});
+		}
+
 		for (const match of content.matchAll(urlPattern)) {
 			const { core } = splitTrailingPunctuation(match[0]);
 			if (seen.includes(core)) continue;
