@@ -17,6 +17,8 @@ import { toFeedNote } from './feed-note';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
+import { clientTag } from './client-tag';
+import { extractHashtagTags } from '$lib/utils/note-content';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
@@ -613,7 +615,8 @@ class FeedStore {
 		const attachments = (options.attachments ?? []).filter((attachment) => attachment?.url);
 		const attachmentLines = attachments.map((attachment) => attachment.url.trim()).filter(Boolean);
 		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
-		const tags = options.sensitive ? [['content-warning', 'Sensitive content']] : [];
+		const tags: string[][] = [...clientTag(), ...extractHashtagTags(body)];
+		if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
 		for (const attachment of attachments) {
 			if (attachment.kind === 'image' || attachment.kind === 'video') {
 				const imeta = [`url ${attachment.url}`];
@@ -670,7 +673,11 @@ class FeedStore {
 				kind: NOSTR_KINDS.TEXT_NOTE,
 				content: prompt,
 				created_at: Math.floor(Date.now() / 1000),
-				tags: cleanOptions.map((label, i) => ['poll_option', String(i), label])
+				tags: [
+					...clientTag(),
+					...extractHashtagTags(prompt),
+					...cleanOptions.map((label, i) => ['poll_option', String(i), label])
+				]
 			},
 			hexToBytes(id.sk)
 		);
@@ -695,10 +702,7 @@ class FeedStore {
 				kind: NOSTR_KINDS.REACTION,
 				content: optionId,
 				created_at: Math.floor(Date.now() / 1000),
-				tags: [
-					['e', note.id],
-					['p', note.pubkey]
-				]
+				tags: [...clientTag(), ['e', note.id], ['p', note.pubkey]]
 			},
 			hexToBytes(id.sk)
 		);
@@ -755,6 +759,8 @@ class FeedStore {
 		].filter((pubkey, index, all) => pubkey && all.indexOf(pubkey) === index);
 
 		const tags: string[][] = [
+			...clientTag(),
+			...extractHashtagTags(body),
 			['e', rootId, '', 'root'],
 			['e', note.id, '', 'reply'],
 			...taggedPubkeys.map((pubkey) => ['p', pubkey])
@@ -824,10 +830,7 @@ class FeedStore {
 				kind: NOSTR_KINDS.REACTION,
 				content: emoji,
 				created_at: Math.floor(Date.now() / 1000),
-				tags: [
-					['e', note.id, '', note.replyTo ? 'reply' : ''],
-					['p', note.pubkey]
-				]
+				tags: [...clientTag(), ['e', note.id, '', note.replyTo ? 'reply' : ''], ['p', note.pubkey]]
 			},
 			hexToBytes(id.sk)
 		);

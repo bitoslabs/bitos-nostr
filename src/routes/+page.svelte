@@ -70,7 +70,7 @@
 	const useRelayFeed = $derived(!!activeTag || normalizedSearch.length >= 2);
 	// Keep local matches visible while the remote search is in flight.
 	const discoveryActive = $derived(
-		algorithmPreferences.discoveryEnabled && feedMode === 'foryou' && !useRelayFeed
+		algorithmPreferences.relayDiscovery.feed && feedMode === 'foryou' && !useRelayFeed
 	);
 	const baseNotes = $derived(
 		useRelayFeed && relayFeedHasResult
@@ -139,9 +139,14 @@
 		// visible window.
 		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
 		if (visibleIds.size) {
-			const stableVisible = rankedFeed.notes.filter(
-				(note) => visibleIds.has(note.id) && nextRanking.notes.some((next) => next.id === note.id)
-			);
+			// Keep the current order for cards already on screen, but take the
+			// note objects from the new ranking. The feed store updates reactions
+			// optimistically; reusing rankedFeed's old objects here would restore
+			// the pre-like state after every ranking pass.
+			const nextById = new Map(nextRanking.notes.map((note) => [note.id, note]));
+			const stableVisible = rankedFeed.notes
+				.filter((note) => visibleIds.has(note.id) && nextById.has(note.id))
+				.map((note) => nextById.get(note.id)!);
 			const stableIds = new Set(stableVisible.map((note) => note.id));
 			nextRanking.notes = [
 				...stableVisible,
@@ -489,6 +494,15 @@
 			relayFeedNotes = relayFeedNotes.map((note) => (note.id === next.id ? next : note));
 		} else {
 			feed.upsertNote(next);
+			// Keep the ranked snapshot's card data live while smooth ranking is
+			// waiting to run. This updates the heart/count immediately without
+			// allowing an interaction to reorder the visible cards.
+			if (rankedFeed.notes.some((note) => note.id === next.id)) {
+				rankedFeed = {
+					...rankedFeed,
+					notes: rankedFeed.notes.map((note) => (note.id === next.id ? next : note))
+				};
+			}
 		}
 	}
 
@@ -553,7 +567,7 @@
 	});
 
 	$effect(() => {
-		void algorithmPreferences.discoveryEnabled;
+		void algorithmPreferences.relayDiscovery.feed;
 		void discoveryActive;
 		void relays.urls;
 		if (!discoveryActive) {

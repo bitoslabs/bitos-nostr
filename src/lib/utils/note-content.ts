@@ -17,6 +17,22 @@ export type ContentToken =
 const contentPattern =
 	/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
 
+const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
+
+/** Convert inline hashtags into normalized Nostr `t` tags, without duplicates. */
+export function extractHashtagTags(content: string): string[][] {
+	const seen = new Set<string>();
+	const tags: string[][] = [];
+	for (const match of content.matchAll(hashtagPattern)) {
+		const tag = match[1].toLowerCase();
+		if (!seen.has(tag)) {
+			seen.add(tag);
+			tags.push(['t', tag]);
+		}
+	}
+	return tags;
+}
+
 /** Peel trailing punctuation (e.g. a `.` or `)`) off a matched URL/entity. */
 export function splitTrailingPunctuation(value: string): { core: string; suffix: string } {
 	const match = value.match(/^(.+?)([.,!?;:)]+)?$/);

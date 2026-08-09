@@ -14,6 +14,11 @@
 
 	const privacyItems = [
 		['privateAcc', 'Private account', 'Only approved followers can see your posts'],
+		[
+			'includeClientTag',
+			'Show BitOS as the client',
+			'Add optional BitOS attribution to public events'
+		],
 		['activity', 'Activity status', "Show when you're active"],
 		['readReceipts', 'Read receipts', 'Let others know you saw their messages']
 	] as const;

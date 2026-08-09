@@ -6,6 +6,7 @@ import type { NotificationType } from '$lib/nostr/types';
 
 export interface PrivacyNotificationSettingsState {
 	privateAcc: boolean;
+	includeClientTag: boolean;
 	activity: boolean;
 	readReceipts: boolean;
 	storyShare: boolean;
@@ -28,10 +29,11 @@ export const STORAGE_KEY = 'bitos:privacy-notification-settings';
 
 export const DEFAULTS: PrivacyNotificationSettingsState = {
 	privateAcc: false,
+	includeClientTag: true,
 	activity: true,
 	readReceipts: true,
 	storyShare: true,
-	messagePermission: 'followers',
+	messagePermission: 'everyone',
 	commentPermission: 'everyone',
 	likes: true,
 	comments: true,

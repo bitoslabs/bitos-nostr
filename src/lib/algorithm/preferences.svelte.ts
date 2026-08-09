@@ -69,12 +69,12 @@ export const DEFAULTS: AlgorithmPreferences = {
 	feed: structuredClone(DEFAULT_SURFACE_CONFIG.feed),
 	reels: structuredClone(DEFAULT_SURFACE_CONFIG.reels),
 	discover: structuredClone(DEFAULT_SURFACE_CONFIG.discover),
-	discoveryEnabled: false
+	relayDiscovery: { feed: false, reels: false, discover: false }
 };
 
 class AlgorithmPreferencesStore {
 	config = $state<AlgorithmPreferences>(structuredClone(DEFAULTS));
-	discoveryEnabled = $state(false);
+	relayDiscovery = $state({ feed: false, reels: false, discover: false });
 	recencyHalfLifeSeconds = $state(DEFAULT_RECENCY_HALF_LIFE_SECONDS);
 	loaded = $state(false);
 	/** Bumps whenever the WoT second-hop cache refreshes, so ranked surfaces that
@@ -94,16 +94,23 @@ class AlgorithmPreferencesStore {
 			const raw = localStorage.getItem(ALGORITHM_STORAGE_KEY);
 			if (raw) {
 				const parsed = JSON.parse(raw) as Partial<AlgorithmPreferences> & {
+					discoveryEnabled?: boolean;
 					recencyHalfLifeSeconds?: number;
-				smoothRanking?: boolean;
+					smoothRanking?: boolean;
 				};
-				this.config = {
-					feed: this.mergeSurface('feed', parsed.feed),
-					reels: this.mergeSurface('reels', parsed.reels),
-					discover: this.mergeSurface('discover', parsed.discover),
-					discoveryEnabled: parsed.discoveryEnabled === true
-				};
-				this.discoveryEnabled = parsed.discoveryEnabled === true;
+					const legacyDiscovery = parsed.discoveryEnabled === true;
+					const relayDiscovery = parsed.relayDiscovery ?? {
+						feed: legacyDiscovery,
+						reels: false,
+						discover: false
+					};
+					this.config = {
+						feed: this.mergeSurface('feed', parsed.feed),
+						reels: this.mergeSurface('reels', parsed.reels),
+						discover: this.mergeSurface('discover', parsed.discover),
+						relayDiscovery
+					};
+					this.relayDiscovery = relayDiscovery;
 				if (
 					Number.isFinite(parsed.recencyHalfLifeSeconds) &&
 					(parsed.recencyHalfLifeSeconds as number) > 0
@@ -134,7 +141,7 @@ class AlgorithmPreferencesStore {
 			ALGORITHM_STORAGE_KEY,
 			JSON.stringify({
 				...this.config,
-				discoveryEnabled: this.discoveryEnabled,
+				relayDiscovery: this.relayDiscovery,
 				recencyHalfLifeSeconds: this.recencyHalfLifeSeconds,
 				smoothRanking: this.smoothRanking
 			})
@@ -174,8 +181,8 @@ class AlgorithmPreferencesStore {
 		this.persist();
 	};
 
-	setDiscoveryEnabled = (enabled: boolean) => {
-		this.discoveryEnabled = enabled;
+	setRelayDiscovery = (surface: SurfaceId, enabled: boolean) => {
+		this.relayDiscovery = { ...this.relayDiscovery, [surface]: enabled };
 		this.persist();
 	};
 
@@ -198,7 +205,7 @@ class AlgorithmPreferencesStore {
 	/** Restore everything (all three surfaces + freshness). */
 	resetAll = () => {
 		this.config = structuredClone(DEFAULTS);
-		this.discoveryEnabled = false;
+		this.relayDiscovery = { feed: false, reels: false, discover: false };
 		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
 		this.smoothRanking = true;
 		this.persist();

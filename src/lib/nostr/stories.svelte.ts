@@ -20,6 +20,8 @@ import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import type { Filter } from 'nostr-tools/filter';
 import { NOSTR_KINDS } from './types';
+import { clientTag } from './client-tag';
+import { extractHashtagTags } from '$lib/utils/note-content';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
 const MAX_PER_AUTHOR = 12;
@@ -305,7 +307,8 @@ class StoriesStore {
 		const tags: string[][] = [
 			['d', `bitos-story-${now}-${Math.random().toString(36).slice(2, 8)}`],
 			['expiration', String(now + STORY_TTL)],
-			['client', 'BitOS']
+			...clientTag(),
+			...extractHashtagTags(text)
 		];
 		if (bg && !imageUrl) tags.push(['background', bg]);
 		let body = text;
@@ -393,7 +396,7 @@ class StoriesStore {
 				kind: NOSTR_KINDS.REACTION,
 				content: emoji,
 				created_at: nowSec(),
-				tags: this.targetTags(slide)
+				tags: [...clientTag(), ...this.targetTags(slide)]
 			},
 			hexToBytes(me.sk)
 		);
@@ -429,6 +432,8 @@ class StoriesStore {
 		if (!content) throw new Error('Nothing to reply');
 		const address = this.addressOf(slide);
 		const tags: string[][] = [
+			...clientTag(),
+			...extractHashtagTags(content),
 			['e', slide.id, '', 'reply'],
 			['p', slide.pubkey]
 		];

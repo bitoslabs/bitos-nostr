@@ -6,7 +6,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryPrimaryFirst } from '$lib/nostr/pool';
+	import { queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
+	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { toFeedNote } from '$lib/nostr/feed-note';
@@ -134,6 +135,28 @@
 			.slice(0, MAX_CACHED_REELS);
 	}
 
+	function discoveryUrls() {
+		if (!algorithmPreferences.relayDiscovery.reels) return [];
+		return DISCOVERY_RELAY_URLS.filter((url) => !relays.urls.includes(url));
+	}
+
+	function mergeEvents(configured: Awaited<ReturnType<typeof queryPrimaryFirst>>, discovered: Awaited<ReturnType<typeof queryUrls>>) {
+		const seen = new Set<string>();
+		return [...configured, ...discovered].filter((event) => {
+			if (seen.has(event.id)) return false;
+			seen.add(event.id);
+			return true;
+		});
+	}
+
+	function discoveryOnlyIds(
+		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		discovered: Awaited<ReturnType<typeof queryUrls>>
+	) {
+		const configuredIds = new Set(configured.map((event) => event.id));
+		return new Set(discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id));
+	}
+
 	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
 		reels = options.append ? mergeReelLists(reels, next) : next.slice(0, MAX_CACHED_REELS);
 		renderedReelCount = options.append
@@ -171,9 +194,9 @@
 
 	async function updateReelWindow(
 		events: Awaited<ReturnType<typeof queryPrimaryFirst>>,
-		options: { append?: boolean } = {}
+		options: { append?: boolean; discoveryIds?: Set<string> } = {}
 	) {
-		const nextReels = await buildReelsFromEvents(events);
+		const nextReels = await buildReelsFromEvents(events, options.discoveryIds);
 		applyReels(nextReels, options);
 		oldestReelEventCreatedAt =
 			events.slice().sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
@@ -183,7 +206,10 @@
 		saveReelsCache(options.append ? reels : nextReels);
 	}
 
-	async function buildReelsFromEvents(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
+	async function buildReelsFromEvents(
+		events: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		discoveryIds = new Set<string>()
+	) {
 		const seen: Record<string, true> = {};
 		const baseReels = events
 			.sort((a, b) => b.created_at - a.created_at)
@@ -193,7 +219,11 @@
 				seen[event.id] = true;
 				return true;
 			})
-			.map(({ event, videoUrl }) => ({ ...toFeedNote(event), videoUrl }));
+			.map(({ event, videoUrl }) => ({
+				...toFeedNote(event),
+				videoUrl,
+				source: discoveryIds.has(event.id) ? ('discovery' as const) : ('configured' as const)
+			}));
 		const reelIds = baseReels.map((reel) => reel.id);
 		const activity = reelIds.length
 			? await queryPrimaryFirst([
@@ -218,15 +248,24 @@
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
+			const filters = [{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }];
+			const discoveryPromise = queryUrls(discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(
-				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }],
+				filters,
 				{
 					onSecondary: (mergedEvents) => {
-						void updateReelWindow(mergedEvents);
+						void discoveryPromise.then((discovered) =>
+							updateReelWindow(mergeEvents(mergedEvents, discovered), {
+									discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
+							})
+						);
 					}
 				}
 			);
-			await updateReelWindow(events);
+			const discovered = await discoveryPromise;
+			await updateReelWindow(mergeEvents(events, discovered), {
+				discoveryIds: discoveryOnlyIds(events, discovered)
+			});
 		} catch (e) {
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
@@ -238,17 +277,24 @@
 		if (loading || loadingMoreReels || !hasMoreReels || !oldestReelEventCreatedAt) return;
 		loadingMoreReels = true;
 		try {
+			const filters = [
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: REELS_PAGE_EVENT_LIMIT,
+					until: oldestReelEventCreatedAt - 1
+				}
+			];
+			const discoveryPromise = queryUrls(discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(
-				[
-					{
-						kinds: [NOSTR_KINDS.TEXT_NOTE],
-						limit: REELS_PAGE_EVENT_LIMIT,
-						until: oldestReelEventCreatedAt - 1
-					}
-				],
+				filters,
 				{
 					onSecondary: (mergedEvents) => {
-						void updateReelWindow(mergedEvents, { append: true });
+						void discoveryPromise.then((discovered) =>
+							updateReelWindow(mergeEvents(mergedEvents, discovered), {
+								append: true,
+									discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
+							})
+						);
 					}
 				}
 			);
@@ -256,7 +302,11 @@
 				hasMoreReels = false;
 				return;
 			}
-			await updateReelWindow(events, { append: true });
+			const discovered = await discoveryPromise;
+			await updateReelWindow(mergeEvents(events, discovered), {
+				append: true,
+				discoveryIds: discoveryOnlyIds(events, discovered)
+			});
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load more reels');
 		} finally {
@@ -753,7 +803,10 @@
 								<a href={`/profile/${reel.pubkey}`} class="truncate text-[14px] font-bold">
 									{name}
 								</a>
-								<p class="text-[11px] opacity-80">{timeAgo(reel.createdAt)}</p>
+								<p class="text-[11px] opacity-80">
+									{timeAgo(reel.createdAt)}
+									{#if reel.source === 'discovery'} · discovery{/if}
+								</p>
 							</div>
 						</div>
 						{#if captionFor(reel)}
