@@ -2,6 +2,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { SettingsSectionKey } from '$lib/settings/sections';
+	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
+	import ContributorsWidget from '$lib/components/support/ContributorsWidget.svelte';
 
 	type Props = {
 		section: Extract<SettingsSectionKey, 'language' | 'help' | 'about'>;
@@ -195,6 +197,12 @@
 {#if section === 'about'}
 	<h2 class="mb-1 font-display text-[24px] font-extrabold">About</h2>
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Information about BitOS</p>
+	<div class="mb-5">
+		<SupportWidget compact />
+	</div>
+	<div class="mb-5">
+		<ContributorsWidget compact />
+	</div>
 
 	<!-- Hero -->
 	<div
@@ -256,7 +264,9 @@
 			>
 				<Icon name={d.icon} class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 				<dt class="text-[13px] text-[var(--ui-text-muted)]">{d.label}</dt>
-				<dd class="ml-auto text-right text-[13px] font-semibold text-[var(--ui-text)]">{d.value}</dd>
+				<dd class="ml-auto text-right text-[13px] font-semibold text-[var(--ui-text)]">
+					{d.value}
+				</dd>
 			</div>
 		{/each}
 	</div>
@@ -268,7 +278,8 @@
 				href={l.href}
 				target={l.external ? '_blank' : undefined}
 				rel={l.external ? 'noreferrer' : undefined}
-				class="group flex items-center gap-3 px-3.5 py-3 transition hover:bg-[var(--interactive-hover-bg)] {i !== 0
+				class="group flex items-center gap-3 px-3.5 py-3 transition hover:bg-[var(--interactive-hover-bg)] {i !==
+				0
 					? 'border-t border-[var(--ui-border-muted)]'
 					: ''}"
 			>
