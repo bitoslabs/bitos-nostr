@@ -20,6 +20,9 @@ const STORAGE_KEY_PREFIX = 'bitos:dm-conversations';
 const REMOVED_KEY_PREFIX = 'bitos:dm-removed';
 const MAX_CACHED_CONVERSATIONS = 80;
 const MAX_CACHED_MESSAGES_PER_CONVERSATION = 80;
+const MAX_DM_CACHE_CHARS = 300_000;
+const MAX_CACHED_MESSAGE_CHARS = 4_000;
+const MAX_REMOVED_PEERS = 500;
 const PERSIST_DEBOUNCE_MS = 250;
 
 class DMStore {
@@ -266,23 +269,59 @@ class DMStore {
 		if (!browser) return;
 		const key = this.storageKey();
 		if (!key) return;
-		const snapshot = this.conversations.slice(0, MAX_CACHED_CONVERSATIONS).map((conversation) => {
-			const messages = conversation.messages.slice(-MAX_CACHED_MESSAGES_PER_CONVERSATION);
-			return {
-				peer: conversation.peer,
-				unread: conversation.unread || 0,
-				messages,
-				lastMessage: messages[messages.length - 1]
-			};
+		const compactMessage = (message: DirectMessage): DirectMessage => ({
+			id: message.id,
+			pubkey: message.pubkey,
+			peer: message.peer,
+			content: message.content.slice(0, MAX_CACHED_MESSAGE_CHARS),
+			createdAt: message.createdAt,
+			mine: message.mine,
+			protocol: message.protocol
 		});
-		localStorage.setItem(key, JSON.stringify(snapshot));
+
+		for (const [conversationLimit, messagesLimit] of [
+			[MAX_CACHED_CONVERSATIONS, MAX_CACHED_MESSAGES_PER_CONVERSATION],
+			[40, 40],
+			[20, 20],
+			[10, 10]
+		] as const) {
+			const snapshot = this.conversations.slice(0, conversationLimit).map((conversation) => {
+				const messages = conversation.messages
+					.slice(-messagesLimit)
+					.map((message) => compactMessage(message));
+				return {
+					peer: conversation.peer,
+					unread: conversation.unread || 0,
+					messages,
+					lastMessage: messages[messages.length - 1]
+				};
+			});
+			const serialized = JSON.stringify(snapshot);
+			if (serialized.length > MAX_DM_CACHE_CHARS) continue;
+			try {
+				localStorage.setItem(key, serialized);
+				return;
+			} catch {
+				// Retry with a smaller disposable cache snapshot.
+			}
+		}
+
+		try {
+			localStorage.removeItem(key);
+		} catch {
+			// Storage may be completely unavailable.
+		}
 	}
 
 	private persistRemoved() {
 		if (!browser) return;
 		const key = this.removedStorageKey();
 		if (!key) return;
-		localStorage.setItem(key, JSON.stringify([...this.removedPeers]));
+		try {
+			localStorage.setItem(key, JSON.stringify([...this.removedPeers].slice(-MAX_REMOVED_PEERS)));
+		} catch {
+			// Removed-peer state is a convenience cache, not required state.
+		}
 	}
 
 	/** Encrypt + publish a DM to `peer`. */

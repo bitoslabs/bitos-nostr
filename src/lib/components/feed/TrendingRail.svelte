@@ -30,6 +30,9 @@
 	const TREND_LIMIT = 5;
 	const SUGGESTION_LIMIT = 5;
 	const CACHE_MS = 5 * 60 * 1000;
+	// This is a performance cache, so it must never be allowed to consume an
+	// appreciable part of the browser's shared localStorage quota.
+	const CACHE_MAX_CHARS = 24_000;
 	const CACHE_KEY = 'bitos:trending-rail-cache';
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
@@ -85,7 +88,39 @@
 	}
 
 	function writeCache() {
-		localStorage.setItem(CACHE_KEY, JSON.stringify({ createdAt: Date.now(), trending, suggested }));
+		const trim = (value: string, maxLength: number) => value.slice(0, maxLength);
+		const cachedTrending = trending.slice(0, TREND_LIMIT).map((item) => ({
+			rank: trim(item.rank, 8),
+			category: trim(item.category, 32),
+			tag: trim(item.tag, 64),
+			posts: trim(item.posts, 24),
+			dir: item.dir,
+			count: item.count
+		}));
+
+		// Profile bios are user-controlled and can be very large. Keep only the
+		// small amount needed to render a useful fallback while offline.
+		for (const limit of [SUGGESTION_LIMIT * 3, SUGGESTION_LIMIT, 0]) {
+			const cachedSuggested = suggested.slice(0, limit).map((item) => ({
+				pubkey: item.pubkey,
+				name: trim(item.name, 80),
+				note: trim(item.note, 160),
+				count: item.count
+			}));
+			const serialized = JSON.stringify({
+				createdAt: Date.now(),
+				trending: cachedTrending,
+				suggested: cachedSuggested
+			});
+			if (serialized.length > CACHE_MAX_CHARS) continue;
+			try {
+				localStorage.setItem(CACHE_KEY, serialized);
+				return;
+			} catch {
+				// Retry with less optional data. If storage is full or disabled, the
+				// rail still works; this cache is not required for correctness.
+			}
+		}
 	}
 
 	async function loadRailData(options: { force?: boolean } = {}) {
@@ -93,55 +128,55 @@
 		loading = true;
 		try {
 			const applyRailEvents = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
-			const seenEvents: Record<string, true> = {};
-			const tagCounts: Record<string, number> = {};
-			const authorCounts: Record<string, { count: number; latest: number }> = {};
+				const seenEvents: Record<string, true> = {};
+				const tagCounts: Record<string, number> = {};
+				const authorCounts: Record<string, { count: number; latest: number }> = {};
 
-			for (const ev of events) {
-				if (seenEvents[ev.id]) continue;
-				seenEvents[ev.id] = true;
+				for (const ev of events) {
+					if (seenEvents[ev.id]) continue;
+					seenEvents[ev.id] = true;
 
-				const eventTags = ev.tags
-					.filter((tag) => tag[0] === 't' && tag[1])
-					.map((tag) => tag[1].toLowerCase());
-				const uniqueTags = [...eventTags, ...tagsFromContent(ev.content)].filter(
-					(tag, index, tags) => tags.indexOf(tag) === index
-				);
-				for (const tag of uniqueTags) tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
+					const eventTags = ev.tags
+						.filter((tag) => tag[0] === 't' && tag[1])
+						.map((tag) => tag[1].toLowerCase());
+					const uniqueTags = [...eventTags, ...tagsFromContent(ev.content)].filter(
+						(tag, index, tags) => tags.indexOf(tag) === index
+					);
+					for (const tag of uniqueTags) tagCounts[tag] = (tagCounts[tag] ?? 0) + 1;
 
-				if (ev.pubkey !== identity.current?.pk) {
-					const author = authorCounts[ev.pubkey] ?? { count: 0, latest: 0 };
-					author.count += 1;
-					author.latest = Math.max(author.latest, ev.created_at);
-					authorCounts[ev.pubkey] = author;
+					if (ev.pubkey !== identity.current?.pk) {
+						const author = authorCounts[ev.pubkey] ?? { count: 0, latest: 0 };
+						author.count += 1;
+						author.latest = Math.max(author.latest, ev.created_at);
+						authorCounts[ev.pubkey] = author;
+					}
 				}
-			}
 
-			trending = Object.entries(tagCounts)
-				.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-				.slice(0, TREND_LIMIT)
-				.map(([tag, count], index) => ({
-					rank: `#${index + 1}`,
-					category: 'Nostr',
-					tag: `#${tag}`,
-					posts: `${compactCount(count)} ${count === 1 ? 'note' : 'notes'}`,
-					dir: index < 2 ? 'up' : 'hot',
-					count
-				}));
+				trending = Object.entries(tagCounts)
+					.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+					.slice(0, TREND_LIMIT)
+					.map(([tag, count], index) => ({
+						rank: `#${index + 1}`,
+						category: 'Nostr',
+						tag: `#${tag}`,
+						posts: `${compactCount(count)} ${count === 1 ? 'note' : 'notes'}`,
+						dir: index < 2 ? 'up' : 'hot',
+						count
+					}));
 
-			suggested = Object.entries(authorCounts)
-				.sort((a, b) => b[1].count - a[1].count || b[1].latest - a[1].latest)
-				.slice(0, SUGGESTION_LIMIT * 3)
-				.map(([pubkey, stats]) => ({
-					pubkey,
-					name: displayName(pubkey),
-					note: profileNote(pubkey, stats.count),
-					count: stats.count
-				}));
+				suggested = Object.entries(authorCounts)
+					.sort((a, b) => b[1].count - a[1].count || b[1].latest - a[1].latest)
+					.slice(0, SUGGESTION_LIMIT * 3)
+					.map(([pubkey, stats]) => ({
+						pubkey,
+						name: displayName(pubkey),
+						note: profileNote(pubkey, stats.count),
+						count: stats.count
+					}));
 
-			profiles.ensure(suggested.map((person) => person.pubkey));
-			writeCache();
-			loaded = true;
+				profiles.ensure(suggested.map((person) => person.pubkey));
+				writeCache();
+				loaded = true;
 			};
 			const events = await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 300 }], {
 				onSecondary: (mergedEvents) => {
@@ -211,10 +246,7 @@
 				{#each trending as t (t.tag)}
 					<div class="rounded-xl transition-colors hover:bg-[var(--interactive-hover-bg)]">
 						<div class="flex items-start gap-2 p-3">
-							<a
-								href={`/?tag=${encodeURIComponent(t.tag.slice(1))}`}
-								class="min-w-0 flex-1"
-							>
+							<a href={`/?tag=${encodeURIComponent(t.tag.slice(1))}`} class="min-w-0 flex-1">
 								<div class="mb-1 flex items-center justify-between gap-2">
 									<span class="text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
 										>{t.rank} · {t.category}</span
