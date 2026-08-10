@@ -21,6 +21,15 @@ import { signals, clamp01 } from './presets-helpers';
 
 export const ALGORITHM_STORAGE_KEY = 'bitos:algorithm-preferences';
 
+function scheduleSettingsSync() {
+	if (!browser) return;
+	void import('$lib/stores/settings-sync.svelte')
+		.then(({ settingsSync }) => settingsSync.schedulePublish())
+		.catch(() => {
+			/* Sync is best-effort and must never block local settings. */
+		});
+}
+
 /** Global freshness control: tunable recency half-life, in seconds. */
 export const DEFAULT_RECENCY_HALF_LIFE_SECONDS = 6 * 3600; // 6h
 
@@ -98,19 +107,19 @@ class AlgorithmPreferencesStore {
 					recencyHalfLifeSeconds?: number;
 					smoothRanking?: boolean;
 				};
-					const legacyDiscovery = parsed.discoveryEnabled === true;
-					const relayDiscovery = parsed.relayDiscovery ?? {
-						feed: legacyDiscovery,
-						reels: false,
-						discover: false
-					};
-					this.config = {
-						feed: this.mergeSurface('feed', parsed.feed),
-						reels: this.mergeSurface('reels', parsed.reels),
-						discover: this.mergeSurface('discover', parsed.discover),
-						relayDiscovery
-					};
-					this.relayDiscovery = relayDiscovery;
+				const legacyDiscovery = parsed.discoveryEnabled === true;
+				const relayDiscovery = parsed.relayDiscovery ?? {
+					feed: legacyDiscovery,
+					reels: false,
+					discover: false
+				};
+				this.config = {
+					feed: this.mergeSurface('feed', parsed.feed),
+					reels: this.mergeSurface('reels', parsed.reels),
+					discover: this.mergeSurface('discover', parsed.discover),
+					relayDiscovery
+				};
+				this.relayDiscovery = relayDiscovery;
 				if (
 					Number.isFinite(parsed.recencyHalfLifeSeconds) &&
 					(parsed.recencyHalfLifeSeconds as number) > 0
@@ -146,6 +155,16 @@ class AlgorithmPreferencesStore {
 				smoothRanking: this.smoothRanking
 			})
 		);
+		scheduleSettingsSync();
+	};
+
+	reload = () => {
+		this.loaded = false;
+		this.config = structuredClone(DEFAULTS);
+		this.relayDiscovery = { feed: false, reels: false, discover: false };
+		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
+		this.smoothRanking = true;
+		this.load();
 	};
 
 	configFor = (surface: SurfaceId): SurfaceConfig => this.config[surface];
@@ -208,7 +227,19 @@ class AlgorithmPreferencesStore {
 		this.relayDiscovery = { feed: false, reels: false, discover: false };
 		this.recencyHalfLifeSeconds = DEFAULT_RECENCY_HALF_LIFE_SECONDS;
 		this.smoothRanking = true;
-		this.persist();
+		// Account transitions clear local state before attempting remote restore.
+		// Do not publish defaults during that small window.
+		if (browser) {
+			localStorage.setItem(
+				ALGORITHM_STORAGE_KEY,
+				JSON.stringify({
+					...this.config,
+					relayDiscovery: this.relayDiscovery,
+					recencyHalfLifeSeconds: this.recencyHalfLifeSeconds,
+					smoothRanking: this.smoothRanking
+				})
+			);
+		}
 	};
 
 	/** Total active weight in a surface (for normalization display in the UI). */

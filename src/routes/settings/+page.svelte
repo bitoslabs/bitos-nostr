@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { finalizeEvent } from 'nostr-tools/pure';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -29,6 +30,17 @@
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
+
+	onMount(() => {
+		const pubkeys = identity.accounts.map((account) => account.pk);
+		if (!pubkeys.length) return;
+		void profiles.refresh(pubkeys).then(() => {
+			for (const pubkey of pubkeys) {
+				const profile = profiles.get(pubkey);
+				if (profile) identity.updateAccountProfile(pubkey, profile);
+			}
+		});
+	});
 
 	const section = $derived(
 		isSettingsSectionKey(page.params.section) ? page.params.section : 'account'
@@ -219,8 +231,7 @@
 		if (
 			!(await confirms.danger({
 				title: 'Remove saved account?',
-				message:
-					'This removes the account from this device. Make sure its nsec is backed up.',
+				message: 'This removes the account from this device. Make sure its nsec is backed up.',
 				confirmLabel: 'Remove'
 			}))
 		)
@@ -413,7 +424,7 @@
 					{/if}
 					<div class="mb-5 flex flex-wrap items-center gap-4">
 						<div
-							class="size-16 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 ring-1 ring-primary-500/20 shadow-[var(--glow-primary)]"
+							class="size-16 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
 						>
 							{#if editingPicture}
 								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
@@ -502,7 +513,9 @@
 								{#snippet trailing()}
 									<button
 										type="button"
-										title="Upload via {providerLabel(activeUploadProvider() === 'none' ? 'server' : activeUploadProvider())}"
+										title="Upload via {providerLabel(
+											activeUploadProvider() === 'none' ? 'server' : activeUploadProvider()
+										)}"
 										onclick={() => avatarInput?.click()}
 										disabled={uploadingMedia !== null}
 										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"
@@ -534,7 +547,9 @@
 								{#snippet trailing()}
 									<button
 										type="button"
-										title="Upload via {providerLabel(activeUploadProvider() === 'none' ? 'server' : activeUploadProvider())}"
+										title="Upload via {providerLabel(
+											activeUploadProvider() === 'none' ? 'server' : activeUploadProvider()
+										)}"
 										onclick={() => bannerInput?.click()}
 										disabled={uploadingMedia !== null}
 										class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 disabled:opacity-50"

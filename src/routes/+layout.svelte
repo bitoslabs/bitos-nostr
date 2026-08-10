@@ -6,7 +6,9 @@
 	import { page } from '$app/state';
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
+	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
 	import { media } from '$lib/stores/media.svelte';
+	import { callSettings } from '$lib/stores/call-settings.svelte';
 	import { clearAccountCaches } from '$lib/stores/account-cache';
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { mutes } from '$lib/stores/mutes.svelte';
@@ -244,8 +246,24 @@
 		if (previousPk && previousPk !== pk) {
 			clearAccountCaches();
 			clearRuntimeAccountState();
+			algorithmPreferences.resetAll();
+			interactionProfile.clear(false);
+			preferences.reload();
+			media.reset();
+			privacyNotificationSettings.reload();
+			blocks.load();
+			mutes.load();
+			feedPreferences.reload();
+			callSettings.reload();
+			relays.load();
 		}
 		if (pk) {
+			// Always revalidate the active account's own metadata. This fixes imports
+			// and account switching when the local account record has no cached name.
+			void profiles.refresh([pk]).then(() => {
+				const profile = profiles.get(pk);
+				if (profile && identity.current?.pk === pk) identity.setProfile(profile);
+			});
 			ensureConnected();
 			contacts.start();
 			stories.start();

@@ -78,7 +78,9 @@ class ProfileStore {
 		return fetchedAt > 0 && Date.now() - fetchedAt < STALE_MS;
 	}
 
-	private applyProfileEvents(events: Array<{ pubkey: string; created_at: number; content: string }>) {
+	private applyProfileEvents(
+		events: Array<{ pubkey: string; created_at: number; content: string }>
+	) {
 		for (const ev of events) {
 			try {
 				const data = JSON.parse(ev.content) as Partial<Profile>;
@@ -95,22 +97,22 @@ class ProfileStore {
 	}
 
 	/** Schedule a fetch for any pubkeys we don't have yet (deduped). */
-	ensure(pubkeys: string[], options: EnsureOptions = {}) {
-		if (!browser) return;
+	ensure(pubkeys: string[], options: EnsureOptions = {}): Promise<void> {
+		if (!browser) return Promise.resolve();
 		this.load();
 		const targets = pubkeys.filter((pk) => {
 			if (!pk || this.inflight.has(pk)) return false;
 			return options.force || !this.byPubkey[pk] || !this.isFresh(pk);
 		});
-		if (!targets.length) return;
+		if (!targets.length) return Promise.resolve();
 		targets.forEach((pk) => this.inflight.add(pk));
-		queryPrimaryFirst(
+		return queryPrimaryFirst(
 			targets.map((pubkey) => ({ kinds: [0], authors: [pubkey], limit: 1 })),
 			{
-			onSecondary: (events) => {
-				this.applyProfileEvents(events);
-				this.persist();
-			}
+				onSecondary: (events) => {
+					this.applyProfileEvents(events);
+					this.persist();
+				}
 			}
 		)
 			.then((events) => {
@@ -125,8 +127,8 @@ class ProfileStore {
 			});
 	}
 
-	refresh(pubkeys: string[]) {
-		this.ensure(pubkeys, { force: true });
+	refresh(pubkeys: string[]): Promise<void> {
+		return this.ensure(pubkeys, { force: true });
 	}
 }
 

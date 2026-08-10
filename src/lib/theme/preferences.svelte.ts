@@ -136,6 +136,12 @@ class PrefsStore {
 		this.state.highContrast = Boolean(this.state.highContrast);
 	};
 
+	reload = () => {
+		this.state = { ...DEFAULTS };
+		this.load();
+		this.apply();
+	};
+
 	/** Track OS color-scheme changes while in `system` mode. */
 	startSystemWatcher = () => {
 		if (!browser) return;
