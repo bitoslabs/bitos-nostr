@@ -28,7 +28,7 @@
 	const backHref = $derived(
 		safeReturnTo ||
 			(noteSource === 'reels'
-				? '/reels'
+				? '/bits'
 				: noteSource === 'discover'
 					? '/discover'
 					: '/notifications')
@@ -41,7 +41,7 @@
 					? 'Notifications'
 					: 'Back'
 			: noteSource === 'reels'
-				? 'Reels'
+				? 'Bits'
 				: noteSource === 'discover'
 					? 'Discover'
 					: 'Notifications'

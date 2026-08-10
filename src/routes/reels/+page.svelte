@@ -28,7 +28,7 @@
 	const urlPattern = /https?:\/\/[^\s<>()]+/gi;
 	const videoPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
 	const videoFormatPattern = /(?:[?&](?:ext|fm|format)=)(?:m3u8|m4v|mov|mp4|webm)\b/i;
-	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
+	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels)(?:\/|$|:|-|_)/i;
 	const REELS_CACHE_KEY = 'bitos:reels-cache:v1';
 	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
 	const MAX_CACHED_REELS = 120;
@@ -114,7 +114,10 @@
 		for (const tag of event.tags.filter((tag) => tag[0] === 'imeta')) {
 			const url = imetaValue(tag, 'url');
 			const mime = imetaValue(tag, 'm');
-			if (url && (mime?.startsWith('video/') || looksLikeVideoUrl(url))) return url;
+			// NIP-92 metadata is authoritative when present. In particular, some
+			// image CDNs use /upload/ in their paths, which must not turn an image
+			// attachment into a reel just because its URL looks video-ish.
+			if (url && (mime ? mime.startsWith('video/') : looksLikeVideoUrl(url))) return url;
 		}
 		for (const match of event.content.matchAll(urlPattern)) {
 			const { core } = splitTrailingPunctuation(match[0]);
@@ -659,7 +662,7 @@
 	});
 </script>
 
-<svelte:head><title>Reels · BitOS</title></svelte:head>
+	<svelte:head><title>Bits · BitOS</title></svelte:head>
 
 <div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	<div
@@ -736,7 +739,7 @@
 					></div>
 
 					<div class="absolute inset-x-0 top-0 z-10 flex items-center justify-between p-5">
-						<h2 class="font-display text-[26px] font-extrabold text-white">Reels</h2>
+						<h2 class="font-display text-[26px] font-extrabold text-white">Bits</h2>
 						<div class="flex items-center gap-2">
 							<button
 								type="button"
@@ -761,7 +764,7 @@
 								type="button"
 								onclick={() => loadReels()}
 								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-								aria-label="Refresh reels"
+								aria-label="Refresh bits"
 							>
 								<Icon name="i-lucide-rotate-cw" class="size-5" />
 							</button>
@@ -858,7 +861,7 @@
 								class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur"
 							>
 								<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-								Loading older reels
+								Loading older bits
 							</div>
 						{/if}
 					</div>
@@ -872,7 +875,7 @@
 					>
 						<Icon name="i-lucide-clapperboard" class="size-8" />
 					</div>
-					<h1 class="font-display text-[28px] font-extrabold">No reels found</h1>
+					<h1 class="font-display text-[28px] font-extrabold">No bits found</h1>
 					<p class="mt-2 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 						Your configured relays did not return kind-1 notes with video links.
 					</p>
@@ -898,7 +901,7 @@
 				type="button"
 				onclick={() => scrollToReel(-1)}
 				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-				aria-label="Previous reel"
+						aria-label="Previous bit"
 			>
 				<Icon name="i-lucide-chevron-up" class="size-[18px]" />
 			</button>
@@ -906,7 +909,7 @@
 				type="button"
 				onclick={() => scrollToReel(1)}
 				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-				aria-label="Next reel"
+						aria-label="Next bit"
 			>
 				<Icon name="i-lucide-chevron-down" class="size-[18px]" />
 			</button>
@@ -922,7 +925,7 @@
 		></button>
 		<aside
 			class="fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0"
-			aria-label="Reel comments"
+						aria-label="Bit comments"
 		>
 			<header
 				class="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ui-border-muted)] px-4"
