@@ -94,9 +94,21 @@ class IdentityStore {
 
 	setProfile = (profile: Profile) => {
 		if (!this.current) return;
-		this.current = { ...this.current, profile };
-		this.rememberAccount(this.current.sk, profile);
+		this.updateAccountProfile(this.current.pk, profile);
 		this.persist();
+	};
+
+	/** Update a saved account summary after its public metadata was fetched. */
+	updateAccountProfile = (pubkey: string, profile: Profile) => {
+		const account = this.storedAccounts().find((item) => buildIdentity(item.sk).pk === pubkey);
+		if (!account) return;
+		this.persistAccounts(
+			this.storedAccounts().map((item) =>
+				buildIdentity(item.sk).pk === pubkey ? { ...item, profile } : item
+			)
+		);
+		if (this.current?.pk === pubkey) this.current = { ...this.current, profile };
+		if (this.current?.pk === pubkey) this.persist();
 	};
 
 	logout = () => {

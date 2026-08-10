@@ -19,6 +19,15 @@ import { bookmarks } from '$lib/stores/bookmarks.svelte';
 import type { FeedNote } from '$lib/nostr/types';
 
 export const PROFILE_STORAGE_KEY = 'bitos:algorithm-interaction-profile';
+
+function scheduleSettingsSync() {
+	if (!browser) return;
+	void import('$lib/stores/settings-sync.svelte')
+		.then(({ settingsSync }) => settingsSync.schedulePublish())
+		.catch(() => {
+			/* Sync is best-effort and must never block local interactions. */
+		});
+}
 const DECAY_HALF_LIFE_DAYS = 30;
 const MAX_AUTHORS = 400;
 const MAX_TAGS = 120;
@@ -91,8 +100,8 @@ class InteractionProfileStore {
 					authorAffinity,
 					tagInterest,
 					dismissedNotes: (parsed.dismissedNotes ?? []).slice(0, MAX_DISMISSED),
-					mutedAuthors: (parsed.mutedAuthors ?? []),
-					mutedTags: (parsed.mutedTags ?? []),
+					mutedAuthors: parsed.mutedAuthors ?? [],
+					mutedTags: parsed.mutedTags ?? [],
 					updatedAt: now
 				};
 				this.trim();
@@ -102,11 +111,18 @@ class InteractionProfileStore {
 		}
 	};
 
+	reload = () => {
+		this.loaded = false;
+		this.state = structuredClone(DEFAULT_STATE);
+		this.load();
+	};
+
 	private persist() {
 		if (!browser) return;
 		this.state.updatedAt = Date.now();
 		localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.state));
 		this.version++;
+		scheduleSettingsSync();
 	}
 
 	private bump() {
@@ -174,7 +190,6 @@ class InteractionProfileStore {
 
 	isDismissed(noteId: string): boolean {
 		return this.state.dismissedNotes.includes(noteId);
-
 	}
 
 	toggleMutedAuthor(pubkey: string): boolean {
@@ -267,9 +282,14 @@ class InteractionProfileStore {
 		}
 	}
 
-	clear = () => {
+	clear = (sync = true) => {
 		this.state = structuredClone(DEFAULT_STATE);
-		this.bump();
+		if (sync) {
+			this.bump();
+		} else {
+			this.version++;
+			if (browser) localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(this.state));
+		}
 	};
 }
 

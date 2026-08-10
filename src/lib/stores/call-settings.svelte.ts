@@ -35,6 +35,11 @@ class CallSettingsStore {
 		}
 	};
 
+	reload = () => {
+		this.state = { ...CALL_SETTINGS_DEFAULTS };
+		this.load();
+	};
+
 	private persist = () => {
 		if (!browser) return;
 		try {

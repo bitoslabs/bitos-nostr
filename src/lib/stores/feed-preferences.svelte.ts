@@ -36,6 +36,12 @@ class FeedPreferencesStore {
 		}
 	}
 
+	reload() {
+		this.loaded = false;
+		this.state = { ...DEFAULTS };
+		this.load();
+	}
+
 	private persist() {
 		if (!browser) return;
 		localStorage.setItem(STORAGE_KEY, JSON.stringify(this.state));

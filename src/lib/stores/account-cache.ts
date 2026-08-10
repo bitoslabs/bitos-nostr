@@ -6,7 +6,16 @@ const EXACT_KEYS = [
 	'bitos:discover-cache:v1',
 	'bitos:reels-cache:v1',
 	'bitos:trending-rail-cache',
-	'bitos:seen-stories'
+	'bitos:seen-stories',
+	'bitos:algorithm-preferences',
+	'bitos:algorithm-interaction-profile',
+	'bitos:prefs',
+	'bitos:privacy-notification-settings',
+	'bitos:media-settings',
+	'bitos:blocked-pubkeys',
+	'bitos:relays',
+	'bitos:feed-preferences',
+	'bitos:call-settings'
 ];
 
 const PREFIXES = [

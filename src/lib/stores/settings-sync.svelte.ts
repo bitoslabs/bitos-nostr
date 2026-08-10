@@ -19,14 +19,8 @@ import {
 	type PrivacyNotificationSettingsState
 } from '$lib/stores/privacy-notification-settings.svelte';
 import { blocks, STORAGE_KEY as BLOCKS_KEY } from '$lib/stores/blocks.svelte';
-import {
-	algorithmPreferences,
-	ALGORITHM_STORAGE_KEY as ALGORITHM_KEY
-} from '$lib/algorithm';
-import {
-	interactionProfile,
-	PROFILE_STORAGE_KEY as PROFILE_KEY
-} from '$lib/algorithm';
+import { algorithmPreferences, ALGORITHM_STORAGE_KEY as ALGORITHM_KEY } from '$lib/algorithm';
+import { interactionProfile, PROFILE_STORAGE_KEY as PROFILE_KEY } from '$lib/algorithm';
 
 const APP_DATA_KIND = 30078;
 const SETTINGS_D_TAG = 'bitos-settings-v1';
@@ -65,6 +59,24 @@ class SettingsSyncStore {
 			algorithm: JSON.parse(localStorage.getItem(ALGORITHM_KEY) ?? 'null'),
 			interactionProfile: JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null')
 		};
+	}
+
+	private publishTimer: ReturnType<typeof setTimeout> | null = null;
+	private publishQueued = false;
+
+	/** Queue a single encrypted backup after a burst of local preference changes. */
+	schedulePublish() {
+		if (!browser || !identity.current || this.restoring) return;
+		this.publishQueued = true;
+		if (this.publishTimer) clearTimeout(this.publishTimer);
+		this.publishTimer = setTimeout(() => {
+			this.publishTimer = null;
+			if (!this.publishQueued || !identity.current) return;
+			this.publishQueued = false;
+			void this.publishBackup().catch(() => {
+				/* Manual sync remains available if relays are temporarily offline. */
+			});
+		}, 1500);
 	}
 
 	private async encryptForSelf(plaintext: string) {
@@ -141,18 +153,17 @@ class SettingsSyncStore {
 			localStorage.setItem(MEDIA_KEY, JSON.stringify(backup.media));
 			localStorage.setItem(RELAYS_KEY, JSON.stringify(backup.relays));
 			localStorage.setItem(BLOCKS_KEY, JSON.stringify(backup.blockedPubkeys));
-			if (backup.algorithm)
-				localStorage.setItem(ALGORITHM_KEY, JSON.stringify(backup.algorithm));
+			if (backup.algorithm) localStorage.setItem(ALGORITHM_KEY, JSON.stringify(backup.algorithm));
 			if (backup.interactionProfile)
 				localStorage.setItem(PROFILE_KEY, JSON.stringify(backup.interactionProfile));
-			preferences.load();
+			preferences.reload();
 			preferences.apply();
 			privacyNotificationSettings.load();
 			media.load();
 			relays.load();
 			blocks.load();
-			algorithmPreferences.load();
-			interactionProfile.load();
+			algorithmPreferences.reload();
+			interactionProfile.reload();
 			this.lastRemoteAt = backup.updatedAt;
 			return backup;
 		} finally {

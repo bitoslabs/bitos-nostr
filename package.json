@@ -1,7 +1,7 @@
 {
 	"name": "bitos-nostr",
 	"private": true,
-	"version": "0.1.7",
+	"version": "0.1.9",
 	"type": "module",
 	"description": "BitOS Nostr client - Decentralized social media platform",
 	"scripts": {
@@ -12,6 +12,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
+		"check:client-tags": "node scripts/check-client-tags.mjs",
 		"format": "prettier --write .",
 		"test:unit": "vitest",
 		"test": "npm run test:unit -- --run && npm run test:e2e",
