@@ -9,6 +9,8 @@ import type { Profile } from './types';
 
 const STORAGE_KEY = 'bitos:profiles-cache';
 const STALE_MS = 12 * 60 * 60 * 1000;
+const MAX_CACHED_PROFILES = 300;
+const MAX_CACHE_CHARS = 300_000;
 
 type CachedProfileRecord = {
 	profile: Profile;
@@ -50,15 +52,45 @@ class ProfileStore {
 
 	private persist() {
 		if (!browser) return;
+		const trim = (value: unknown, maxLength: number) =>
+			(typeof value === 'string' ? value : '').slice(0, maxLength);
+		const recentPubkeys = Object.keys(this.byPubkey)
+			.sort((a, b) => (this.fetchedAt.get(b) ?? 0) - (this.fetchedAt.get(a) ?? 0))
+			.slice(0, MAX_CACHED_PROFILES);
 		const payload: Record<string, CachedProfileRecord> = {};
-		for (const [pubkey, profile] of Object.entries(this.byPubkey)) {
+
+		for (const pubkey of recentPubkeys) {
+			const profile = this.byPubkey[pubkey];
 			payload[pubkey] = {
-				profile,
+				profile: {
+					pubkey,
+					name: trim(profile.name, 100),
+					display_name: trim(profile.display_name, 100),
+					about: trim(profile.about, 500),
+					picture: trim(profile.picture, 2048),
+					banner: trim(profile.banner, 2048),
+					website: trim(profile.website, 512),
+					nip05: trim(profile.nip05, 256),
+					lud16: trim(profile.lud16, 256),
+					lud06: trim(profile.lud06, 512)
+				},
 				latestAt: this.latestAt.get(pubkey) ?? -1,
 				fetchedAt: this.fetchedAt.get(pubkey) ?? 0
 			};
 		}
-		localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+
+		try {
+			const serialized = JSON.stringify(payload);
+			if (serialized.length <= MAX_CACHE_CHARS) localStorage.setItem(STORAGE_KEY, serialized);
+		} catch {
+			// Profile data is a cache only. Quota/private-mode failures must not
+			// turn an otherwise successful relay request into an uncaught error.
+			try {
+				localStorage.removeItem(STORAGE_KEY);
+			} catch {
+				// Storage may be completely unavailable.
+			}
+		}
 	}
 
 	get(pubkey: string): Profile | undefined {

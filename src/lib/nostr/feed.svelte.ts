@@ -23,6 +23,7 @@ import { extractHashtagTags } from '$lib/utils/note-content';
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
+const MAX_PENDING_NOTES = 100;
 const MAX_TEXT_NOTE_CHARS = 16_000;
 const MAX_BUFFERED_REACTIONS = 2_000;
 
@@ -257,6 +258,11 @@ class FeedStore {
 		while (idx < this.pendingNotes.length && this.pendingNotes[idx].createdAt >= note.createdAt)
 			idx++;
 		this.pendingNotes = [...this.pendingNotes.slice(0, idx), note, ...this.pendingNotes.slice(idx)];
+		// Keep the new-notes banner useful and bounded if the tab stays open for
+		// a long time without the user revealing incoming notes.
+		if (this.pendingNotes.length > MAX_PENDING_NOTES) {
+			this.pendingNotes = this.pendingNotes.slice(0, MAX_PENDING_NOTES);
+		}
 		this.rebuildPendingIndex();
 	}
 
