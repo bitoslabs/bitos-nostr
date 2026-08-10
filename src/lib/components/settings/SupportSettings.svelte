@@ -3,6 +3,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { SettingsSectionKey } from '$lib/settings/sections';
 	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
+	import ContributorsWidget from '$lib/components/support/ContributorsWidget.svelte';
 
 	type Props = {
 		section: Extract<SettingsSectionKey, 'language' | 'help' | 'about'>;
@@ -198,6 +199,9 @@
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Information about BitOS</p>
 	<div class="mb-5">
 		<SupportWidget compact />
+	</div>
+	<div class="mb-5">
+		<ContributorsWidget compact />
 	</div>
 
 	<!-- Hero -->

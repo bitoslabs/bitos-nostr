@@ -1,9 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { decode } from 'nostr-tools/nip19';
+	import { decode, encodeBytes } from 'nostr-tools/nip19';
+	import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { identity } from '$lib/nostr/identity.svelte';
+	import { relays } from '$lib/nostr/relays.svelte';
+	import { subscribe } from '$lib/nostr/pool';
+	import { hexToBytes } from '$lib/nostr/hex';
 	import { shortKey } from '$lib/utils/format';
 
 	type Props = { compact?: boolean };
@@ -25,6 +30,9 @@
 	let loadingProfile = $state(true);
 	let loadingInvoice = $state(false);
 	let copied = $state(false);
+	let paid = $state(false);
+	let isZap = $state(false);
+	let stopReceipt = $state<(() => void) | undefined>(undefined);
 
 	const profile = $derived(pubkey ? profiles.get(pubkey) : undefined);
 	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
@@ -41,6 +49,7 @@
 			loadingProfile = false;
 			error = 'The support profile could not be decoded.';
 		}
+		return () => stopReceipt?.();
 	});
 
 	function selectTier(sats: number) {
@@ -48,12 +57,14 @@
 		customSats = '';
 		invoice = '';
 		error = '';
+		paid = false;
 	}
 
 	function setCustomAmount(value: string) {
 		customSats = value.replace(/[^\d]/g, '').slice(0, 8);
 		invoice = '';
 		error = '';
+		paid = false;
 	}
 
 	async function requestInvoice() {
@@ -66,6 +77,10 @@
 		loadingInvoice = true;
 		error = '';
 		invoice = '';
+		paid = false;
+		isZap = false;
+		stopReceipt?.();
+		stopReceipt = undefined;
 		try {
 			const [user, domain] = lightningAddress.split('@');
 			if (!user || !domain || lightningAddress.includes('://')) {
@@ -82,6 +97,7 @@
 				minSendable?: number;
 				maxSendable?: number;
 				allowsNostr?: boolean;
+				nostrPubkey?: string;
 			};
 			if (metadata.status === 'ERROR' || !metadata.callback) {
 				throw new Error(metadata.errors || 'The Lightning provider rejected the request.');
@@ -99,6 +115,33 @@
 			}
 			const callback = new URL(metadata.callback);
 			callback.searchParams.set('amount', String(millisats));
+			const supportsZap = metadata.allowsNostr === true && metadata.nostrPubkey === pubkey;
+			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
+			if (supportsZap) {
+				zapRequest = finalizeEvent(
+					{
+						kind: 9734,
+						content: '',
+						created_at: Math.floor(Date.now() / 1000),
+						tags: [
+							['relays', ...relays.urls.slice(0, 8)],
+							['amount', String(millisats)],
+							['p', pubkey]
+						]
+					},
+					identity.current?.sk ? hexToBytes(identity.current.sk) : generateSecretKey()
+				);
+				callback.searchParams.set('nostr', JSON.stringify(zapRequest));
+				callback.searchParams.set(
+					'lnurl',
+					encodeBytes(
+						'lnurl',
+						new TextEncoder().encode(
+							`https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`
+						)
+					)
+				);
+			}
 			const invoiceResponse = await fetch(callback);
 			if (!invoiceResponse.ok) throw new Error('Could not create a Lightning invoice.');
 			const payment = (await invoiceResponse.json()) as {
@@ -109,6 +152,28 @@
 			if (payment.status === 'ERROR' || !payment.pr)
 				throw new Error(payment.reason || 'The provider returned no invoice.');
 			invoice = payment.pr;
+			isZap = !!zapRequest;
+			if (zapRequest) {
+				const requestId = zapRequest.id;
+				stopReceipt = subscribe(
+					[{ kinds: [9735], '#p': [pubkey], since: Math.floor(Date.now() / 1000) - 120 }],
+					{
+						onevent: (event) => {
+							const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
+							if (!description) return;
+							try {
+								const receipt = JSON.parse(description) as { id?: string };
+								if (receipt.id !== requestId) return;
+								paid = true;
+								stopReceipt?.();
+								stopReceipt = undefined;
+							} catch {
+								/* Ignore malformed zap receipts. */
+							}
+						}
+					}
+				);
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not prepare the donation.';
 		} finally {
@@ -214,9 +279,20 @@
 		>
 			<QrCode value={invoice.toUpperCase()} label="Lightning invoice QR code" />
 			<div class="min-w-0">
-				<p class="text-[13px] font-bold">Invoice ready · {amount.toLocaleString()} sats</p>
+				<p class="flex items-center gap-2 text-[13px] font-bold">
+					{#if paid}
+						<span
+							class="grid size-5 place-items-center rounded-full bg-accent-500/15 text-accent-600"
+							><Icon name="i-lucide-check" class="size-3.5" /></span
+						>
+						Zap paid · {amount.toLocaleString()} sats
+					{:else}
+						{isZap ? 'Zap invoice ready' : 'Invoice ready'} · {amount.toLocaleString()} sats
+					{/if}
+				</p>
 				<p class="mt-1 text-[11.5px] text-[var(--ui-text-muted)]">
-					Scan with any Lightning wallet, or open it directly on this device.
+					{#if paid}Payment confirmed by a Nostr zap receipt.{:else}Scan with any Lightning wallet,
+						or open it directly on this device.{/if}
 				</p>
 				<div class="mt-3 flex flex-wrap gap-2">
 					<a
@@ -236,6 +312,9 @@
 				<p class="mt-3 truncate font-mono text-[10px] text-[var(--ui-text-dimmed)]">
 					{shortKey(invoice, 18, 12)}
 				</p>
+				{#if isZap && !paid}<p class="mt-2 text-[10.5px] text-[var(--ui-text-dimmed)]">
+						Listening for the payment receipt on Nostr…
+					</p>{/if}
 			</div>
 		</div>
 	{/if}

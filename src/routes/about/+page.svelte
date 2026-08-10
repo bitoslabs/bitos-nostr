@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
+	import ContributorsWidget from '$lib/components/support/ContributorsWidget.svelte';
 
 	const features = [
 		{
@@ -94,6 +95,10 @@
 
 <section class="mt-12">
 	<SupportWidget />
+</section>
+
+<section class="mt-5">
+	<ContributorsWidget />
 </section>
 
 <!-- What is Nostr -->

@@ -43,6 +43,7 @@
 	import MentionLink from './MentionLink.svelte';
 	import NostrEventPreview from './NostrEventPreview.svelte';
 	import Poll from './Poll.svelte';
+	import NoteZapDialog from './NoteZapDialog.svelte';
 
 	type MediaAttachment = {
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
@@ -79,6 +80,8 @@
 	const urlPattern = /https?:\/\/[^\s<>()]+/giu;
 	const longTextLimit = 420;
 	const MAX_VISIBLE_MEDIA = 6;
+	let optimisticZapSats = $state(0);
+	let optimisticZapBase = $state(0);
 
 	const profile = $derived(profiles.get(note.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || shortKey(note.pubkey));
@@ -86,11 +89,13 @@
 	const isMe = $derived(identity.current?.pk === note.pubkey);
 	const liked = $derived(note.reactions.some((r) => r.byMe));
 	const reactionCount = $derived(note.reactions.reduce((s, r) => s + r.count, 0));
+	const visibleZapSats = $derived(note.zapTotalSats + optimisticZapSats);
+	const visibleZapCount = $derived(note.zapCount + (optimisticZapSats ? 1 : 0));
 	const zapLabel = $derived(
-		note.zapTotalSats
-			? `${compactSats(note.zapTotalSats)} sats`
-			: note.zapCount
-				? `${note.zapCount} zaps`
+		visibleZapSats
+			? `${compactSats(visibleZapSats)} sats`
+			: visibleZapCount
+				? `${visibleZapCount} zaps`
 				: 'Zap'
 	);
 	const menuId = $derived(`post-menu:${note.id}`);
@@ -136,6 +141,7 @@
 	let likeBursts = $state<{ id: number; x: number; y: number; particles: Particle[] }[]>([]);
 	let likeBurstSeq = 0;
 	let rawOpen = $state(false);
+	let zapOpen = $state(false);
 	let deleteOpen = $state(false);
 	let pendingDelete = $state<FeedNote | null>(null);
 	let deleting = $state(false);
@@ -547,9 +553,20 @@
 			toasts.info('This author has no Lightning address');
 			return;
 		}
-		if (!browser) return;
-		window.location.href = `lightning:${lightningAddress}`;
+		zapOpen = true;
 	}
+
+	function handleZapPaid(sats: number) {
+		optimisticZapBase = note.zapTotalSats;
+		optimisticZapSats = sats;
+	}
+
+	$effect(() => {
+		if (optimisticZapSats > 0 && note.zapTotalSats > optimisticZapBase) {
+			optimisticZapSats = 0;
+			optimisticZapBase = 0;
+		}
+	});
 
 	async function reactToComment(reply: FeedNote) {
 		try {
@@ -950,7 +967,7 @@
 	{/if}
 
 	<!-- Reactions summary -->
-	{#if reactionCount > 0 || note.zapCount > 0 || note.repostCount > 0}
+	{#if reactionCount > 0 || visibleZapCount > 0 || note.repostCount > 0}
 		<div
 			class="flex items-center justify-between gap-2 px-4 pt-1 pb-1.5 text-[12px] text-[var(--ui-text-dimmed)]"
 		>
@@ -969,9 +986,9 @@
 			</div>
 			<div class="flex shrink-0 items-center gap-3">
 				{#if note.repostCount > 0}<span>{note.repostCount} reposts</span>{/if}
-				{#if note.zapCount > 0}
+				{#if visibleZapCount > 0}
 					<span class="inline-flex items-center gap-0.5">
-						{compactSats(note.zapTotalSats)} sats
+						{compactSats(visibleZapSats)} sats
 					</span>
 				{/if}
 			</div>
@@ -1310,6 +1327,14 @@
 		{/each}
 	</div>
 </article>
+
+<NoteZapDialog
+	bind:open={zapOpen}
+	recipientPubkey={note.pubkey}
+	{lightningAddress}
+	eventId={note.id}
+	onPaid={handleZapPaid}
+/>
 
 <Dialog bind:open={deleteOpen} title={`Delete ${deleteTargetLabel}`}>
 	<div class="space-y-4">
