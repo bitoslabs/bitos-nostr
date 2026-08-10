@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
 
 	const features = [
 		{
@@ -43,7 +44,11 @@
 
 <!-- Hero -->
 <section class="text-center">
-	<img src={logo} alt="BitOS logo" class="mx-auto mb-5 size-16 rounded-2xl shadow-[var(--glow-primary)]" />
+	<img
+		src={logo}
+		alt="BitOS logo"
+		class="mx-auto mb-5 size-16 rounded-2xl shadow-[var(--glow-primary)]"
+	/>
 	<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight sm:text-[40px]">
 		BitOS
 	</h1>
@@ -55,8 +60,8 @@
 	<p class="mt-2 text-[12px] font-medium text-[var(--ui-text-dimmed)]">Launches {launchDate}</p>
 	<p class="mx-auto mt-3 max-w-xl text-[15px] leading-relaxed text-[var(--ui-text-muted)]">
 		A <strong class="text-[var(--ui-text)]">local-first</strong> social client for the
-		<strong class="text-[var(--ui-text)]">Nostr</strong> protocol. Your keys never leave your
-		device — there is no central server, no company holding your account, and no lock-in.
+		<strong class="text-[var(--ui-text)]">Nostr</strong> protocol. Your keys never leave your device —
+		there is no central server, no company holding your account, and no lock-in.
 	</p>
 	<div class="mt-6 flex flex-wrap items-center justify-center gap-2.5">
 		<a
@@ -87,7 +92,11 @@
 	</div>
 </section>
 
-	<!-- What is Nostr -->
+<section class="mt-12">
+	<SupportWidget />
+</section>
+
+<!-- What is Nostr -->
 <section class="mt-14">
 	<h2 class="font-display text-[20px] font-bold tracking-tight">What is Nostr?</h2>
 	<p class="mt-3 text-[14px] leading-relaxed text-[var(--ui-text-muted)]">
@@ -103,7 +112,7 @@
 	</p>
 </section>
 
-	<!-- Features -->
+<!-- Features -->
 <section class="mt-12">
 	<h2 class="font-display text-[20px] font-bold tracking-tight">What makes BitOS different</h2>
 	<div class="mt-5 grid gap-3 sm:grid-cols-2">
@@ -121,8 +130,10 @@
 	</div>
 </section>
 
-	<!-- Open source -->
-<section class="mt-12 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-5">
+<!-- Open source -->
+<section
+	class="mt-12 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-5"
+>
 	<div class="flex flex-wrap items-center gap-4">
 		<div class="min-w-0 flex-1">
 			<h2 class="font-display text-[17px] font-bold tracking-tight">Open source & self-hostable</h2>
@@ -143,7 +154,7 @@
 	</div>
 </section>
 
-	<!-- Legal -->
+<!-- Legal -->
 <section class="mt-10 rounded-2xl bg-[var(--ui-bg-muted)] p-5 text-center">
 	<p class="text-[13px] text-[var(--ui-text-muted)]">
 		By using BitOS you agree to our
