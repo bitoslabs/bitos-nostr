@@ -9,6 +9,9 @@ export interface PrivacyNotificationSettingsState {
 	includeClientTag: boolean;
 	activity: boolean;
 	readReceipts: boolean;
+	hideSensitiveMedia: boolean;
+	/** Show the author's sensitive-content warning reason. */
+	sensitiveReason: boolean;
 	storyShare: boolean;
 	messagePermission: 'followers' | 'everyone' | 'none';
 	commentPermission: 'everyone' | 'followers' | 'friends';
@@ -32,6 +35,8 @@ export const DEFAULTS: PrivacyNotificationSettingsState = {
 	includeClientTag: true,
 	activity: true,
 	readReceipts: true,
+	hideSensitiveMedia: true,
+	sensitiveReason: true,
 	storyShare: true,
 	messagePermission: 'everyone',
 	commentPermission: 'everyone',

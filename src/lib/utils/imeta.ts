@@ -25,6 +25,9 @@ export interface ImageMeta {
 	size?: number;
 	/** alt text (NIP-92 `alt`). */
 	alt?: string;
+	/** Per-attachment content warning metadata. */
+	contentWarning?: string;
+	sensitive?: string;
 	/** Detected kind. */
 	kind: 'image' | 'video' | 'gif';
 	/** True when the attachment is animated (gif / video). */
@@ -112,6 +115,14 @@ export function parseImeta(tags: string[][]): Map<string, ImageMeta> {
 				}
 				case 'alt':
 					meta.alt = value;
+					break;
+				case 'content-warning':
+				case 'warning':
+				case 'cw':
+					meta.contentWarning = value || 'Sensitive media';
+					break;
+				case 'sensitive':
+					meta.sensitive = value || 'true';
 					break;
 			}
 		}

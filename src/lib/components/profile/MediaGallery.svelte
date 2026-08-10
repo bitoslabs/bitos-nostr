@@ -9,6 +9,7 @@
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import { extractProfileMedia, type ProfileMediaItem } from '$lib/utils/profile-stats';
 	import type { FeedNote } from '$lib/nostr/types';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 	let { notes }: { notes: FeedNote[] } = $props();
 
@@ -20,8 +21,13 @@
 	let lightboxOpen = $state(false);
 	let lightboxIndex = $state(0);
 	let failed = $state<Record<string, boolean>>({});
+	let revealed = $state<Record<string, boolean>>({});
 
 	function openLightbox(item: ProfileMediaItem) {
+		if (item.sensitiveReason && !revealed[item.url]) {
+			revealed = { ...revealed, [item.url]: true };
+			return;
+		}
 		const imageOnly = items.filter((m) => m.type === 'image' || m.type === 'gif');
 		const idx = imageOnly.findIndex((m) => m.url === item.url);
 		if (idx >= 0) {
@@ -35,10 +41,19 @@
 	<div class="grid grid-cols-3 gap-1.5 pb-2 sm:grid-cols-4 sm:gap-2">
 		{#each items as item (item.url)}
 			{@const isPlayable = item.type === 'video' || item.type === 'gif'}
+			{@const covered =
+				privacyNotificationSettings.state.hideSensitiveMedia &&
+				!!item.sensitiveReason &&
+				!revealed[item.url]}
 			{@const activeNote = `/note/${item.noteId}`}
 			<a
 				href={isPlayable ? activeNote : undefined}
 				onclick={(e) => {
+					if (covered) {
+						e.preventDefault();
+						revealed = { ...revealed, [item.url]: true };
+						return;
+					}
 					if (item.type === 'image' || item.type === 'gif') {
 						e.preventDefault();
 						openLightbox(item);
@@ -71,6 +86,19 @@
 						onerror={() => (failed = { ...failed, [item.url]: true })}
 						class="size-full object-cover transition duration-300 group-hover:scale-[1.04]"
 					/>
+				{/if}
+				{#if covered}
+					<div
+						class="absolute inset-0 grid place-items-center bg-black/35 p-2 text-center text-white backdrop-blur-xl"
+					>
+						<span class="text-[10px] font-bold">
+							<Icon name="i-lucide-eye-off" class="mx-auto mb-1 size-4" />
+							Sensitive media
+							{#if privacyNotificationSettings.state.sensitiveReason}
+								<span class="mt-0.5 block font-normal text-white/75">{item.sensitiveReason}</span>
+							{/if}
+						</span>
+					</div>
 				{/if}
 
 				<!-- Type badge for gifs / extra hints -->

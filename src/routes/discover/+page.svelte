@@ -13,6 +13,7 @@
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
 
 	type TrendTag = { tag: string; count: number };
@@ -101,14 +102,17 @@
 		creators.filter((item) => {
 			const profile = profiles.get(item.pubkey);
 			const name = profile?.display_name || profile?.name || shortKey(item.pubkey);
-			return !queryText || name.toLowerCase().includes(queryText) || item.pubkey.includes(queryText);
+			return (
+				!queryText || name.toLowerCase().includes(queryText) || item.pubkey.includes(queryText)
+			);
 		})
 	);
 	const filteredMedia = $derived(
 		mediaItems.filter((item) => {
 			const profile = profiles.get(item.pubkey);
 			const name = profile?.display_name || profile?.name || shortKey(item.pubkey);
-			const haystack = `${item.kind} ${item.content} ${item.url} ${name} ${item.pubkey}`.toLowerCase();
+			const haystack =
+				`${item.kind} ${item.content} ${item.url} ${name} ${item.pubkey}`.toLowerCase();
 			return !queryText || haystack.includes(queryText);
 		})
 	);
@@ -137,11 +141,7 @@
 			.map((creator) => {
 				const engagement = Math.log10(1 + creator.count) / Math.log10(1 + maxCount);
 				const recency = Math.pow(0.5, Math.max(0, now - creator.latest) / halfLife);
-				const wot = followingSet.has(creator.pubkey)
-					? 1
-					: wotSet.has(creator.pubkey)
-						? 0.6
-						: 0.2;
+				const wot = followingSet.has(creator.pubkey) ? 1 : wotSet.has(creator.pubkey) ? 0.6 : 0.2;
 				const score = (engagement * wEng + recency * wRec + wot * wWot) / total;
 				return { creator, score };
 			})
@@ -149,10 +149,12 @@
 			.map((item) => item.creator);
 	});
 	const activeMedia = $derived(
-		hasActiveRelaySearch ? relaySearchData?.mediaItems.slice(0, mediaVisibleCount) ?? [] : visibleMedia
+		hasActiveRelaySearch
+			? (relaySearchData?.mediaItems.slice(0, mediaVisibleCount) ?? [])
+			: visibleMedia
 	);
 	const activeMediaCount = $derived(
-		hasActiveRelaySearch ? relaySearchData?.mediaItems.length ?? 0 : filteredMedia.length
+		hasActiveRelaySearch ? (relaySearchData?.mediaItems.length ?? 0) : filteredMedia.length
 	);
 	const selectedMediaItem = $derived(mediaDialogOpen ? (activeMedia[mediaIndex] ?? null) : null);
 
@@ -249,11 +251,19 @@
 		discovered: Awaited<ReturnType<typeof queryUrls>>
 	) {
 		const configuredIds = new Set(configured.map((event) => event.id));
-		return new Set(discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id));
+		return new Set(
+			discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id)
+		);
 	}
 
 	function buildDiscoverData(
-		events: Array<{ id: string; pubkey: string; content: string; created_at: number; tags: string[][] }>,
+		events: Array<{
+			id: string;
+			pubkey: string;
+			content: string;
+			created_at: number;
+			tags: string[][];
+		}>,
 		options: { mediaLimit?: number; discoveryIds?: Set<string> } = {}
 	) {
 		const seen: Record<string, true> = {};
@@ -324,15 +334,13 @@
 	function applyDiscoverData(data: Omit<DiscoverCache, 'savedAt'>) {
 		trendTags = data.trendTags.slice(0, MAX_CACHED_TAGS);
 		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
-		mediaItems = data.mediaItems
-			.slice(0, MAX_CACHED_MEDIA)
-			.map((item) => ({
-				...item,
-				kind: item.kind ?? 'image',
-				createdAt: item.createdAt ?? 0,
-				sensitiveReason: item.sensitiveReason ?? '',
-				source: item.source ?? 'configured'
-			}));
+		mediaItems = data.mediaItems.slice(0, MAX_CACHED_MEDIA).map((item) => ({
+			...item,
+			kind: item.kind ?? 'image',
+			createdAt: item.createdAt ?? 0,
+			sensitiveReason: item.sensitiveReason ?? '',
+			source: item.source ?? 'configured'
+		}));
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		profiles.ensure(creators.map((creator) => creator.pubkey));
 		profiles.ensure(mediaItems.map((item) => item.pubkey));
@@ -427,11 +435,12 @@
 			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
 				const combined = mergeEvents(events, discovered);
 				const { data, sortedEvents } = buildDiscoverData(combined, {
-				discoveryIds: discoveryOnlyIds(events, discovered)
+					discoveryIds: discoveryOnlyIds(events, discovered)
 				});
 				applyDiscoverData(data);
 				oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
-				hasMoreMedia = combined.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
+				hasMoreMedia =
+					combined.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
 				saveDiscoverCache(data);
 			};
 			const discoveryPromise = queryUrls(discoveryUrls(), filters).then((events) => {
@@ -440,14 +449,11 @@
 				return events;
 			});
 			let primaryEvents: Awaited<ReturnType<typeof queryPrimaryFirst>> = [];
-			const events = await queryPrimaryFirst(
-				filters,
-				{
-					onSecondary: (mergedEvents) => {
-						applyResults(mergedEvents);
-					}
+			const events = await queryPrimaryFirst(filters, {
+				onSecondary: (mergedEvents) => {
+					applyResults(mergedEvents);
 				}
-			);
+			});
 			primaryEvents = events;
 			await discoveryPromise;
 			applyResults(events);
@@ -560,8 +566,11 @@
 	}
 
 	function shouldHideMedia(item: MediaItem) {
-		if (item.kind === 'image') return !isMediaRevealed(item);
-		return !!item.sensitiveReason && !isMediaRevealed(item);
+		return (
+			privacyNotificationSettings.state.hideSensitiveMedia &&
+			!!item.sensitiveReason &&
+			!isMediaRevealed(item)
+		);
 	}
 
 	function prevMedia() {
@@ -686,7 +695,9 @@
 				<p class="mt-1.5 text-[13px] text-[var(--ui-text-muted)]">
 					Real notes, tags, creators, and media from your relays
 				</p>
-				<div class="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+				<div
+					class="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
+				>
 					{#if refreshingRelays}
 						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
 						<span>Refreshing relays…</span>
@@ -834,7 +845,9 @@
 								<!-- svelte-ignore a11y_media_has_caption -->
 								<video
 									src={item.url}
-									class="aspect-video w-full bg-black object-cover transition {!shouldHideMedia(item)
+									class="aspect-video w-full bg-black object-cover transition {!shouldHideMedia(
+										item
+									)
 										? ''
 										: 'scale-105 blur-2xl saturate-50'}"
 									muted
@@ -867,11 +880,11 @@
 										<span class="block text-[13px] font-bold"
 											>{item.kind === 'image' ? 'Image hidden' : 'Sensitive media'}</span
 										>
-										<span class="mt-1 block text-[11px] text-white/80"
-											>{item.kind === 'image'
-												? item.sensitiveReason || 'Tap view to reveal'
-												: item.sensitiveReason}</span
-										>
+										{#if privacyNotificationSettings.state.sensitiveReason}
+											<span class="mt-1 block text-[11px] text-white/80"
+												>{item.sensitiveReason}</span
+											>
+										{/if}
 										<span
 											class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
 										>
@@ -891,7 +904,10 @@
 										/>
 										<span class="truncate">{name}</span>
 										{#if item.source === 'discovery'}
-											<span class="shrink-0 rounded-full bg-primary-500/80 px-1.5 py-0.5 text-[9px] uppercase">discovery</span>
+											<span
+												class="shrink-0 rounded-full bg-primary-500/80 px-1.5 py-0.5 text-[9px] uppercase"
+												>discovery</span
+											>
 										{/if}
 									</div>
 									<p class="line-clamp-3 text-[12px] font-semibold">{item.content}</p>
@@ -943,7 +959,7 @@
 	{@const profile = profiles.get(selectedMediaItem.pubkey)}
 	{@const name = profile?.display_name || profile?.name || shortKey(selectedMediaItem.pubkey)}
 	<!-- Immersive media viewer -->
-	<div class="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm animate-fade">
+	<div class="animate-fade fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm">
 		<!-- Top bar -->
 		<header class="flex items-center gap-2 p-3 text-white">
 			<a
@@ -951,12 +967,7 @@
 				onclick={() => (mediaDialogOpen = false)}
 				class="flex min-w-0 flex-1 items-center gap-2.5 rounded-full p-1 pr-3 transition hover:bg-white/10"
 			>
-				<Avatar
-					pubkey={selectedMediaItem.pubkey}
-					name={name}
-					picture={profile?.picture}
-					size={36}
-				/>
+				<Avatar pubkey={selectedMediaItem.pubkey} {name} picture={profile?.picture} size={36} />
 				<div class="min-w-0 leading-tight">
 					<p class="truncate text-[14px] font-bold">{name}</p>
 					<p class="text-[11.5px] text-white/65">
@@ -1011,11 +1022,9 @@
 							<p class="text-[15px] font-bold">
 								{selectedMediaItem.kind === 'image' ? 'Image hidden' : 'Sensitive media hidden'}
 							</p>
-							<p class="mt-1 text-[12px] text-white/75">
-								{selectedMediaItem.kind === 'image'
-									? selectedMediaItem.sensitiveReason || 'Tap view to reveal'
-									: selectedMediaItem.sensitiveReason}
-							</p>
+							{#if privacyNotificationSettings.state.sensitiveReason}
+								<p class="mt-1 text-[12px] text-white/75">{selectedMediaItem.sensitiveReason}</p>
+							{/if}
 							<span
 								class="mt-4 inline-flex rounded-full bg-white px-4 py-2 text-[12px] font-bold text-black"
 							>

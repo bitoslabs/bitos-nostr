@@ -150,7 +150,9 @@
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
 	const sensitiveReason = $derived(sensitiveMediaReason());
-	const shouldCoverMedia = $derived(!!sensitiveReason);
+	const shouldCoverMedia = $derived(
+		privacyNotificationSettings.state.hideSensitiveMedia && !!sensitiveReason
+	);
 	const allReplies = $derived.by(() => {
 		const byId = new Map(feed.notes.map((reply) => [reply.id, reply]));
 		for (const reply of optimisticReplies) byId.set(reply.id, reply);
@@ -902,7 +904,9 @@
 								>
 									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
 									<span class="block text-[13px] font-bold">Sensitive video</span>
-									<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
+									{#if privacyNotificationSettings.state.sensitiveReason}
+										<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
+									{/if}
 									<span
 										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
 									>

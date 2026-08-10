@@ -8,6 +8,7 @@
  */
 import type { FeedNote, Profile } from '$lib/nostr/types';
 import { extractNotificationMedia } from './imeta';
+import { sensitiveMediaReason } from './sensitive-media';
 
 /* -------------------------------------------------------------------------- */
 /*  Compact formatters (shared so the feed + profile never drift apart)       */
@@ -38,6 +39,7 @@ export type ProfileMediaItem = {
 	alt?: string;
 	noteId: string;
 	createdAt: number;
+	sensitiveReason: string;
 };
 
 /**
@@ -59,7 +61,8 @@ export function extractProfileMedia(notes: FeedNote[], max = 60): ProfileMediaIt
 				thumb: m.thumb,
 				alt: m.alt,
 				noteId: note.id,
-				createdAt: note.createdAt
+				createdAt: note.createdAt,
+				sensitiveReason: sensitiveMediaReason(note.tags, note.content, m)
 			});
 			if (items.length >= max) return items;
 		}

@@ -14,4 +14,14 @@ describe('imeta media parsing', () => {
 		expect(media).toHaveLength(1);
 		expect(media[0]).toMatchObject({ url, kind: 'image', animated: false });
 	});
+
+	it('keeps per-media warning metadata from imeta tags', () => {
+		const tags = [
+			['imeta', `url ${url}`, 'm image/jpeg', 'content-warning Graphic violence', 'sensitive true']
+		];
+		const parsed = parseImeta(tags).get(url);
+
+		expect(parsed?.contentWarning).toBe('Graphic violence');
+		expect(parsed?.sensitive).toBe('true');
+	});
 });

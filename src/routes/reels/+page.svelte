@@ -16,6 +16,8 @@
 	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
+	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 	type ReelNote = FeedNote & { videoUrl: string };
 	type ReelsCache = {
@@ -47,6 +49,7 @@
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let activeReelId = $state('');
 	let activeReelMuted = $state(true);
+	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let reelProgress = $state<Record<string, number>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
@@ -73,7 +76,9 @@
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
 	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
-	const currentDisplayName = $derived(currentProfile?.display_name || currentProfile?.name || 'You');
+	const currentDisplayName = $derived(
+		currentProfile?.display_name || currentProfile?.name || 'You'
+	);
 
 	function splitTrailingPunctuation(raw: string) {
 		let core = raw;
@@ -119,11 +124,7 @@
 	}
 
 	function captionFor(reel: ReelNote) {
-		return reel.content
-			.split(reel.videoUrl)
-			.join(' ')
-			.replace(/\s+/g, ' ')
-			.trim();
+		return reel.content.split(reel.videoUrl).join(' ').replace(/\s+/g, ' ').trim();
 	}
 
 	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
@@ -140,7 +141,10 @@
 		return DISCOVERY_RELAY_URLS.filter((url) => !relays.urls.includes(url));
 	}
 
-	function mergeEvents(configured: Awaited<ReturnType<typeof queryPrimaryFirst>>, discovered: Awaited<ReturnType<typeof queryUrls>>) {
+	function mergeEvents(
+		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
+		discovered: Awaited<ReturnType<typeof queryUrls>>
+	) {
 		const seen = new Set<string>();
 		return [...configured, ...discovered].filter((event) => {
 			if (seen.has(event.id)) return false;
@@ -154,7 +158,9 @@
 		discovered: Awaited<ReturnType<typeof queryUrls>>
 	) {
 		const configuredIds = new Set(configured.map((event) => event.id));
-		return new Set(discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id));
+		return new Set(
+			discovered.filter((event) => !configuredIds.has(event.id)).map((event) => event.id)
+		);
 	}
 
 	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
@@ -163,7 +169,9 @@
 			? Math.min(reels.length, Math.max(renderedReelCount, INITIAL_RENDERED_REELS))
 			: Math.min(INITIAL_RENDERED_REELS, reels.length);
 		if (identity.current) profiles.ensure([identity.current.pk]);
-		profiles.ensure(reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey));
+		profiles.ensure(
+			reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey)
+		);
 		for (const reel of next) feed.upsertNote(reel);
 	}
 
@@ -199,7 +207,10 @@
 		const nextReels = await buildReelsFromEvents(events, options.discoveryIds);
 		applyReels(nextReels, options);
 		oldestReelEventCreatedAt =
-			events.slice().sort((a, b) => b.created_at - a.created_at).at(-1)?.created_at ?? 0;
+			events
+				.slice()
+				.sort((a, b) => b.created_at - a.created_at)
+				.at(-1)?.created_at ?? 0;
 		hasMoreReels =
 			events.length >= (options.append ? REELS_PAGE_EVENT_LIMIT : REELS_INITIAL_EVENT_LIMIT) &&
 			!!oldestReelEventCreatedAt;
@@ -234,10 +245,12 @@
 					}
 				])
 			: [];
-		const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map((note) => ({
-			...note,
-			videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
-		}));
+		const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map(
+			(note) => ({
+				...note,
+				videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
+			})
+		);
 		for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
 			const reply = toFeedNote(event);
 			if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
@@ -250,18 +263,15 @@
 		try {
 			const filters = [{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }];
 			const discoveryPromise = queryUrls(discoveryUrls(), filters);
-			const events = await queryPrimaryFirst(
-				filters,
-				{
-					onSecondary: (mergedEvents) => {
-						void discoveryPromise.then((discovered) =>
-							updateReelWindow(mergeEvents(mergedEvents, discovered), {
-									discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
-							})
-						);
-					}
+			const events = await queryPrimaryFirst(filters, {
+				onSecondary: (mergedEvents) => {
+					void discoveryPromise.then((discovered) =>
+						updateReelWindow(mergeEvents(mergedEvents, discovered), {
+							discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
+						})
+					);
 				}
-			);
+			});
 			const discovered = await discoveryPromise;
 			await updateReelWindow(mergeEvents(events, discovered), {
 				discoveryIds: discoveryOnlyIds(events, discovered)
@@ -285,19 +295,16 @@
 				}
 			];
 			const discoveryPromise = queryUrls(discoveryUrls(), filters);
-			const events = await queryPrimaryFirst(
-				filters,
-				{
-					onSecondary: (mergedEvents) => {
-						void discoveryPromise.then((discovered) =>
-							updateReelWindow(mergeEvents(mergedEvents, discovered), {
-								append: true,
-									discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
-							})
-						);
-					}
+			const events = await queryPrimaryFirst(filters, {
+				onSecondary: (mergedEvents) => {
+					void discoveryPromise.then((discovered) =>
+						updateReelWindow(mergeEvents(mergedEvents, discovered), {
+							append: true,
+							discoveryIds: discoveryOnlyIds(mergedEvents, discovered)
+						})
+					);
 				}
-			);
+			});
 			if (!events.length) {
 				hasMoreReels = false;
 				return;
@@ -347,7 +354,10 @@
 		if (!reelScroller || !renderedReels.length) return null;
 		const index = Math.max(
 			0,
-			Math.min(renderedReels.length - 1, Math.round(reelScroller.scrollTop / reelScroller.clientHeight))
+			Math.min(
+				renderedReels.length - 1,
+				Math.round(reelScroller.scrollTop / reelScroller.clientHeight)
+			)
 		);
 		return renderedReels[index] ?? null;
 	}
@@ -361,7 +371,10 @@
 		if (!reelScroller) return 0;
 		return Math.max(
 			0,
-			Math.min(renderedReels.length - 1, Math.round(reelScroller.scrollTop / reelScroller.clientHeight))
+			Math.min(
+				renderedReels.length - 1,
+				Math.round(reelScroller.scrollTop / reelScroller.clientHeight)
+			)
 		);
 	}
 
@@ -528,7 +541,8 @@
 		try {
 			await feed.react(reel, '❤️');
 			const updated = feed.notes.find((note) => note.id === reel.id);
-			if (updated) reels = reels.map((item) => (item.id === reel.id ? { ...item, ...updated } : item));
+			if (updated)
+				reels = reels.map((item) => (item.id === reel.id ? { ...item, ...updated } : item));
 		} catch (e) {
 			toasts.error((e as Error).message);
 		}
@@ -552,9 +566,7 @@
 			const replyEvents = await queryPrimaryFirst([
 				{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [reel.id], limit: 200 }
 			]);
-			const replies = replyEvents
-				.map(toFeedNote)
-				.filter((note) => note.replyTo === reel.id);
+			const replies = replyEvents.map(toFeedNote).filter((note) => note.replyTo === reel.id);
 			const replyIds = replies.map((reply) => reply.id);
 			const reactions = replyIds.length
 				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
@@ -667,6 +679,11 @@
 			{#each renderedReels as reel (reel.id)}
 				{@const profile = profiles.get(reel.pubkey)}
 				{@const name = profile?.display_name || profile?.name || shortKey(reel.pubkey)}
+				{@const reelSensitiveReason = sensitiveMediaReason(reel.tags, reel.content)}
+				{@const reelCovered =
+					privacyNotificationSettings.state.hideSensitiveMedia &&
+					!!reelSensitiveReason &&
+					!revealedSensitiveReels[reel.id]}
 				<div
 					use:trackReelCard={reel.id}
 					data-reel-id={reel.id}
@@ -684,13 +701,36 @@
 					<video
 						use:trackReelVideo={reel.id}
 						src={reel.videoUrl}
-						class="absolute inset-0 size-full object-cover"
+						class="absolute inset-0 size-full object-cover {reelCovered
+							? 'scale-105 blur-2xl saturate-50'
+							: ''}"
 						aria-label="Relay video note"
 						autoplay={reel.id === activeReelId}
 						loop
 						playsinline
 						preload="metadata"
 					></video>
+					{#if reelCovered}
+						<button
+							type="button"
+							class="absolute inset-0 z-20 grid place-items-center bg-black/20 p-4 text-center text-white"
+							onclick={() =>
+								(revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true })}
+							aria-label="Show sensitive reel"
+						>
+							<span class="max-w-56 rounded-3xl bg-black/45 px-5 py-4 backdrop-blur-md">
+								<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6" />
+								<span class="block text-[14px] font-bold">Sensitive media</span>
+								{#if privacyNotificationSettings.state.sensitiveReason}
+									<span class="mt-1 block text-[11px] text-white/75">{reelSensitiveReason}</span>
+								{/if}
+								<span
+									class="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
+									>View</span
+								>
+							</span>
+						</button>
+					{/if}
 					<div
 						class="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/70"
 					></div>
@@ -783,7 +823,7 @@
 						</button>
 						<a
 							href={`/profile/${reel.pubkey}`}
-							class="mask-squircle spin-slow mt-2 size-10 overflow-hidden border-2 border-white"
+							class="spin-slow mt-2 size-10 overflow-hidden mask-squircle border-2 border-white"
 							aria-label="Open profile"
 						>
 							<Avatar pubkey={reel.pubkey} {name} picture={profile?.picture} size={40} />
@@ -805,7 +845,8 @@
 								</a>
 								<p class="text-[11px] opacity-80">
 									{timeAgo(reel.createdAt)}
-									{#if reel.source === 'discovery'} · discovery{/if}
+									{#if reel.source === 'discovery'}
+										· discovery{/if}
 								</p>
 							</div>
 						</div>
@@ -813,7 +854,9 @@
 							<p class="line-clamp-4 text-[13.5px] leading-relaxed">{captionFor(reel)}</p>
 						{/if}
 						{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
-							<div class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur">
+							<div
+								class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur"
+							>
 								<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
 								Loading older reels
 							</div>
@@ -847,7 +890,7 @@
 
 	{#if reels.length}
 		<div
-			class="absolute top-1/2 right-[92px] z-30 hidden -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/25 p-1 shadow-lg shadow-black/20 ring-1 ring-white/10 backdrop-blur-md transition-[right] duration-200 sm:flex {commentReel
+			class="absolute top-1/2 right-[92px] z-30 hidden -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/25 p-1 shadow-lg ring-1 shadow-black/20 ring-white/10 backdrop-blur-md transition-[right] duration-200 sm:flex {commentReel
 				? 'lg:right-[398px]'
 				: ''}"
 		>
@@ -943,7 +986,10 @@
 											>
 												{commentName}
 											</a>
-											<a href={`/note/${comment.id}?from=reels`} class="block hover:text-primary-500">
+											<a
+												href={`/note/${comment.id}?from=reels`}
+												class="block hover:text-primary-500"
+											>
 												<p
 													class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
 												>
@@ -1027,7 +1073,9 @@
 					<textarea
 						bind:value={commentText}
 						rows="1"
-						placeholder={identity.current ? 'Add a comment...' : 'Create or import a key to comment'}
+						placeholder={identity.current
+							? 'Add a comment...'
+							: 'Create or import a key to comment'}
 						disabled={!identity.current || postingComment}
 						class="max-h-28 min-h-10 flex-1 resize-none rounded-full bg-[var(--ui-bg-accented)] px-4 py-2.5 text-[14px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-60"
 						onkeydown={(event) => {
@@ -1035,8 +1083,7 @@
 								event.preventDefault();
 								void submitComment();
 							}
-						}}
-					></textarea>
+						}}></textarea>
 					<button
 						type="button"
 						onclick={submitComment}
