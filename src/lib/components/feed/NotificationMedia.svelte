@@ -15,6 +15,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { blurhashToDataUrl } from '$lib/utils/blurhash';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import type { ImageMeta } from '$lib/utils/imeta';
 
 	let {
@@ -54,8 +55,16 @@
 		return 'grid-cols-2';
 	}
 
+	function reasonFor(item: ImageMeta): string {
+		return getSensitiveMediaReason(tags, content, item);
+	}
+
 	function isCovered(item: ImageMeta): boolean {
-		return !!sensitive && !revealed[item.url];
+		return (
+			privacyNotificationSettings.state.hideSensitiveMedia &&
+			!!reasonFor(item) &&
+			!revealed[item.url]
+		);
 	}
 
 	function openLightbox(index: number) {
@@ -83,6 +92,7 @@
 			{@const isFailed = failed[item.url]}
 			{@const isLoaded = loaded[item.url]}
 			{@const covered = isCovered(item)}
+			{@const itemReason = reasonFor(item)}
 			{@const showMore = hiddenCount > 0 && i === visible.length - 1}
 			<button
 				type="button"
@@ -201,6 +211,9 @@
 						<span class="flex flex-col items-center gap-1 text-white">
 							<Icon name="i-lucide-eye-off" class="size-5" />
 							<span class="text-[10.5px] font-bold">Tap to view</span>
+							{#if privacyNotificationSettings.state.sensitiveReason && itemReason}
+								<span class="max-w-48 text-center text-[10px] text-white/75">{itemReason}</span>
+							{/if}
 						</span>
 					</span>
 				{/if}
@@ -209,10 +222,12 @@
 	</div>
 
 	{#if sensitive}
-		<p class="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--ui-text-dimmed)]">
-			<Icon name="i-lucide-shield-alert" class="size-3" />
-			Sensitive — {sensitive}
-		</p>
+		{#if privacyNotificationSettings.state.sensitiveReason}
+			<p class="mt-1.5 flex items-center gap-1 text-[11px] text-[var(--ui-text-dimmed)]">
+				<Icon name="i-lucide-shield-alert" class="size-3" />
+				Sensitive — {sensitive}
+			</p>
+		{/if}
 	{/if}
 
 	<ImageLightbox bind:open={lightboxOpen} images={fullResUrls} bind:index={lightboxIndex} />

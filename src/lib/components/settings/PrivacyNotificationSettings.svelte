@@ -20,7 +20,17 @@
 			'Add optional BitOS attribution to public events'
 		],
 		['activity', 'Activity status', "Show when you're active"],
-		['readReceipts', 'Read receipts', 'Let others know you saw their messages']
+		['readReceipts', 'Read receipts', 'Let others know you saw their messages'],
+		[
+			'hideSensitiveMedia',
+			'Hide sensitive media',
+			'Apply a glass/blur cover to media marked by warning tags or metadata'
+		],
+		[
+			'sensitiveReason',
+			'Show warning reason',
+			'Show details such as “Graphic violence” or “Spoilers” when available'
+		]
 	] as const;
 
 	const notificationItems = [

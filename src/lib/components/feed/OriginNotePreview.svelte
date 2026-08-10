@@ -28,6 +28,8 @@
 	import { cleanNotificationPreview, extractNotificationMedia } from '$lib/utils/imeta';
 	import { extractMentionEntities } from '$lib/utils/nip27';
 	import { parseContent } from '$lib/utils/note-content';
+	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
+	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 	let {
 		noteId,
@@ -42,9 +44,9 @@
 	});
 
 	const event = $derived(originNotes[noteId]);
-	const state = $derived(originNoteStates[noteId]);
-	const loading = $derived(!event && state !== 'missing');
-	const missing = $derived(!event && state === 'missing');
+	const originState = $derived(originNoteStates[noteId]);
+	const loading = $derived(!event && originState !== 'missing');
+	const missing = $derived(!event && originState === 'missing');
 
 	const profile = $derived(event ? profiles.get(event.pubkey) : undefined);
 	const isMe = $derived(!!event && identity.current?.pk === event.pubkey);
@@ -85,6 +87,10 @@
 
 	// A single thumbnail (Facebook style) — the full grid lives on the note page.
 	const thumb = $derived(event ? extractNotificationMedia(event)[0] : undefined);
+	const thumbSensitiveReason = $derived(
+		event && thumb ? sensitiveMediaReason(event.tags, event.content, thumb) : ''
+	);
+	let thumbRevealed = $state(false);
 
 	const href = $derived(`/note/${event?.id ?? noteId}?returnTo=${encodeURIComponent(returnTo)}`);
 
@@ -180,6 +186,19 @@
 						referrerpolicy="no-referrer"
 						class="size-full object-cover transition duration-300 group-hover:scale-[1.04]"
 					/>
+				{/if}
+				{#if privacyNotificationSettings.state.hideSensitiveMedia && thumbSensitiveReason && !thumbRevealed}
+					<button
+						type="button"
+						class="absolute inset-0 grid place-items-center bg-black/40 text-white backdrop-blur-md"
+						onclick={(e) => {
+							e.preventDefault();
+							thumbRevealed = true;
+						}}
+						aria-label="Reveal sensitive media"
+					>
+						<Icon name="i-lucide-eye-off" class="size-4" />
+					</button>
 				{/if}
 			</div>
 		{/if}
