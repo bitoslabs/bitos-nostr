@@ -94,7 +94,7 @@
 		<div class="min-w-0 flex-1">
 			<h2 class="font-display text-[24px] font-extrabold leading-tight">Algorithm</h2>
 			<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-				Tune how BitOS ranks your Feed, Reels, and Discover — fully on your device. Turn a
+		Tune how BitOS ranks your Feed, Bits, and Discover — fully on your device. Turn a
 				surface off for pure reverse-chronological order. Nothing leaves your browser.
 			</p>
 		</div>
@@ -390,7 +390,7 @@
 				<Icon name={discoverySurface === 'discover' ? 'i-lucide-compass' : 'i-lucide-clapperboard'} class="size-5 text-primary-500" />
 				<div class="min-w-0 flex-1">
 					<p class="text-[13px] font-bold text-[var(--ui-text)]">
-						{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Reels relay discovery'}
+					{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Bits relay discovery'}
 					</p>
 					<p class="text-[11px] text-[var(--ui-text-muted)]">
 						Add public candidates from curated relays without changing your relay settings.

@@ -234,7 +234,7 @@ import PollComposer from './PollComposer.svelte';
 	];
 
 	const stubActions = [
-		{ icon: 'i-lucide-clapperboard', label: 'Reel', color: 'text-warm-500', toast: 'Reel creator' },
+		{ icon: 'i-lucide-circle-play', label: 'Bits', color: 'text-warm-500', toast: 'Bits creator' },
 		{
 			icon: 'i-lucide-bar-chart-3',
 			label: 'Poll',

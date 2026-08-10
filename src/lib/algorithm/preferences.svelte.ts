@@ -269,9 +269,9 @@ export const SURFACE_META: Record<
 		candidatePool: 'Notes from people you follow'
 	},
 	reels: {
-		label: 'Reels',
-		icon: 'i-lucide-clapperboard',
-		tagline: 'Discovery-first — engagement & zaps lead.',
+		label: 'Bits',
+		icon: 'i-lucide-circle-play',
+		tagline: 'Bits — short videos on Nostr',
 		candidatePool: 'Video notes across your relays'
 	},
 	discover: {

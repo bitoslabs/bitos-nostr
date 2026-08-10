@@ -21,7 +21,7 @@
 			notifications: true,
 			requiresAuth: true
 		},
-		{ to: '/reels', label: 'Reels', icon: 'i-lucide-clapperboard' },
+		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark', requiresAuth: true },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
