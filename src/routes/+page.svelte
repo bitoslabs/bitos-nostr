@@ -7,6 +7,7 @@
 	import Composer from '$lib/components/feed/Composer.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
+	import ZapLiveStrip from '$lib/components/feed/ZapLiveStrip.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryParallelProgressive, queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
@@ -988,6 +989,8 @@
 					</div>
 				</section>
 			{/if}
+
+			<ZapLiveStrip />
 
 			<!-- Posts -->
 			{#if feed.loading && !feed.notes.length}
