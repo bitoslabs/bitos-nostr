@@ -165,6 +165,8 @@ export const NOSTR_KINDS = {
 	/** NIP-56 report event. */
 	REPORT: 1984,
 	ZAP: 9735,
+	/** NIP-53 live streaming activity (used by zap.stream and other clients). */
+	LIVE_ACTIVITY: 30311,
 	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
 	STORY_STATUS: 30315
