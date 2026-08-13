@@ -364,7 +364,7 @@
 		>
 			<!-- Desktop nav rail (Pulse icon rail) -->
 			<aside
-				class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] lg:flex lg:flex-col"
+				class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)]  lg:flex lg:flex-col"
 			>
 				<NavRail />
 			</aside>
