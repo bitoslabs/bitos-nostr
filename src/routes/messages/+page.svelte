@@ -3230,8 +3230,9 @@
 						<button
 							type="button"
 							onclick={() => (showDetails = true)}
-							class="grid size-10 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500 xl:hidden"
+							class="grid size-10 place-items-center rounded-xl text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500"
 							aria-label="Conversation details"
+							title="Conversation details"
 						>
 							<Icon name="i-lucide-info" class="size-4" />
 						</button>
@@ -3883,7 +3884,7 @@
 			</div>
 
 			<aside
-				class="hidden w-[320px] shrink-0 flex-col overflow-y-auto border-l border-[var(--ui-border-muted)] bg-[var(--surface-bg)] xl:flex"
+				class="hidden w-[320px] shrink-0 flex-col overflow-y-auto border-l border-[var(--ui-border-muted)] bg-[var(--surface-bg)]"
 			>
 				<div class="border-b border-[var(--ui-border-muted)] px-6 pt-8 pb-5 text-center">
 					{#if active.kind === 'group'}
@@ -4247,6 +4248,37 @@
 				: 'Messages prefer Secure DMs (NIP-17) and can still read legacy NIP-04 chats. Calls and file uploads require additional Nostr-compatible services.'}
 		</div>
 		{#if activeGroup}
+			<div class="mt-5">
+				<h3 class="mb-2 text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
+					Description
+				</h3>
+				<p class="text-[13px] leading-relaxed">{activeGroup.description}</p>
+			</div>
+			{#if activeGroup.files.length}
+				<div class="mt-5">
+					<h3
+						class="mb-2 text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase"
+					>
+						Files - {activeGroup.files.length}
+					</h3>
+					<div class="space-y-2">
+						{#each activeGroup.files as file (file.name)}
+							<div class="flex items-center gap-3 rounded-lg bg-[var(--ui-bg-muted)] p-2">
+								<div
+									class="grid size-9 shrink-0 place-items-center rounded-lg bg-primary-500/10 text-primary-600 dark:text-primary-300"
+								>
+									<Icon name={file.icon} class="size-4" />
+								</div>
+								<div class="min-w-0 flex-1">
+									<p class="truncate text-[12px] font-semibold">{file.name}</p>
+									<p class="text-[10px] text-[var(--ui-text-muted)]">{file.meta}</p>
+								</div>
+								<Icon name="i-lucide-download" class="size-3.5 text-[var(--ui-text-dimmed)]" />
+							</div>
+						{/each}
+					</div>
+				</div>
+			{/if}
 			<div class="mt-5">
 				<h3 class="mb-2 text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
 					Members - {activeGroup.members.length}
