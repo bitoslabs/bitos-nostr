@@ -461,7 +461,7 @@
 		</div>
 	</div>
 
-	<div class="mx-auto max-w-[900px] px-4 sm:px-6">
+	<div class="mx-auto max-w-[900px] px-4 sm:px-6 xl:max-w-[860px]">
 		<!-- ============================ IDENTITY ROW ============================ -->
 		<div
 			class="relative -mt-12 mb-4 flex flex-col items-center gap-4 text-center sm:-mt-16 sm:flex-row sm:items-end sm:text-left"

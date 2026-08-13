@@ -24,15 +24,13 @@
 <svelte:head><title>Bookmarks · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[640px] px-5 py-6">
+	<div class="page-container page-container--feed py-6">
 		<div class="mb-5 flex items-center justify-between">
 			<div>
 				<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
 					Bookmarks
 				</h1>
-				<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
-					Notes you saved for later
-				</p>
+				<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">Notes you saved for later</p>
 			</div>
 			<div
 				class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500"
@@ -58,8 +56,8 @@
 							<div class="min-w-0 flex-1">
 								<p class="text-[14px] font-bold">Saved note unavailable</p>
 								<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-									This old bookmark only saved the note ID. Save the note again from the feed to keep a
-									full preview here.
+									This old bookmark only saved the note ID. Save the note again from the feed to
+									keep a full preview here.
 								</p>
 								<p class="mt-2 truncate font-mono text-[11px] text-[var(--ui-text-dimmed)]">
 									{item.id}
