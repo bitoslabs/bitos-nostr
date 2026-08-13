@@ -74,10 +74,14 @@
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="ui4-brand mb-6 flex items-center gap-2.5 px-3 pt-2 transition-opacity hover:opacity-85"
+		class="flex items-center mb-4 gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
-		<span class="ui4-brand-mark grid size-7 place-items-center">⚡</span>
-		<span class="ui4-brand-name">nostr</span>
+		<img
+			src="/icons/logo.png"
+			alt=""
+			class="w-20"
+		/>
+		<!-- <span class="ui4-brand-name">BitOS</span> -->
 	</a>
 
 	<div class="flex flex-1 flex-col gap-1 pl-3">
@@ -101,25 +105,27 @@
 						aria-hidden="true"
 					></span>
 				{/if}
-				<Icon
-					name={item.icon}
-					class="relative z-10 size-5 shrink-0 transition-transform {active
-						? 'scale-105 text-primary-500 dark:text-primary-300'
-						: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
-				/>
+				<span class="relative z-10 shrink-0">
+					<Icon
+						name={item.icon}
+						class="size-5 transition-transform {active
+							? 'scale-105 text-primary-500 dark:text-primary-300'
+							: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
+					/>
+					{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
+						<span
+							class="absolute -top-2.5 -right-3 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
+							>{item.notifications
+								? notificationUnread > 9
+									? '9+'
+									: notificationUnread
+								: unread > 9
+									? '9+'
+									: unread}</span
+						>
+					{/if}
+				</span>
 				<span class="relative z-10">{item.label}</span>
-				{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
-					<span
-						class="absolute -top-1.5 -right-1.5 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
-						>{item.notifications
-							? notificationUnread > 9
-								? '9+'
-								: notificationUnread
-							: unread > 9
-								? '9+'
-								: unread}</span
-					>
-				{/if}
 			</a>
 		{/each}
 	</div>
@@ -127,7 +133,7 @@
 	{#if me}
 		<div class="px-2 pb-1">
 			<a
-				href="/"
+				href="/#composer"
 				class="ui4-compose flex items-center justify-center gap-2 rounded-full py-2.5 font-semibold transition-all"
 			>
 				<Icon name="i-lucide-pen-line" class="size-4" />
@@ -236,13 +242,6 @@
 </nav>
 
 <style>
-	.ui4-brand-mark {
-		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
-		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
-		color: #050507;
-		font-size: 13px;
-		font-weight: 800;
-	}
 	.ui4-brand-name {
 		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
 		background-clip: text;

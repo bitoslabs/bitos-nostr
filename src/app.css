@@ -496,6 +496,17 @@
 		padding: 2.5px;
 		border-radius: 9999px;
 	}
+	/* Keep story borders aligned with the shared hex avatar silhouette. */
+	.story-ring-frame {
+		display: inline-grid;
+		place-items: center;
+		box-sizing: content-box;
+		line-height: 0;
+		isolation: isolate;
+	}
+	.story-ring-inner {
+		line-height: normal;
+	}
 	.story-ring-viewed {
 		background: var(--ui-border-accented);
 		padding: 2.5px;

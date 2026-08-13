@@ -74,15 +74,15 @@
 >
 	<!-- Brand -->
 	<a href="/" class="mb-6 flex items-center gap-2.5 px-3 pt-2" aria-label="Home">
-		<span
-			class="hex-clip grid size-7 place-items-center bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500))] text-black"
-		>
-			<Icon name="i-lucide-zap" class="size-[13px]" />
-		</span>
+		<img
+			src="/icons/icon-192-192.png"
+			alt=""
+			class="size-7 rounded-[9px] shadow-[var(--glow-primary)]"
+		/>
 		<span
 			class="bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500))] bg-clip-text text-2xl font-bold tracking-tight text-transparent"
 		>
-			nostr
+			BitOS
 		</span>
 	</a>
 
@@ -122,7 +122,9 @@
 						</span>
 					{/if}
 					{#if item.trailing === 'relay'}
-						<span class="relay-pulse inline-block size-1.5 rounded-full bg-[var(--tone-success-text)] glow-success"></span>
+						<span
+							class="relay-pulse glow-success inline-block size-1.5 rounded-full bg-[var(--tone-success-text)]"
+						></span>
 					{/if}
 				</span>
 			</a>
@@ -134,14 +136,14 @@
 		<button
 			type="button"
 			onclick={onNewNote}
-			class="glow-accent flex w-full items-center justify-center gap-2 rounded-full bg-[var(--ui-color-primary-500)] py-2.5 px-5 font-semibold text-[var(--ui-text-inverted)] transition-all hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50"
+			class="glow-accent flex w-full items-center justify-center gap-2 rounded-full bg-[var(--ui-color-primary-500)] px-5 py-2.5 font-semibold text-[var(--ui-text-inverted)] transition-all hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50"
 		>
 			<Icon name="i-lucide-zap" class="size-4" />
 			New Note
 		</button>
 	</div>
 
-	<WalletCard {balance} onDeposit={onDeposit} onWithdraw={onWithdraw} />
+	<WalletCard {balance} {onDeposit} {onWithdraw} />
 
 	{#if account}
 		<button

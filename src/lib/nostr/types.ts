@@ -42,6 +42,8 @@ export interface FeedNote {
 	pubkey: string;
 	content: string;
 	createdAt: number;
+	/** NIP-13 leading zero-bit difficulty, when the note was mined. */
+	pow?: number;
 	tags: string[][];
 	replyTo?: string;
 	/** Reactions aggregated by emoji. */

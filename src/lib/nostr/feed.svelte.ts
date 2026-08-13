@@ -5,7 +5,9 @@
  * newest-first and capped to a sane window.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import { getPow, minePow } from 'nostr-tools/nip13';
+import type { UnsignedEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
@@ -28,6 +30,22 @@ const MAX_TEXT_NOTE_CHARS = 16_000;
 const MAX_BUFFERED_REACTIONS = 2_000;
 
 type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
+
+function minePowAsync(unsigned: UnsignedEvent, difficulty: number) {
+	return new Promise<ReturnType<typeof minePow>>((resolve, reject) => {
+		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
+		worker.onmessage = (message: MessageEvent<{ ok: boolean; event?: ReturnType<typeof minePow>; error?: string }>) => {
+			worker.terminate();
+			if (message.data.ok && message.data.event) resolve(message.data.event);
+			else reject(new Error(message.data.error || 'Proof of Work failed'));
+		};
+		worker.onerror = () => {
+			worker.terminate();
+			reject(new Error('Proof of Work worker failed'));
+		};
+		worker.postMessage({ unsigned, difficulty });
+	});
+}
 
 type ReactionEvent = {
 	id: string;
@@ -204,12 +222,15 @@ class FeedStore {
 		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
+		const nonceTag = ev.tags.find((t) => t[0] === 'nonce');
+		const powTarget = Number(nonceTag?.[2]);
 		const pollOptions = parsePoll(ev.tags);
 		const note: FeedNote = {
 			id: ev.id,
 			pubkey: ev.pubkey,
 			content: ev.content,
 			createdAt: ev.created_at,
+			pow: nonceTag && Number.isFinite(powTarget) && powTarget > 0 ? getPow(ev.id) : undefined,
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],
@@ -617,7 +638,7 @@ class FeedStore {
 	/** Compose + sign + publish a text note. Returns the published event id. */
 	async post(
 		content: string,
-		options: { sensitive?: boolean; attachments?: PostMediaAttachment[] } = {}
+		options: { sensitive?: boolean; attachments?: PostMediaAttachment[]; pow?: number } = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -648,12 +669,15 @@ class FeedStore {
 			);
 		}
 		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: body,
 			created_at: Math.floor(Date.now() / 1000),
 			tags
 		};
-		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
+		// NIP-13 mining is opt-in so ordinary posts remain immediate.
+		const mined = options.pow && options.pow > 0 ? await minePowAsync(unsigned, options.pow) : unsigned;
+		const event = finalizeEvent(mined, hexToBytes(id.sk));
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });

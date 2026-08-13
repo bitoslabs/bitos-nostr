@@ -15,6 +15,8 @@
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
+	import HashViz from '$lib/components/ui/HashViz.svelte';
+import { onMount } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
 import { rewriteMentions } from '$lib/utils/nip27';
 import StoryRing from './StoryRing.svelte';
@@ -24,6 +26,7 @@ import PollComposer from './PollComposer.svelte';
 
 	let text = $state('');
 	let posting = $state(false);
+	let mining = $state(false);
 	let uploading = $state(false);
 	let attachments = $state<UploadedMedia[]>([]);
 	let sensitive = $state(false);
@@ -37,6 +40,8 @@ import PollComposer from './PollComposer.svelte';
 	let pollOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
+	let showPow = $state(false);
+	let pow = $state(0);
 	let providerInitialized = $state(false);
 	let mention = $state<{ start: number; query: string } | null>(null);
 	let mentionIndex = $state(0);
@@ -108,6 +113,20 @@ import PollComposer from './PollComposer.svelte';
 	function textareaElement() {
 		return document.getElementById('composer-input') as HTMLTextAreaElement | null;
 	}
+
+	function focusFromHash() {
+		if (window.location.hash !== '#composer') return;
+		requestAnimationFrame(() => {
+			composerEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			textareaElement()?.focus();
+		});
+	}
+
+	onMount(() => {
+		focusFromHash();
+		window.addEventListener('hashchange', focusFromHash);
+		return () => window.removeEventListener('hashchange', focusFromHash);
+	});
 
 	function syncMention() {
 		const el = textareaElement();
@@ -283,19 +302,29 @@ import PollComposer from './PollComposer.svelte';
 	async function submit() {
 		if (!canPost || posting) return;
 		posting = true;
+		mining = showPow && pow > 0;
 		try {
+			// Let the browser paint the mining state before starting the worker.
+			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
-			await feed.post(rewriteMentions(text, allMentions), { sensitive, attachments });
+			await feed.post(rewriteMentions(text, allMentions), {
+				sensitive,
+				attachments,
+				pow: showPow ? pow : 0
+			});
 			text = '';
 			mentions = [];
 			mention = null;
 			attachments = [];
 			sensitive = false;
+			showPow = false;
+			pow = 0;
 			expanded = false;
 			toasts.success('Posted to Nostr');
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {
+			mining = false;
 			posting = false;
 		}
 	}
@@ -330,6 +359,7 @@ import PollComposer from './PollComposer.svelte';
 {#if me}
 	<div
 		bind:this={composerEl}
+		id="composer"
 		class="post-card -mx-[clamp(1rem,3vw,1.5rem)] border-y border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-[clamp(1rem,3vw,1.5rem)] py-4 transition-all duration-200"
 	>
 		<div class="flex items-start gap-3">
@@ -395,6 +425,35 @@ import PollComposer from './PollComposer.svelte';
 								{/if}
 							</button>
 						{/each}
+					</div>
+				{/if}
+				{#if showPow}
+					<div class="mt-3 rounded-xl border border-primary-500/15 bg-primary-500/5 p-3">
+						<div class="flex items-center justify-between gap-3">
+							<div>
+								<p class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
+									Proof of Work
+								</p>
+								<p class="mt-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
+									{mining ? 'Mining your note… keep this tab open.' : 'Mine a harder-to-spam note before publishing.'}
+								</p>
+							</div>
+							<span class="font-mono text-sm font-semibold text-primary-500">{pow} bits</span>
+						</div>
+						<input
+							type="range"
+							min="0"
+							max="30"
+							bind:value={pow}
+							class="pow-slider mt-2.5 w-full"
+							aria-label="Proof of Work difficulty"
+						/>
+						<HashViz bits={pow} class="mt-2.5" />
+						{#if pow > 20}
+							<p class="mt-2 text-[10px] text-warm-500">
+								High difficulty may take noticeably longer to mine.
+							</p>
+						{/if}
 					</div>
 				{/if}
 				{#if overSoftLimit}
@@ -536,6 +595,18 @@ import PollComposer from './PollComposer.svelte';
 						</MenuItem>
 					{/each}
 				</Popover>
+				<button
+					type="button"
+					onclick={() => (showPow = !showPow)}
+					aria-label="Proof of Work"
+					aria-pressed={showPow}
+					title="Proof of Work"
+					class="grid size-9 place-items-center rounded-full transition {showPow
+						? 'bg-primary-500/10 text-primary-600'
+						: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
+				>
+						<Icon name={mining ? 'i-lucide-loader-circle' : 'i-lucide-shield-check'} class="size-[18px] {mining ? 'animate-spin' : ''}" />
+				</button>
 			</div>
 
 			<div class="flex flex-wrap items-center justify-end gap-1.5">

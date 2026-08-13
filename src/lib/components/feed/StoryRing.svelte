@@ -16,7 +16,7 @@
 
 	let {
 		pubkey,
-		rounded = 'mask-squircle',
+		rounded = 'hex-clip',
 		interactive = true,
 		children
 	}: {
@@ -50,13 +50,13 @@
 		<button
 			type="button"
 			onclick={() => author && (viewing = true)}
-			class="{rounded} cursor-pointer p-[3px] {ringClass} transition-transform hover:scale-105"
+			class="story-ring-frame {rounded} cursor-pointer p-[3px] {ringClass} transition-transform hover:scale-105"
 			aria-label="View story"
 		>
 			{@render children()}
 		</button>
 	{:else}
-		<div class="{rounded} p-[3px] {ringClass}">
+		<div class="story-ring-frame {rounded} p-[3px] {ringClass}">
 			{@render children()}
 		</div>
 	{/if}

@@ -44,6 +44,7 @@
 	import NostrEventPreview from './NostrEventPreview.svelte';
 	import Poll from './Poll.svelte';
 	import NoteZapDialog from './NoteZapDialog.svelte';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 
 	type MediaAttachment = {
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
@@ -151,6 +152,7 @@
 	let replyFocusTick = $state(0);
 	let showAllReplies = $state(false);
 	let refreshingComments = $state(false);
+	let commentsLoaded = $state(false);
 	let replyingToCommentId = $state('');
 	let optimisticReplies = $state<FeedNote[]>([]);
 	let failedMedia = $state<Record<string, boolean>>({});
@@ -292,13 +294,24 @@
 		};
 	}
 
-	function startReply() {
+	async function startReply() {
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
 			return;
 		}
 		replyOpen = true;
 		replyFocusTick++;
+		if (!commentsLoaded && !refreshingComments) {
+			refreshingComments = true;
+			try {
+				await feed.refreshReplies(note.id);
+				commentsLoaded = true;
+			} catch (e) {
+				toasts.error((e as Error).message || 'Could not load comments');
+			} finally {
+				refreshingComments = false;
+			}
+		}
 	}
 
 	function startCommentReply(reply: FeedNote) {
@@ -581,6 +594,7 @@
 		refreshingComments = true;
 		try {
 			await feed.refreshReplies(note.id);
+			commentsLoaded = true;
 			toasts.success('Comments refreshed');
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not refresh comments');
@@ -659,7 +673,25 @@
 				{rankTag.label}
 			</button>
 		{/if}
-		<div class="shrink-0">
+		<div class="flex shrink-0 items-center gap-1">
+			<span
+				class="rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)]"
+				title="Nostr event kind"
+				>kind:1</span
+			>
+			<button
+				type="button"
+				onclick={(event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					void copyText(note.id, 'Note ID');
+				}}
+				class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+				aria-label="Copy event fingerprint"
+				title="Copy event fingerprint"
+			>
+				<Icon name="i-lucide-fingerprint" class="size-4" />
+			</button>
 			<Popover
 				id={menuId}
 				placement="bottom-end"
@@ -789,6 +821,11 @@
 
 		{#if note.poll}
 			<Poll {note} onVoted={onNoteChange} />
+		{/if}
+		{#if note.pow}
+			<div class="mt-2">
+				<PowBadge bits={note.pow} compact={true} showLabel={true} />
+			</div>
 		{/if}
 	</div>
 
@@ -997,7 +1034,7 @@
 
 	<!-- Action bar -->
 	<div
-		class="mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] px-4 py-1"
+		class="mb-2 flex items-center justify-between gap-1 px-4 py-2"
 	>
 		<button
 			type="button"
@@ -1290,20 +1327,29 @@
 				</button>
 			{/if}
 		</div>
+		<div class="h-2">
+		</div>
+	{/if}
+	{#if replyOpen && refreshingComments}
+		<div class="mx-4 mb-3 flex items-center gap-2 rounded-xl bg-[var(--ui-bg-muted)] px-3 py-2 text-[11px] font-semibold text-[var(--ui-text-muted)]">
+			<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
+			Loading comments…
+		</div>
 	{/if}
 
 	<!-- Reply input -->
-	<div class="px-4 pt-1 pb-4 {replyOpen ? '' : 'hidden sm:block'}">
+	<div class="px-4 pt-1 pb-4 {replyOpen ? '' : 'hidden'}">
 		<ReplyComposer
 			parent={note}
 			placeholder="Reply to this note…"
 			autofocus={replyOpen}
 			focusTick={replyFocusTick}
-			onSubmitted={(reply) => {
-				addOptimisticReply(reply);
-				replyOpen = false;
-			}}
-		/>
+				onSubmitted={(reply) => {
+					addOptimisticReply(reply);
+					replyOpen = false;
+				}}
+				onCancel={() => (replyOpen = false)}
+			/>
 	</div>
 	<!-- Like confetti burst overlay -->
 	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">
