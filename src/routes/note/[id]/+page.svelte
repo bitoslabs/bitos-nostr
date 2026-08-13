@@ -152,7 +152,7 @@
 <svelte:head><title>Note · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[640px] px-5 py-6">
+	<div class="page-container page-container--feed py-6">
 		<header class="mb-5">
 			<a
 				href={backHref}

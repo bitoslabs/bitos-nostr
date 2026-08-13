@@ -394,7 +394,7 @@
 			>
 			<span class="w-8 shrink-0"></span>
 		</div>
-		<div class="mx-auto max-w-[680px] px-4 py-5 sm:px-8 sm:py-6">
+		<div class="page-container py-5 sm:py-6">
 			<!-- ACCOUNT -->
 			{#if section === 'account'}
 				<input

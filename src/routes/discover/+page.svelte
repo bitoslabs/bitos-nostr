@@ -686,7 +686,7 @@
 <svelte:head><title>Discover · BitOS</title></svelte:head>
 
 <div bind:this={discoverScroller} class="h-full overflow-y-auto" onscroll={handleDiscoverScroll}>
-	<div class="mx-auto max-w-[1100px] px-6 py-6">
+	<div class="page-container page-container--wide py-6">
 		<div class="mb-6 flex items-start justify-between gap-4">
 			<div>
 				<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight">

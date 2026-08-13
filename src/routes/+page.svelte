@@ -630,7 +630,7 @@
 <div class="flex h-full">
 	<!-- Center feed -->
 	<div bind:this={feedScroller} class="flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
-		<div class="mx-auto max-w-[640px] px-5 py-6">
+		<div class="page-container page-container--feed py-6">
 			<!-- Header -->
 			<div class="relative z-30 mb-5 flex flex-wrap items-start justify-between gap-3">
 				<div>
@@ -1119,7 +1119,7 @@
 		</div>
 	</div>
 
-	<!-- Right rail -->
+	<!-- Home-only trending rail. Other pages keep the centered single-column layout. -->
 	<TrendingRail />
 </div>
 

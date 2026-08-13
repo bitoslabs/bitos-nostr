@@ -34,7 +34,7 @@
 	<header
 		class="sticky top-0 z-10 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_85%,transparent)] backdrop-blur-md"
 	>
-		<div class="mx-auto flex max-w-3xl items-center gap-3 px-5 py-3">
+		<div class="page-container page-container--public flex items-center gap-3 py-3">
 			<a href="/" class="flex items-center gap-2" aria-label="BitOS home">
 				<img src={logo} alt="BitOS logo" class="size-8 rounded-lg shadow-[var(--glow-primary)]" />
 				<span class="font-display text-[15px] font-bold tracking-tight">BitOS</span>
@@ -61,13 +61,13 @@
 		</div>
 	</header>
 
-	<main class="mx-auto max-w-3xl px-5 py-10 sm:py-14">
+	<main class="page-container page-container--public py-10 sm:py-14">
 		{@render children?.()}
 	</main>
 
 	<!-- Footer -->
 	<footer class="border-t border-[var(--ui-border-muted)]">
-		<div class="mx-auto max-w-3xl px-5 py-8">
+		<div class="page-container page-container--public py-8">
 			<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] font-semibold">
 				<a
 					href="https://github.com/bitoslabs/bitos-svelte"
@@ -85,15 +85,19 @@
 				>
 					bitos.space ↗
 				</a>
-				<a href="/about" class="text-[var(--ui-text-muted)] transition hover:text-primary-500">About</a>
+				<a href="/about" class="text-[var(--ui-text-muted)] transition hover:text-primary-500"
+					>About</a
+				>
 				<a href="/privacy" class="text-[var(--ui-text-muted)] transition hover:text-primary-500"
 					>Privacy</a
 				>
-				<a href="/terms" class="text-[var(--ui-text-muted)] transition hover:text-primary-500">Terms</a>
+				<a href="/terms" class="text-[var(--ui-text-muted)] transition hover:text-primary-500"
+					>Terms</a
+				>
 			</div>
 			<p class="mt-4 text-[11.5px] text-[var(--ui-text-dimmed)]">
-				© {year} BitOS · A local-first client for the Nostr protocol. No central server, no
-				accounts — your keys, your data, your device.
+				© {year} BitOS · A local-first client for the Nostr protocol. No central server, no accounts —
+				your keys, your data, your device.
 			</p>
 		</div>
 	</footer>

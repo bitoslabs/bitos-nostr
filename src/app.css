@@ -281,6 +281,27 @@
    Component primitives — Pulse cards, glass, chat bubbles, dots.
 --------------------------------------------------------------------------- */
 @layer components {
+	/* Shared route content widths. Keep page content optically centered while
+	   allowing wide, purpose-built views to opt into a larger measure. */
+	.page-container {
+		width: 100%;
+		max-width: 680px;
+		margin-inline: auto;
+		padding-inline: clamp(1rem, 3vw, 1.5rem);
+	}
+	.page-container--feed {
+		max-width: 680px;
+	}
+	.page-container--notifications {
+		max-width: 760px;
+	}
+	.page-container--wide {
+		max-width: 1120px;
+	}
+	.page-container--public {
+		max-width: 768px;
+	}
+
 	.glass {
 		background-color: var(--glass-bg);
 		backdrop-filter: none;
@@ -652,6 +673,20 @@
 	.reel-card {
 		scroll-snap-align: start;
 		scroll-snap-stop: always;
+	}
+	@media (min-width: 1024px) {
+		.reel-comments-panel {
+			position: absolute !important;
+			inset-block: 0;
+			left: auto !important;
+			right: 0 !important;
+			width: 390px;
+			max-height: none;
+			border-radius: 1rem 0 0 1rem;
+			border-top: 0;
+			border-right: 0;
+			border-bottom: 0;
+		}
 	}
 }
 

@@ -329,6 +329,9 @@
 	const isPublicRoute = $derived(isStandalonePublicRoute(page.url.pathname));
 	const routeNeedsAuth = $derived(isProtectedRoute(page.url.pathname));
 	const authMessage = $derived(authMessageForPath(page.url.pathname));
+
+	// All authenticated routes share a centered cluster with the desktop
+	// navigation rail; individual pages control their own content treatment.
 </script>
 
 <svelte:head>
@@ -355,24 +358,28 @@
 		{@render children?.()}
 	</PublicShell>
 {:else}
-	<div class="flex h-screen w-full overflow-hidden">
-		<!-- Desktop nav rail (Pulse icon rail) -->
-		<aside
-			class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] lg:flex lg:flex-col"
+	<div class="flex h-screen w-full justify-center overflow-hidden">
+		<div
+			class="flex w-full max-w-[var(--ui-container)] overflow-hidden lg:border-x lg:border-[var(--ui-border-muted)]"
 		>
-			<NavRail />
-		</aside>
+			<!-- Desktop nav rail (Pulse icon rail) -->
+			<aside
+				class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] lg:flex lg:flex-col"
+			>
+				<NavRail />
+			</aside>
 
-		<!-- Main view (full-bleed; each route renders its own Pulse layout) -->
-		<main
-			class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
-		>
-			{#if routeNeedsAuth && !hasIdentity}
-				<AuthRequired title={authMessage.title} description={authMessage.description} />
-			{:else}
-				{@render children?.()}
-			{/if}
-		</main>
+			<!-- Main view (each route renders its own Pulse layout) -->
+			<main
+				class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
+			>
+				{#if routeNeedsAuth && !hasIdentity}
+					<AuthRequired title={authMessage.title} description={authMessage.description} />
+				{:else}
+					{@render children?.()}
+				{/if}
+			</main>
+		</div>
 	</div>
 
 	<MobileTabBar />

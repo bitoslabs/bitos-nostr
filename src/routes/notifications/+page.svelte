@@ -5,6 +5,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
 	import OriginNotePreview from '$lib/components/feed/OriginNotePreview.svelte';
+	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -301,441 +302,448 @@
 	<title>Notifications · BitOS</title>
 </svelte:head>
 
-<div bind:this={listEl} class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[720px] px-5 py-6">
-		<!-- Header -->
-		<header class="mb-4 flex items-center justify-between gap-4">
-			<div>
-				<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-					Notifications
-				</h1>
-				<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
-					<span class="inline-flex items-center gap-1">
-						{#if notifications.connected}
-							<span class="live-dot"></span>
-							Live
-						{:else if notifications.loading}
-							<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
-							Connecting…
-						{:else}
-							<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
-							Offline
-						{/if}
-					</span>
-					· {unread} unread · {notifications.visible.length} activities
-				</p>
-			</div>
-			<button
-				type="button"
-				onclick={() => notifications.markAllRead()}
-				disabled={!unread}
-				class="inline-flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-50"
-			>
-				<Icon name="i-lucide-check-check" class="size-4" />
-				Mark read
-			</button>
-		</header>
-
-		<!-- Filters + search -->
-		<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-			<div class="flex flex-wrap gap-1.5">
-				{#each FILTER_LABELS as f (f.key)}
-					<button
-						type="button"
-						onclick={() => (filter = f.key)}
-						class="pill-tab flex items-center gap-1.5 {filter === f.key ? 'active' : ''}"
-					>
-						{f.label}
-						{#if f.key === 'unread' && unread}
-							<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
-								{unread}
-							</span>
-						{:else if f.key === 'mention'}
-							{@const n = notifications.countByType['mention'] ?? 0}
-							{#if n}
-								<span
-									class="rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]"
-								>
-									{n}
-								</span>
-							{/if}
-						{/if}
-					</button>
-				{/each}
-			</div>
-			<div
-				class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 sm:ml-auto sm:w-[220px]"
-			>
-				<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
-				<input
-					type="search"
-					bind:value={query}
-					placeholder="Search activity…"
-					class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
-				/>
-			</div>
-		</div>
-
-		<!-- States -->
-		{#if notifications.loading && !notifications.items.length}
-			<div class="flex flex-col items-center gap-3 py-20 text-center">
-				<div
-					class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
-				></div>
-				<p class="text-[13px] text-[var(--ui-text-muted)]">Loading activity from relays…</p>
-			</div>
-		{:else if !notifications.connected && !notifications.items.length}
-			<div class="post-card flex flex-col items-center gap-3 py-16 text-center">
-				<div
-					class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]"
-				>
-					<Icon name="i-lucide-wifi-off" class="size-7" />
-				</div>
+<div class="flex h-full">
+	<div bind:this={listEl} class="min-w-0 flex-1 overflow-y-auto">
+		<div class="page-container page-container--notifications py-6">
+			<!-- Header -->
+			<header class="mb-4 flex items-center justify-between gap-4">
 				<div>
-					<p class="text-[15px] font-semibold">Couldn't reach relays</p>
-					<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-						We'll keep retrying, or tap below to try again.
+					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
+						Notifications
+					</h1>
+					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
+						<span class="inline-flex items-center gap-1">
+							{#if notifications.connected}
+								<span class="live-dot"></span>
+								Live
+							{:else if notifications.loading}
+								<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+								Connecting…
+							{:else}
+								<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
+								Offline
+							{/if}
+						</span>
+						· {unread} unread · {notifications.visible.length} activities
 					</p>
 				</div>
 				<button
 					type="button"
-					onclick={() => notifications.start()}
-					class="mt-1 inline-flex items-center gap-2 rounded-full bg-primary-500 px-4 py-2 text-[12.5px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+					onclick={() => notifications.markAllRead()}
+					disabled={!unread}
+					class="inline-flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-50"
 				>
-					<Icon name="i-lucide-refresh-ccw" class="size-4" />
-					Reconnect
+					<Icon name="i-lucide-check-check" class="size-4" />
+					Mark read
 				</button>
-			</div>
-		{:else if !filtered.length}
-			<div class="post-card flex flex-col items-center gap-3 py-16 text-center">
+			</header>
+
+			<!-- Filters + search -->
+			<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+				<div class="flex flex-wrap gap-1.5">
+					{#each FILTER_LABELS as f (f.key)}
+						<button
+							type="button"
+							onclick={() => (filter = f.key)}
+							class="pill-tab flex items-center gap-1.5 {filter === f.key ? 'active' : ''}"
+						>
+							{f.label}
+							{#if f.key === 'unread' && unread}
+								<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
+									{unread}
+								</span>
+							{:else if f.key === 'mention'}
+								{@const n = notifications.countByType['mention'] ?? 0}
+								{#if n}
+									<span
+										class="rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]"
+									>
+										{n}
+									</span>
+								{/if}
+							{/if}
+						</button>
+					{/each}
+				</div>
 				<div
-					class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]"
+					class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 sm:ml-auto sm:w-[220px]"
 				>
-					<Icon
-						name={query || filter !== 'all' ? 'i-lucide-search-x' : 'i-lucide-bell'}
-						class="size-7"
+					<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
+					<input
+						type="search"
+						bind:value={query}
+						placeholder="Search activity…"
+						class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 					/>
 				</div>
-				<div>
-					<p class="text-[15px] font-semibold">
-						{query || filter !== 'all' ? 'No matching activity' : 'No notifications yet'}
-					</p>
-					<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-						{query || filter !== 'all'
-							? 'Try a different filter or search term.'
-							: 'Likes, comments, reposts, mentions, zaps and follows will appear here.'}
-					</p>
-				</div>
 			</div>
-		{:else}
-			<!-- Live region: screen readers announce fresh activity -->
-			<div role="log" aria-live="polite" aria-atomic="false" class="space-y-6">
-				{#each sections as section (section.label)}
-					<section>
-						<h2
-							class="mb-2 px-1 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
-						>
-							{section.label}
-						</h2>
-						<div class="space-y-2.5">
-							{#each section.rows as row (row.kind === 'group' ? row.first.id : row.item.id)}
-								{@const item = row.kind === 'group' ? row.first : row.item}
-								{@const meta = TYPE_META[item.type]}
-								{@const profile = profiles.get(item.pubkey)}
-								{@const menuId = `notif:${item.id}`}
-								{@const menuOpen = popovers.isOpen(menuId)}
-								<article
-									class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
-										? 'z-30'
-										: 'z-0'} {!item.read ? 'bg-[var(--active-surface-bg)]' : ''}"
-								>
-									<!-- Unread accent stripe -->
-									{#if !item.read}
-										<span
-											class="absolute top-0 bottom-0 left-0 w-[3px]"
-											style="background:{meta.color}"
-										></span>
-									{/if}
 
-									<div class="flex items-start gap-3 p-4 pr-14">
-										<div class="relative shrink-0">
-											{#if row.kind === 'group'}
-												{@const actors = row.items.slice(0, 3)}
-												<div class="flex -space-x-3">
-													{#each actors as g, i (g.id)}
-														<a
-															href={profileLink(g.pubkey)}
-															onclick={() => openRow(g)}
-															class="relative z-{10 -
-																i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
-															aria-label={`View ${actorName(g.pubkey)}'s profile`}
-														>
-															<Avatar
-																pubkey={g.pubkey}
-																name={actorName(g.pubkey)}
-																picture={profiles.get(g.pubkey)?.picture}
-																size={40}
-																class="mask-squircle"
-															/>
-														</a>
-													{/each}
-												</div>
-												<span
-													class="absolute -right-1 -bottom-1 z-20 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
-													style="background:{meta.color}"
-												>
-													<Icon name={meta.icon} class="size-3" />
-												</span>
-											{:else}
-												<a
-													href={profileLink(item.pubkey)}
-													onclick={() => openRow(item)}
-													class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
-													aria-label={`View ${actorName(item.pubkey)}'s profile`}
-												>
-													<Avatar
-														pubkey={item.pubkey}
-														name={actorName(item.pubkey)}
-														picture={profile?.picture}
-														size={44}
-														class="mask-squircle"
-													/>
-												</a>
-												<span
-													class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
-													style="background:{meta.color}"
-												>
-													<Icon name={meta.icon} class="size-3" />
-												</span>
-											{/if}
-										</div>
+			<!-- States -->
+			{#if notifications.loading && !notifications.items.length}
+				<div class="flex flex-col items-center gap-3 py-20 text-center">
+					<div
+						class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
+					></div>
+					<p class="text-[13px] text-[var(--ui-text-muted)]">Loading activity from relays…</p>
+				</div>
+			{:else if !notifications.connected && !notifications.items.length}
+				<div class="post-card flex flex-col items-center gap-3 py-16 text-center">
+					<div
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]"
+					>
+						<Icon name="i-lucide-wifi-off" class="size-7" />
+					</div>
+					<div>
+						<p class="text-[15px] font-semibold">Couldn't reach relays</p>
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+							We'll keep retrying, or tap below to try again.
+						</p>
+					</div>
+					<button
+						type="button"
+						onclick={() => notifications.start()}
+						class="mt-1 inline-flex items-center gap-2 rounded-full bg-primary-500 px-4 py-2 text-[12.5px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+					>
+						<Icon name="i-lucide-refresh-ccw" class="size-4" />
+						Reconnect
+					</button>
+				</div>
+			{:else if !filtered.length}
+				<div class="post-card flex flex-col items-center gap-3 py-16 text-center">
+					<div
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]"
+					>
+						<Icon
+							name={query || filter !== 'all' ? 'i-lucide-search-x' : 'i-lucide-bell'}
+							class="size-7"
+						/>
+					</div>
+					<div>
+						<p class="text-[15px] font-semibold">
+							{query || filter !== 'all' ? 'No matching activity' : 'No notifications yet'}
+						</p>
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+							{query || filter !== 'all'
+								? 'Try a different filter or search term.'
+								: 'Likes, comments, reposts, mentions, zaps and follows will appear here.'}
+						</p>
+					</div>
+				</div>
+			{:else}
+				<!-- Live region: screen readers announce fresh activity -->
+				<div role="log" aria-live="polite" aria-atomic="false" class="space-y-6">
+					{#each sections as section (section.label)}
+						<section>
+							<h2
+								class="mb-2 px-1 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
+							>
+								{section.label}
+							</h2>
+							<div class="space-y-2.5">
+								{#each section.rows as row (row.kind === 'group' ? row.first.id : row.item.id)}
+									{@const item = row.kind === 'group' ? row.first : row.item}
+									{@const meta = TYPE_META[item.type]}
+									{@const profile = profiles.get(item.pubkey)}
+									{@const menuId = `notif:${item.id}`}
+									{@const menuOpen = popovers.isOpen(menuId)}
+									<article
+										class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
+											? 'z-30'
+											: 'z-0'} {!item.read ? 'bg-[var(--active-surface-bg)]' : ''}"
+									>
+										<!-- Unread accent stripe -->
+										{#if !item.read}
+											<span
+												class="absolute top-0 bottom-0 left-0 w-[3px]"
+												style="background:{meta.color}"
+											></span>
+										{/if}
 
-										<div class="min-w-0 flex-1">
-											<div class="flex min-w-0 items-start justify-between gap-3">
-												<p class="min-w-0 text-[14px] leading-snug">
-													{#if row.kind === 'group'}
-														{@const { actors: summaryActors, extra } = actorSummary(row.items)}
-														{#each summaryActors as actor, i (actor.id)}
+										<div class="flex items-start gap-3 p-4 pr-14">
+											<div class="relative shrink-0">
+												{#if row.kind === 'group'}
+													{@const actors = row.items.slice(0, 3)}
+													<div class="flex -space-x-3">
+														{#each actors as g, i (g.id)}
 															<a
-																href={profileLink(actor.pubkey)}
-																onclick={() => openRow(actor)}
-																class="font-bold hover:text-primary-500"
-																>{actorName(actor.pubkey)}</a
+																href={profileLink(g.pubkey)}
+																onclick={() => openRow(g)}
+																class="relative z-{10 -
+																	i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+																aria-label={`View ${actorName(g.pubkey)}'s profile`}
 															>
-															{#if i === 0 && summaryActors.length > 1}<span class="font-bold"
-																	>,
-																</span>{/if}
+																<Avatar
+																	pubkey={g.pubkey}
+																	name={actorName(g.pubkey)}
+																	picture={profiles.get(g.pubkey)?.picture}
+																	size={40}
+																	class="mask-squircle"
+																/>
+															</a>
 														{/each}
-														{#if extra > 0}
-															<span class="font-bold">
-																and {extra} other{extra > 1 ? 's' : ''}</span
-															>
-														{/if}
-														{#if sourceLink(row.first)}
-															<a
-																href={sourceLink(row.first)}
-																onclick={() => openRow(row.first)}
-																class="text-[var(--ui-text-muted)] hover:text-primary-500"
-																>{verbFor(row.first)}</a
-															>
-														{:else}
-															<span class="text-[var(--ui-text-muted)]"> {verbFor(row.first)}</span>
-														{/if}
-													{:else}
-														<a
-															href={profileLink(item.pubkey)}
-															onclick={() => openRow(item)}
-															class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
-														>
-														{#if hasNip05(item.pubkey)}
-															<Icon
-																name="i-lucide-badge-check"
-																class="size-3.5 shrink-0 text-primary-500"
-															/>
-														{/if}
-														{#if identity.current?.pk === item.pubkey}
-															<span
-																class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
-																>you</span
-															>
-														{/if}
-														{#if sourceLink(item)}
-															<a
-																href={sourceLink(item)}
-																onclick={() => openRow(item)}
-																class="text-[var(--ui-text-muted)] hover:text-primary-500"
-																>{verbFor(item)}</a
-															>
-														{:else}
-															<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
-														{/if}
-														{#if item.type === 'zap' && item.amountSats}
-															<span
-																class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
-															>
-																<Icon name="i-lucide-zap" class="size-3.5" />
-																{item.amountSats.toLocaleString()} sats
-															</span>
-														{/if}
-													{/if}
-												</p>
-												<div class="mt-0.5 flex shrink-0 items-center gap-2">
-													<time
-														class="text-[11px] text-[var(--ui-text-dimmed)]"
-														title={timeFull(item.createdAt)}
+													</div>
+													<span
+														class="absolute -right-1 -bottom-1 z-20 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
+														style="background:{meta.color}"
 													>
-														{timeAgo(item.createdAt)}
-													</time>
-													{#if !item.read}
-														<span class="size-2 rounded-full bg-primary-500"></span>
-													{/if}
-												</div>
+														<Icon name={meta.icon} class="size-3" />
+													</span>
+												{:else}
+													<a
+														href={profileLink(item.pubkey)}
+														onclick={() => openRow(item)}
+														class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+														aria-label={`View ${actorName(item.pubkey)}'s profile`}
+													>
+														<Avatar
+															pubkey={item.pubkey}
+															name={actorName(item.pubkey)}
+															picture={profile?.picture}
+															size={44}
+															class="mask-squircle"
+														/>
+													</a>
+													<span
+														class="absolute -right-1 -bottom-1 grid size-5 place-items-center rounded-full text-white ring-2 ring-[var(--surface-bg)]"
+														style="background:{meta.color}"
+													>
+														<Icon name={meta.icon} class="size-3" />
+													</span>
+												{/if}
 											</div>
 
-											{#if preview(item)}
-												{#if sourceLink(item)}
-													<a
-														href={sourceLink(item)}
-														onclick={() => openRow(item)}
-														class="mt-1 line-clamp-2 block text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)] hover:text-primary-500"
-													>
-														{preview(item)}
-													</a>
-												{:else}
-													<p
-														class="mt-1 line-clamp-2 text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)]"
-													>
-														{preview(item)}
+											<div class="min-w-0 flex-1">
+												<div class="flex min-w-0 items-start justify-between gap-3">
+													<p class="min-w-0 text-[14px] leading-snug">
+														{#if row.kind === 'group'}
+															{@const { actors: summaryActors, extra } = actorSummary(row.items)}
+															{#each summaryActors as actor, i (actor.id)}
+																<a
+																	href={profileLink(actor.pubkey)}
+																	onclick={() => openRow(actor)}
+																	class="font-bold hover:text-primary-500"
+																	>{actorName(actor.pubkey)}</a
+																>
+																{#if i === 0 && summaryActors.length > 1}<span class="font-bold"
+																		>,
+																	</span>{/if}
+															{/each}
+															{#if extra > 0}
+																<span class="font-bold">
+																	and {extra} other{extra > 1 ? 's' : ''}</span
+																>
+															{/if}
+															{#if sourceLink(row.first)}
+																<a
+																	href={sourceLink(row.first)}
+																	onclick={() => openRow(row.first)}
+																	class="text-[var(--ui-text-muted)] hover:text-primary-500"
+																	>{verbFor(row.first)}</a
+																>
+															{:else}
+																<span class="text-[var(--ui-text-muted)]">
+																	{verbFor(row.first)}</span
+																>
+															{/if}
+														{:else}
+															<a
+																href={profileLink(item.pubkey)}
+																onclick={() => openRow(item)}
+																class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
+															>
+															{#if hasNip05(item.pubkey)}
+																<Icon
+																	name="i-lucide-badge-check"
+																	class="size-3.5 shrink-0 text-primary-500"
+																/>
+															{/if}
+															{#if identity.current?.pk === item.pubkey}
+																<span
+																	class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
+																	>you</span
+																>
+															{/if}
+															{#if sourceLink(item)}
+																<a
+																	href={sourceLink(item)}
+																	onclick={() => openRow(item)}
+																	class="text-[var(--ui-text-muted)] hover:text-primary-500"
+																	>{verbFor(item)}</a
+																>
+															{:else}
+																<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
+															{/if}
+															{#if item.type === 'zap' && item.amountSats}
+																<span
+																	class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
+																>
+																	<Icon name="i-lucide-zap" class="size-3.5" />
+																	{item.amountSats.toLocaleString()} sats
+																</span>
+															{/if}
+														{/if}
 													</p>
+													<div class="mt-0.5 flex shrink-0 items-center gap-2">
+														<time
+															class="text-[11px] text-[var(--ui-text-dimmed)]"
+															title={timeFull(item.createdAt)}
+														>
+															{timeAgo(item.createdAt)}
+														</time>
+														{#if !item.read}
+															<span class="size-2 rounded-full bg-primary-500"></span>
+														{/if}
+													</div>
+												</div>
+
+												{#if preview(item)}
+													{#if sourceLink(item)}
+														<a
+															href={sourceLink(item)}
+															onclick={() => openRow(item)}
+															class="mt-1 line-clamp-2 block text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)] hover:text-primary-500"
+														>
+															{preview(item)}
+														</a>
+													{:else}
+														<p
+															class="mt-1 line-clamp-2 text-[13px] leading-relaxed break-words text-[var(--ui-text-muted)]"
+														>
+															{preview(item)}
+														</p>
+													{/if}
 												{/if}
-											{/if}
 
-											{#if item.targetId && ['like', 'comment', 'mention', 'repost'].includes(item.type)}
-												<OriginNotePreview noteId={item.targetId} />
-											{/if}
+												{#if item.targetId && ['like', 'comment', 'mention', 'repost'].includes(item.type)}
+													<OriginNotePreview noteId={item.targetId} />
+												{/if}
+											</div>
 										</div>
-									</div>
 
-									{#if row.kind === 'single' && mediaFor(item).length}
-										{@const media = mediaFor(item)}
-										<!-- Media is a sibling of the row content so its zoom buttons don't nest
+										{#if row.kind === 'single' && mediaFor(item).length}
+											{@const media = mediaFor(item)}
+											<!-- Media is a sibling of the row content so its zoom buttons don't nest
 										     inside the link (matches PostCard's separation pattern). -->
-										<div class="pr-4 pb-4 pl-[72px]">
-											<NotificationMedia
-												{media}
-												tags={item.raw?.tags ?? []}
-												content={item.content}
-											/>
-										</div>
-									{/if}
+											<div class="pr-4 pb-4 pl-[72px]">
+												<NotificationMedia
+													{media}
+													tags={item.raw?.tags ?? []}
+													content={item.content}
+												/>
+											</div>
+										{/if}
 
-									<!-- Overflow actions stay outside the row links, so there are no nested interactives. -->
-									<div class="absolute top-2.5 right-2.5 z-20 shrink-0">
-										<button
-											type="button"
-											onclick={(e) => {
-												e.preventDefault();
-												e.stopPropagation();
-												popovers.toggle(menuId);
-											}}
-											class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
-												? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
-												: ''}"
-											aria-label="Notification actions"
-											aria-expanded={menuOpen}
-										>
-											<Icon name="i-lucide-ellipsis" class="size-[18px]" />
-										</button>
-										{#if menuOpen}
-											<div
-												class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
-												role="menu"
+										<!-- Overflow actions stay outside the row links, so there are no nested interactives. -->
+										<div class="absolute top-2.5 right-2.5 z-20 shrink-0">
+											<button
+												type="button"
+												onclick={(e) => {
+													e.preventDefault();
+													e.stopPropagation();
+													popovers.toggle(menuId);
+												}}
+												class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
+													? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
+													: ''}"
+												aria-label="Notification actions"
+												aria-expanded={menuOpen}
 											>
-												{#if !item.read}
+												<Icon name="i-lucide-ellipsis" class="size-[18px]" />
+											</button>
+											{#if menuOpen}
+												<div
+													class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+													role="menu"
+												>
+													{#if !item.read}
+														<button
+															type="button"
+															role="menuitem"
+															onclick={() => {
+																notifications.markRead(item.id);
+																popovers.close();
+															}}
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon name="i-lucide-check" class="size-4 shrink-0" />
+															Mark as read
+														</button>
+													{/if}
+													<a
+														href={`/profile/${item.pubkey}`}
+														role="menuitem"
+														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+													>
+														<Icon name="i-lucide-user" class="size-4 shrink-0" />
+														View profile
+													</a>
 													<button
 														type="button"
 														role="menuitem"
-														onclick={() => {
-															notifications.markRead(item.id);
-															popovers.close();
-														}}
+														onclick={() => copyTarget(item)}
 														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 													>
-														<Icon name="i-lucide-check" class="size-4 shrink-0" />
-														Mark as read
+														<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
+														{item.targetId ? 'Copy note id' : 'Copy profile id'}
 													</button>
-												{/if}
-												<a
-													href={`/profile/${item.pubkey}`}
-													role="menuitem"
-													class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-												>
-													<Icon name="i-lucide-user" class="size-4 shrink-0" />
-													View profile
-												</a>
-												<button
-													type="button"
-													role="menuitem"
-													onclick={() => copyTarget(item)}
-													class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-												>
-													<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
-													{item.targetId ? 'Copy note id' : 'Copy profile id'}
-												</button>
-												<button
-													type="button"
-													role="menuitem"
-													onclick={() => viewRawEvent(item)}
-													class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-												>
-													<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
-													View raw event
-												</button>
-												<button
-													type="button"
-													role="menuitem"
-													onclick={() => muteType(item.type)}
-													class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-												>
-													<Icon
-														name={notifications.muted.has(item.type)
-															? 'i-lucide-bell-ring'
-															: 'i-lucide-bell-off'}
-														class="size-4 shrink-0"
-													/>
-													{notifications.muted.has(item.type)
-														? 'Unmute this type'
-														: 'Mute this type'}
-												</button>
-											</div>
-										{/if}
-									</div>
-								</article>
-							{/each}
-						</div>
-					</section>
-				{/each}
-			</div>
+													<button
+														type="button"
+														role="menuitem"
+														onclick={() => viewRawEvent(item)}
+														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+													>
+														<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
+														View raw event
+													</button>
+													<button
+														type="button"
+														role="menuitem"
+														onclick={() => muteType(item.type)}
+														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+													>
+														<Icon
+															name={notifications.muted.has(item.type)
+																? 'i-lucide-bell-ring'
+																: 'i-lucide-bell-off'}
+															class="size-4 shrink-0"
+														/>
+														{notifications.muted.has(item.type)
+															? 'Unmute this type'
+															: 'Mute this type'}
+													</button>
+												</div>
+											{/if}
+										</div>
+									</article>
+								{/each}
+							</div>
+						</section>
+					{/each}
+				</div>
 
-			<div class="py-8 text-center">
-				<button
-					type="button"
-					onclick={() => notifications.loadMore()}
-					disabled={notifications.loadingMore || !notifications.hasMore}
-					class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
-				>
-					{#if notifications.loadingMore}
-						<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-						Loading older activity
-					{:else if notifications.hasMore}
-						Load older notifications
-					{:else}
-						End of relay results
-					{/if}
-				</button>
-			</div>
-		{/if}
+				<div class="py-8 text-center">
+					<button
+						type="button"
+						onclick={() => notifications.loadMore()}
+						disabled={notifications.loadingMore || !notifications.hasMore}
+						class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
+					>
+						{#if notifications.loadingMore}
+							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+							Loading older activity
+						{:else if notifications.hasMore}
+							Load older notifications
+						{:else}
+							End of relay results
+						{/if}
+					</button>
+				</div>
+			{/if}
+		</div>
 	</div>
+
+	<!-- Notifications keep the same contextual rail as the home feed. -->
+	<TrendingRail />
 </div>
 
 <Dialog bind:open={rawOpen} title="Raw event">
