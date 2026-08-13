@@ -2954,7 +2954,7 @@
 
 <div class="flex h-full">
 	<aside
-		class="flex w-full shrink-0 flex-col border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] sm:w-[340px] {selected
+		class="flex w-full shrink-0 flex-col border-r border-[var(--ui-border-muted)] sm:w-[340px] {selected
 			? 'hidden sm:flex'
 			: 'flex'}"
 	>

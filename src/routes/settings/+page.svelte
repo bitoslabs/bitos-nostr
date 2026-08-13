@@ -246,7 +246,7 @@
 <div class="flex h-full flex-col sm:flex-row">
 	<!-- Settings sidebar -->
 	<aside
-		class="hidden w-[260px] shrink-0 flex-col overflow-y-auto border-r border-[var(--ui-border-muted)] bg-[var(--surface-bg)] sm:flex"
+		class="hidden w-[260px] shrink-0 flex-col overflow-y-auto border-r border-[var(--ui-border-muted)] sm:flex"
 	>
 		<div class="border-b border-[var(--ui-border-muted)] p-5">
 			<h1 class="font-display text-[24px] font-extrabold tracking-tight">Settings</h1>
