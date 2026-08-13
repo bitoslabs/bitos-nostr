@@ -3,9 +3,9 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
 	import OriginNotePreview from '$lib/components/feed/OriginNotePreview.svelte';
-	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -304,40 +304,35 @@
 
 <div class="flex h-full">
 	<div bind:this={listEl} class="min-w-0 flex-1 overflow-y-auto">
-		<div class="page-container page-container--notifications py-6">
-			<!-- Header -->
-			<header class="mb-4 flex items-center justify-between gap-4">
-				<div>
-					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-						Notifications
-					</h1>
-					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
-						<span class="inline-flex items-center gap-1">
-							{#if notifications.connected}
-								<span class="live-dot"></span>
-								Live
-							{:else if notifications.loading}
-								<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
-								Connecting…
-							{:else}
-								<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
-								Offline
-							{/if}
-						</span>
-						· {unread} unread · {notifications.visible.length} activities
-					</p>
-				</div>
+		<PageHeader title="Notifications">
+			{#snippet subtitle()}
+				<span class="inline-flex items-center gap-1">
+					{#if notifications.connected}
+						<span class="live-dot"></span>
+						Live
+					{:else if notifications.loading}
+						<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+						Connecting…
+					{:else}
+						<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
+						Offline
+					{/if}
+				</span>
+				· {unread} unread · {notifications.visible.length} activities
+			{/snippet}
+			{#snippet actions()}
 				<button
 					type="button"
 					onclick={() => notifications.markAllRead()}
 					disabled={!unread}
-					class="inline-flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-50"
+					class="icon-btn size-9 disabled:pointer-events-none disabled:opacity-40"
+					aria-label="Mark all read"
 				>
-					<Icon name="i-lucide-check-check" class="size-4" />
-					Mark read
+					<Icon name="i-lucide-check-check" class="size-[18px]" />
 				</button>
-			</header>
-
+			{/snippet}
+		</PageHeader>
+		<div class="page-container page-container--notifications py-6">
 			<!-- Filters + search -->
 			<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
 				<div class="flex flex-wrap gap-1.5">
@@ -431,7 +426,12 @@
 				</div>
 			{:else}
 				<!-- Live region: screen readers announce fresh activity -->
-				<div role="log" aria-live="polite" aria-atomic="false" class="space-y-6">
+				<div
+					role="log"
+					aria-live="polite"
+					aria-atomic="false"
+					class="notifications-list space-y-6"
+				>
 					{#each sections as section (section.label)}
 						<section>
 							<h2
@@ -742,8 +742,6 @@
 		</div>
 	</div>
 
-	<!-- Notifications keep the same contextual rail as the home feed. -->
-	<TrendingRail />
 </div>
 
 <Dialog bind:open={rawOpen} title="Raw event">

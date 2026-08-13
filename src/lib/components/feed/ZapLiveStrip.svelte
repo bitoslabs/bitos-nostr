@@ -158,7 +158,7 @@
 
 {#if loading || activities.length}
 	<section
-		class="mb-5 overflow-hidden rounded-[22px] border border-primary-500/20 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--surface-bg)_94%,#7c3aed),var(--surface-bg))] shadow-[0_12px_36px_color-mix(in_srgb,#7c3aed_8%,transparent)]"
+		class="-mx-[clamp(1rem,3vw,1.5rem)] overflow-hidden border-y border-primary-500/20 bg-[linear-gradient(135deg,color-mix(in_oklab,var(--surface-bg)_94%,#7c3aed),var(--surface-bg))] shadow-[0_12px_36px_color-mix(in_srgb,#7c3aed_8%,transparent)]"
 		aria-labelledby="live-on-zap-stream"
 	>
 		<div class="flex items-center justify-between gap-3 px-4 pt-4 pb-3">

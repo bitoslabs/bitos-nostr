@@ -4,6 +4,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { algorithmPreferences, getWotSet } from '$lib/algorithm';
@@ -686,37 +687,27 @@
 <svelte:head><title>Discover · BitOS</title></svelte:head>
 
 <div bind:this={discoverScroller} class="h-full overflow-y-auto" onscroll={handleDiscoverScroll}>
-	<div class="page-container page-container--wide py-6">
-		<div class="mb-6 flex items-start justify-between gap-4">
-			<div>
-				<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight">
-					Discover
-				</h1>
-				<p class="mt-1.5 text-[13px] text-[var(--ui-text-muted)]">
-					Real notes, tags, creators, and media from your relays
-				</p>
-				<div
-					class="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
-				>
-					{#if refreshingRelays}
-						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
-						<span>Refreshing relays…</span>
-					{:else if lastRelayRefreshAt}
-						<Icon name="i-lucide-check-circle-2" class="size-3.5 text-primary-500" />
-						<span>Updated {timeAgo(lastRelayRefreshAt)}</span>
-					{/if}
-				</div>
-			</div>
+	<PageHeader title="Discover">
+		{#snippet subtitle()}
+			Real notes, tags, creators, and media from your relays
+			{#if refreshingRelays}
+				· <span class="inline-flex items-center gap-1"><Icon name="i-lucide-loader-circle" class="size-3 animate-spin text-primary-500" />Refreshing relays…</span>
+			{:else if lastRelayRefreshAt}
+				· <span class="inline-flex items-center gap-1"><Icon name="i-lucide-check-circle-2" class="size-3 text-primary-500" />Updated {timeAgo(lastRelayRefreshAt)}</span>
+			{/if}
+		{/snippet}
+		{#snippet actions()}
 			<button
 				type="button"
 				onclick={() => loadDiscover()}
-				class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
+				class="icon-btn size-9"
 				aria-label="Refresh discover"
 			>
-				<Icon name="i-lucide-rotate-cw" class="size-5 {loading ? 'animate-spin' : ''}" />
+				<Icon name="i-lucide-rotate-cw" class="size-[18px] {loading ? 'animate-spin' : ''}" />
 			</button>
-		</div>
-
+		{/snippet}
+	</PageHeader>
+	<div class="page-container page-container--wide py-6">
 		<div class="relative mb-6">
 			<Icon
 				name="i-lucide-search"

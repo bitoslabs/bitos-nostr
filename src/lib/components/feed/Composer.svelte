@@ -330,9 +330,7 @@ import PollComposer from './PollComposer.svelte';
 {#if me}
 	<div
 		bind:this={composerEl}
-		class="post-card p-4 transition-all duration-200 {expanded
-			? 'border-[var(--ui-border)] shadow-[var(--shadow-card-hover)] ring-1 ring-primary-500/15'
-			: ''}"
+		class="post-card -mx-[clamp(1rem,3vw,1.5rem)] border-y border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-[clamp(1rem,3vw,1.5rem)] py-4 transition-all duration-200"
 	>
 		<div class="flex items-start gap-3">
 			<StoryRing pubkey={me.pk} interactive={false}>
@@ -498,7 +496,7 @@ import PollComposer from './PollComposer.svelte';
 
 		<!-- Toolbar -->
 		<div
-			class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border-muted)] pt-3"
+			class="mt-3 flex flex-wrap items-center justify-between gap-2  border-[var(--ui-border-muted)] pt-3"
 		>
 			<div class="flex flex-wrap items-center gap-1">
 				{#each mediaActions as a (a.label)}

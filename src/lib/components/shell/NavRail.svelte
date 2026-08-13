@@ -13,7 +13,13 @@
 
 	const nav = [
 		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
-		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true, requiresAuth: true },
+		{
+			to: '/messages',
+			label: 'Chats',
+			icon: 'i-lucide-message-circle-more',
+			badge: true,
+			requiresAuth: true
+		},
 		{
 			to: '/notifications',
 			label: 'Notifications',
@@ -39,7 +45,6 @@
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
-	const logo = '/icons/icon-96-96.png';
 	const accountMenuId = 'nav-account-switcher';
 	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
 
@@ -64,29 +69,30 @@
 	}
 </script>
 
-<nav class="flex h-full flex-col items-center py-5">
+<nav class="ui4-nav flex h-full flex-col p-3.5">
 	<!-- Brand -->
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="mask-squircle mb-6 grid size-11 place-items-center overflow-hidden shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
+		class="ui4-brand mb-6 flex items-center gap-2.5 px-3 pt-2 transition-opacity hover:opacity-85"
 	>
-		<img src={logo} alt="" class="size-full" />
+		<span class="ui4-brand-mark grid size-7 place-items-center">⚡</span>
+		<span class="ui4-brand-name">nostr</span>
 	</a>
 
-	<div class="flex flex-1 flex-col gap-2">
+	<div class="flex flex-1 flex-col gap-1 pl-3">
 		{#each visibleNav as item (item.to)}
 			{@const active = isActive(item.to)}
 			<a
 				href={item.to}
-				class="group relative grid size-12 place-items-center transition-all"
+				class="ui4-nav-item group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
 				aria-label={item.label}
 				aria-current={active ? 'page' : undefined}
 			>
 				<span
-					class="mask-squircle absolute inset-0 transition-all {active
-						? 'bg-primary-500/12 ring-1 ring-primary-500/20 shadow-[var(--glow-primary)]'
-						: 'bg-transparent group-hover:bg-primary-500/10'}"
+					class="ui4-nav-surface absolute inset-0 rounded-xl transition-all {active
+						? 'is-active'
+						: ''}"
 					aria-hidden="true"
 				></span>
 				{#if active}
@@ -97,13 +103,14 @@
 				{/if}
 				<Icon
 					name={item.icon}
-					class="relative z-10 size-[18px] transition-transform {active
+					class="relative z-10 size-5 shrink-0 transition-transform {active
 						? 'scale-105 text-primary-500 dark:text-primary-300'
 						: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
 				/>
+				<span class="relative z-10">{item.label}</span>
 				{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
 					<span
-						class="absolute -top-1.5 -right-1.5 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
+						class="absolute -top-1.5 -right-1.5 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
 						>{item.notifications
 							? notificationUnread > 9
 								? '9+'
@@ -113,16 +120,23 @@
 								: unread}</span
 					>
 				{/if}
-				<span
-					class="pointer-events-none absolute left-[calc(100%+12px)] z-50 hidden rounded-md bg-[var(--ui-text-highlighted)] px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-[var(--ui-bg)] opacity-0 shadow-[var(--shadow-pop)] transition-opacity group-hover:opacity-100 lg:block"
-				>
-					{item.label}
-				</span>
 			</a>
 		{/each}
 	</div>
 
-	<div class="flex flex-col items-center gap-2">
+	{#if me}
+		<div class="px-2 pb-1">
+			<a
+				href="/"
+				class="ui4-compose flex items-center justify-center gap-2 rounded-full py-2.5 font-semibold transition-all"
+			>
+				<Icon name="i-lucide-pen-line" class="size-4" />
+				<span>New Note</span>
+			</a>
+		</div>
+	{/if}
+
+	<div class="flex flex-col gap-2">
 		{#if me}
 			<div class="relative">
 				<button
@@ -131,17 +145,24 @@
 						event.stopPropagation();
 						popovers.toggle(accountMenuId);
 					}}
-					class="relative size-12 overflow-hidden mask-squircle bg-primary-500/10 p-[2px] ring-1 ring-primary-500/20 shadow-[var(--glow-primary)] transition-all hover:bg-primary-500/12 hover:ring-primary-500/35"
+					class="ui4-account relative w-full overflow-hidden rounded-xl p-2.5 text-left transition-all hover:bg-[var(--interactive-hover-bg)]"
 					aria-label="Account menu"
 					aria-expanded={accountMenuOpen}
 				>
-					<div class="mask-squircle size-full bg-[var(--surface-bg)]">
+					<div class="flex items-center gap-2.5">
 						<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+						<span class="min-w-0 flex-1">
+							<span class="block truncate text-sm font-semibold">{displayName}</span>
+							<span class="block truncate font-mono text-[11px] text-[var(--ui-text-muted)]"
+								>{shortKey(me.pk, 8, 5)}</span
+							>
+						</span>
+						<Icon name="i-lucide-ellipsis" class="size-4 text-[var(--ui-text-muted)]" />
 					</div>
 				</button>
 				{#if accountMenuOpen}
 					<div
-						class="absolute bottom-0 left-[calc(100%+12px)] z-50 w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+						class="absolute right-0 bottom-0 z-50 w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
 					>
 						<a
 							href="/profile"
@@ -205,7 +226,7 @@
 		{:else}
 			<a
 				href="/welcome"
-				class="grid size-12 place-items-center rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
+				class="grid size-12 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
 				aria-label="Create or import a key"
 			>
 				<Icon name="i-lucide-log-in" class="size-[18px]" />
@@ -213,3 +234,51 @@
 		{/if}
 	</div>
 </nav>
+
+<style>
+	.ui4-brand-mark {
+		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
+		color: #050507;
+		font-size: 13px;
+		font-weight: 800;
+	}
+	.ui4-brand-name {
+		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
+		background-clip: text;
+		color: transparent;
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.025em;
+	}
+	.ui4-nav-item {
+		color: var(--ui-text-muted);
+	}
+	.ui4-nav-item:hover {
+		color: var(--ui-text);
+	}
+	.ui4-nav-surface {
+		z-index: 0;
+	}
+	.ui4-nav-surface.is-active {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 12%, transparent);
+	}
+	.ui4-account :global(.mask-squircle) {
+		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+	}
+	.ui4-compose {
+		background: var(--ui-color-primary-500);
+		color: #ffffff;
+		box-shadow: var(--glow-primary);
+	}
+	:global(.dark) .ui4-compose {
+		color: #050507;
+	}
+	.ui4-compose:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 0 28px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	.ui4-compose:active {
+		transform: translateY(0);
+	}
+</style>

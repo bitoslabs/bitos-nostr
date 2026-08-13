@@ -73,3 +73,15 @@ export function dayLabel(unixSeconds: number): string {
 	if (sameDay(d, yesterday)) return 'Yesterday';
 	return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
+
+/** Compact number formatting for stats: 12847 → "12.8k", 2_400_000 → "2.4M". */
+export function formatCompact(n: number): string {
+	const abs = Math.abs(n);
+	if (abs >= 1_000_000) return `${trim(n / 1_000_000)}M`;
+	if (abs >= 1_000) return `${trim(n / 1_000)}k`;
+	return Math.round(n).toString();
+}
+
+function trim(value: number): string {
+	return value.toFixed(1).replace(/\.0$/, '');
+}

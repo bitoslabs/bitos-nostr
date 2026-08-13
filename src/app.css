@@ -3,7 +3,8 @@
    A bright, social-first design language:
      • Primary = electric blue (#2F95F6), accent = mint (#55D69A),
        warm = coral (#FF755F) on a flat white canvas.
-     • Typography: Plus Jakarta Sans (body) + Bricolage Grotesque (display).
+     • Typography: Space Grotesk (body + display) + JetBrains Mono (code/npub),
+       matching the docs/ui.html design system.
      • Surface-token architecture (School ERP lineage) so every component
        flips cleanly between light and dark.
    ========================================================================== */
@@ -32,9 +33,9 @@
 --------------------------------------------------------------------------- */
 @theme {
 	--font-sans:
-		'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+		'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
 		Arial, sans-serif;
-	--font-display: 'Bricolage Grotesque', 'Plus Jakarta Sans', sans-serif;
+	--font-display: 'Space Grotesk', sans-serif;
 	--font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
 
 	/* Pulse primary = electric blue. */
@@ -290,8 +291,9 @@
 		padding-inline: clamp(1rem, 3vw, 1.5rem);
 	}
 	.page-container--feed {
-		max-width: 680px;
+		max-width: none;
 	}
+
 	.page-container--notifications {
 		max-width: 760px;
 	}
@@ -300,6 +302,44 @@
 	}
 	.page-container--public {
 		max-width: 768px;
+	}
+
+	/* Notification separators align with the full-width page/header border while
+	   keeping row content at the page container's normal inset. */
+	.notifications-list .post-card {
+		border-bottom: 0;
+	}
+
+	.notifications-list .post-card::after {
+		position: absolute;
+		right: calc(-1 * clamp(1rem, 3vw, 1.5rem));
+		bottom: 0;
+		left: calc(-1 * clamp(1rem, 3vw, 1.5rem));
+		border-bottom: 1px solid var(--ui-border-muted);
+		content: '';
+	}
+
+	/* Keep the feed composer divider closed against the same content edges as
+	   the sticky feed tabs. The post-card primitive has an explicit width, so
+	   compensate for the negative margins when making it full bleed. */
+	.feed-composer .post-card {
+		width: calc(100% + (2 * clamp(1rem, 3vw, 1.5rem)));
+		border-top: 0;
+		border-bottom: 0;
+	}
+
+	/* Feed note cards use the same closed, full-width separator as notifications. */
+	.feed-note-list > .post-card {
+		border-bottom: 0;
+	}
+
+	.feed-note-list > .post-card::after {
+		position: absolute;
+		right: calc(-1 * clamp(1rem, 3vw, 1.5rem));
+		bottom: 0;
+		left: calc(-1 * clamp(1rem, 3vw, 1.5rem));
+		border-bottom: 1px solid var(--ui-border-muted);
+		content: '';
 	}
 
 	.glass {
@@ -435,18 +475,19 @@
    reels, masonry, settings nav. All token-driven so they flip in dark mode.
 --------------------------------------------------------------------------- */
 @layer components {
-	/* Feed post card */
+	/* Feed note surface: notes are timeline rows, not floating cards. Keep the
+	   treatment consistent across Home, Discover, Bookmarks, Profile, and the
+	   note detail views. */
 	.post-card {
-		background-color: var(--surface-bg);
-		border: 1px solid var(--ui-border-muted);
-		border-radius: calc(var(--ui-radius) + 0.4rem);
-		box-shadow: var(--shadow-card);
-		transition:
-			box-shadow 0.2s ease,
-			transform 0.2s ease;
-	}
-	.post-card:hover {
-		box-shadow: var(--shadow-card-hover);
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+		background-color: transparent;
+		border: 0;
+		border-top: 0;
+		border-bottom: 1px solid var(--ui-border-muted);
+		border-radius: 0;
+		box-shadow: none;
 	}
 
 	/* Stories ring (unread vs viewed) */
@@ -1175,4 +1216,392 @@ html[data-reduced-motion='true'] *::after {
 	animation-duration: 0.001ms !important;
 	animation-iteration-count: 1 !important;
 	transition-duration: 0.001ms !important;
+}
+
+/* ==========================================================================
+   Premium BitOS shell — hexagon avatars, PoW/hash viz, ambient orbs, widgets.
+   Every value is token-driven so the premium layer flips in light + dark and
+   respects the user's accent selection.
+   ========================================================================== */
+@layer components {
+	/* Hexagon avatar clip-path (fallback to squircle via border-radius). */
+	.hex-clip {
+		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+		border-radius: 24%;
+	}
+
+	/* Proof-of-Work segments. */
+	.pow-bar {
+		display: inline-flex;
+		gap: 2px;
+		align-items: center;
+	}
+	.pow-bar > span {
+		width: 3px;
+		height: 9px;
+		background: var(--ui-color-primary-500);
+		border-radius: 1px;
+		opacity: 0.18;
+		transition:
+			opacity 0.3s ease,
+			box-shadow 0.3s ease;
+	}
+	.pow-bar > span.is-filled {
+		opacity: 1;
+		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+
+	/* Hash digest visualization (32 leading bits). */
+	.hash-viz {
+		display: inline-flex;
+		gap: 2px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.hash-viz > span {
+		width: 3px;
+		height: 12px;
+		background: var(--ui-text-dimmed);
+		border-radius: 1px;
+		opacity: 0.6;
+		transition:
+			background 0.3s ease,
+			opacity 0.3s ease;
+	}
+	.hash-viz > span.is-on {
+		background: var(--ui-color-primary-500);
+		opacity: 1;
+		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+
+	/* Right-rail widget container. */
+	.premium-widget {
+		border: 1px solid var(--ui-border-muted);
+		border-radius: calc(var(--ui-radius) + 0.5rem);
+		background: color-mix(in oklab, var(--surface-bg) 94%, transparent);
+		box-shadow: var(--shadow-card);
+		overflow: hidden;
+	}
+	.premium-widget-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.85rem 1rem;
+		font-size: 0.9rem;
+		font-weight: 700;
+		border-bottom: 1px solid var(--ui-border-muted);
+	}
+
+	/* Premium icon button (ghost → accent on hover, with optional glow). */
+	.icon-btn {
+		display: inline-grid;
+		place-items: center;
+		border-radius: 9999px;
+		border: 1px solid color-mix(in oklab, var(--ui-color-primary-500) 18%, transparent);
+		background: color-mix(in oklab, var(--ui-color-primary-500) 10%, transparent);
+		color: var(--ui-color-primary-600);
+		transition:
+			background 0.18s ease,
+			box-shadow 0.18s ease,
+			transform 0.18s ease;
+		cursor: pointer;
+	}
+	.icon-btn:hover {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 18%, transparent);
+		box-shadow: 0 0 22px color-mix(in oklab, var(--ui-color-primary-500) 30%, transparent);
+	}
+	.icon-btn.is-active {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 22%, transparent);
+		border-color: color-mix(in oklab, var(--ui-color-primary-500) 42%, transparent);
+		box-shadow: 0 0 22px color-mix(in oklab, var(--ui-color-primary-500) 32%, transparent);
+	}
+	.icon-btn:active {
+		transform: scale(0.94);
+	}
+	:where(.dark) .icon-btn {
+		color: var(--ui-color-primary-300);
+	}
+
+	/* Network throughput shimmer bar. */
+	.throughput-fill {
+		animation: premium-throughput 3s linear infinite;
+	}
+	@keyframes premium-throughput {
+		0% {
+			transform: translateX(-100%);
+		}
+		100% {
+			transform: translateX(100%);
+		}
+	}
+
+	/* PoW difficulty range slider. */
+	.pow-slider {
+		-webkit-appearance: none;
+		appearance: none;
+		height: 4px;
+		background: color-mix(in oklab, var(--ui-color-primary-500) 12%, transparent);
+		border-radius: 2px;
+		outline: none;
+	}
+	.pow-slider::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 16px;
+		height: 16px;
+		background: var(--ui-color-primary-500);
+		border-radius: 50%;
+		cursor: pointer;
+		box-shadow: 0 0 12px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	.pow-slider::-moz-range-thumb {
+		width: 16px;
+		height: 16px;
+		background: var(--ui-color-primary-500);
+		border-radius: 50%;
+		cursor: pointer;
+		border: none;
+		box-shadow: 0 0 12px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+
+	/* Premium post / explore / relay card. */
+	.premium-card {
+		border: 1px solid var(--ui-border-muted);
+		border-radius: calc(var(--ui-radius) + 0.5rem);
+		background: color-mix(in oklab, var(--surface-bg) 96%, transparent);
+		transition:
+			border-color 0.2s ease,
+			background 0.2s ease,
+			transform 0.2s ease,
+			box-shadow 0.2s ease;
+	}
+	.premium-card:hover {
+		border-color: color-mix(in oklab, var(--ui-color-primary-500) 30%, var(--ui-border-accented));
+		background: color-mix(in oklab, var(--ui-color-primary-500) 4%, var(--surface-bg));
+		transform: translateY(-2px);
+		box-shadow: var(--shadow-card-hover);
+	}
+}
+
+@layer utilities {
+	/* Global ui4 dark palette. Light mode keeps the existing Pulse palette;
+	   dark mode uses the same graphite / amber language across every route. */
+	html.dark {
+		--ui-bg: #0a0a0f;
+		--ui-bg-muted: #12121a;
+		--ui-bg-elevated: #12121a;
+		--ui-bg-accented: #181822;
+		--surface-bg: #12121a;
+		--surface-bg-soft: #181822;
+		--ui-text: #f5f5f7;
+		--ui-text-highlighted: #ffffff;
+		--ui-text-muted: #7a7a85;
+		--ui-text-toned: #c8c8d0;
+		--ui-text-dimmed: #4a4a55;
+		--ui-text-inverted: #050507;
+		--color-primary-300: #ffd270;
+		--color-primary-400: #ffbf45;
+		--color-primary-500: #ffb627;
+		--color-primary-600: #c98a0f;
+		--color-primary-700: #9d6908;
+		--ui-color-primary-300: #ffd270;
+		--ui-color-primary-400: #ffbf45;
+		--ui-color-primary-500: #ffb627;
+		--ui-color-primary-600: #c98a0f;
+		--ui-color-primary-700: #9d6908;
+		--color-accent-500: #00ff88;
+		--color-accent-600: #00cc6d;
+		--color-warm-500: #ff2d75;
+		--color-warm-600: #d51f5d;
+		--tone-success-bg: rgba(0, 255, 136, 0.1);
+		--tone-success-text: #00ff88;
+		--tone-info-bg: rgba(110, 231, 255, 0.1);
+		--tone-info-text: #6ee7ff;
+		--tone-warning-bg: rgba(255, 45, 117, 0.1);
+		--tone-warning-text: #ff2d75;
+		--tone-neutral-bg: rgba(255, 255, 255, 0.05);
+		--tone-neutral-text: #c8c8d0;
+		--ui-border: rgba(255, 255, 255, 0.07);
+		--ui-border-muted: rgba(255, 255, 255, 0.07);
+		--ui-border-accented: rgba(255, 255, 255, 0.14);
+		--interactive-hover-bg: rgba(255, 255, 255, 0.05);
+		--shadow-card: none;
+		--shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.22);
+	}
+
+	/* ui4 reference skin: the Pulse showcase intentionally uses the visual
+	   language from docs/ui4.html while the rest of BitOS keeps its own theme. */
+	.pulse-theme {
+		font-family: 'Space Grotesk', sans-serif;
+	}
+	.dark .pulse-theme {
+		--ui-bg: #0a0a0f;
+		--ui-bg-muted: #12121a;
+		--ui-bg-elevated: #12121a;
+		--ui-bg-accented: #181822;
+		--surface-bg: #12121a;
+		--surface-bg-soft: #181822;
+		--ui-text: #f5f5f7;
+		--ui-text-highlighted: #ffffff;
+		--ui-text-muted: #7a7a85;
+		--ui-text-toned: #c8c8d0;
+		--ui-text-dimmed: #4a4a55;
+		--ui-text-inverted: #050507;
+		--ui-color-primary-300: #ffd270;
+		--ui-color-primary-400: #ffbf45;
+		--ui-color-primary-500: #ffb627;
+		--ui-color-primary-600: #c98a0f;
+		--ui-color-primary-700: #9d6908;
+		--color-brand-500: #ffb627;
+		--color-accent-500: #00ff88;
+		--color-accent-600: #00cc6d;
+		--color-warm-500: #ff2d75;
+		--color-warm-600: #d51f5d;
+		--tone-success-bg: rgba(0, 255, 136, 0.1);
+		--tone-success-text: #00ff88;
+		--tone-info-bg: rgba(110, 231, 255, 0.1);
+		--tone-info-text: #6ee7ff;
+		--tone-warning-bg: rgba(255, 45, 117, 0.1);
+		--tone-warning-text: #ff2d75;
+		--tone-neutral-bg: rgba(255, 255, 255, 0.05);
+		--tone-neutral-text: #c8c8d0;
+		--ui-border: rgba(255, 255, 255, 0.07);
+		--ui-border-muted: rgba(255, 255, 255, 0.07);
+		--ui-border-accented: rgba(255, 255, 255, 0.14);
+		--hairline-strong: rgba(255, 255, 255, 0.14);
+		--interactive-hover-bg: rgba(255, 255, 255, 0.05);
+		--shadow-card: none;
+		--shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.22);
+		--chat-bg: #0e0e15;
+		--bubble-in-bg: #181822;
+		--bubble-in-border: rgba(255, 255, 255, 0.07);
+		--bubble-out-bg: #c98a0f;
+		background: #0a0a0f;
+		color: #f5f5f7;
+	}
+
+	.pulse-theme .font-mono {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+	}
+	.pulse-theme .premium-card {
+		width: 100%;
+		min-width: 0;
+		box-sizing: border-box;
+		border-inline: 0;
+		border-top: 0;
+		/* The feed wrapper owns the separators via divide-y. Keeping the
+		   card's border-bottom here makes each divider render twice. */
+		border-bottom: 0;
+		border-radius: 0;
+		background: transparent;
+		box-shadow: none;
+	}
+	.pulse-theme .premium-card:hover {
+		border-color: var(--ui-border-muted);
+		background: transparent;
+		transform: none;
+		box-shadow: none;
+	}
+	.pulse-theme .premium-widget {
+		border-radius: 1rem;
+		background: var(--surface-bg);
+		box-shadow: none;
+	}
+	.pulse-theme .pulse-tab-active {
+		color: var(--ui-text);
+	}
+	.pulse-theme .icon-btn {
+		color: var(--ui-color-primary-500);
+	}
+	.dark .pulse-theme .premium-widget {
+		background: rgba(255, 255, 255, 0.012);
+	}
+	.dark .pulse-theme .premium-card:hover {
+		background: transparent;
+	}
+	/* Fine film grain overlay. */
+	.grain {
+		position: fixed;
+		inset: 0;
+		pointer-events: none;
+		opacity: 0.03;
+		z-index: 0;
+		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	}
+
+	/* Accent + status glows. */
+	.glow-accent {
+		box-shadow: 0 0 28px color-mix(in oklab, var(--ui-color-primary-500) 35%, transparent);
+	}
+	.glow-success {
+		box-shadow: 0 0 8px color-mix(in oklab, var(--tone-success-text) 50%, transparent);
+	}
+
+	/* Staggered fade-up entrance for premium page sections. */
+	.premium-rise {
+		animation: premium-rise 0.4s ease backwards;
+	}
+	@keyframes premium-rise {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	/* Interaction micro-animations. */
+	.heart-pop {
+		animation: premium-heart 0.4s ease;
+	}
+	@keyframes premium-heart {
+		0% {
+			transform: scale(1);
+		}
+		40% {
+			transform: scale(1.5);
+		}
+		100% {
+			transform: scale(1);
+		}
+	}
+	.zap-particle {
+		animation: premium-zap-burst 0.6s ease-out forwards;
+	}
+	@keyframes premium-zap-burst {
+		0% {
+			transform: translate(0, 0) scale(1);
+			opacity: 1;
+		}
+		100% {
+			transform: translate(var(--tx), var(--ty)) scale(0);
+			opacity: 0;
+		}
+	}
+	.relay-pulse {
+		animation: premium-relay 2s ease-in-out infinite;
+	}
+	@keyframes premium-relay {
+		0%,
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
+		50% {
+			opacity: 0.5;
+			transform: scale(0.8);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.throughput-fill,
+		.premium-rise,
+		.heart-pop,
+		.zap-particle,
+		.relay-pulse {
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+		}
+	}
 }

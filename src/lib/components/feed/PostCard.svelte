@@ -997,7 +997,7 @@
 
 	<!-- Action bar -->
 	<div
-		class="mx-4 mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] py-1"
+		class="mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] px-4 py-1"
 	>
 		<button
 			type="button"

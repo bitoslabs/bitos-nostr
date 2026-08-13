@@ -473,7 +473,8 @@
 						name={displayName}
 						picture={profile?.picture}
 						size={104}
-						class="mask-squircle shadow-xl ring-4 ring-[var(--ui-bg)]"
+						shape="squircle"
+						class="shadow-xl ring-4 ring-[var(--ui-bg)]"
 					/>
 				</StoryRing>
 			</div>

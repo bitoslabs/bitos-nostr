@@ -629,13 +629,13 @@
 
 <div class="flex h-full">
 	<!-- Center feed -->
-	<div bind:this={feedScroller} class="flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
-		<div class="page-container page-container--feed py-6">
+	<div bind:this={feedScroller} class="min-w-0 flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
+		<div class="page-container page-container--feed feed-timeline py-6">
 			<!-- Header -->
 			<div class="relative z-30 mb-5 flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-						Discover
+						Home
 					</h1>
 					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
 						Fresh notes from the global Nostr feed
@@ -652,7 +652,7 @@
 								toasts.info('Refreshing feed');
 							}
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
+						class="icon-btn size-10"
 						aria-label={feed.pendingCount ? 'Show new notes' : 'Refresh'}
 					>
 						<Icon name="i-lucide-rotate-cw" class="size-5" />
@@ -663,10 +663,7 @@
 							searchOpen = !searchOpen;
 							if (!searchOpen) searchQuery = '';
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {searchOpen ||
-						normalizedSearch
-							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
-							: ''}"
+						class="icon-btn size-10 {searchOpen || normalizedSearch ? 'is-active' : ''}"
 						aria-label={searchOpen ? 'Hide search' : 'Show search'}
 						aria-expanded={searchOpen}
 					>
@@ -678,10 +675,8 @@
 							e.stopPropagation();
 							popovers.toggle(filterMenuId);
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {!activeFilters.includes(
-							'all'
-						) || activeFilters.length > 1
-							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
+						class="icon-btn size-10 {!activeFilters.includes('all') || activeFilters.length > 1
+							? 'is-active'
 							: ''}"
 						aria-label="Filters"
 						aria-expanded={filterOpen}
@@ -749,7 +744,7 @@
 
 			<!-- Sticky feed tabs: For you · Following · pinned hashtags -->
 			<div
-				class="sticky top-0 z-10 -mx-5 mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-5 backdrop-blur-md"
+				class="sticky top-0 z-10 -mx-[clamp(1rem,3vw,1.5rem)] mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-[clamp(1rem,3vw,1.5rem)] backdrop-blur-md"
 			>
 				<div
 					class="flex [scrollbar-width:none] items-center gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden"
@@ -890,7 +885,7 @@
 				</div>
 
 				<!-- Composer -->
-				<div class="mb-4">
+				<div class="feed-composer mb-4">
 					<Composer />
 				</div>
 			{:else}
@@ -956,8 +951,8 @@
 			{/if}
 
 			{#if newlyRevealedNotes.length && !useRelayFeed}
-				<section class="mb-5 rounded-2xl border border-primary-500/20 bg-primary-500/5 p-3">
-					<div class="mb-3 flex items-center justify-between gap-3 px-1">
+				<section class="-mx-[clamp(1rem,3vw,1.5rem)] border-y border-primary-500/20 bg-primary-500/5 py-3">
+					<div class="mb-0 flex items-center justify-between gap-3 px-1">
 						<div class="flex min-w-0 items-center gap-2">
 							<Icon name="i-lucide-sparkles" class="size-4 shrink-0 text-primary-500" />
 							<div class="min-w-0">
@@ -976,7 +971,7 @@
 							Continue to For you
 						</button>
 					</div>
-					<div class="space-y-3">
+					<div>
 						{#each newlyRevealedNotes as note, i (note.id)}
 							<PostCard
 								{note}
@@ -1057,7 +1052,7 @@
 			{:else}
 				{#if algorithmActive && renderedNotes.length > 0}
 					<div
-						class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-500/15 bg-primary-500/5 px-3 py-2"
+						class="-mx-[clamp(1rem,3vw,1.5rem)] flex flex-wrap items-center justify-between gap-2 border-b border-primary-500/15 bg-primary-500/5 px-[clamp(1rem,3vw,1.5rem)] py-2"
 					>
 						<div class="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-primary-600">
 							<Icon name="i-lucide-wand-sparkles" class="size-4 shrink-0" />
@@ -1071,7 +1066,7 @@
 						</a>
 					</div>
 				{/if}
-				<div class="space-y-5">
+				<div class="feed-note-list space-y-5">
 					{#each renderedNotes as note, i (note.id)}
 						<PostCard
 							{note}

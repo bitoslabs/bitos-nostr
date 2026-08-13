@@ -33,7 +33,9 @@ export interface Preferences {
 
 export const STORAGE_KEY = 'bitos:prefs';
 export const DEFAULTS: Preferences = {
-	mode: 'system',
+	// The showcase design (docs/ui.html) is the dark premium skin, so first
+	// run opens in dark. The Appearance picker still switches light/dark/system.
+	mode: 'dark',
 	accent: 'blue',
 	neutral: 'slate',
 	rounded: 'round',

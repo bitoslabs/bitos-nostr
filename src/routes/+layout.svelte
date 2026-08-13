@@ -35,6 +35,8 @@
 	import IncomingCallOverlay from '$lib/components/calls/IncomingCallOverlay.svelte';
 	import NavRail from '$lib/components/shell/NavRail.svelte';
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
+	import NetworkBar from '$lib/components/shell/NetworkBar.svelte';
+	import AppRightRail from '$lib/components/shell/AppRightRail.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
@@ -327,8 +329,24 @@
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
 	const isPublicRoute = $derived(isStandalonePublicRoute(page.url.pathname));
+	const isShowcase = $derived(page.url.pathname === '/pulse');
 	const routeNeedsAuth = $derived(isProtectedRoute(page.url.pathname));
 	const authMessage = $derived(authMessageForPath(page.url.pathname));
+
+	// Premium 3-column shell (docs/ui.html): the right rail shows on content
+	// routes. Multi-pane routes (messages, settings, reels) own their own layout
+	// and opt out so their internal columns get the full center width. The home
+	// feed renders its own richer trending/suggestions rail, so it opts out too.
+	const railHiddenPrefixes = ['/messages', '/settings', '/bits', '/profile'];
+	const showRail = $derived(
+		hasIdentity &&
+		page.url.pathname !== '/' &&
+			!railHiddenPrefixes.some(
+				(p) => page.url.pathname === p || page.url.pathname.startsWith(`${p}/`)
+			)
+	);
+	const relayTotal = $derived(relays.list.length);
+	const relayConnected = $derived(relays.list.filter((r) => r.status === 'ok').length);
 
 	// All authenticated routes share a centered cluster with the desktop
 	// navigation rail; individual pages control their own content treatment.
@@ -353,25 +371,33 @@
 			class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
 		></div>
 	</div>
+{:else if isShowcase}
+	<!-- Full-bleed premium UI showcase — owns the whole viewport. -->
+	{@render children?.()}
 {:else if isPublicRoute}
 	<PublicShell>
 		{@render children?.()}
 	</PublicShell>
 {:else}
-	<div class="flex h-screen w-full justify-center overflow-hidden">
+	<!-- Premium shell (docs/ui.html): film grain, a top
+	     throughput bar, and a responsive nav · main · right-rail grid. -->
+	<div class="grain" aria-hidden="true"></div>
+	<NetworkBar connected={relayConnected} total={relayTotal} />
+
+	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
 		<div
 			class="flex w-full max-w-[var(--ui-container)] overflow-hidden lg:border-x lg:border-[var(--ui-border-muted)]"
 		>
-			<!-- Desktop nav rail (Pulse icon rail) -->
+			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
-				class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)]  lg:flex lg:flex-col"
+				class="z-20 hidden w-[260px] shrink-0 border-r border-[var(--ui-border-muted)] lg:flex lg:flex-col"
 			>
 				<NavRail />
 			</aside>
 
-			<!-- Main view (each route renders its own Pulse layout) -->
+			<!-- Main view (each route renders its own premium layout) -->
 			<main
-				class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
+				class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
 			>
 				{#if routeNeedsAuth && !hasIdentity}
 					<AuthRequired title={authMessage.title} description={authMessage.description} />
@@ -379,6 +405,15 @@
 					{@render children?.()}
 				{/if}
 			</main>
+
+			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
+			{#if showRail}
+				<aside
+					class="hidden w-[340px] shrink-0 overflow-y-auto border-l border-[var(--ui-border-muted)] xl:block"
+				>
+					<AppRightRail showTrending={page.url.pathname !== '/notifications'} />
+				</aside>
+			{/if}
 		</div>
 	</div>
 

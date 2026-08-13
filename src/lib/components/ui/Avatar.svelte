@@ -4,14 +4,16 @@
 
 	/**
 	 * Profile avatar. Shows the Nostr picture if available, else a deterministic
-	 * flat color + initials derived from the pubkey. Avatars use the product's
-	 * soft squircle mask by default.
+	 * flat color + initials derived from the pubkey. The docs/ui.html design
+	 * system uses hexagon avatars, so `hex` is the default shape; pass `squircle`
+	 * or `circle` to override per use.
 	 */
 	let {
 		pubkey,
 		name,
 		picture,
 		size = 40,
+		shape = 'hex',
 		frame = false,
 		class: cls
 	}: {
@@ -19,6 +21,7 @@
 		name?: string | null;
 		picture?: string | null;
 		size?: number;
+		shape?: 'hex' | 'squircle' | 'circle';
 		frame?: boolean;
 		class?: string;
 	} = $props();
@@ -28,11 +31,15 @@
 	const hue = $derived(hueFromKey(pubkey));
 	const fallbackBg = $derived(`hsl(${hue} 70% 50%)`);
 	const initials = $derived(initialsFrom(name));
+	const shapeClass = $derived(
+		shape === 'hex' ? 'hex-clip' : shape === 'circle' ? 'rounded-full' : 'mask-squircle'
+	);
 </script>
 
 <div
 	class={cn(
-		'relative grid shrink-0 place-items-center overflow-hidden mask-squircle font-semibold',
+		'relative grid shrink-0 place-items-center overflow-hidden font-semibold',
+		shapeClass,
 		frame && 'border border-[var(--ui-border-muted)]',
 		cls
 	)}
