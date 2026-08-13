@@ -883,7 +883,7 @@
 				<MediaGallery {notes} />
 			</div>
 		{:else if visibleNotes.length}
-			<div class="space-y-4 pb-8">
+			<div class="feed-note-list pb-8">
 				{#each visibleNotes as note, i (note.id)}
 					{#if activeTab === 'reposts' || activeTab === 'pinned'}
 						{#if activeTab === 'reposts'}

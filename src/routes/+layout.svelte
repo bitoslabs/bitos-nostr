@@ -337,7 +337,7 @@
 	// routes. Multi-pane routes (messages, settings, reels) own their own layout
 	// and opt out so their internal columns get the full center width. The home
 	// feed renders its own richer trending/suggestions rail, so it opts out too.
-	const railHiddenPrefixes = ['/messages', '/settings', '/bits', '/profile'];
+	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
 	const showRail = $derived(
 		hasIdentity &&
 		page.url.pathname !== '/' &&
@@ -386,7 +386,7 @@
 
 	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
 		<div
-			class="flex w-full max-w-[var(--ui-container)] overflow-hidden lg:border-x lg:border-[var(--ui-border-muted)]"
+			class="flex w-full max-w-[var(--ui-container)] overflow-hidden"
 		>
 			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
@@ -409,7 +409,7 @@
 			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
 			{#if showRail}
 				<aside
-					class="hidden w-[340px] shrink-0 overflow-y-auto border-l border-[var(--ui-border-muted)] xl:block"
+					class="hidden w-[340px] shrink-0 overflow-y-auto xl:block"
 				>
 					<AppRightRail showTrending={page.url.pathname !== '/notifications'} />
 				</aside>

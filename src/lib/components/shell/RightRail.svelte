@@ -42,7 +42,7 @@
 	} = $props();
 </script>
 
-<aside class="flex flex-col gap-3.5 p-3.5">
+<aside class="flex flex-col gap-3.5 p-3.5 border-l border-[var(--ui-border-muted)]">
 	<label class="relative block">
 		<Icon
 			name="i-lucide-search"

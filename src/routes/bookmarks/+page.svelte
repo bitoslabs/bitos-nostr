@@ -36,7 +36,7 @@
 	<div class="page-container page-container--feed py-6">
 
 		{#if bookmarks.items.length}
-			<div class="space-y-5 pb-8">
+			<div class="feed-note-list pb-8">
 				{#each validItems as item, i (item.id)}
 					<PostCard note={item.note} index={i} onNoteChange={updateNote} />
 				{/each}
