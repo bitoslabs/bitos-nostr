@@ -42,6 +42,8 @@
 		creators: Creator[];
 		mediaItems: MediaItem[];
 		notes?: FeedNote[];
+		oldestNoteEventCreatedAt?: number;
+		hasMoreNotes?: boolean;
 	};
 	type DiscoverSearchCache = {
 		savedAt: number;
@@ -62,22 +64,27 @@
 	const imagePathPattern =
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
-	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v3';
-	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v3';
+	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v7';
+	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v7';
 	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
 	const DISCOVER_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 	const MAX_CACHED_SEARCHES = 5;
-	const MAX_CACHED_TAGS = 18;
-	const MAX_CACHED_CREATORS = 8;
+	const MAX_CACHED_TAGS = 60;
+	const MAX_CACHED_CREATORS = 40;
 	const MAX_CACHED_MEDIA = 180;
-	const MAX_CACHED_SEARCH_NOTES = 40;
+	// The initial relay query already requests 300 events. Keeping only 40 here
+	// made Discover stop after two visual pages even when more notes were ready.
+	const MAX_CACHED_SEARCH_NOTES = 300;
 	const DISCOVER_INITIAL_EVENT_LIMIT = 300;
 	const DISCOVER_PAGE_EVENT_LIMIT = 180;
 	const DISCOVER_SEARCH_EVENT_LIMIT = 180;
 	const DISCOVER_TEXT_FALLBACK_LIMIT = 240;
 	const INITIAL_MEDIA_VISIBLE = 24;
 	const INITIAL_NOTES_VISIBLE = 20;
+	const INITIAL_TAGS_VISIBLE = 18;
+	const INITIAL_CREATORS_VISIBLE = 8;
 	const MEDIA_PAGE_SIZE = 18;
+	const NOTES_PAGE_SIZE = 20;
 	const MEDIA_PREFETCH_THRESHOLD = 12;
 	const SEARCH_DEBOUNCE_MS = 350;
 
@@ -92,12 +99,17 @@
 	let activeTab = $state<DiscoverTab>('notes');
 	let noteScope = $state<'latest' | 'following'>('latest');
 	let notesVisibleCount = $state(INITIAL_NOTES_VISIBLE);
+	let tagsVisibleCount = $state(INITIAL_TAGS_VISIBLE);
+	let creatorsVisibleCount = $state(INITIAL_CREATORS_VISIBLE);
+	let loadingMoreNotes = $state(false);
+	let hasMoreNotes = $state(false);
 	let mediaVisibleCount = $state(INITIAL_MEDIA_VISIBLE);
 	let loadingMoreMedia = $state(false);
 	let searchingRelays = $state(false);
 	let hasMoreMedia = $state(true);
 	let discoverScroller: HTMLDivElement | undefined = $state();
 	let oldestMediaEventCreatedAt = $state(0);
+	let oldestNoteEventCreatedAt = $state(0);
 	let mediaDialogOpen = $state(false);
 	let mediaIndex = $state(0);
 	let zoomOpen = $state(false);
@@ -111,6 +123,9 @@
 	const queryText = $derived(query.trim().toLowerCase());
 	const queryTag = $derived(queryTrimmed.replace(/^#/, '').trim().toLowerCase());
 	const hasActiveRelaySearch = $derived(queryTrimmed.length >= 2);
+	const isRelayQuerying = $derived(
+		loading || refreshingRelays || searchingRelays || loadingMoreNotes || loadingMoreMedia
+	);
 
 	// The app-wide rail routes its search here. Keep the URL as the hand-off
 	// boundary so a shared rail never needs to reach into this page's state.
@@ -148,6 +163,7 @@
 	const activeTrendTags = $derived(
 		hasActiveRelaySearch ? (relaySearchData?.trendTags ?? []) : filteredTags
 	);
+	const visibleTrendTags = $derived(activeTrendTags.slice(0, tagsVisibleCount));
 	const activeCreators = $derived(
 		hasActiveRelaySearch ? (relaySearchData?.creators ?? []) : filteredCreators
 	);
@@ -176,6 +192,7 @@
 			.sort((a, b) => b.score - a.score)
 			.map((item) => item.creator);
 	});
+	const visibleCreators = $derived(rankedCreators.slice(0, creatorsVisibleCount));
 	const activeMedia = $derived(
 		hasActiveRelaySearch
 			? (relaySearchData?.mediaItems.slice(0, mediaVisibleCount) ?? [])
@@ -184,6 +201,7 @@
 	const activeMediaCount = $derived(
 		hasActiveRelaySearch ? (relaySearchData?.mediaItems.length ?? 0) : filteredMedia.length
 	);
+	const hasUnrevealedMedia = $derived(activeMedia.length < activeMediaCount);
 	const activeSearchNotes = $derived(hasActiveRelaySearch ? (relaySearchData?.notes ?? []) : []);
 	const availableNotes = $derived(hasActiveRelaySearch ? activeSearchNotes : notes);
 	const filteredNotes = $derived(
@@ -268,7 +286,34 @@
 			seen.add(item.id);
 			merged.push(item);
 		}
-		return merged.slice(0, MAX_CACHED_MEDIA);
+		return merged;
+	}
+
+	function mergeTrendTags(existing: TrendTag[], incoming: TrendTag[]) {
+		const counts = new Map<string, number>();
+		for (const item of [...existing, ...incoming]) {
+			counts.set(item.tag, (counts.get(item.tag) ?? 0) + item.count);
+		}
+		return [...counts]
+			.map(([tag, count]) => ({ tag, count }))
+			.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+			.slice(0, MAX_CACHED_TAGS);
+	}
+
+	function mergeCreators(existing: Creator[], incoming: Creator[]) {
+		const creatorsByKey = new Map(existing.map((creator) => [creator.pubkey, { ...creator }]));
+		for (const creator of incoming) {
+			const current = creatorsByKey.get(creator.pubkey);
+			if (current) {
+				current.count += creator.count;
+				current.latest = Math.max(current.latest, creator.latest);
+			} else {
+				creatorsByKey.set(creator.pubkey, { ...creator });
+			}
+		}
+		return [...creatorsByKey.values()]
+			.sort((a, b) => b.count - a.count || b.latest - a.latest)
+			.slice(0, MAX_CACHED_CREATORS);
 	}
 
 	function discoveryUrls() {
@@ -414,7 +459,11 @@
 			source: item.source ?? 'configured'
 		}));
 		notes = (data.notes ?? []).slice(0, MAX_CACHED_SEARCH_NOTES);
+		oldestNoteEventCreatedAt = data.oldestNoteEventCreatedAt ?? notes.at(-1)?.createdAt ?? 0;
+		hasMoreNotes = data.hasMoreNotes ?? false;
 		notesVisibleCount = INITIAL_NOTES_VISIBLE;
+		tagsVisibleCount = INITIAL_TAGS_VISIBLE;
+		creatorsVisibleCount = INITIAL_CREATORS_VISIBLE;
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		profiles.ensure(creators.map((creator) => creator.pubkey));
 		profiles.ensure(mediaItems.map((item) => item.pubkey));
@@ -434,7 +483,10 @@
 	}
 
 	function showMoreNotes() {
-		notesVisibleCount = Math.min(filteredNotes.length, notesVisibleCount + INITIAL_NOTES_VISIBLE);
+		if (filteredNotes.length > notesVisibleCount) {
+			notesVisibleCount = Math.min(filteredNotes.length, notesVisibleCount + NOTES_PAGE_SIZE);
+		}
+		void ensureNotesBuffered();
 	}
 
 	async function toggleFollowCreator(pubkey: string) {
@@ -450,7 +502,7 @@
 		if (!nextItems.length) return;
 		mediaItems = mergeMediaLists(mediaItems, nextItems);
 		profiles.ensure(nextItems.map((item) => item.pubkey));
-		saveDiscoverCache({ trendTags, creators, mediaItems, notes });
+		saveCurrentDiscoverCache();
 	}
 
 	function loadCachedDiscover() {
@@ -481,6 +533,18 @@
 		} catch {
 			/* Ignore quota/private-mode failures; cache is only a performance hint. */
 		}
+	}
+
+	function saveCurrentDiscoverCache() {
+		const cachedNotes = notes.slice(0, MAX_CACHED_SEARCH_NOTES);
+		saveDiscoverCache({
+			trendTags,
+			creators,
+			mediaItems: mediaItems.slice(0, MAX_CACHED_MEDIA),
+			notes: cachedNotes,
+			oldestNoteEventCreatedAt: cachedNotes.at(-1)?.createdAt ?? oldestNoteEventCreatedAt,
+			hasMoreNotes
+		});
 	}
 
 	function loadCachedDiscoverSearch(queryValue: string) {
@@ -527,6 +591,7 @@
 	}
 
 	async function loadDiscover(options: { background?: boolean } = {}) {
+		console.debug('[Discover relay] Starting Discover query', { background: !!options.background });
 		if (!options.background) loading = true;
 		refreshingRelays = true;
 		try {
@@ -540,10 +605,14 @@
 					discoveryIds: discoveryOnlyIds(events, discovered)
 				});
 				applyDiscoverData(data);
-				oldestMediaEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
-				hasMoreMedia =
-					combined.length >= DISCOVER_INITIAL_EVENT_LIMIT && !!oldestMediaEventCreatedAt;
-				saveDiscoverCache(data);
+				const oldestEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
+				oldestMediaEventCreatedAt = oldestEventCreatedAt;
+				oldestNoteEventCreatedAt = oldestEventCreatedAt;
+				// Relays often return partial pages, so a short response is not a reliable
+				// end-of-feed signal. Continue until a request returns no older events.
+				hasMoreMedia = !!oldestMediaEventCreatedAt;
+				hasMoreNotes = !!oldestNoteEventCreatedAt;
+				saveCurrentDiscoverCache();
 			};
 			const discoveryPromise = queryUrls(discoveryUrls(), filters).then((events) => {
 				discovered = events;
@@ -560,18 +629,89 @@
 			await discoveryPromise;
 			applyResults(events);
 		} catch (e) {
+			console.debug('[Discover relay] Discover query failed', e);
 			if (!options.background) {
 				toasts.error((e as Error).message || 'Could not load discover data');
 			}
 		} finally {
+			console.debug('[Discover relay] Discover query finished');
 			loading = false;
 			refreshingRelays = false;
 			lastRelayRefreshAt = Math.floor(Date.now() / 1000);
 		}
 	}
 
+	async function loadMoreNotes() {
+		if (loadingMoreNotes || !hasMoreNotes || !oldestNoteEventCreatedAt) {
+			console.debug('[Discover pagination] Notes request skipped', {
+				loadingMoreNotes,
+				hasMoreNotes,
+				oldestNoteEventCreatedAt
+			});
+			return;
+		}
+		console.debug('[Discover pagination] Requesting older notes from relays', {
+			cursor: oldestNoteEventCreatedAt,
+			relays: relays.orderedReadUrls.length
+		});
+		loadingMoreNotes = true;
+		try {
+			const events = await queryUrls(relays.orderedReadUrls, [
+				{
+					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					limit: DISCOVER_PAGE_EVENT_LIMIT,
+					until: oldestNoteEventCreatedAt - 1
+				}
+			]);
+			const sortedEvents = events.sort((a, b) => b.created_at - a.created_at);
+			oldestNoteEventCreatedAt = sortedEvents.at(-1)?.created_at ?? 0;
+			hasMoreNotes = events.length > 0 && oldestNoteEventCreatedAt > 0;
+			const { data: olderDiscoverData } = buildDiscoverData(sortedEvents);
+			trendTags = mergeTrendTags(trendTags, olderDiscoverData.trendTags);
+			creators = mergeCreators(creators, olderDiscoverData.creators);
+			profiles.ensure(olderDiscoverData.creators.map((creator) => creator.pubkey));
+			const existingIds = new Set(notes.map((note) => note.id));
+			const nextNotes = sortedEvents
+				.filter((event) => !existingIds.has(event.id))
+				.slice(0, NOTES_PAGE_SIZE)
+				.map((event) => ({ ...toFeedNote(event), source: 'configured' as const }));
+			if (nextNotes.length) {
+				notes = [...notes, ...nextNotes];
+				profiles.ensure(nextNotes.map((note) => note.pubkey));
+				saveCurrentDiscoverCache();
+			}
+			console.debug('[Discover pagination] Older notes relay request completed', {
+				loaded: nextNotes.length,
+				hasMoreNotes,
+				nextCursor: oldestNoteEventCreatedAt
+			});
+		} catch (e) {
+			console.debug('[Discover pagination] Older notes relay request failed', e);
+			toasts.error((e as Error).message || 'Could not load more notes');
+		} finally {
+			loadingMoreNotes = false;
+		}
+	}
+
+	async function ensureNotesBuffered() {
+		if (hasActiveRelaySearch || loading || loadingMoreNotes || !hasMoreNotes) return;
+		if (notes.length - notesVisibleCount > NOTES_PAGE_SIZE) return;
+		await loadMoreNotes();
+	}
+
 	async function loadMoreMedia() {
-		if (loadingMoreMedia || !hasMoreMedia || !oldestMediaEventCreatedAt) return;
+		if (loadingMoreMedia || !hasMoreMedia || !oldestMediaEventCreatedAt) {
+			console.debug('[Discover pagination] Media request skipped', {
+				loadingMoreMedia,
+				hasMoreMedia,
+				oldestMediaEventCreatedAt
+			});
+			return;
+		}
+		console.debug('[Discover pagination] Requesting older media from relays', {
+			cursor: oldestMediaEventCreatedAt,
+			relays: relays.orderedReadUrls.length
+		});
 		loadingMoreMedia = true;
 		try {
 			const nextMedia: MediaItem[] = [];
@@ -579,7 +719,7 @@
 			let attempts = 0;
 
 			while (nextMedia.length < MEDIA_PAGE_SIZE && hasMoreMedia && nextCursor > 0 && attempts < 4) {
-				const events = await queryPrimaryFirst([
+				const events = await queryUrls(relays.orderedReadUrls, [
 					{
 						kinds: [NOSTR_KINDS.TEXT_NOTE],
 						limit: DISCOVER_PAGE_EVENT_LIMIT,
@@ -595,7 +735,7 @@
 				const sortedEvents = events.sort((a, b) => b.created_at - a.created_at);
 				nextCursor = sortedEvents.at(-1)?.created_at ?? 0;
 				oldestMediaEventCreatedAt = nextCursor;
-				hasMoreMedia = events.length >= DISCOVER_PAGE_EVENT_LIMIT && nextCursor > 0;
+				hasMoreMedia = nextCursor > 0;
 
 				const existingIds = new Set([...mediaItems, ...nextMedia].map((item) => item.id));
 				for (const event of sortedEvents) {
@@ -617,7 +757,13 @@
 			}
 
 			appendDiscoverMedia(nextMedia);
+			console.debug('[Discover pagination] Older media relay request completed', {
+				loaded: nextMedia.length,
+				hasMoreMedia,
+				nextCursor: oldestMediaEventCreatedAt
+			});
 		} catch (e) {
+			console.debug('[Discover pagination] Older media relay request failed', e);
 			toasts.error((e as Error).message || 'Could not load more media');
 		} finally {
 			loadingMoreMedia = false;
@@ -631,18 +777,103 @@
 	}
 
 	function revealMoreMedia() {
-		if (filteredMedia.length > mediaVisibleCount) {
-			mediaVisibleCount = Math.min(filteredMedia.length, mediaVisibleCount + MEDIA_PAGE_SIZE);
+		const availableMedia = hasActiveRelaySearch ? (relaySearchData?.mediaItems ?? []) : filteredMedia;
+		console.debug('[Discover pagination] Revealing media', {
+			visible: mediaVisibleCount,
+			available: availableMedia.length,
+			hasMoreMedia
+		});
+		if (availableMedia.length > mediaVisibleCount) {
+			mediaVisibleCount = Math.min(availableMedia.length, mediaVisibleCount + MEDIA_PAGE_SIZE);
 		}
 		void ensureMediaBuffered();
 	}
 
+	function loadNextDiscoverResults(trigger: 'scroll' | 'sentinel') {
+		console.debug('[Discover pagination] Checking next page', {
+			trigger,
+			tab: activeTab,
+			visibleNotes: visibleNotes.length,
+			availableNotes: filteredNotes.length,
+			visibleMedia: activeMedia.length,
+			availableMedia: activeMediaCount,
+			hasMoreMedia
+		});
+		if (activeTab === 'notes') {
+			if (visibleNotes.length < filteredNotes.length) {
+				console.debug('[Discover pagination] Auto-revealing notes');
+				showMoreNotes();
+			} else {
+				console.debug('[Discover pagination] Auto-requesting older notes from relays');
+				void ensureNotesBuffered();
+			}
+			return;
+		}
+		if (activeTab === 'media') {
+			console.debug('[Discover pagination] Auto-revealing media');
+			revealMoreMedia();
+			return;
+		}
+		if (activeTab === 'people') {
+			if (visibleCreators.length < rankedCreators.length) {
+				console.debug('[Discover pagination] Revealing more people');
+				creatorsVisibleCount = Math.min(
+					rankedCreators.length,
+					creatorsVisibleCount + INITIAL_CREATORS_VISIBLE
+				);
+			} else {
+				console.debug('[Discover pagination] Requesting older results for more people');
+				void loadMoreNotes();
+			}
+			return;
+		}
+		if (activeTab === 'tags') {
+			if (visibleTrendTags.length < activeTrendTags.length) {
+				console.debug('[Discover pagination] Revealing more tags');
+				tagsVisibleCount = Math.min(activeTrendTags.length, tagsVisibleCount + INITIAL_TAGS_VISIBLE);
+			} else {
+				console.debug('[Discover pagination] Requesting older results for more tags');
+				void loadMoreNotes();
+			}
+			return;
+		}
+		console.debug('[Discover pagination] Nothing more to load for this tab');
+	}
+
+	function observeDiscoverPagination(node: HTMLElement) {
+		if (typeof IntersectionObserver === 'undefined') {
+			console.debug('[Discover pagination] IntersectionObserver unavailable; using scroll fallback');
+			return {};
+		}
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((entry) => entry.isIntersecting)) return;
+				console.debug('[Discover pagination] Bottom sentinel reached', {
+					usesDiscoverScroller: !!discoverScroller
+				});
+				loadNextDiscoverResults('sentinel');
+			},
+			{ root: discoverScroller ?? null, rootMargin: '0px 0px 640px', threshold: 0 }
+		);
+		observer.observe(node);
+		return { destroy: () => observer.disconnect() };
+	}
+
 	function handleDiscoverScroll() {
-		if (hasActiveRelaySearch) return;
 		if (!discoverScroller) return;
 		const remaining =
 			discoverScroller.scrollHeight - discoverScroller.scrollTop - discoverScroller.clientHeight;
-		if (remaining < discoverScroller.clientHeight * 1.5) revealMoreMedia();
+		console.debug('[Discover pagination] Scroll received', {
+			tab: activeTab,
+			scrollTop: Math.round(discoverScroller.scrollTop),
+			remaining: Math.round(remaining),
+			threshold: Math.round(discoverScroller.clientHeight * 1.5)
+		});
+		// Keep the current result surface moving without unexpectedly fetching or
+		// expanding a tab the person is not looking at. Buttons below each list
+		// remain as a keyboard and manual-retry fallback.
+		if (remaining >= discoverScroller.clientHeight * 1.5) return;
+		loadNextDiscoverResults('scroll');
 	}
 
 	function openMediaDialog(item: MediaItem) {
@@ -698,6 +929,7 @@
 	}
 
 	async function searchDiscoverRelays(term: string) {
+		console.debug('[Discover relay] Starting search query', { term });
 		const searchToken = ++relaySearchToken;
 		searchingRelays = true;
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
@@ -766,10 +998,14 @@
 			applyResults(events);
 		} catch (e) {
 			if (searchToken !== relaySearchToken) return;
+			console.debug('[Discover relay] Search query failed', e);
 			relaySearchData = { trendTags: [], creators: [], mediaItems: [], notes: [] };
 			toasts.error((e as Error).message || 'Could not search relays');
 		} finally {
-			if (searchToken === relaySearchToken) searchingRelays = false;
+			if (searchToken === relaySearchToken) {
+				console.debug('[Discover relay] Search query finished', { term });
+				searchingRelays = false;
+			}
 		}
 	}
 
@@ -831,6 +1067,31 @@
 				<Icon name="i-lucide-rotate-cw" class="size-[18px] {loading ? 'animate-spin' : ''}" />
 			</button>
 		{/snippet}
+		{#snippet tabs()}
+			<div
+				class="flex gap-1 overflow-x-auto px-[clamp(1rem,3vw,1.5rem)]"
+				role="tablist"
+				aria-label="Discover results"
+			>
+				{#each resultTabs as tab (tab.key)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTab === tab.key}
+						onclick={() => (activeTab = tab.key)}
+						class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {activeTab ===
+						tab.key
+							? 'text-primary-600'
+							: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+					>
+						{tab.label}<span class="ml-1.5 font-mono text-[10px] opacity-70">{tab.count}</span>
+						{#if activeTab === tab.key}<span
+								class="absolute right-2 bottom-0 left-2 h-0.5 rounded-full bg-primary-500"
+							></span>{/if}
+					</button>
+				{/each}
+			</div>
+		{/snippet}
 	</PageHeader>
 	<div class="page-container page-container--wide py-6">
 		<div class="relative mb-6">
@@ -867,29 +1128,6 @@
 				{searchingRelays ? 'Searching relays...' : `Relay results for "${queryTrimmed}"`}
 			</p>
 		{/if}
-		<div
-			class="-mx-[clamp(1rem,3vw,1.5rem)] mb-6 flex gap-1 overflow-x-auto border-b border-[var(--ui-border-muted)] px-[clamp(1rem,3vw,1.5rem)]"
-			role="tablist"
-			aria-label="Discover results"
-		>
-			{#each resultTabs as tab (tab.key)}
-				<button
-					type="button"
-					role="tab"
-					aria-selected={activeTab === tab.key}
-					onclick={() => (activeTab = tab.key)}
-					class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {activeTab ===
-					tab.key
-						? 'text-primary-600'
-						: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-				>
-					{tab.label}<span class="ml-1.5 font-mono text-[10px] opacity-70">{tab.count}</span>
-					{#if activeTab === tab.key}<span
-							class="absolute right-2 bottom-0 left-2 h-0.5 rounded-full bg-primary-500"
-						></span>{/if}
-				</button>
-			{/each}
-		</div>
 		{#if hasActiveRelaySearch && activeTab === 'notes'}
 			<section class="mb-8" aria-label="Matching notes">
 				<div class="mb-3 flex items-center justify-between gap-3">
@@ -920,11 +1158,21 @@
 							<PostCard {note} {index} flat onNoteChange={updateSearchNote} />
 						{/each}
 					</div>
-					{#if visibleNotes.length < filteredNotes.length}<button
-							type="button"
-							onclick={showMoreNotes}
-							class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
-							>Load more notes</button
+					{#if isRelayQuerying}
+						<div class="mt-3 space-y-3" role="status" aria-live="polite">
+							<span class="sr-only">Loading notes from relays</span>
+							{#each [0, 1] as item (item)}
+								<div class="h-28 animate-pulse rounded-2xl bg-[var(--ui-bg-muted)]"></div>
+							{/each}
+						</div>
+					{/if}
+					{#if visibleNotes.length < filteredNotes.length || (!hasActiveRelaySearch && hasMoreNotes)}<button
+						use:observeDiscoverPagination
+						type="button"
+						onclick={showMoreNotes}
+						disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
+						class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+						>{visibleNotes.length < filteredNotes.length ? 'Load more notes' : 'Loading older notes'}</button
 						>{/if}
 				{:else if searchingRelays}
 					<div class="space-y-3">
@@ -972,11 +1220,21 @@
 							<PostCard {note} {index} flat onNoteChange={updateDiscoverNote} />
 						{/each}
 					</div>
-					{#if visibleNotes.length < filteredNotes.length}<button
-							type="button"
-							onclick={showMoreNotes}
-							class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
-							>Load more notes</button
+					{#if isRelayQuerying}
+						<div class="mt-3 space-y-3" role="status" aria-live="polite">
+							<span class="sr-only">Loading notes from relays</span>
+							{#each [0, 1] as item (item)}
+								<div class="h-28 animate-pulse rounded-2xl bg-[var(--ui-bg-muted)]"></div>
+							{/each}
+						</div>
+					{/if}
+					{#if visibleNotes.length < filteredNotes.length || (!hasActiveRelaySearch && hasMoreNotes)}<button
+						use:observeDiscoverPagination
+						type="button"
+						onclick={showMoreNotes}
+						disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
+						class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+						>{visibleNotes.length < filteredNotes.length ? 'Load more notes' : 'Loading older notes'}</button
 						>{/if}
 				{:else if loading}
 					<div class="space-y-3">
@@ -997,7 +1255,7 @@
 				<h3 class="mb-3 font-display text-[18px] font-extrabold">Trending tags</h3>
 				{#if activeTrendTags.length}
 					<div class="flex flex-wrap gap-2">
-						{#each activeTrendTags as item (item.tag)}
+						{#each visibleTrendTags as item (item.tag)}
 							<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
 								<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
 								#{item.tag}
@@ -1005,6 +1263,21 @@
 							</a>
 						{/each}
 					</div>
+					{#if visibleTrendTags.length < activeTrendTags.length || (!hasActiveRelaySearch && hasMoreNotes)}
+						<button
+							use:observeDiscoverPagination
+							type="button"
+							onclick={() => loadNextDiscoverResults('sentinel')}
+							disabled={loadingMoreNotes && visibleTrendTags.length >= activeTrendTags.length}
+							class="mt-4 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+						>
+							{visibleTrendTags.length < activeTrendTags.length ? 'Show more tags' : 'Load older tags'}
+						</button>
+					{:else}
+						<p class="mt-4 text-center text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+							All available tags are shown
+						</p>
+					{/if}
 				{:else}
 					<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
 						{searchingRelays
@@ -1034,7 +1307,7 @@
 				</div>
 				{#if activeCreators.length}
 					<div class="grid grid-cols-1 gap-x-10 gap-y-8 sm:grid-cols-2">
-						{#each rankedCreators as creator (creator.pubkey)}
+						{#each visibleCreators as creator (creator.pubkey)}
 							{@const profile = profiles.get(creator.pubkey)}
 							{@const name = profile?.display_name || profile?.name || shortKey(creator.pubkey)}
 							<div class="min-w-0">
@@ -1077,6 +1350,21 @@
 							</div>
 						{/each}
 					</div>
+					{#if visibleCreators.length < rankedCreators.length || (!hasActiveRelaySearch && hasMoreNotes)}
+						<button
+							use:observeDiscoverPagination
+							type="button"
+							onclick={() => loadNextDiscoverResults('sentinel')}
+							disabled={loadingMoreNotes && visibleCreators.length >= rankedCreators.length}
+							class="mt-5 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+						>
+							{visibleCreators.length < rankedCreators.length ? 'Load more people' : 'Load older people'}
+						</button>
+					{:else}
+						<p class="mt-5 text-center text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+							All available people are shown
+						</p>
+					{/if}
 				{:else}
 					<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
 						{searchingRelays
@@ -1186,28 +1474,51 @@
 							</button>
 						{/each}
 					</div>
-					{#if !hasActiveRelaySearch && (filteredMedia.length > mediaVisibleCount || hasMoreMedia)}
-						<div class="mt-5 flex justify-center">
-							<button
+					{#if isRelayQuerying}
+						<div class="masonry mt-3" role="status" aria-live="polite">
+							<span class="sr-only">Loading media from relays</span>
+							{#each [0, 1, 2, 3, 4, 5] as item (item)}
+								<div
+									class="break-inside-avoid animate-pulse rounded-xl bg-[var(--ui-bg-muted)] {item % 3 ===
+										0
+										? 'aspect-[4/5]'
+										: item % 3 === 1
+											? 'aspect-square'
+											: 'aspect-[3/4]'}"
+								></div>
+							{/each}
+						</div>
+					{/if}
+					<div class="mt-5 flex flex-col items-center gap-2">
+						<button
+								use:observeDiscoverPagination
 								type="button"
 								onclick={revealMoreMedia}
-								disabled={loadingMoreMedia && filteredMedia.length <= mediaVisibleCount}
+								disabled={loadingMoreMedia || (!hasUnrevealedMedia && (!hasMoreMedia || hasActiveRelaySearch))}
 								class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
 							>
 								<Icon
-									name={loadingMoreMedia && filteredMedia.length <= mediaVisibleCount
+								name={loadingMoreMedia && !hasUnrevealedMedia
 										? 'i-lucide-loader-circle'
 										: 'i-lucide-plus'}
-									class="size-4 {loadingMoreMedia && filteredMedia.length <= mediaVisibleCount
+								class="size-4 {loadingMoreMedia && !hasUnrevealedMedia
 										? 'animate-spin'
 										: ''}"
 								/>
-								{filteredMedia.length > mediaVisibleCount
+								{loadingMoreMedia
+									? 'Loading older media'
+									: hasUnrevealedMedia
 									? 'Load more media'
-									: 'Loading older media'}
-							</button>
-						</div>
-					{/if}
+									: hasMoreMedia && !hasActiveRelaySearch
+										? 'Load older media'
+										: 'All available media is shown'}
+						</button>
+						{#if !hasUnrevealedMedia && (!hasMoreMedia || hasActiveRelaySearch) && !loadingMoreMedia}
+							<p class="text-center text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+								No additional media from these relay results
+							</p>
+						{/if}
+					</div>
 				{:else}
 					<div class="post-card p-5 text-[13px] text-[var(--ui-text-muted)]">
 						{searchingRelays
