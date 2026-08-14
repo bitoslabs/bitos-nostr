@@ -2,15 +2,14 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
+	import HashViz from '$lib/components/ui/HashViz.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 
-	let {
-		open = $bindable(false),
-		onposted = () => {}
-	}: { open?: boolean; onposted?: () => void } = $props();
+	let { open = $bindable(false), onposted = () => {} }: { open?: boolean; onposted?: () => void } =
+		$props();
 
 	const MIN_OPTIONS = 2;
 	const MAX_OPTIONS = 6;
@@ -20,6 +19,9 @@
 	let question = $state('');
 	let options = $state<string[]>(['', '']);
 	let posting = $state(false);
+	let mining = $state(false);
+	let showPow = $state(false);
+	let pow = $state(0);
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
@@ -28,7 +30,10 @@
 	const cleanOptions = $derived(options.map((o) => o.trim()).filter(Boolean));
 	const validQuestion = $derived(question.trim().length > 0);
 	const canPost = $derived(
-		validQuestion && cleanOptions.length >= MIN_OPTIONS && !posting && question.length <= MAX_QUESTION
+		validQuestion &&
+			cleanOptions.length >= MIN_OPTIONS &&
+			!posting &&
+			question.length <= MAX_QUESTION
 	);
 	const remaining = $derived(MAX_QUESTION - question.length);
 
@@ -46,6 +51,9 @@
 		question = '';
 		options = ['', ''];
 		posting = false;
+		mining = false;
+		showPow = false;
+		pow = 0;
 	}
 
 	function close() {
@@ -56,14 +64,18 @@
 	async function post() {
 		if (!canPost || posting) return;
 		posting = true;
+		mining = showPow && pow > 0;
 		try {
-			await feed.postPoll(question, cleanOptions);
+			// Yield once so the mining state is visible before the worker starts.
+			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
+			await feed.postPoll(question, cleanOptions, { pow: showPow ? pow : 0 });
 			toasts.success('Poll posted to Nostr');
 			onposted();
 			close();
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {
+			mining = false;
 			posting = false;
 		}
 	}
@@ -90,12 +102,7 @@
 		<!-- Author -->
 		<div class="flex items-center gap-2.5">
 			{#if me}
-				<Avatar
-					pubkey={me.pk}
-					name={myName}
-					picture={myProfile?.picture}
-					size={36}
-				/>
+				<Avatar pubkey={me.pk} name={myName} picture={myProfile?.picture} size={36} />
 			{/if}
 			<span class="text-[13px] font-bold text-[var(--ui-text)]">{myName}</span>
 		</div>
@@ -141,7 +148,7 @@
 						type="text"
 						maxlength={MAX_OPTION}
 						placeholder={`Option ${i + 1}`}
-						class="h-10 flex-1 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 text-[13.5px] text-[var(--ui-text)] outline-none transition placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/20"
+						class="h-10 flex-1 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 text-[13.5px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/20"
 					/>
 					{#if options.length > MIN_OPTIONS}
 						<button
@@ -174,6 +181,43 @@
 		<p class="text-[11px] text-[var(--ui-text-dimmed)]">
 			Votes are published as Nostr reactions and are public. One vote per account (latest wins).
 		</p>
+
+		<div class="rounded-xl border border-primary-500/15 bg-primary-500/5 p-3">
+			<div class="flex items-center justify-between gap-3">
+				<div>
+					<p class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
+						Proof of Work
+					</p>
+					<p class="mt-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
+						{mining
+							? 'Mining your poll… keep this tab open.'
+							: 'Optionally mine this poll before publishing.'}
+					</p>
+				</div>
+				<button
+					type="button"
+					onclick={() => (showPow = !showPow)}
+					aria-label="Enable Proof of Work"
+					aria-pressed={showPow}
+					class="rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition {showPow
+						? 'bg-primary-500 text-white'
+						: 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+				>
+					{showPow ? `${pow} bits` : 'Off'}
+				</button>
+			</div>
+			{#if showPow}
+				<input
+					type="range"
+					min="0"
+					max="30"
+					bind:value={pow}
+					class="pow-slider mt-2.5 w-full"
+					aria-label="Proof of Work difficulty"
+				/>
+				<HashViz bits={pow} class="mt-2.5" />
+			{/if}
+		</div>
 	</div>
 
 	{#snippet footer()}

@@ -6,6 +6,85 @@ export type AccentScale = Record<
 >;
 
 export const accentScale: Record<string, AccentScale> = {
+	// docs/ui.html reference palette.
+	lightning: {
+		'50': '#fff9e6',
+		'100': '#fff0c2',
+		'200': '#ffe08a',
+		'300': '#ffd270',
+		'400': '#ffbf45',
+		'500': '#ffb627',
+		'600': '#c98a0f',
+		'700': '#9d6908',
+		'800': '#744e06',
+		'900': '#4f3505',
+		'950': '#2b1b00'
+	},
+	signal: {
+		'50': '#fff0f6',
+		'100': '#ffd9e7',
+		'200': '#ffb3cd',
+		'300': '#ff80ad',
+		'400': '#ff5a91',
+		'500': '#ff2d75',
+		'600': '#d51f5d',
+		'700': '#ab1749',
+		'800': '#801138',
+		'900': '#590c28',
+		'950': '#310415'
+	},
+	relay: {
+		'50': '#e6fff3',
+		'100': '#bfffe0',
+		'200': '#80ffc1',
+		'300': '#40ffa2',
+		'400': '#12f58a',
+		'500': '#00ff88',
+		'600': '#00cc6d',
+		'700': '#009e55',
+		'800': '#00753f',
+		'900': '#00522d',
+		'950': '#002d18'
+	},
+	ice: {
+		'50': '#edfcff',
+		'100': '#d6f8ff',
+		'200': '#b5f2ff',
+		'300': '#91edff',
+		'400': '#78e9ff',
+		'500': '#6ee7ff',
+		'600': '#35ccef',
+		'700': '#169fbe',
+		'800': '#147f97',
+		'900': '#146a7d',
+		'950': '#073f4e'
+	},
+	purple: {
+		'50': '#faf5ff',
+		'100': '#f3e8ff',
+		'200': '#e9d5ff',
+		'300': '#d8b4fe',
+		'400': '#c084fc',
+		'500': '#a855f7',
+		'600': '#9333ea',
+		'700': '#7e22ce',
+		'800': '#6b21a8',
+		'900': '#581c87',
+		'950': '#3b0764'
+	},
+	orange: {
+		'50': '#fff7ed',
+		'100': '#ffedd5',
+		'200': '#fed7aa',
+		'300': '#fdba74',
+		'400': '#fb923c',
+		'500': '#f97316',
+		'600': '#ea580c',
+		'700': '#c2410c',
+		'800': '#9a3412',
+		'900': '#7c2d12',
+		'950': '#431407'
+	},
 	// Pulse electric blue (default)
 	blue: {
 		'50': '#eff6ff',
@@ -142,6 +221,14 @@ export const accentScale: Record<string, AccentScale> = {
 };
 
 export const accentOptions = [
+	// docs/ui.html colors
+	{ key: 'lightning', label: 'Lightning amber', hex: '#ffb627' },
+	{ key: 'signal', label: 'Signal pink', hex: '#ff2d75' },
+	{ key: 'relay', label: 'Relay green', hex: '#00ff88' },
+	{ key: 'ice', label: 'Ice blue', hex: '#6ee7ff' },
+	{ key: 'purple', label: 'Purple', hex: '#c084fc' },
+	{ key: 'orange', label: 'Orange', hex: '#f97316' },
+	// Keep every existing Pulse option available as well.
 	{ key: 'blue', label: 'Pulse Blue', hex: '#2f95f6' },
 	{ key: 'mint', label: 'Mint', hex: '#55d69a' },
 	{ key: 'coral', label: 'Coral', hex: '#ff755f' },

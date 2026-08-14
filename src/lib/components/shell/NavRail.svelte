@@ -12,7 +12,7 @@
 	import { shortKey } from '$lib/utils/format';
 
 	const nav = [
-		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
+		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
 		{
 			to: '/messages',
 			label: 'Chats',
@@ -67,6 +67,15 @@
 			toasts.error((e as Error).message);
 		}
 	}
+
+	function focusComposer(event: MouseEvent) {
+		// A repeat click on /#composer does not emit `hashchange`, so explicitly
+		// notify the mounted composer when the user is already on the home feed.
+		if (page.url.pathname !== '/') return;
+		event.preventDefault();
+		if (window.location.hash !== '#composer') window.history.pushState(null, '', '#composer');
+		window.dispatchEvent(new CustomEvent('bitos:focus-composer'));
+	}
 </script>
 
 <nav class="ui4-nav flex h-full flex-col p-3.5">
@@ -74,13 +83,9 @@
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="flex items-center mb-4 gap-2.5 px-3 transition-opacity hover:opacity-85"
+		class="mb-4 flex items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
-		<img
-			src="/icons/logo.png"
-			alt=""
-			class="w-20"
-		/>
+		<img src="/icons/logo.png" alt="" class="w-20" />
 		<!-- <span class="ui4-brand-name">BitOS</span> -->
 	</a>
 
@@ -134,6 +139,7 @@
 		<div class="px-2 pb-1">
 			<a
 				href="/#composer"
+				onclick={focusComposer}
 				class="ui4-compose flex items-center justify-center gap-2 rounded-full py-2.5 font-semibold transition-all"
 			>
 				<Icon name="i-lucide-pen-line" class="size-4" />

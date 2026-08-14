@@ -36,7 +36,7 @@ export const DEFAULTS: Preferences = {
 	// The showcase design (docs/ui.html) is the dark premium skin, so first
 	// run opens in dark. The Appearance picker still switches light/dark/system.
 	mode: 'dark',
-	accent: 'blue',
+	accent: 'lightning',
 	neutral: 'slate',
 	rounded: 'round',
 	density: 'normal',
@@ -59,10 +59,11 @@ function prefersDark(): boolean {
 
 function applyAccent(accent: AccentKey) {
 	if (!browser) return;
-	const scale = accentScale[accent] ?? accentScale.blue;
+	const scale = accentScale[accent] ?? accentScale.lightning;
 	const root = document.documentElement;
 	(Object.keys(scale) as (keyof typeof scale)[]).forEach((shade) => {
 		root.style.setProperty(`--color-primary-${shade}`, scale[shade]);
+		root.style.setProperty(`--ui-color-primary-${shade}`, scale[shade]);
 	});
 }
 
@@ -126,7 +127,7 @@ class PrefsStore {
 		} catch {
 			/* ignore malformed storage */
 		}
-		// Migrate legacy accents (e.g. the old "yellow") onto the current palette.
+		// Fall back to the docs/ui.html default if a saved palette is no longer known.
 		const known = accentOptions.map((a) => a.key);
 		if (!known.includes(this.state.accent)) this.state.accent = DEFAULTS.accent;
 		const knownNeutrals = neutralOptions.map((a) => a.key);

@@ -335,13 +335,12 @@
 
 	// Premium 3-column shell (docs/ui.html): the right rail shows on content
 	// routes. Multi-pane routes (messages, settings, reels) own their own layout
-	// and opt out so their internal columns get the full center width. The home
-	// feed renders its own richer trending/suggestions rail, so it opts out too.
+	// and opt out so their internal columns get the full center width. Home uses
+	// the same consolidated AppRightRail as the rest of the content routes.
 	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
 	const showRail = $derived(
 		hasIdentity &&
-		page.url.pathname !== '/' &&
-			!railHiddenPrefixes.some(
+		!railHiddenPrefixes.some(
 				(p) => page.url.pathname === p || page.url.pathname.startsWith(`${p}/`)
 			)
 	);
@@ -408,11 +407,11 @@
 
 			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
 			{#if showRail}
-				<aside
+				<div
 					class="hidden w-[340px] shrink-0 overflow-y-auto xl:block"
 				>
 					<AppRightRail showTrending={page.url.pathname !== '/notifications'} />
-				</aside>
+				</div>
 			{/if}
 		</div>
 	</div>

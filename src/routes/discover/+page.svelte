@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -90,11 +91,24 @@
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
 	let relaySearchData = $state<Omit<DiscoverCache, 'savedAt'> | null>(null);
 	let relaySearchToken = 0;
+	let appliedRailQuery = $state<string | null>(null);
 	const me = $derived(identity.current?.pk ?? '');
 	const queryTrimmed = $derived(query.trim());
+	const railQuery = $derived(page.url.searchParams.get('q')?.trim() ?? '');
 	const queryText = $derived(query.trim().toLowerCase());
 	const queryTag = $derived(queryTrimmed.replace(/^#/, '').trim().toLowerCase());
 	const hasActiveRelaySearch = $derived(queryTrimmed.length >= 2);
+
+	// The app-wide rail routes its search here. Keep the URL as the hand-off
+	// boundary so a shared rail never needs to reach into this page's state.
+	// Track the last URL value applied: reading `query` here would make each
+	// keystroke overwrite the user's edits with the original `?q=` value.
+	$effect(() => {
+		if (railQuery && railQuery !== appliedRailQuery) {
+			query = railQuery;
+			appliedRailQuery = railQuery;
+		}
+	});
 
 	const filteredTags = $derived(
 		trendTags.filter((item) => !queryText || item.tag.toLowerCase().includes(queryText))

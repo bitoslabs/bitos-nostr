@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { npubEncode } from 'nostr-tools/nip19';
+	import { afterNavigate } from '$app/navigation';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
@@ -16,11 +17,11 @@
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import HashViz from '$lib/components/ui/HashViz.svelte';
-import { onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
-import { rewriteMentions } from '$lib/utils/nip27';
-import StoryRing from './StoryRing.svelte';
-import PollComposer from './PollComposer.svelte';
+	import { rewriteMentions } from '$lib/utils/nip27';
+	import StoryRing from './StoryRing.svelte';
+	import PollComposer from './PollComposer.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
@@ -116,17 +117,33 @@ import PollComposer from './PollComposer.svelte';
 
 	function focusFromHash() {
 		if (window.location.hash !== '#composer') return;
+		focusComposer();
+	}
+
+	function focusComposer() {
 		requestAnimationFrame(() => {
 			composerEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-			textareaElement()?.focus();
+			const textarea = textareaElement();
+			textarea?.focus({ preventScroll: true });
+			// Route scroll restoration can run after the first animation frame.
+			// Retry once so navigation from another page consistently lands in the input.
+			window.setTimeout(() => {
+				if (document.activeElement !== textarea) textareaElement()?.focus({ preventScroll: true });
+			}, 100);
 		});
 	}
 
 	onMount(() => {
 		focusFromHash();
 		window.addEventListener('hashchange', focusFromHash);
-		return () => window.removeEventListener('hashchange', focusFromHash);
+		window.addEventListener('bitos:focus-composer', focusComposer);
+		return () => {
+			window.removeEventListener('hashchange', focusFromHash);
+			window.removeEventListener('bitos:focus-composer', focusComposer);
+		};
 	});
+
+	afterNavigate(() => focusFromHash());
 
 	function syncMention() {
 		const el = textareaElement();
@@ -431,11 +448,15 @@ import PollComposer from './PollComposer.svelte';
 					<div class="mt-3 rounded-xl border border-primary-500/15 bg-primary-500/5 p-3">
 						<div class="flex items-center justify-between gap-3">
 							<div>
-								<p class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
+								<p
+									class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase"
+								>
 									Proof of Work
 								</p>
 								<p class="mt-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
-									{mining ? 'Mining your note… keep this tab open.' : 'Mine a harder-to-spam note before publishing.'}
+									{mining
+										? 'Mining your note… keep this tab open.'
+										: 'Mine a harder-to-spam note before publishing.'}
 								</p>
 							</div>
 							<span class="font-mono text-sm font-semibold text-primary-500">{pow} bits</span>
@@ -555,7 +576,7 @@ import PollComposer from './PollComposer.svelte';
 
 		<!-- Toolbar -->
 		<div
-			class="mt-3 flex flex-wrap items-center justify-between gap-2  border-[var(--ui-border-muted)] pt-3"
+			class="mt-3 flex flex-wrap items-center justify-between gap-2 border-[var(--ui-border-muted)] pt-3"
 		>
 			<div class="flex flex-wrap items-center gap-1">
 				{#each mediaActions as a (a.label)}
@@ -605,7 +626,10 @@ import PollComposer from './PollComposer.svelte';
 						? 'bg-primary-500/10 text-primary-600'
 						: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
 				>
-						<Icon name={mining ? 'i-lucide-loader-circle' : 'i-lucide-shield-check'} class="size-[18px] {mining ? 'animate-spin' : ''}" />
+					<Icon
+						name={mining ? 'i-lucide-loader-circle' : 'i-lucide-shield-check'}
+						class="size-[18px] {mining ? 'animate-spin' : ''}"
+					/>
 				</button>
 			</div>
 

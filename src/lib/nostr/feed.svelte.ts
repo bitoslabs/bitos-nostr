@@ -34,7 +34,9 @@ type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'by
 function minePowAsync(unsigned: UnsignedEvent, difficulty: number) {
 	return new Promise<ReturnType<typeof minePow>>((resolve, reject) => {
 		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
-		worker.onmessage = (message: MessageEvent<{ ok: boolean; event?: ReturnType<typeof minePow>; error?: string }>) => {
+		worker.onmessage = (
+			message: MessageEvent<{ ok: boolean; event?: ReturnType<typeof minePow>; error?: string }>
+		) => {
 			worker.terminate();
 			if (message.data.ok && message.data.event) resolve(message.data.event);
 			else reject(new Error(message.data.error || 'Proof of Work failed'));
@@ -676,7 +678,8 @@ class FeedStore {
 			tags
 		};
 		// NIP-13 mining is opt-in so ordinary posts remain immediate.
-		const mined = options.pow && options.pow > 0 ? await minePowAsync(unsigned, options.pow) : unsigned;
+		const mined =
+			options.pow && options.pow > 0 ? await minePowAsync(unsigned, options.pow) : unsigned;
 		const event = finalizeEvent(mined, hexToBytes(id.sk));
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
@@ -689,7 +692,11 @@ class FeedStore {
 	 * becomes a `["poll_option", "<id>", "<label>"]` tag. Votes arrive later as
 	 * kind-7 reactions whose content is the option id.
 	 */
-	async postPoll(question: string, options: string[]): Promise<string> {
+	async postPoll(
+		question: string,
+		options: string[],
+		publishOptions: { pow?: number } = {}
+	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
@@ -703,19 +710,22 @@ class FeedStore {
 				`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
 			);
 		}
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.TEXT_NOTE,
-				content: prompt,
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [
-					...clientTag(),
-					...extractHashtagTags(prompt),
-					...cleanOptions.map((label, i) => ['poll_option', String(i), label])
-				]
-			},
-			hexToBytes(id.sk)
-		);
+		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content: prompt,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [
+				...clientTag(),
+				...extractHashtagTags(prompt),
+				...cleanOptions.map((label, i) => ['poll_option', String(i), label])
+			]
+		};
+		const mined =
+			publishOptions.pow && publishOptions.pow > 0
+				? await minePowAsync(unsigned, publishOptions.pow)
+				: unsigned;
+		const event = finalizeEvent(mined, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
