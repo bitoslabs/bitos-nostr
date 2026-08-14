@@ -61,7 +61,8 @@
 		onNoteHide,
 		rankTag,
 		onExplain,
-		onInteract
+		onInteract,
+		flat = false
 	}: {
 		note: FeedNote;
 		index?: number;
@@ -70,6 +71,8 @@
 		rankTag?: { label: string; icon: string; color: string };
 		onExplain?: () => void;
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
+		/** Use the surrounding list's dividers instead of an individual card surface. */
+		flat?: boolean;
 	} = $props();
 
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
@@ -620,7 +623,7 @@
 
 <article
 	bind:this={articleEl}
-	class="post-card fade-up relative overflow-visible"
+	class="{flat ? '' : 'post-card'} fade-up relative overflow-visible"
 	style="animation-delay:{index * 0.05}s"
 >
 	<!-- Author header -->
@@ -676,8 +679,7 @@
 		<div class="flex shrink-0 items-center gap-1">
 			<span
 				class="rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)]"
-				title="Nostr event kind"
-				>kind:1</span
+				title="Nostr event kind">kind:1</span
 			>
 			<button
 				type="button"
@@ -1033,9 +1035,7 @@
 	{/if}
 
 	<!-- Action bar -->
-	<div
-		class="mb-2 flex items-center justify-between gap-1 px-4 py-2"
-	>
+	<div class="mb-2 flex items-center justify-between gap-1 px-4 py-2">
 		<button
 			type="button"
 			onclick={react}
@@ -1327,11 +1327,12 @@
 				</button>
 			{/if}
 		</div>
-		<div class="h-2">
-		</div>
+		<div class="h-2"></div>
 	{/if}
 	{#if replyOpen && refreshingComments}
-		<div class="mx-4 mb-3 flex items-center gap-2 rounded-xl bg-[var(--ui-bg-muted)] px-3 py-2 text-[11px] font-semibold text-[var(--ui-text-muted)]">
+		<div
+			class="mx-4 mb-3 flex items-center gap-2 rounded-xl bg-[var(--ui-bg-muted)] px-3 py-2 text-[11px] font-semibold text-[var(--ui-text-muted)]"
+		>
 			<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
 			Loading comments…
 		</div>
@@ -1344,12 +1345,12 @@
 			placeholder="Reply to this note…"
 			autofocus={replyOpen}
 			focusTick={replyFocusTick}
-				onSubmitted={(reply) => {
-					addOptimisticReply(reply);
-					replyOpen = false;
-				}}
-				onCancel={() => (replyOpen = false)}
-			/>
+			onSubmitted={(reply) => {
+				addOptimisticReply(reply);
+				replyOpen = false;
+			}}
+			onCancel={() => (replyOpen = false)}
+		/>
 	</div>
 	<!-- Like confetti burst overlay -->
 	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">
