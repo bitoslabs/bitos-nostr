@@ -881,7 +881,9 @@
 				<section
 					class="-mx-[clamp(1rem,3vw,1.5rem)] border-y border-primary-500/20 bg-primary-500/5 py-3"
 				>
-					<div class="mb-0 flex items-center justify-between gap-3 px-1">
+					<div
+						class="mb-0 flex items-center justify-between gap-3 px-[clamp(1rem,3vw,1.5rem)]"
+					>
 						<div class="flex min-w-0 items-center gap-2">
 							<Icon name="i-lucide-sparkles" class="size-4 shrink-0 text-primary-500" />
 							<div class="min-w-0">
@@ -900,7 +902,7 @@
 							Continue to For you
 						</button>
 					</div>
-					<div class="-mx-[clamp(1rem,3vw,1.5rem)] divide-y divide-[var(--ui-border-muted)]">
+					<div class="divide-y divide-[var(--ui-border-muted)]">
 						{#each newlyRevealedNotes as note, i (note.id)}
 							<PostCard
 								{note}
