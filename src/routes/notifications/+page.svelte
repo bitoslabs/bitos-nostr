@@ -552,8 +552,8 @@
 															<a
 																href={profileLink(g.pubkey)}
 																onclick={() => openRow(g)}
-																class="relative z-{10 -
-																	i} shrink-0 mask-squircle ring-2 ring-[var(--surface-bg)] drop-shadow-[0_2px_8px_rgb(15_23_42_/_0.14)] transition hover:ring-2 hover:ring-primary-500/30"
+																class="hex-clip relative shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:z-20 hover:bg-primary-500/40"
+																style="z-index:{10 - i}"
 																aria-label={`View ${actorName(g.pubkey)}'s profile`}
 															>
 																<Avatar
@@ -561,7 +561,7 @@
 																	name={actorName(g.pubkey)}
 																	picture={profiles.get(g.pubkey)?.picture}
 																	size={40}
-																	class="mask-squircle"
+																	shape="hex"
 																/>
 															</a>
 														{/each}
@@ -573,10 +573,10 @@
 														<Icon name={meta.icon} class="size-3" />
 													</span>
 												{:else}
-													<a
-														href={profileLink(item.pubkey)}
-														onclick={() => openRow(item)}
-														class="shrink-0 mask-squircle drop-shadow-[0_2px_8px_rgb(15_23_42_/_0.14)] transition hover:ring-2 hover:ring-primary-500/30"
+												<a
+													href={profileLink(item.pubkey)}
+													onclick={() => openRow(item)}
+													class="hex-clip block size-12 shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:bg-primary-500/40"
 														aria-label={`View ${actorName(item.pubkey)}'s profile`}
 													>
 														<Avatar
@@ -584,7 +584,7 @@
 															name={actorName(item.pubkey)}
 															picture={profile?.picture}
 															size={44}
-															class="mask-squircle"
+															shape="hex"
 														/>
 													</a>
 													<span

@@ -467,15 +467,10 @@
 			class="relative -mt-12 mb-4 flex flex-col items-center gap-4 text-center sm:-mt-16 sm:flex-row sm:items-end sm:text-left"
 		>
 			<div class="relative">
-				<StoryRing {pubkey} rounded="mask-squircle">
-					<Avatar
-						{pubkey}
-						name={displayName}
-						picture={profile?.picture}
-						size={104}
-						shape="squircle"
-						class="shadow-xl ring-4 ring-[var(--ui-bg)]"
-					/>
+				<StoryRing {pubkey} rounded="hex-clip">
+					<div class="hex-clip bg-[var(--ui-bg)] p-1">
+						<Avatar {pubkey} name={displayName} picture={profile?.picture} size={104} shape="hex" />
+					</div>
 				</StoryRing>
 			</div>
 
