@@ -32,7 +32,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
-	import { extractNotificationMedia } from '$lib/utils/imeta';
+	import { extractNotificationMedia, stripMediaUrls } from '$lib/utils/imeta';
 	import {
 		isEventReference,
 		parseContent,
@@ -124,15 +124,27 @@
 			2
 		)
 	);
+	const mediaAttachments = $derived(extractMedia(note.content, note.tags));
+	// Attachment URLs do not add useful context once their media/link card is
+	// rendered below. Removing them here keeps the body to the author's caption
+	// and prevents attachment-only notes from incorrectly needing “Show more”.
+	const captionContent = $derived(
+		stripMediaUrls(
+			note.content,
+			mediaAttachments.map((media) => media.url)
+		)
+			.replace(/[ \t]+\n/g, '\n')
+			.replace(/\n{3,}/g, '\n\n')
+			.trim()
+	);
 	let expanded = $state(false);
 	const isLong = $derived(
-		note.content.length > longTextLimit || note.content.split('\n').length > 8
+		captionContent.length > longTextLimit || captionContent.split('\n').length > 8
 	);
 	const visibleContent = $derived(
-		isLong && !expanded ? `${note.content.slice(0, longTextLimit).trimEnd()}…` : note.content
+		isLong && !expanded ? `${captionContent.slice(0, longTextLimit).trimEnd()}…` : captionContent
 	);
 	const contentTokens = $derived(parseContent(visibleContent));
-	const mediaAttachments = $derived(extractMedia(note.content, note.tags));
 	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
 	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
 	const firstAttachment = $derived(mediaAttachments[0]);
@@ -790,55 +802,57 @@
 		</header>
 
 		<!-- Body -->
-		<div class="pt-1.5 pb-3">
-			<div class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
-				{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
-					{#if token.type === 'text'}
-						{token.value}
-					{:else if token.type === 'hashtag'}
-						<a
-							href={`/?tag=${encodeURIComponent(token.tag)}`}
-							class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
-						>
+		{#if captionContent || note.poll || note.pow}
+			<div class="pt-1.5 pb-3">
+				<div class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
+					{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
+						{#if token.type === 'text'}
 							{token.value}
-						</a>
-					{:else if token.type === 'nostr'}
-						{#if isEventReference(token.value)}
-							<NostrEventPreview value={token.value} />
+						{:else if token.type === 'hashtag'}
+							<a
+								href={`/?tag=${encodeURIComponent(token.tag)}`}
+								class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
+							>
+								{token.value}
+							</a>
+						{:else if token.type === 'nostr'}
+							{#if isEventReference(token.value)}
+								<NostrEventPreview value={token.value} />
+							{:else}
+								<MentionLink value={token.value} />
+							{/if}
 						{:else}
-							<MentionLink value={token.value} />
+							<a
+								href={token.value}
+								target="_blank"
+								rel="noreferrer"
+								class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+							>
+								{token.host}
+							</a>
 						{/if}
-					{:else}
-						<a
-							href={token.value}
-							target="_blank"
-							rel="noreferrer"
-							class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
-						>
-							{token.host}
-						</a>
-					{/if}
-				{/each}
-			</div>
-			{#if isLong}
-				<button
-					type="button"
-					onclick={() => (expanded = !expanded)}
-					class="mt-2 text-[13px] font-bold text-primary-500 transition hover:text-primary-600"
-				>
-					{expanded ? 'Show less' : 'Show more'}
-				</button>
-			{/if}
-
-			{#if note.poll}
-				<Poll {note} onVoted={onNoteChange} />
-			{/if}
-			{#if note.pow}
-				<div class="mt-2">
-					<PowBadge bits={note.pow} showLabel={false} id={note.id} />
+					{/each}
 				</div>
-			{/if}
-		</div>
+				{#if isLong}
+					<button
+						type="button"
+						onclick={() => (expanded = !expanded)}
+						class="mt-2 text-[13px] font-bold text-primary-500 transition hover:text-primary-600"
+					>
+						{expanded ? 'Show less' : 'Show more'}
+					</button>
+				{/if}
+
+				{#if note.poll}
+					<Poll {note} onVoted={onNoteChange} />
+				{/if}
+				{#if note.pow}
+					<div class="mt-2">
+						<PowBadge bits={note.pow} showLabel={false} id={note.id} />
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		{#if mediaAttachments.length}
 			<div

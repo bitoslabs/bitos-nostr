@@ -344,8 +344,9 @@
 	// and opt out so their internal columns get the full center width. Home uses
 	// the same consolidated AppRightRail as the rest of the content routes.
 	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
+	const publicRailRoutes = new Set(['/', '/discover']);
 	const showRail = $derived(
-		hasIdentity &&
+		(hasIdentity || publicRailRoutes.has(page.url.pathname)) &&
 		!railHiddenPrefixes.some(
 				(p) => page.url.pathname === p || page.url.pathname.startsWith(`${p}/`)
 			)
@@ -417,7 +418,10 @@
 				<div
 					class="hidden w-[340px] shrink-0 overflow-y-auto xl:block"
 				>
-					<AppRightRail showTrending={page.url.pathname !== '/notifications'} />
+					<AppRightRail
+						showTrending={page.url.pathname !== '/notifications'}
+						showSuggestions={hasIdentity}
+					/>
 				</div>
 			{/if}
 		</div>
