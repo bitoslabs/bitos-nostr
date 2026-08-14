@@ -15,6 +15,8 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
+	import { wallet } from '$lib/nostr/wallet.svelte';
 	import { algorithmPreferences, interactionProfile } from '$lib/algorithm';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -186,6 +188,7 @@
 		notifications.clear();
 		bookmarks.clear();
 		callAlerts.clear();
+		wallet.clear();
 	}
 
 	function shouldAutoRestoreSettings(pubkey: string, previousPubkey: string | null) {
@@ -227,6 +230,7 @@
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
+		walletPrefs.load();
 		profiles.load();
 		blocks.load();
 		mutes.load();
@@ -258,6 +262,8 @@
 			feedPreferences.reload();
 			callSettings.reload();
 			relays.load();
+			walletPrefs.load();
+			wallet.disconnectWallet();
 		}
 		if (pk) {
 			// Always revalidate the active account's own metadata. This fixes imports

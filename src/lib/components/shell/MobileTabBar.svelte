@@ -31,6 +31,7 @@
 
 	const moreItems = [
 		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
+		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
 		{ to: '/bookmarks', label: 'Saved', icon: 'i-lucide-bookmark', requiresAuth: true },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
 		{ to: '/settings', label: 'Account', icon: 'i-lucide-settings-2', requiresAuth: true }

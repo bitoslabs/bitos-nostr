@@ -9,6 +9,9 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { subscribe } from '$lib/nostr/pool';
 	import { hexToBytes } from '$lib/nostr/hex';
+	import { wallet } from '$lib/nostr/wallet.svelte';
+	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
+	import { hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
 
 	type Props = {
 		open?: boolean;
@@ -25,8 +28,8 @@
 		eventId,
 		onPaid
 	}: Props = $props();
-	const amounts = [21, 100, 1000, 5000];
-	let selectedAmount = $state(100);
+	const amounts = $derived(walletPrefs.state.amounts);
+	let selectedAmount = $state(walletPrefs.state.defaultAmount);
 	let customAmount = $state('');
 	let invoice = $state('');
 	let error = $state('');
@@ -34,6 +37,7 @@
 	let paid = $state(false);
 	let isZap = $state(false);
 	let copied = $state(false);
+	let paying = $state(false);
 	let stopReceipt: (() => void) | undefined;
 
 	const amount = $derived(Math.max(1, Math.round(Number(customAmount) || selectedAmount)));
@@ -156,6 +160,7 @@
 								const receipt = JSON.parse(description) as { id?: string };
 								if (receipt.id !== requestId) return;
 								paid = true;
+								recordSent();
 								onPaid?.(amount);
 								cleanupReceipt();
 							} catch {
@@ -165,6 +170,9 @@
 					}
 				);
 			}
+			// Auto-pay through a connected WebLN wallet so the user never has to
+			// leave the app. Falls through to the QR/deeplink flow on failure.
+			void maybePayWithWebLN();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not prepare the zap.';
 		} finally {
@@ -177,6 +185,41 @@
 		await navigator.clipboard.writeText(invoice);
 		copied = true;
 		setTimeout(() => (copied = false), 1800);
+	}
+
+	/** Record a successfully-sent zap into the local wallet ledger. */
+	function recordSent() {
+		wallet.recordSent({
+			id: `${eventId}:${amount}:${Math.floor(Date.now() / 1000)}`,
+			amountSats: amount,
+			recipientPubkey,
+			targetNoteId: eventId
+		});
+	}
+
+	/** Pay the current invoice via a connected WebLN wallet (best-effort). */
+	async function maybePayWithWebLN() {
+		if (!invoice || paid || !hasWebLN()) return;
+		try {
+			await enableWebLN();
+		} catch {
+			return; // user declined to enable the wallet — fall back to QR
+		}
+		paying = true;
+		try {
+			await payWithWebLN(invoice);
+			// The receipt listener confirms the NIP-57 zap; for non-zap invoices
+			// there is no receipt, so record the sent entry optimistically here.
+			if (!isZap) {
+				paid = true;
+				recordSent();
+				onPaid?.(amount);
+			}
+		} catch {
+			/* Wallet payment failed/cancelled — the QR/deeplink remains available. */
+		} finally {
+			paying = false;
+		}
 	}
 
 	onDestroy(cleanupReceipt);
@@ -229,6 +272,15 @@
 					</p>{/if}
 				<QrCode value={invoice.toUpperCase()} label="Zap invoice QR code" />
 				<div class="mt-3 flex gap-2">
+					{#if hasWebLN() && !paid}
+						<button
+							type="button"
+							onclick={maybePayWithWebLN}
+							disabled={paying}
+							class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
+							><Icon name={paying ? 'i-lucide-loader-circle' : 'i-lucide-wallet'} class="size-3.5 {paying ? 'animate-spin' : ''}" />{paying ? 'Paying…' : 'Pay with wallet'}</button
+						>
+					{/if}
 					<a
 						href={`lightning:${invoice}`}
 						class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"

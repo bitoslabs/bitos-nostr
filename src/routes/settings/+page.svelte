@@ -11,6 +11,7 @@
 	import MediaSettings from '$lib/components/settings/MediaSettings.svelte';
 	import PrivacyNotificationSettings from '$lib/components/settings/PrivacyNotificationSettings.svelte';
 	import SecuritySettings from '$lib/components/settings/SecuritySettings.svelte';
+	import LightningSettings from '$lib/components/settings/LightningSettings.svelte';
 	import SupportSettings from '$lib/components/settings/SupportSettings.svelte';
 	import {
 		isSettingsSectionKey,
@@ -755,6 +756,11 @@
 
 			{#if section === 'privacy' || section === 'notifications'}
 				<PrivacyNotificationSettings {section} />
+			{/if}
+
+			<!-- LIGHTNING (wallet connection + default zap amounts + zap prefs) -->
+			{#if section === 'lightning'}
+				<LightningSettings />
 			{/if}
 
 			<!-- APPEARANCE (wired to real preferences) -->

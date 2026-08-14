@@ -78,25 +78,13 @@ and one-tap zaps.
 
 ---
 
-## 4. ⚠️ Dedicated Relays page — **missing as a route**
+## 4. ✅ Relays — **kept in Settings (single source of truth)**
 
-The doc has a full Relays page. Real relay management lives inside
-`src/lib/components/settings/SecuritySettings.svelte` (add / test / ping /
-remove relays), reachable only via **Settings → Security & Relay**.
-
-Doc features not surfaced in the real app:
-
-- **Top stat tiles**: Connected x/y · Avg Latency · **Events Cached (GB)** ·
-  **Total Events** — the real Security view has none of these aggregate tiles.
-- **Per-relay cards** with events count, latency, mode (read/write/both),
-  paid/free badge — the real view is a simpler list.
-- **"Connect New Relay" form + suggested-relay chips** — exists functionally
-  (add relay) but not as a prominent page.
-
-**To integrate**
-- Add `src/routes/relays/+page.svelte` (port `premium/RelaysView.svelte` to the
-  real `relays` store) and a nav entry, OR surface `SecuritySettings` relay
-  block as its own top-level page and link Settings to it.
+The doc shows a full Relays page. Relay management intentionally lives in one
+place — **Settings → Security & Relay** (`SecuritySettings.svelte`: add /
+test / ping / remove / set read & write primaries), reachable from the nav
+and from the right-rail "Manage relays" action. A separate `/relays` route was
+removed to avoid duplicating relay state across two surfaces.
 
 ---
 
@@ -174,7 +162,7 @@ when present).
 | 1 | Zaps page + wallet ledger (`/zaps`) | High | Med-High |
 | 2 | WebLN wallet integration (in-app pay/deposit/withdraw) | High | Med |
 | 3 | Lightning settings section | Med | Low-Med |
-| 4 | Relays as a top-level page + nav entry | Med | Low |
+| 4 | Relays as a top-level page + nav entry | Resolved (kept in Settings) | — |
 | 5 | Network settings section | Med | Low |
 | 6 | Keys settings section (consolidated nsec/npub) | Med | Low |
 | 7 | Notifications type tabs (Zaps/Likes/Reposts/Follows) | Low | Low |

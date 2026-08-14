@@ -15,15 +15,7 @@
 	import BookmarksView from '$lib/components/premium/BookmarksView.svelte';
 	import ProfileView from '$lib/components/premium/ProfileView.svelte';
 	import SettingsView from '$lib/components/premium/SettingsView.svelte';
-	import {
-		account,
-		nav,
-		trends,
-		relays,
-		posts,
-		notifications,
-		type NotifType
-	} from '$lib/components/premium/data';
+	import { account, nav, trends, relays, posts } from '$lib/components/premium/data';
 
 	/**
 	 * Premium UI showcase router. Mirrors the docs/ui4.html SPA: the left nav
@@ -32,7 +24,16 @@
 	 * single-responsibility component.
 	 */
 
-	type Page = 'home' | 'explore' | 'notifications' | 'messages' | 'zaps' | 'relays' | 'bookmarks' | 'profile' | 'settings';
+	type Page =
+		| 'home'
+		| 'explore'
+		| 'notifications'
+		| 'messages'
+		| 'zaps'
+		| 'relays'
+		| 'bookmarks'
+		| 'profile'
+		| 'settings';
 	let page = $state<Page>('home');
 
 	// Quick-action destinations for the default right rail.
@@ -79,18 +80,25 @@
 			<RightRail
 				{trends}
 				{relays}
-				network={{ activePubkeys: 47392, eventsPerMin: 312, relaysOnline: 1247, sats24h: 2_400_000 }}
+				network={{
+					activePubkeys: 47392,
+					eventsPerMin: 312,
+					relaysOnline: 1247,
+					sats24h: 2_400_000
+				}}
 				onSelectTag={() => (page = 'explore')}
 				onManageRelays={() => (page = 'relays')}
 			/>
 		{:else if page === 'explore'}
 			<aside class="flex flex-col gap-3.5 p-3.5">
-				<NetworkStats stats={[
-					{ label: 'Total pubkeys', value: 847000 },
-					{ label: 'Daily active', value: 47000, tone: 'success' },
-					{ label: 'Notes today', value: 312000 },
-					{ label: 'Zaps today', value: 2_400_000, tone: 'accent' }
-				]} />
+				<NetworkStats
+					stats={[
+						{ label: 'Total pubkeys', value: 847000 },
+						{ label: 'Daily active', value: 47000, tone: 'success' },
+						{ label: 'Notes today', value: 312000 },
+						{ label: 'Zaps today', value: 2_400_000, tone: 'accent' }
+					]}
+				/>
 				<TopZapped {posts} />
 			</aside>
 		{:else if page === 'notifications'}
@@ -99,7 +107,7 @@
 			</aside>
 		{:else}
 			<aside class="flex flex-col gap-3.5 p-3.5">
-				<QuickActions actions={quickActions} onAction={onAction} />
+				<QuickActions actions={quickActions} {onAction} />
 				<YourStats />
 			</aside>
 		{/if}

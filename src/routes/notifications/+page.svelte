@@ -21,7 +21,7 @@
 	import { decode as decodeBech32 } from 'nostr-tools/nip19';
 	import type { NotificationItem } from '$lib/nostr/types';
 
-	type Filter = 'all' | 'unread' | 'mention';
+	type Filter = 'all' | 'unread' | 'mention' | 'zap' | 'like' | 'repost' | 'follow' | 'comment';
 
 	/** Semantic per-type presentation config (icon + accent color + verb). */
 	const TYPE_META: Record<NotificationItem['type'], { icon: string; color: string; verb: string }> =
@@ -59,7 +59,12 @@
 	const FILTER_LABELS: { key: Filter; label: string }[] = [
 		{ key: 'all', label: 'All' },
 		{ key: 'unread', label: 'Unread' },
-		{ key: 'mention', label: 'Mentions' }
+		{ key: 'zap', label: 'Zaps' },
+		{ key: 'mention', label: 'Mentions' },
+		{ key: 'comment', label: 'Replies' },
+		{ key: 'like', label: 'Likes' },
+		{ key: 'repost', label: 'Reposts' },
+		{ key: 'follow', label: 'Follows' }
 	];
 
 	let filter = $state<Filter>('all');
@@ -72,7 +77,7 @@
 	const filtered = $derived(
 		notifications.visible.filter((item) => {
 			if (filter === 'unread' && item.read) return false;
-			if (filter === 'mention' && item.type !== 'mention') return false;
+			if (filter !== 'all' && filter !== 'unread' && item.type !== filter) return false;
 			if (!query.trim()) return true;
 			const q = query.trim().toLowerCase();
 			const name = actorName(item.pubkey).toLowerCase();
@@ -347,8 +352,8 @@
 								<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
 									{unread}
 								</span>
-							{:else if f.key === 'mention'}
-								{@const n = notifications.countByType['mention'] ?? 0}
+							{:else if f.key !== 'all' && f.key !== 'unread'}
+								{@const n = notifications.countByType[f.key] ?? 0}
 								{#if n}
 									<span
 										class="rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]"

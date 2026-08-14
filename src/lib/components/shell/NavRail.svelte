@@ -29,6 +29,7 @@
 		},
 		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
+		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
 		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark', requiresAuth: true },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
 		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2', requiresAuth: true }

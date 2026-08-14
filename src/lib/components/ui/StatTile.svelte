@@ -40,7 +40,7 @@
 
 <div
 	class={cn(
-		'premium-card p-3.5',
+		'surface-card surface-card-hover p-3.5',
 		center && 'text-center',
 		cls
 	)}
