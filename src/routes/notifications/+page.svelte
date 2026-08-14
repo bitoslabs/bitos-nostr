@@ -518,13 +518,14 @@
 									<article
 										class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
 											? 'z-30'
-											: 'z-0'} {!item.read ? 'bg-primary-500/[0.035]' : ''}"
+											: 'z-0'} {!item.read ? 'notification-row--unread' : ''}"
+										style={!item.read ? `--notification-accent: ${meta.color}` : undefined}
 									>
 										<!-- Unread accent stripe -->
 										{#if !item.read}
 											<span
-												class="absolute top-0 bottom-0 left-0 w-[3px]"
-												style="background:{meta.color}"
+												class="notification-accent absolute top-0 bottom-0 left-0 z-10 w-[3px]"
+												style="background:var(--notification-accent)"
 											></span>
 										{/if}
 
@@ -702,87 +703,99 @@
 											</div>
 										{/if}
 
-										<!-- Overflow actions stay outside the row links, so there are no nested interactives. -->
-										<div class="absolute top-2.5 right-2.5 z-20 shrink-0">
-											<button
-												type="button"
-												onclick={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
-													popovers.toggle(menuId);
-												}}
-												class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
-													? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
-													: ''}"
-												aria-label="Notification actions"
-												aria-expanded={menuOpen}
-											>
-												<Icon name="i-lucide-ellipsis" class="size-[18px]" />
-											</button>
-											{#if menuOpen}
-												<div
-													class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
-													role="menu"
+										<!-- The overflow action uses the same far-right column as the page-level actions. -->
+										<div
+											class="absolute top-2.5 z-20 shrink-0"
+											style={item.read
+												? 'right:calc(0.625rem - clamp(1rem, 3vw, 1.5rem))'
+												: 'right:0.625rem'}
+										>
+											{@render notificationActions()}
+										</div>
+
+										<!-- The menu remains outside all row links. -->
+										{#snippet notificationActions()}
+											<div class="relative z-20 shrink-0">
+												<button
+													type="button"
+													onclick={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														popovers.toggle(menuId);
+													}}
+													class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
+														? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
+														: ''}"
+													aria-label="Notification actions"
+													aria-expanded={menuOpen}
 												>
-													{#if !item.read}
+													<Icon name="i-lucide-ellipsis" class="size-[18px]" />
+												</button>
+												{#if menuOpen}
+													<div
+														class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+														role="menu"
+													>
+														{#if !item.read}
+															<button
+																type="button"
+																role="menuitem"
+																onclick={() => {
+																	notifications.markRead(item.id);
+																	popovers.close();
+																}}
+																class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+															>
+																<Icon name="i-lucide-check" class="size-4 shrink-0" />
+																Mark as read
+															</button>
+														{/if}
+														<a
+															href={`/profile/${item.pubkey}`}
+															role="menuitem"
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon name="i-lucide-user" class="size-4 shrink-0" />
+															View profile
+														</a>
 														<button
 															type="button"
 															role="menuitem"
-															onclick={() => {
-																notifications.markRead(item.id);
-																popovers.close();
-															}}
+															onclick={() => copyTarget(item)}
 															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 														>
-															<Icon name="i-lucide-check" class="size-4 shrink-0" />
-															Mark as read
+															<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
+															{item.targetId ? 'Copy note id' : 'Copy profile id'}
 														</button>
-													{/if}
-													<a
-														href={`/profile/${item.pubkey}`}
-														role="menuitem"
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-user" class="size-4 shrink-0" />
-														View profile
-													</a>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => copyTarget(item)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
-														{item.targetId ? 'Copy note id' : 'Copy profile id'}
-													</button>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => viewRawEvent(item)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
-														View raw event
-													</button>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => muteType(item.type)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon
-															name={notifications.muted.has(item.type)
-																? 'i-lucide-bell-ring'
-																: 'i-lucide-bell-off'}
-															class="size-4 shrink-0"
-														/>
-														{notifications.muted.has(item.type)
-															? 'Unmute this type'
-															: 'Mute this type'}
-													</button>
-												</div>
-											{/if}
-										</div>
+														<button
+															type="button"
+															role="menuitem"
+															onclick={() => viewRawEvent(item)}
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
+															View raw event
+														</button>
+														<button
+															type="button"
+															role="menuitem"
+															onclick={() => muteType(item.type)}
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon
+																name={notifications.muted.has(item.type)
+																	? 'i-lucide-bell-ring'
+																	: 'i-lucide-bell-off'}
+																class="size-4 shrink-0"
+															/>
+															{notifications.muted.has(item.type)
+																? 'Unmute this type'
+																: 'Mute this type'}
+														</button>
+													</div>
+												{/if}
+											</div>
+										{/snippet}
 									</article>
 								{/each}
 							</div>

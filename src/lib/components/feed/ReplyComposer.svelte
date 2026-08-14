@@ -57,7 +57,9 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import GifPicker from './GifPicker.svelte';
-	import { feed } from '$lib/nostr/feed.svelte';
+	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
+	import PowCard from '$lib/components/ui/PowCard.svelte';
+	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
@@ -110,6 +112,14 @@
 	let attachments = $state<Attachment[]>([]);
 	let posting = $state(false);
 	let uploading = $state(false);
+	// NIP-13 Proof of Work (mirrors the main Composer via the shared PowCard).
+	let showPow = $state(untrack(() => powPrefs.state.showPanelByDefault));
+	let pow = $state(untrack(() => powPrefs.state.lastDifficulty));
+	let mining = $state(false);
+	let powProgress = $state<PowProgress | null>(null);
+	let mineController: AbortController | undefined;
+	/** Coarse submit phase for the send button. */
+	let postPhase = $state<'idle' | 'mining' | 'publishing'>('idle');
 	let textareaEl = $state<HTMLTextAreaElement | undefined>(undefined);
 	let imageInput = $state<HTMLInputElement | null>(null);
 	let videoInput = $state<HTMLInputElement | null>(null);
@@ -206,6 +216,10 @@
 			mentions = [{ name: initialMention.name, npub: npubEncode(initialMention.pubkey) }];
 		}
 		if (autofocus) setTimeout(() => textareaEl?.focus(), 0);
+		return () => {
+			// Unmounting mid-mining must not leak a running worker.
+			mineController?.abort();
+		};
 	});
 
 	function syncMention() {
@@ -316,6 +330,11 @@
 		}
 		if (e.key === 'Escape') {
 			e.preventDefault();
+			// Escape first stops an in-flight mining run; the composer stays.
+			if (mining) {
+				mineController?.abort();
+				return;
+			}
 			cancel();
 			return;
 		}
@@ -392,10 +411,21 @@
 		onCancel?.();
 	}
 
+	function cancelMining() {
+		mineController?.abort();
+	}
+
 	async function submit() {
 		if (!canPost || posting || !me) return;
 		posting = true;
+		mining = showPow && pow > 0;
+		const minedBits = pow;
+		const controller = new AbortController();
+		mineController = controller;
+		powProgress = null;
 		try {
+			// Let the browser paint the mining state before starting the worker.
+			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
 			const body = rewriteMentions(text, allMentions);
 			const reply = await feed.reply(parent, body, {
@@ -404,14 +434,29 @@
 					kind: a.kind,
 					mimeType: a.mimeType,
 					bytes: a.bytes
-				}))
+				})),
+				pow: showPow ? pow : 0,
+				onPowProgress: (progress) => (powProgress = progress),
+				onPhase: (phase) => (postPhase = phase),
+				signal: controller.signal
 			});
+			// Persist the difficulty actually used (0 when PoW was off).
+			powPrefs.remember(showPow ? pow : 0);
+			powPrefs.rememberPanelVisibility(showPow);
 			reset();
+			showPow = false;
+			pow = 0;
 			onSubmitted?.(reply);
-			toasts.success('Reply posted');
+			toasts.success(mining ? `Mined ${minedBits} bits · Reply posted` : 'Reply posted');
 		} catch (e) {
-			toasts.error((e as Error).message);
+			const message = (e as Error).message;
+			if (/cancelled/i.test(message)) toasts.info('Mining cancelled — nothing was posted');
+			else toasts.error(message);
 		} finally {
+			mineController = undefined;
+			powProgress = null;
+			postPhase = 'idle';
+			mining = false;
 			posting = false;
 		}
 	}
@@ -536,6 +581,10 @@
 			</p>
 		{/if}
 
+		{#if showPow}
+			<PowCard bind:pow {mining} progress={powProgress} compact oncancel={cancelMining} />
+		{/if}
+
 		<!-- Toolbar -->
 		<div class="mt-2 flex items-center justify-between gap-1.5">
 			<div class="flex items-center gap-0.5">
@@ -611,6 +660,23 @@
 					</div>
 				</Popover>
 
+				<button
+					type="button"
+					onclick={() => (showPow = !showPow)}
+					disabled={mining}
+					aria-label="Proof of Work"
+					aria-pressed={showPow}
+					title="Proof of Work"
+					class="grid size-8 place-items-center rounded-full transition disabled:pointer-events-none disabled:opacity-40 {showPow
+						? 'bg-primary-500/10 text-primary-600'
+						: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-primary-500'}"
+				>
+					<Icon
+						name={mining ? 'i-lucide-pickaxe' : 'i-lucide-shield-check'}
+						class="size-[17px] {mining ? 'animate-pulse' : ''}"
+					/>
+				</button>
+
 				<span
 					class="ml-1 hidden items-center gap-1 text-[10px] text-[var(--ui-text-dimmed)] sm:inline-flex"
 				>
@@ -661,12 +727,27 @@
 					onclick={() => void submit()}
 					disabled={!canPost}
 					class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:pointer-events-none disabled:opacity-40"
-					aria-label="Post reply"
-					title="Enter to send · Shift+Enter for new line"
+					aria-label={posting
+						? postPhase === 'mining'
+							? 'Mining reply'
+							: 'Publishing reply'
+						: 'Post reply'}
+					title={posting
+						? postPhase === 'mining'
+							? `Mining ${pow} bits — Esc to cancel`
+							: 'Publishing…'
+						: 'Enter to send · Shift+Enter for new line'}
 				>
 					<Icon
-						name={posting ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
-						class="size-4 {posting ? 'animate-spin' : ''}"
+						name={posting
+							? postPhase === 'mining'
+								? 'i-lucide-pickaxe'
+								: 'i-lucide-loader-circle'
+							: 'i-lucide-send-horizontal'}
+						class="size-4 {posting && postPhase !== 'mining' ? 'animate-spin' : ''} {posting &&
+						postPhase === 'mining'
+							? 'animate-pulse'
+							: ''}"
 					/>
 				</button>
 			</div>

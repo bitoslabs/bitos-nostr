@@ -835,7 +835,7 @@
 			{/if}
 			{#if note.pow}
 				<div class="mt-2">
-					<PowBadge bits={note.pow} compact={true} showLabel={true} />
+					<PowBadge bits={note.pow} showLabel={false} id={note.id} />
 				</div>
 			{/if}
 		</div>
@@ -1169,6 +1169,9 @@
 										>you</span
 									>
 								{/if}
+								{#if reply.pow}
+									<PowBadge bits={reply.pow} micro id={reply.id} />
+								{/if}
 								<time
 									class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
 									title={timeFull(reply.createdAt)}>{timeAgo(reply.createdAt)}</time
@@ -1252,6 +1255,9 @@
 															class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
 															>you</span
 														>
+													{/if}
+													{#if child.pow}
+														<PowBadge bits={child.pow} micro id={child.id} />
 													{/if}
 													<time
 														class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"

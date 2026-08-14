@@ -319,6 +319,23 @@
 		content: '';
 	}
 
+	/* Match the active-contact state in Messages: an unread activity gets a
+	   calm, full-row tinted surface and a type-colored edge, without card or
+	   rail lines. Keep its content aligned with the read rows. */
+	.notifications-list .post-card.notification-row--unread {
+		width: calc(100% + (2 * clamp(1rem, 3vw, 1.5rem)));
+		margin-inline: calc(-1 * clamp(1rem, 3vw, 1.5rem));
+		padding-inline: clamp(1rem, 3vw, 1.5rem);
+		background: color-mix(in oklab, var(--notification-accent) 9%, transparent);
+	}
+
+	/* The full-bleed unread row has already expanded to the rail edges, so its
+	   divider should sit on those edges rather than extending a second inset. */
+	.notifications-list .post-card.notification-row--unread::after {
+		left: 0;
+		right: 0;
+	}
+
 	/* Keep the feed composer divider closed against the same content edges as
 	   the sticky feed tabs. The post-card primitive has an explicit width, so
 	   compensate for the negative margins when making it full bleed. */

@@ -16,8 +16,9 @@
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
-	import HashViz from '$lib/components/ui/HashViz.svelte';
-	import { onMount } from 'svelte';
+	import PowCard from '$lib/components/ui/PowCard.svelte';
+	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
+	import { onMount, untrack } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import StoryRing from './StoryRing.svelte';
@@ -56,8 +57,9 @@
 	let pollOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
-	let showPow = $state(false);
-	let pow = $state(0);
+	// Start from the last difficulty the user actually published with.
+	let showPow = $state(untrack(() => powPrefs.state.showPanelByDefault));
+	let pow = $state(untrack(() => powPrefs.state.lastDifficulty));
 	let providerInitialized = $state(false);
 	let mention = $state<{ start: number; query: string } | null>(null);
 	let mentionIndex = $state(0);
@@ -93,18 +95,6 @@
 			? `${text.length.toLocaleString()} / ${SOFT_LIMIT.toLocaleString()}`
 			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
 	);
-	const powEffort = $derived(
-		pow === 0
-			? 'No extra work'
-			: pow <= 16
-				? 'Light work'
-				: pow <= 20
-					? 'Balanced work'
-					: pow <= 24
-						? 'Higher work'
-						: 'Heavy work'
-	);
-
 	const candidates = $derived.by(() => {
 		const map: Record<string, { pubkey: string; name: string; picture?: string; npub: string }> =
 			{};
@@ -248,22 +238,6 @@
 				? 'text-warm-500'
 				: 'text-primary-500'
 	);
-	// Mining telemetry: expected work, progress odds, ETA and a live nonce.
-	const expectedHashes = $derived(Math.pow(2, pow));
-	const miningPercent = $derived(
-		powProgress && expectedHashes > 0
-			? Math.min(99, (powProgress.hashes / expectedHashes) * 100)
-			: 0
-	);
-	const miningEtaMs = $derived.by(() => {
-		if (!powProgress || powProgress.hashrate <= 0) return 0;
-		return (Math.max(0, expectedHashes - powProgress.hashes) / powProgress.hashrate) * 1000;
-	});
-	const miningNonceHex = $derived(
-		powProgress ? Number.parseInt(powProgress.nonce, 10).toString(16).padStart(8, '0') : ''
-	);
-	const hashvizBits = $derived(mining && powProgress ? powProgress.best : pow);
-
 	const configuredProviders = $derived(MEDIA_PROVIDERS.filter((p) => media.isConfigured(p.id)));
 	const selectedProviderLabel = $derived(
 		providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)
@@ -408,19 +382,6 @@
 		mineController?.abort();
 	}
 
-	function formatHashrate(rate: number) {
-		return rate >= 1_000_000
-			? `${(rate / 1_000_000).toFixed(1)} MH/s`
-			: rate >= 1_000
-				? `${(rate / 1_000).toFixed(1)} kH/s`
-				: `${Math.max(1, Math.round(rate))} H/s`;
-	}
-
-	function formatDuration(ms: number) {
-		const total = Math.max(0, Math.round(ms / 1000));
-		return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-	}
-
 	async function submit() {
 		if (!canPost || posting) return;
 		posting = true;
@@ -441,6 +402,9 @@
 				onPhase: (phase) => (postPhase = phase),
 				signal: controller.signal
 			});
+			// Persist the difficulty actually used so the next composer starts there.
+			powPrefs.remember(showPow ? pow : 0);
+			powPrefs.rememberPanelVisibility(showPow);
 			text = '';
 			mentions = [];
 			mention = null;
@@ -466,6 +430,12 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
+		// Escape first stops an in-flight mining run (textarea stays readonly).
+		if (e.key === 'Escape' && mining) {
+			e.preventDefault();
+			cancelMining();
+			return;
+		}
 		if (mention && filteredMentions.length) {
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -586,96 +556,7 @@
 					</div>
 				{/if}
 				{#if showPow}
-					<div class="mt-3 rounded-xl border border-primary-500/15 bg-primary-500/5 p-3">
-						<div class="flex items-center justify-between gap-3">
-							<div>
-								<p
-									class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase"
-								>
-									Proof of Work
-								</p>
-								<p class="mt-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
-									{mining
-										? 'Mining your note… keep this tab open.'
-										: 'Mine a harder-to-spam note before publishing.'}
-								</p>
-							</div>
-							<div class="text-right">
-								<span class="block font-mono text-sm font-semibold text-primary-500"
-									>{pow} bits</span
-								>
-								{#if !mining}
-									<span class="text-[10px] text-[var(--ui-text-dimmed)]">{powEffort}</span>
-								{/if}
-							</div>
-							{#if mining}
-								<button
-									type="button"
-									onclick={cancelMining}
-									class="flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--ui-border-accented)] px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-[var(--tone-error-text)] hover:text-[var(--tone-error-text)] active:scale-95"
-								>
-									<Icon name="i-lucide-square" class="size-3" />
-									Cancel
-								</button>
-							{/if}
-						</div>
-						<input
-							type="range"
-							min="0"
-							max="30"
-							bind:value={pow}
-							class="pow-slider mt-2.5 w-full"
-							aria-label="Proof of Work difficulty"
-						/>
-						<HashViz bits={hashvizBits} {mining} class="mt-2.5" />
-						{#if mining && powProgress}
-							<div class="mt-2.5">
-								<div
-									class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-mono text-[10px] text-[var(--ui-text-dimmed)]"
-								>
-									<span>
-										Best <span class="font-semibold text-primary-500">{powProgress.best}/{pow}</span
-										>
-										bits · {formatHashrate(powProgress.hashrate)} · {formatDuration(
-											powProgress.elapsedMs
-										)} elapsed
-									</span>
-									<span>≈ {formatDuration(miningEtaMs)} left</span>
-								</div>
-								<div
-									class="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--ui-bg-muted)]"
-									role="progressbar"
-									aria-label="Mining progress"
-									aria-valuemin="0"
-									aria-valuemax="100"
-									aria-valuenow={Math.round(miningPercent)}
-								>
-									<div
-										class="h-full rounded-full bg-primary-500 transition-[width] duration-150 ease-out"
-										style="width:{miningPercent}%"
-									></div>
-								</div>
-								<div
-									class="mt-1.5 flex items-center justify-between font-mono text-[10px] text-[var(--ui-text-dimmed)]"
-								>
-									<span>{powProgress.hashes.toLocaleString()} hashes</span>
-									<span class="mining-nonce text-primary-500" aria-hidden="true"
-										>0x{miningNonceHex}</span
-									>
-								</div>
-							</div>
-						{/if}
-						{#if !mining}
-							<p class="mt-2 text-[10px] text-[var(--ui-text-dimmed)]">
-								Mining starts only after you post.
-							</p>
-						{/if}
-						{#if pow > 20}
-							<p class="mt-2 text-[10px] text-warm-500">
-								High difficulty may take noticeably longer to mine.
-							</p>
-						{/if}
-					</div>
+					<PowCard bind:pow {mining} progress={powProgress} oncancel={cancelMining} />
 				{/if}
 				{#if overSoftLimit}
 					<p
@@ -936,8 +817,8 @@
 						: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
 				>
 					<Icon
-						name={mining ? 'i-lucide-loader-circle' : 'i-lucide-shield-check'}
-						class="size-[18px] {mining ? 'animate-spin' : ''}"
+						name={mining ? 'i-lucide-pickaxe' : 'i-lucide-shield-check'}
+						class="size-[18px] {mining ? 'animate-pulse' : ''}"
 					/>
 				</button>
 			</div>

@@ -44,6 +44,7 @@
 		image,
 		kind = 1,
 		pow = 0,
+		eventId,
 		stats = {},
 		quote,
 		liked = false,
@@ -63,6 +64,8 @@
 		image?: string;
 		kind?: number;
 		pow?: number;
+		/** Optional hex event id — powers the PoW badge receipt. */
+		eventId?: string;
 		stats?: PostStats;
 		quote?: PostQuote;
 		liked?: boolean;
@@ -79,10 +82,7 @@
 </script>
 
 <article
-	class={cn(
-		'premium-card cursor-pointer border-x-0 border-t-0 p-3.5 px-4 transition-all',
-		cls
-	)}
+	class={cn('premium-card cursor-pointer border-x-0 border-t-0 p-3.5 px-4 transition-all', cls)}
 >
 	<div class="flex gap-3">
 		<HexAvatar
@@ -121,7 +121,7 @@
 			</div>
 
 			<!-- Body -->
-			<div class="whitespace-pre-wrap text-[15px] leading-relaxed text-[var(--ui-text)]">
+			<div class="text-[15px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]">
 				{content}
 			</div>
 
@@ -150,7 +150,7 @@
 
 			{#if pow > 0}
 				<div class="mt-2.5 w-fit">
-					<PowBadge bits={pow} />
+					<PowBadge bits={pow} id={eventId} />
 				</div>
 			{/if}
 
@@ -196,7 +196,10 @@
 							: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
 					)}
 				>
-					<Icon name={liked ? 'i-lucide-heart' : 'i-lucide-heart'} class="size-4 {liked ? 'fill-current' : ''}" />
+					<Icon
+						name={liked ? 'i-lucide-heart' : 'i-lucide-heart'}
+						class="size-4 {liked ? 'fill-current' : ''}"
+					/>
 					<span>{stats.likes ?? 0}</span>
 				</button>
 				<button

@@ -835,7 +835,18 @@ class FeedStore {
 	async reply(
 		note: FeedNote,
 		content: string,
-		options: { attachments?: PostMediaAttachment[]; extraPubkeys?: string[] } = {}
+		options: {
+			attachments?: PostMediaAttachment[];
+			extraPubkeys?: string[];
+			/** NIP-13 difficulty (leading zero bits) to mine before publishing. */
+			pow?: number;
+			/** Live stats while the NIP-13 worker mines. */
+			onPowProgress?: (progress: PowProgress) => void;
+			/** Coarse phase updates for button / status labels. */
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			/** Aborts mining (worker is terminated, nothing is published). */
+			signal?: AbortSignal;
+		} = {}
 	): Promise<FeedNote> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -882,22 +893,43 @@ class FeedStore {
 			if (eventId !== rootId && eventId !== note.id) tags.push(['e', eventId]);
 		}
 
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.TEXT_NOTE,
-				content: body,
-				created_at: Math.floor(Date.now() / 1000),
-				tags
-			},
-			hexToBytes(id.sk)
-		);
+		// NIP-13 mining is opt-in; ordinary replies remain immediate.
+		let unsigned: UnsignedEvent = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content: body,
+			created_at: Math.floor(Date.now() / 1000),
+			tags
+		};
+		if (options.pow && options.pow > 0) {
+			options.onPhase?.('mining');
+			unsigned = await minePowAsync(unsigned, options.pow, {
+				onProgress: options.onPowProgress,
+				signal: options.signal
+			});
+		}
+		options.onPhase?.('publishing');
+		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return toFeedNote(event);
 	}
 
 	/** React to a note with a ❤️ (kind 7). */
-	async react(note: FeedNote, emoji = '❤️') {
+	async react(
+		note: FeedNote,
+		emoji = '❤️',
+		options: {
+			/**
+			 * Optional NIP-13 difficulty. Reactions stay instant by default
+			 * (pow 0); pass a value only when a relay mandates a minimum
+			 * difficulty (NIP-11 `min_pow_difficulty`).
+			 */
+			pow?: number;
+			onPowProgress?: (progress: PowProgress) => void;
+			signal?: AbortSignal;
+		} = {}
+	) {
 		if (!browser) return;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
@@ -924,15 +956,20 @@ class FeedStore {
 			this.removeMyReaction(note.id, emoji);
 			return;
 		}
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.REACTION,
-				content: emoji,
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ['e', note.id, '', note.replyTo ? 'reply' : ''], ['p', note.pubkey]]
-			},
-			hexToBytes(id.sk)
-		);
+		let unsigned: UnsignedEvent = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.REACTION,
+			content: emoji,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [...clientTag(), ['e', note.id, '', note.replyTo ? 'reply' : ''], ['p', note.pubkey]]
+		};
+		if (options.pow && options.pow > 0) {
+			unsigned = await minePowAsync(unsigned, options.pow, {
+				onProgress: options.onPowProgress,
+				signal: options.signal
+			});
+		}
+		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestReaction(event);
 	}
