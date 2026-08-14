@@ -15,6 +15,8 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
+	import { wallet } from '$lib/nostr/wallet.svelte';
 	import { algorithmPreferences, interactionProfile } from '$lib/algorithm';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -35,6 +37,8 @@
 	import IncomingCallOverlay from '$lib/components/calls/IncomingCallOverlay.svelte';
 	import NavRail from '$lib/components/shell/NavRail.svelte';
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
+	import NetworkBar from '$lib/components/shell/NetworkBar.svelte';
+	import AppRightRail from '$lib/components/shell/AppRightRail.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
@@ -184,6 +188,7 @@
 		notifications.clear();
 		bookmarks.clear();
 		callAlerts.clear();
+		wallet.clear();
 	}
 
 	function shouldAutoRestoreSettings(pubkey: string, previousPubkey: string | null) {
@@ -225,6 +230,7 @@
 		preferences.apply();
 		preferences.startSystemWatcher();
 		media.load();
+		walletPrefs.load();
 		profiles.load();
 		blocks.load();
 		mutes.load();
@@ -256,6 +262,8 @@
 			feedPreferences.reload();
 			callSettings.reload();
 			relays.load();
+			walletPrefs.load();
+			wallet.disconnectWallet();
 		}
 		if (pk) {
 			// Always revalidate the active account's own metadata. This fixes imports
@@ -327,8 +335,24 @@
 
 	const hasIdentity = $derived(identity.ready && !!identity.current);
 	const isPublicRoute = $derived(isStandalonePublicRoute(page.url.pathname));
+	const isShowcase = $derived(page.url.pathname === '/pulse');
 	const routeNeedsAuth = $derived(isProtectedRoute(page.url.pathname));
 	const authMessage = $derived(authMessageForPath(page.url.pathname));
+
+	// Premium 3-column shell (docs/ui.html): the right rail shows on content
+	// routes. Multi-pane routes (messages, settings, reels) own their own layout
+	// and opt out so their internal columns get the full center width. Home uses
+	// the same consolidated AppRightRail as the rest of the content routes.
+	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
+	const showRail = $derived(
+		hasIdentity &&
+		!railHiddenPrefixes.some(
+				(p) => page.url.pathname === p || page.url.pathname.startsWith(`${p}/`)
+			)
+	);
+	const relayTotal = $derived(relays.list.length);
+	const relayConnected = $derived(relays.list.filter((r) => r.status === 'ok').length);
+	const relayChecking = $derived(relays.list.some((r) => r.status === 'connecting'));
 
 	// All authenticated routes share a centered cluster with the desktop
 	// navigation rail; individual pages control their own content treatment.
@@ -353,25 +377,33 @@
 			class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
 		></div>
 	</div>
+{:else if isShowcase}
+	<!-- Full-bleed premium UI showcase — owns the whole viewport. -->
+	{@render children?.()}
 {:else if isPublicRoute}
 	<PublicShell>
 		{@render children?.()}
 	</PublicShell>
 {:else}
-	<div class="flex h-screen w-full justify-center overflow-hidden">
+	<!-- Premium shell (docs/ui.html): film grain, a top
+	     throughput bar, and a responsive nav · main · right-rail grid. -->
+	<div class="grain" aria-hidden="true"></div>
+	<NetworkBar connected={relayConnected} total={relayTotal} checking={relayChecking} />
+
+	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
 		<div
-			class="flex w-full max-w-[var(--ui-container)] overflow-hidden lg:border-x lg:border-[var(--ui-border-muted)]"
+			class="flex w-full max-w-[var(--ui-container)] overflow-hidden"
 		>
-			<!-- Desktop nav rail (Pulse icon rail) -->
+			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
-				class="z-20 hidden w-[76px] shrink-0 border-r border-[var(--ui-border-muted)]  lg:flex lg:flex-col"
+				class="z-20 hidden w-[260px] shrink-0 border-r border-[var(--ui-border-muted)] lg:flex lg:flex-col"
 			>
 				<NavRail />
 			</aside>
 
-			<!-- Main view (each route renders its own Pulse layout) -->
+			<!-- Main view (each route renders its own premium layout) -->
 			<main
-				class="min-w-0 flex-1 bg-[var(--ui-bg)] pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
+				class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
 			>
 				{#if routeNeedsAuth && !hasIdentity}
 					<AuthRequired title={authMessage.title} description={authMessage.description} />
@@ -379,6 +411,15 @@
 					{@render children?.()}
 				{/if}
 			</main>
+
+			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
+			{#if showRail}
+				<div
+					class="hidden w-[340px] shrink-0 overflow-y-auto xl:block"
+				>
+					<AppRightRail showTrending={page.url.pathname !== '/notifications'} />
+				</div>
+			{/if}
 		</div>
 	</div>
 

@@ -70,7 +70,7 @@
 	<button
 		type="button"
 		onclick={() => openAuthor(author)}
-		class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-2xl bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
+		class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-[18px] bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
 	>
 		{#if latestSlide(author)?.imageUrl}
 			<img
@@ -96,8 +96,8 @@
 
 		<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
 
-		<div class="absolute top-3 left-3 mask-squircle p-[2.5px] {ringClass(author)}">
-			<div class="mask-squircle bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
+		<div class="story-ring-frame hex-clip absolute top-3 left-3 p-[3px] {ringClass(author)}">
+			<div class="story-ring-inner hex-clip bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">
 				<Avatar
 					pubkey={author.pubkey}
 					name={nameFor(author.pubkey)}

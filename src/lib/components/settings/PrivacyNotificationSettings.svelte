@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import type { SettingsSectionKey } from '$lib/settings/sections';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { blocks } from '$lib/stores/blocks.svelte';
@@ -71,8 +72,7 @@
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
 		Control who can see and interact with your content
 	</p>
-	<div class="post-card mb-5 p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Account privacy</h3>
+	<SectionCard title="Account privacy" class="mb-5">
 		<div class="space-y-3">
 			{#each privacyItems as [k, title, desc] (k)}
 				<div
@@ -94,9 +94,8 @@
 				</div>
 			{/each}
 		</div>
-	</div>
-	<div class="post-card p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Interactions</h3>
+	</SectionCard>
+	<SectionCard title="Interactions">
 		<div class="space-y-3">
 			<div class="flex items-center justify-between">
 				<div>
@@ -144,9 +143,8 @@
 				></button>
 			</div>
 		</div>
-	</div>
-	<div class="post-card mt-5 p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Blocked users</h3>
+	</SectionCard>
+	<SectionCard title="Blocked users" class="mt-5">
 		{#if blockedPubkeys.length}
 			<div class="space-y-3">
 				{#each blockedPubkeys as pubkey (pubkey)}
@@ -177,7 +175,7 @@
 		{:else}
 			<p class="text-[13px] text-[var(--ui-text-muted)]">No blocked users.</p>
 		{/if}
-	</div>
+	</SectionCard>
 {/if}
 
 {#if section === 'notifications'}
@@ -185,8 +183,7 @@
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
 		Choose what you want to be notified about
 	</p>
-	<div class="post-card mb-5 p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Push notifications</h3>
+	<SectionCard title="Push notifications" class="mb-5">
 		<div class="space-y-3">
 			{#each notificationItems as [k, ic, col, title, desc] (k)}
 				<div
@@ -213,5 +210,5 @@
 				</div>
 			{/each}
 		</div>
-	</div>
+	</SectionCard>
 {/if}

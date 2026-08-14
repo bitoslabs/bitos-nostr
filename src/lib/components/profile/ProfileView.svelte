@@ -467,14 +467,10 @@
 			class="relative -mt-12 mb-4 flex flex-col items-center gap-4 text-center sm:-mt-16 sm:flex-row sm:items-end sm:text-left"
 		>
 			<div class="relative">
-				<StoryRing {pubkey} rounded="mask-squircle">
-					<Avatar
-						{pubkey}
-						name={displayName}
-						picture={profile?.picture}
-						size={104}
-						class="mask-squircle shadow-xl ring-4 ring-[var(--ui-bg)]"
-					/>
+				<StoryRing {pubkey} rounded="hex-clip">
+					<div class="hex-clip bg-[var(--ui-bg)] p-1">
+						<Avatar {pubkey} name={displayName} picture={profile?.picture} size={104} shape="hex" />
+					</div>
 				</StoryRing>
 			</div>
 
@@ -882,7 +878,7 @@
 				<MediaGallery {notes} />
 			</div>
 		{:else if visibleNotes.length}
-			<div class="space-y-4 pb-8">
+			<div class="feed-note-list pb-8">
 				{#each visibleNotes as note, i (note.id)}
 					{#if activeTab === 'reposts' || activeTab === 'pinned'}
 						{#if activeTab === 'reposts'}

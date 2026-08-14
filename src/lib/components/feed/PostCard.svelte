@@ -44,6 +44,7 @@
 	import NostrEventPreview from './NostrEventPreview.svelte';
 	import Poll from './Poll.svelte';
 	import NoteZapDialog from './NoteZapDialog.svelte';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 
 	type MediaAttachment = {
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
@@ -60,7 +61,8 @@
 		onNoteHide,
 		rankTag,
 		onExplain,
-		onInteract
+		onInteract,
+		flat = false
 	}: {
 		note: FeedNote;
 		index?: number;
@@ -69,6 +71,8 @@
 		rankTag?: { label: string; icon: string; color: string };
 		onExplain?: () => void;
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
+		/** Use the surrounding list's dividers instead of an individual card surface. */
+		flat?: boolean;
 	} = $props();
 
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
@@ -151,6 +155,7 @@
 	let replyFocusTick = $state(0);
 	let showAllReplies = $state(false);
 	let refreshingComments = $state(false);
+	let commentsLoaded = $state(false);
 	let replyingToCommentId = $state('');
 	let optimisticReplies = $state<FeedNote[]>([]);
 	let failedMedia = $state<Record<string, boolean>>({});
@@ -292,13 +297,24 @@
 		};
 	}
 
-	function startReply() {
+	async function startReply() {
 		if (!identity.current) {
 			toasts.error('Create or import a key first');
 			return;
 		}
 		replyOpen = true;
 		replyFocusTick++;
+		if (!commentsLoaded && !refreshingComments) {
+			refreshingComments = true;
+			try {
+				await feed.refreshReplies(note.id);
+				commentsLoaded = true;
+			} catch (e) {
+				toasts.error((e as Error).message || 'Could not load comments');
+			} finally {
+				refreshingComments = false;
+			}
+		}
 	}
 
 	function startCommentReply(reply: FeedNote) {
@@ -581,6 +597,7 @@
 		refreshingComments = true;
 		try {
 			await feed.refreshReplies(note.id);
+			commentsLoaded = true;
 			toasts.success('Comments refreshed');
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not refresh comments');
@@ -606,16 +623,21 @@
 
 <article
 	bind:this={articleEl}
-	class="post-card fade-up relative overflow-visible"
+	class="{flat ? '' : 'post-card'} fade-up relative flex gap-3 overflow-visible px-4 pt-4"
 	style="animation-delay:{index * 0.05}s"
 >
-	<!-- Author header -->
-	<header class="flex items-center justify-between gap-2 p-4 pb-3">
-		<a href={`/profile/${note.pubkey}`} class="flex min-w-0 flex-1 items-center gap-3">
-			<StoryRing pubkey={note.pubkey} interactive={false}>
-				<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
-			</StoryRing>
-			<div class="min-w-0 flex-1 leading-tight">
+	<!-- Avatar rail: X-style layout keeps body + media aligned under the name,
+		not under the avatar. -->
+	<a href={`/profile/${note.pubkey}`} class="shrink-0" aria-label={displayName}>
+		<StoryRing pubkey={note.pubkey} interactive={false}>
+			<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+		</StoryRing>
+	</a>
+	<!-- Content column: name, body, media and actions all share one left edge. -->
+	<div class="min-w-0 flex-1">
+		<!-- Author header -->
+		<header class="flex items-start justify-between gap-2">
+			<a href={`/profile/${note.pubkey}`} class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
 					{#if profile?.nip05}<Icon
@@ -641,669 +663,711 @@
 						>
 					{/if}
 				</p>
-			</div>
-		</a>
-		{#if rankTag}
-			<button
-				type="button"
-				onclick={(e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					onExplain?.();
-				}}
-				class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold transition hover:border-primary-500/40 hover:bg-primary-500/5 sm:inline-flex"
-				style="color:{rankTag.color}"
-				title="Why am I seeing this?"
-			>
-				<Icon name={rankTag.icon} class="size-3" />
-				{rankTag.label}
-			</button>
-		{/if}
-		<div class="shrink-0">
-			<Popover
-				id={menuId}
-				placement="bottom-end"
-				width="auto"
-				class="w-60"
-				label="Post actions"
-				triggerClass="grid size-9 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)]"
-				triggerActiveClass="bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]"
-			>
-				{#snippet trigger()}
-					<Icon name="i-lucide-ellipsis" class="size-5" />
-				{/snippet}
+			</a>
 
-				<MenuItem href={`/messages?to=${note.pubkey}`} icon="i-lucide-message-circle">
-					Message author
-				</MenuItem>
-				<MenuItem icon={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'} onclick={toggleSaved}>
-					{saved ? 'Unsave note' : 'Save note'}
-				</MenuItem>
-				<MenuItem icon="i-lucide-link" onclick={() => copyText(noteLink, 'Note link')}>
-					Copy note link
-				</MenuItem>
-				<MenuItem icon="i-lucide-fingerprint" onclick={() => copyText(note.id, 'Note ID')}>
-					Copy note ID
-				</MenuItem>
-				<MenuItem icon="i-lucide-text" onclick={() => copyText(note.content, 'Note text')}>
-					Copy note text
-				</MenuItem>
-				{#if firstAttachment}
-					<MenuItem icon="i-lucide-external-link" onclick={openAttachment}>
-						Open attachment
+			<div class="flex shrink-0 items-center gap-1">
+				{#if rankTag}
+					<button
+						type="button"
+						onclick={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							onExplain?.();
+						}}
+						class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold transition hover:border-primary-500/40 hover:bg-primary-500/5 sm:inline-flex"
+						style="color:{rankTag.color}"
+						title="Why am I seeing this?"
+					>
+						<Icon name={rankTag.icon} class="size-3" />
+						{rankTag.label}
+					</button>
+				{/if}
+				<span
+					class="rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)]"
+					title="Nostr event kind">kind:1</span
+				>
+				<button
+					type="button"
+					onclick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						void copyText(note.id, 'Note ID');
+					}}
+					class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+					aria-label="Copy event fingerprint"
+					title="Copy event fingerprint"
+				>
+					<Icon name="i-lucide-fingerprint" class="size-4" />
+				</button>
+				<Popover
+					id={menuId}
+					placement="bottom-end"
+					width="auto"
+					class="w-60"
+					label="Post actions"
+					triggerClass="grid size-9 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)]"
+					triggerActiveClass="bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]"
+				>
+					{#snippet trigger()}
+						<Icon name="i-lucide-ellipsis" class="size-5" />
+					{/snippet}
+
+					<MenuItem href={`/messages?to=${note.pubkey}`} icon="i-lucide-message-circle">
+						Message author
 					</MenuItem>
 					<MenuItem
-						icon="i-lucide-image"
-						onclick={() => copyText(firstAttachment.url, 'Attachment URL')}
+						icon={saved ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
+						onclick={toggleSaved}
 					>
-						Copy attachment URL
+						{saved ? 'Unsave note' : 'Save note'}
 					</MenuItem>
-				{/if}
-				<MenuItem icon="i-lucide-user-round" onclick={() => copyText(authorNpub, 'Author npub')}>
-					Copy author npub
-				</MenuItem>
-				<MenuItem icon="i-lucide-braces" onclick={showRaw}>View raw note</MenuItem>
-
-				<MenuDivider />
-
-				<MenuItem icon="i-lucide-thumbs-down" onclick={notInterested}>Not interested</MenuItem>
-				{#if !isMe}
-					<MenuItem
-						icon={interactionProfile.isAuthorMuted(note.pubkey)
-							? 'i-lucide-eye'
-							: 'i-lucide-eye-off'}
-						onclick={toggleMuteAuthor}
-					>
-						{interactionProfile.isAuthorMuted(note.pubkey)
-							? `Show more from ${displayName}`
-							: `Show less from ${displayName}`}
+					<MenuItem icon="i-lucide-link" onclick={() => copyText(noteLink, 'Note link')}>
+						Copy note link
 					</MenuItem>
-				{/if}
-				{#each extractTags(note).slice(0, 3) as tag (tag)}
-					{#if interactionProfile.isTagMuted(tag)}
-						<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
-							Show more about #{tag}
+					<MenuItem icon="i-lucide-fingerprint" onclick={() => copyText(note.id, 'Note ID')}>
+						Copy note ID
+					</MenuItem>
+					<MenuItem icon="i-lucide-text" onclick={() => copyText(note.content, 'Note text')}>
+						Copy note text
+					</MenuItem>
+					{#if firstAttachment}
+						<MenuItem icon="i-lucide-external-link" onclick={openAttachment}>
+							Open attachment
 						</MenuItem>
+						<MenuItem
+							icon="i-lucide-image"
+							onclick={() => copyText(firstAttachment.url, 'Attachment URL')}
+						>
+							Copy attachment URL
+						</MenuItem>
+					{/if}
+					<MenuItem icon="i-lucide-user-round" onclick={() => copyText(authorNpub, 'Author npub')}>
+						Copy author npub
+					</MenuItem>
+					<MenuItem icon="i-lucide-braces" onclick={showRaw}>View raw note</MenuItem>
+
+					<MenuDivider />
+
+					<MenuItem icon="i-lucide-thumbs-down" onclick={notInterested}>Not interested</MenuItem>
+					{#if !isMe}
+						<MenuItem
+							icon={interactionProfile.isAuthorMuted(note.pubkey)
+								? 'i-lucide-eye'
+								: 'i-lucide-eye-off'}
+							onclick={toggleMuteAuthor}
+						>
+							{interactionProfile.isAuthorMuted(note.pubkey)
+								? `Show more from ${displayName}`
+								: `Show less from ${displayName}`}
+						</MenuItem>
+					{/if}
+					{#each extractTags(note).slice(0, 3) as tag (tag)}
+						{#if interactionProfile.isTagMuted(tag)}
+							<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
+								Show more about #{tag}
+							</MenuItem>
+						{:else}
+							<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
+								Show less about #{tag}
+							</MenuItem>
+						{/if}
+					{/each}
+
+					<MenuDivider />
+
+					<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
+					{#if !isMe}
+						<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
+						<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>Block author</MenuItem
+						>
 					{:else}
-						<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
-							Show less about #{tag}
+						<MenuItem tone="danger" icon="i-lucide-trash-2" onclick={askDeleteNote}>
+							Delete note
 						</MenuItem>
+					{/if}
+				</Popover>
+			</div>
+		</header>
+
+		<!-- Body -->
+		<div class="pt-1.5 pb-3">
+			<div class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
+				{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
+					{#if token.type === 'text'}
+						{token.value}
+					{:else if token.type === 'hashtag'}
+						<a
+							href={`/?tag=${encodeURIComponent(token.tag)}`}
+							class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
+						>
+							{token.value}
+						</a>
+					{:else if token.type === 'nostr'}
+						{#if isEventReference(token.value)}
+							<NostrEventPreview value={token.value} />
+						{:else}
+							<MentionLink value={token.value} />
+						{/if}
+					{:else}
+						<a
+							href={token.value}
+							target="_blank"
+							rel="noreferrer"
+							class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
+						>
+							{token.host}
+						</a>
 					{/if}
 				{/each}
+			</div>
+			{#if isLong}
+				<button
+					type="button"
+					onclick={() => (expanded = !expanded)}
+					class="mt-2 text-[13px] font-bold text-primary-500 transition hover:text-primary-600"
+				>
+					{expanded ? 'Show less' : 'Show more'}
+				</button>
+			{/if}
 
-				<MenuDivider />
-
-				<MenuItem icon="i-lucide-eye-off" onclick={hideNote}>Hide note</MenuItem>
-				{#if !isMe}
-					<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
-					<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>Block author</MenuItem>
-				{:else}
-					<MenuItem tone="danger" icon="i-lucide-trash-2" onclick={askDeleteNote}>
-						Delete note
-					</MenuItem>
-				{/if}
-			</Popover>
+			{#if note.poll}
+				<Poll {note} onVoted={onNoteChange} />
+			{/if}
+			{#if note.pow}
+				<div class="mt-2">
+					<PowBadge bits={note.pow} showLabel={false} id={note.id} />
+				</div>
+			{/if}
 		</div>
-	</header>
 
-	<!-- Body -->
-	<div class="px-4 pb-3">
-		<div class="text-[14.5px] leading-relaxed break-words whitespace-pre-wrap">
-			{#each contentTokens as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
-				{#if token.type === 'text'}
-					{token.value}
-				{:else if token.type === 'hashtag'}
-					<a
-						href={`/?tag=${encodeURIComponent(token.tag)}`}
-						class="font-bold text-primary-500 transition hover:text-primary-600 hover:underline"
-					>
-						{token.value}
-					</a>
-				{:else if token.type === 'nostr'}
-					{#if isEventReference(token.value)}
-						<NostrEventPreview value={token.value} />
-					{:else}
-						<MentionLink value={token.value} />
-					{/if}
-				{:else}
-					<a
-						href={token.value}
-						target="_blank"
-						rel="noreferrer"
-						class="font-semibold text-accent-500 transition hover:text-accent-600 hover:underline"
-					>
-						{token.host}
-					</a>
-				{/if}
-			{/each}
-		</div>
-		{#if isLong}
-			<button
-				type="button"
-				onclick={() => (expanded = !expanded)}
-				class="mt-2 text-[13px] font-bold text-primary-500 transition hover:text-primary-600"
+		{#if mediaAttachments.length}
+			<div
+				class="mb-3 grid gap-0.5 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaGridClass(
+					visibleMediaAttachments.length
+				)}"
+				style={mediaGridStyle(visibleMediaAttachments.length)}
 			>
-				{expanded ? 'Show less' : 'Show more'}
-			</button>
-		{/if}
-
-		{#if note.poll}
-			<Poll {note} onVoted={onNoteChange} />
-		{/if}
-	</div>
-
-	{#if mediaAttachments.length}
-		<div
-			class="mx-4 mb-3 grid gap-0.5 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] {mediaGridClass(
-				visibleMediaAttachments.length
-			)}"
-			style={mediaGridStyle(visibleMediaAttachments.length)}
-		>
-			{#each visibleMediaAttachments as media, mediaIndex (media.url)}
-				{@const tileClass = mediaTileClass(mediaIndex, visibleMediaAttachments.length)}
-				{@const contentClass = mediaContentClass(visibleMediaAttachments.length)}
-				{@const showMoreOverlay =
-					hiddenMediaCount > 0 && mediaIndex === visibleMediaAttachments.length - 1}
-				{#if media.type === 'image'}
-					{#if failedMedia[media.url]}
+				{#each visibleMediaAttachments as media, mediaIndex (media.url)}
+					{@const tileClass = mediaTileClass(mediaIndex, visibleMediaAttachments.length)}
+					{@const contentClass = mediaContentClass(visibleMediaAttachments.length)}
+					{@const showMoreOverlay =
+						hiddenMediaCount > 0 && mediaIndex === visibleMediaAttachments.length - 1}
+					{#if media.type === 'image'}
+						{#if failedMedia[media.url]}
+							<a
+								href={media.url}
+								target="_blank"
+								rel="noreferrer"
+								class="{tileClass} flex min-h-32 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+							>
+								<span
+									class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
+								>
+									<Icon name="i-lucide-image-off" class="size-5" />
+								</span>
+								<span class="min-w-0">
+									<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
+										Open image
+									</span>
+									<span class="block truncate text-[12px] text-[var(--ui-text-muted)]"
+										>{media.url}</span
+									>
+								</span>
+							</a>
+						{:else if shouldHideImage(media.url)}
+							<div class="{tileClass} relative block bg-black">
+								<img
+									src={media.url}
+									alt="Blurred sensitive attachment"
+									loading="lazy"
+									referrerpolicy="no-referrer"
+									onerror={() => markMediaFailed(media.url)}
+									class="{contentClass} scale-105 object-cover blur-2xl saturate-50 transition"
+								/>
+								<button
+									type="button"
+									class="absolute inset-0 z-5 grid place-items-center bg-black/16 p-2 text-center text-white"
+									onclick={() => revealMedia(media.url)}
+									aria-label="Show sensitive media"
+								>
+									<span
+										class="w-full max-w-[11rem] rounded-[18px] border border-white/15 bg-white/10 px-3 py-2 shadow-lg backdrop-blur-sm sm:max-w-48"
+									>
+										<span
+											class="flex items-center justify-center gap-2 text-[11px] font-bold text-white"
+										>
+											<Icon name="i-lucide-eye-off" class="size-4" />
+											<span>View</span>
+										</span>
+									</span>
+								</button>
+							</div>
+						{:else}
+							<button
+								type="button"
+								class="{tileClass} group relative block w-full bg-black"
+								onclick={() => previewImage(media.url)}
+							>
+								<img
+									src={media.url}
+									alt="Note attachment"
+									loading="lazy"
+									referrerpolicy="no-referrer"
+									onerror={() => markMediaFailed(media.url)}
+									class="{contentClass} object-cover transition group-hover:scale-[1.02]"
+								/>
+								<span
+									class="absolute right-3 bottom-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white opacity-0 transition group-hover:opacity-100"
+								>
+									Preview
+								</span>
+								{#if showMoreOverlay}
+									<span
+										class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+									>
+										+{hiddenMediaCount}
+									</span>
+								{/if}
+							</button>
+						{/if}
+					{:else if media.type === 'video'}
+						<div class="{tileClass} relative overflow-hidden bg-black">
+							<!-- svelte-ignore a11y_media_has_caption -->
+							<video
+								use:trackFeedVideo
+								src={media.url}
+								controls={!shouldHideVideo(media.url)}
+								preload="metadata"
+								playsinline
+								class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
+									? ''
+									: 'scale-105 blur-2xl saturate-50'}"
+							></video>
+							{#if !shouldHideVideo(media.url)}
+								<div
+									class="pointer-events-none absolute top-3 left-3 rounded-full bg-black/55 p-2 text-white shadow-lg"
+								>
+									<Icon name="i-lucide-play" class="size-4" />
+								</div>
+							{/if}
+							{#if showMoreOverlay}
+								<div
+									class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
+								>
+									+{hiddenMediaCount}
+								</div>
+							{/if}
+							{#if shouldHideVideo(media.url)}
+								<button
+									type="button"
+									class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-3 text-center text-white"
+									onclick={() => revealMedia(media.url)}
+									aria-label="Show sensitive video"
+								>
+									<span
+										class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+									>
+										<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
+										<span class="block text-[13px] font-bold">Sensitive video</span>
+										{#if privacyNotificationSettings.state.sensitiveReason}
+											<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
+										{/if}
+										<span
+											class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
+										>
+											View
+										</span>
+									</span>
+								</button>
+							{/if}
+						</div>
+					{:else if media.type === 'audio'}
+						<div class="{tileClass} flex min-h-28 flex-col justify-center gap-3 p-4">
+							<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
+								<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
+								<span class="truncate">{media.host}</span>
+							</div>
+							<audio src={media.url} controls class="w-full"></audio>
+						</div>
+					{:else}
 						<a
 							href={media.url}
 							target="_blank"
 							rel="noreferrer"
-							class="{tileClass} flex min-h-32 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
+							class="{tileClass} flex min-h-28 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
 						>
 							<span
 								class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
 							>
-								<Icon name="i-lucide-image-off" class="size-5" />
+								<Icon name="i-lucide-external-link" class="size-5" />
 							</span>
 							<span class="min-w-0">
 								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
-									Open image
+									{media.host}
 								</span>
 								<span class="block truncate text-[12px] text-[var(--ui-text-muted)]"
 									>{media.url}</span
 								>
 							</span>
 						</a>
-					{:else if shouldHideImage(media.url)}
-						<div class="{tileClass} relative block bg-black">
-							<img
-								src={media.url}
-								alt="Blurred sensitive attachment"
-								loading="lazy"
-								referrerpolicy="no-referrer"
-								onerror={() => markMediaFailed(media.url)}
-								class="{contentClass} scale-105 object-cover blur-2xl saturate-50 transition"
-							/>
-							<button
-								type="button"
-								class="absolute inset-0 z-5 grid place-items-center bg-black/16 p-2 text-center text-white"
-								onclick={() => revealMedia(media.url)}
-								aria-label="Show sensitive media"
-							>
-								<span
-									class="w-full max-w-[11rem] rounded-[18px] border border-white/15 bg-white/10 px-3 py-2 shadow-lg backdrop-blur-sm sm:max-w-48"
-								>
-									<span
-										class="flex items-center justify-center gap-2 text-[11px] font-bold text-white"
-									>
-										<Icon name="i-lucide-eye-off" class="size-4" />
-										<span>View</span>
-									</span>
-								</span>
-							</button>
-						</div>
-					{:else}
-						<button
-							type="button"
-							class="{tileClass} group relative block w-full bg-black"
-							onclick={() => previewImage(media.url)}
-						>
-							<img
-								src={media.url}
-								alt="Note attachment"
-								loading="lazy"
-								referrerpolicy="no-referrer"
-								onerror={() => markMediaFailed(media.url)}
-								class="{contentClass} object-cover transition group-hover:scale-[1.02]"
-							/>
-							<span
-								class="absolute right-3 bottom-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white opacity-0 transition group-hover:opacity-100"
-							>
-								Preview
-							</span>
-							{#if showMoreOverlay}
-								<span
-									class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
-								>
-									+{hiddenMediaCount}
-								</span>
-							{/if}
-						</button>
 					{/if}
-				{:else if media.type === 'video'}
-					<div class="{tileClass} relative overflow-hidden bg-black">
-						<!-- svelte-ignore a11y_media_has_caption -->
-						<video
-							use:trackFeedVideo
-							src={media.url}
-							controls={!shouldHideVideo(media.url)}
-							preload="metadata"
-							playsinline
-							class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
-								? ''
-								: 'scale-105 blur-2xl saturate-50'}"
-						></video>
-						{#if !shouldHideVideo(media.url)}
-							<div
-								class="pointer-events-none absolute top-3 left-3 rounded-full bg-black/55 p-2 text-white shadow-lg"
-							>
-								<Icon name="i-lucide-play" class="size-4" />
-							</div>
-						{/if}
-						{#if showMoreOverlay}
-							<div
-								class="absolute inset-0 grid place-items-center bg-black/55 text-3xl font-extrabold text-white"
-							>
-								+{hiddenMediaCount}
-							</div>
-						{/if}
-						{#if shouldHideVideo(media.url)}
-							<button
-								type="button"
-								class="absolute inset-0 z-5 grid place-items-center bg-black/18 p-3 text-center text-white"
-								onclick={() => revealMedia(media.url)}
-								aria-label="Show sensitive video"
-							>
+				{/each}
+			</div>
+		{/if}
+
+		<!-- Reactions summary -->
+		{#if reactionCount > 0 || visibleZapCount > 0 || note.repostCount > 0}
+			<div
+				class="flex items-center justify-between gap-2 pt-1 pb-1.5 text-[12px] text-[var(--ui-text-dimmed)]"
+			>
+				<div class="flex min-w-0 items-center gap-1.5">
+					{#if reactionCount > 0}
+						<span class="flex -space-x-1.5">
+							{#each note.reactions.slice(0, 3) as r (r.emoji)}
 								<span
-									class="max-w-56 rounded-[22px] border border-white/25 bg-white/14 px-4 py-3 shadow-lg backdrop-blur-md backdrop-saturate-150"
+									class="grid size-[18px] place-items-center rounded-full bg-[var(--ui-bg-muted)] text-[9px] ring-2 ring-[var(--surface-bg)]"
+									>{r.emoji || '❤️'}</span
 								>
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-5 text-white/90" />
-									<span class="block text-[13px] font-bold">Sensitive video</span>
-									{#if privacyNotificationSettings.state.sensitiveReason}
-										<span class="mt-1 block text-[11px] text-white/80">{sensitiveReason}</span>
-									{/if}
-									<span
-										class="mt-2 inline-flex rounded-full border border-white/25 bg-white/90 px-3 py-1 text-[11px] font-bold text-black"
-									>
-										View
-									</span>
-								</span>
-							</button>
-						{/if}
-					</div>
-				{:else if media.type === 'audio'}
-					<div class="{tileClass} flex min-h-28 flex-col justify-center gap-3 p-4">
-						<div class="flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text)]">
-							<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
-							<span class="truncate">{media.host}</span>
-						</div>
-						<audio src={media.url} controls class="w-full"></audio>
-					</div>
-				{:else}
-					<a
-						href={media.url}
-						target="_blank"
-						rel="noreferrer"
-						class="{tileClass} flex min-h-28 items-center gap-3 p-4 transition hover:bg-[var(--interactive-hover-bg)]"
-					>
-						<span
-							class="grid size-10 shrink-0 place-items-center rounded-xl bg-primary-500/15 text-primary-500"
-						>
-							<Icon name="i-lucide-external-link" class="size-5" />
+							{/each}
 						</span>
-						<span class="min-w-0">
-							<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
-								{media.host}
-							</span>
-							<span class="block truncate text-[12px] text-[var(--ui-text-muted)]">{media.url}</span
-							>
+						<span class="font-semibold text-[var(--ui-text-muted)]">{reactionCount}</span>
+					{/if}
+				</div>
+				<div class="flex shrink-0 items-center gap-3">
+					{#if note.repostCount > 0}<span>{note.repostCount} reposts</span>{/if}
+					{#if visibleZapCount > 0}
+						<span class="inline-flex items-center gap-0.5">
+							{compactSats(visibleZapSats)} sats
 						</span>
-					</a>
-				{/if}
-			{/each}
-		</div>
-	{/if}
-
-	<!-- Reactions summary -->
-	{#if reactionCount > 0 || visibleZapCount > 0 || note.repostCount > 0}
-		<div
-			class="flex items-center justify-between gap-2 px-4 pt-1 pb-1.5 text-[12px] text-[var(--ui-text-dimmed)]"
-		>
-			<div class="flex min-w-0 items-center gap-1.5">
-				{#if reactionCount > 0}
-					<span class="flex -space-x-1.5">
-						{#each note.reactions.slice(0, 3) as r (r.emoji)}
-							<span
-								class="grid size-[18px] place-items-center rounded-full bg-[var(--ui-bg-muted)] text-[9px] ring-2 ring-[var(--surface-bg)]"
-								>{r.emoji || '❤️'}</span
-							>
-						{/each}
-					</span>
-					<span class="font-semibold text-[var(--ui-text-muted)]">{reactionCount}</span>
-				{/if}
+					{/if}
+				</div>
 			</div>
-			<div class="flex shrink-0 items-center gap-3">
-				{#if note.repostCount > 0}<span>{note.repostCount} reposts</span>{/if}
-				{#if visibleZapCount > 0}
-					<span class="inline-flex items-center gap-0.5">
-						{compactSats(visibleZapSats)} sats
-					</span>
-				{/if}
-			</div>
-		</div>
-	{/if}
+		{/if}
 
-	<!-- Action bar -->
-	<div
-		class="mx-4 mb-2 flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] py-1"
-	>
-		<button
-			type="button"
-			onclick={react}
-			class="group relative flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition active:scale-90 md:flex-none md:px-3 {liked
-				? 'text-[var(--tone-error-text)]'
-				: 'text-[var(--ui-text-muted)] hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]'}"
-			aria-label={liked ? 'Unlike' : 'Like'}
-		>
-			<span class="relative grid place-items-center">
-				<Icon
-					name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
-					class="size-[18px] transition group-active:scale-90"
-				/>
-				{#if burst}
-					<span
-						class="heart-burst pointer-events-none absolute inset-0 text-[var(--tone-error-text)]"
-					>
-						<Icon name="i-solar-heart-bold" class="size-[18px]" />
-					</span>
-				{/if}
-			</span>
-			{#if reactionCount > 0}
-				<span class="tabular-nums">{reactionCount}</span>
-			{:else}
-				<span class="hidden md:inline">Like</span>
-			{/if}
-		</button>
-		<button
-			type="button"
-			onclick={startReply}
-			disabled={!canCommentOnNote}
-			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-primary-500/10 hover:text-primary-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
-			aria-label={directReplies.length
-				? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
-				: 'Comment'}
-		>
-			<Icon name="i-lucide-message-circle" class="size-[18px]" />
-			{#if directReplies.length > 0}
-				<span class="tabular-nums">{directReplies.length}</span>
-			{:else}
-				<span class="hidden md:inline">Comment</span>
-			{/if}
-		</button>
-		<button
-			type="button"
-			onclick={() => copyText(noteLink, 'Note link')}
-			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 md:flex-none md:px-3"
-			aria-label="Share"
-		>
-			<Icon name="i-lucide-share" class="size-[18px]" />
-			<span class="hidden md:inline">Share</span>
-		</button>
-		<button
-			type="button"
-			onclick={zapNote}
-			disabled={!lightningAddress}
-			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
-			aria-label={zapLabel}
-		>
-			<Icon name="i-lucide-zap" class="size-[18px]" />
-			<span class="hidden md:inline">{zapLabel}</span>
-		</button>
-		<button
-			type="button"
-			onclick={toggleSaved}
-			class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] active:scale-90 md:flex-none md:px-3 {saved
-				? 'text-primary-500'
-				: 'text-[var(--ui-text-muted)]'}"
-			aria-label={saved ? 'Unsave note' : 'Save note'}
-		>
-			<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[18px]" />
-		</button>
-	</div>
-
-	{#if directReplies.length}
-		<div class="mx-4 mb-3 space-y-3 rounded-xl bg-[var(--ui-bg-muted)] p-3">
-			<div class="flex items-center justify-between">
-				<span class="text-[11px] font-bold text-[var(--ui-text-dimmed)] uppercase">Comments</span>
-				<button
-					type="button"
-					onclick={refreshComments}
-					disabled={refreshingComments}
-					class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:cursor-not-allowed disabled:opacity-60"
-					aria-label="Refresh comments"
-				>
+		<!-- Action bar -->
+		<div class="mb-2 flex items-center justify-between gap-1 py-2">
+			<button
+				type="button"
+				onclick={react}
+				class="group relative flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition active:scale-90 md:flex-none md:px-3 {liked
+					? 'text-[var(--tone-error-text)]'
+					: 'text-[var(--ui-text-muted)] hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]'}"
+				aria-label={liked ? 'Unlike' : 'Like'}
+			>
+				<span class="relative grid place-items-center">
 					<Icon
-						name="i-lucide-refresh-cw"
-						class="size-3.5 {refreshingComments ? 'animate-spin' : ''}"
+						name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+						class="size-[18px] transition group-active:scale-90"
 					/>
-					Refresh
-				</button>
-			</div>
-			{#each visibleReplies as reply (reply.id)}
-				{@const replyProfile = profiles.get(reply.pubkey)}
-				{@const replyName =
-					replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
-				{@const children = childReplies(reply.id)}
-				<div class="flex gap-2.5">
-					<a href={`/profile/${reply.pubkey}`} class="shrink-0">
-						<Avatar
-							pubkey={reply.pubkey}
-							name={replyName}
-							picture={replyProfile?.picture}
-							size={28}
+					{#if burst}
+						<span
+							class="heart-burst pointer-events-none absolute inset-0 text-[var(--tone-error-text)]"
+						>
+							<Icon name="i-solar-heart-bold" class="size-[18px]" />
+						</span>
+					{/if}
+				</span>
+				{#if reactionCount > 0}
+					<span class="tabular-nums">{reactionCount}</span>
+				{:else}
+					<span class="hidden md:inline">Like</span>
+				{/if}
+			</button>
+			<button
+				type="button"
+				onclick={startReply}
+				disabled={!canCommentOnNote}
+				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-primary-500/10 hover:text-primary-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
+				aria-label={directReplies.length
+					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
+					: 'Comment'}
+			>
+				<Icon name="i-lucide-message-circle" class="size-[18px]" />
+				{#if directReplies.length > 0}
+					<span class="tabular-nums">{directReplies.length}</span>
+				{:else}
+					<span class="hidden md:inline">Comment</span>
+				{/if}
+			</button>
+			<button
+				type="button"
+				onclick={() => copyText(noteLink, 'Note link')}
+				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 md:flex-none md:px-3"
+				aria-label="Share"
+			>
+				<Icon name="i-lucide-share" class="size-[18px]" />
+				<span class="hidden md:inline">Share</span>
+			</button>
+			<button
+				type="button"
+				onclick={zapNote}
+				disabled={!lightningAddress}
+				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
+				aria-label={zapLabel}
+			>
+				<Icon name="i-lucide-zap" class="size-[18px]" />
+				<span class="hidden md:inline">{zapLabel}</span>
+			</button>
+			<button
+				type="button"
+				onclick={toggleSaved}
+				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] active:scale-90 md:flex-none md:px-3 {saved
+					? 'text-primary-500'
+					: 'text-[var(--ui-text-muted)]'}"
+				aria-label={saved ? 'Unsave note' : 'Save note'}
+			>
+				<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[18px]" />
+			</button>
+		</div>
+
+		{#if directReplies.length}
+			<div class="mb-3 space-y-3 rounded-xl bg-[var(--ui-bg-muted)] p-3">
+				<div class="flex items-center justify-between">
+					<span class="text-[11px] font-bold text-[var(--ui-text-dimmed)] uppercase">Comments</span>
+					<button
+						type="button"
+						onclick={refreshComments}
+						disabled={refreshingComments}
+						class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:cursor-not-allowed disabled:opacity-60"
+						aria-label="Refresh comments"
+					>
+						<Icon
+							name="i-lucide-refresh-cw"
+							class="size-3.5 {refreshingComments ? 'animate-spin' : ''}"
 						/>
-					</a>
-					<div class="min-w-0 flex-1">
-						<div class="flex min-w-0 items-center gap-1.5">
-							<a
-								href={`/profile/${reply.pubkey}`}
-								class="truncate text-[12.5px] font-bold hover:text-primary-500"
-							>
-								{replyName}
-							</a>
-							{#if replyProfile?.nip05}
-								<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
-							{/if}
-							{#if identity.current?.pk === reply.pubkey}
-								<span
-									class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
-									>you</span
+						Refresh
+					</button>
+				</div>
+				{#each visibleReplies as reply (reply.id)}
+					{@const replyProfile = profiles.get(reply.pubkey)}
+					{@const replyName =
+						replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
+					{@const children = childReplies(reply.id)}
+					<div class="flex gap-2.5">
+						<a href={`/profile/${reply.pubkey}`} class="shrink-0">
+							<Avatar
+								pubkey={reply.pubkey}
+								name={replyName}
+								picture={replyProfile?.picture}
+								size={28}
+							/>
+						</a>
+						<div class="min-w-0 flex-1">
+							<div class="flex min-w-0 items-center gap-1.5">
+								<a
+									href={`/profile/${reply.pubkey}`}
+									class="truncate text-[12.5px] font-bold hover:text-primary-500"
 								>
-							{/if}
-							<time
-								class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
-								title={timeFull(reply.createdAt)}>{timeAgo(reply.createdAt)}</time
-							>
-						</div>
-						<CommentBody content={reply.content} tags={reply.tags} />
-						<div class="mt-1.5 flex items-center gap-3 text-[11.5px] font-bold">
-							<button
-								type="button"
-								onclick={() => reactToComment(reply)}
-								class="inline-flex items-center gap-1 {commentLiked(reply)
-									? 'text-[var(--tone-error-text)]'
-									: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
-							>
-								<Icon
-									name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
-									class="size-3.5"
-								/>
-								{commentLiked(reply) ? 'Unlike' : 'Like'}
-								{#if commentReactionCount(reply)}
-									<span class="font-semibold"> · {commentReactionCount(reply)}</span>
+									{replyName}
+								</a>
+								{#if replyProfile?.nip05}
+									<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
 								{/if}
-							</button>
-							<button
-								type="button"
-								onclick={() => startCommentReply(reply)}
-								disabled={!privacyNotificationSettings.canCommentOn(reply.pubkey)}
-								class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
-							>
-								Reply
-							</button>
-							<button
-								type="button"
-								onclick={() => hideComment(reply)}
-								class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
-							>
-								Hide
-							</button>
-							{#if identity.current?.pk === reply.pubkey}
+								{#if identity.current?.pk === reply.pubkey}
+									<span
+										class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
+										>you</span
+									>
+								{/if}
+								{#if reply.pow}
+									<PowBadge bits={reply.pow} micro id={reply.id} />
+								{/if}
+								<time
+									class="shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
+									title={timeFull(reply.createdAt)}>{timeAgo(reply.createdAt)}</time
+								>
+							</div>
+							<CommentBody content={reply.content} tags={reply.tags} />
+							<div class="mt-1.5 flex items-center gap-3 text-[11.5px] font-bold">
 								<button
 									type="button"
-									onclick={() => askDeleteComment(reply)}
-									class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+									onclick={() => reactToComment(reply)}
+									class="inline-flex items-center gap-1 {commentLiked(reply)
+										? 'text-[var(--tone-error-text)]'
+										: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
 								>
-									Delete
+									<Icon
+										name={commentLiked(reply) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+										class="size-3.5"
+									/>
+									{commentLiked(reply) ? 'Unlike' : 'Like'}
+									{#if commentReactionCount(reply)}
+										<span class="font-semibold"> · {commentReactionCount(reply)}</span>
+									{/if}
 								</button>
-							{/if}
-						</div>
+								<button
+									type="button"
+									onclick={() => startCommentReply(reply)}
+									disabled={!privacyNotificationSettings.canCommentOn(reply.pubkey)}
+									class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
+								>
+									Reply
+								</button>
+								<button
+									type="button"
+									onclick={() => hideComment(reply)}
+									class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+								>
+									Hide
+								</button>
+								{#if identity.current?.pk === reply.pubkey}
+									<button
+										type="button"
+										onclick={() => askDeleteComment(reply)}
+										class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+									>
+										Delete
+									</button>
+								{/if}
+							</div>
 
-						{#if children.length}
-							<div class="mt-3 space-y-2 border-l border-[var(--ui-border-muted)] pl-3">
-								{#each children.slice(0, 3) as child (child.id)}
-									{@const childProfile = profiles.get(child.pubkey)}
-									{@const childName =
-										childProfile?.display_name || childProfile?.name || shortKey(child.pubkey)}
-									<div class="flex gap-2">
-										<a href={`/profile/${child.pubkey}`} class="shrink-0">
-											<Avatar
-												pubkey={child.pubkey}
-												name={childName}
-												picture={childProfile?.picture}
-												size={22}
-											/>
-										</a>
-										<div class="min-w-0 flex-1">
-											<div class="flex min-w-0 items-center gap-1.5">
-												<a
-													href={`/profile/${child.pubkey}`}
-													class="truncate text-[12px] font-bold hover:text-primary-500"
-												>
-													{childName}
-												</a>
-												{#if childProfile?.nip05}
-													<Icon
-														name="i-lucide-badge-check"
-														class="size-3 shrink-0 text-primary-500"
-													/>
-												{/if}
-												{#if identity.current?.pk === child.pubkey}
-													<span
-														class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
-														>you</span
+							{#if children.length}
+								<div class="mt-3 space-y-2 border-l border-[var(--ui-border-muted)] pl-3">
+									{#each children.slice(0, 3) as child (child.id)}
+										{@const childProfile = profiles.get(child.pubkey)}
+										{@const childName =
+											childProfile?.display_name || childProfile?.name || shortKey(child.pubkey)}
+										<div class="flex gap-2">
+											<a href={`/profile/${child.pubkey}`} class="shrink-0">
+												<Avatar
+													pubkey={child.pubkey}
+													name={childName}
+													picture={childProfile?.picture}
+													size={22}
+												/>
+											</a>
+											<div class="min-w-0 flex-1">
+												<div class="flex min-w-0 items-center gap-1.5">
+													<a
+														href={`/profile/${child.pubkey}`}
+														class="truncate text-[12px] font-bold hover:text-primary-500"
 													>
-												{/if}
-												<time
-													class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
-													title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
-												>
-											</div>
-											<CommentBody content={child.content} tags={child.tags} compact />
-											<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
-												<button
-													type="button"
-													onclick={() => reactToComment(child)}
-													class="inline-flex items-center gap-1 {commentLiked(child)
-														? 'text-[var(--tone-error-text)]'
-														: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
-												>
-													<Icon
-														name={commentLiked(child)
-															? 'i-solar-heart-bold'
-															: 'i-solar-heart-linear'}
-														class="size-3"
-													/>
-													{commentLiked(child) ? 'Unlike' : 'Like'}
-													{#if commentReactionCount(child)}
-														<span class="font-semibold"> · {commentReactionCount(child)}</span>
+														{childName}
+													</a>
+													{#if childProfile?.nip05}
+														<Icon
+															name="i-lucide-badge-check"
+															class="size-3 shrink-0 text-primary-500"
+														/>
 													{/if}
-												</button>
-												<button
-													type="button"
-													onclick={() => hideComment(child)}
-													class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
-												>
-													Hide
-												</button>
-												{#if identity.current?.pk === child.pubkey}
+													{#if identity.current?.pk === child.pubkey}
+														<span
+															class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
+															>you</span
+														>
+													{/if}
+													{#if child.pow}
+														<PowBadge bits={child.pow} micro id={child.id} />
+													{/if}
+													<time
+														class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
+														title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
+													>
+												</div>
+												<CommentBody content={child.content} tags={child.tags} compact />
+												<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
 													<button
 														type="button"
-														onclick={() => askDeleteComment(child)}
-														class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+														onclick={() => reactToComment(child)}
+														class="inline-flex items-center gap-1 {commentLiked(child)
+															? 'text-[var(--tone-error-text)]'
+															: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
 													>
-														Delete
+														<Icon
+															name={commentLiked(child)
+																? 'i-solar-heart-bold'
+																: 'i-solar-heart-linear'}
+															class="size-3"
+														/>
+														{commentLiked(child) ? 'Unlike' : 'Like'}
+														{#if commentReactionCount(child)}
+															<span class="font-semibold"> · {commentReactionCount(child)}</span>
+														{/if}
 													</button>
-												{/if}
+													<button
+														type="button"
+														onclick={() => hideComment(child)}
+														class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+													>
+														Hide
+													</button>
+													{#if identity.current?.pk === child.pubkey}
+														<button
+															type="button"
+															onclick={() => askDeleteComment(child)}
+															class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+														>
+															Delete
+														</button>
+													{/if}
+												</div>
 											</div>
 										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
+									{/each}
+								</div>
+							{/if}
 
-						{#if replyingToCommentId === reply.id}
-							<div class="mt-3">
-								<ReplyComposer
-									parent={reply}
-									placeholder={`Reply to ${replyName}…`}
-									autofocus
-									initialMention={{ pubkey: reply.pubkey, name: replyName }}
-									onSubmitted={(reply) => {
-										addOptimisticReply(reply);
-										replyingToCommentId = '';
-									}}
-									onCancel={() => (replyingToCommentId = '')}
-								/>
-							</div>
-						{/if}
+							{#if replyingToCommentId === reply.id}
+								<div class="mt-3">
+									<ReplyComposer
+										parent={reply}
+										placeholder={`Reply to ${replyName}…`}
+										autofocus
+										initialMention={{ pubkey: reply.pubkey, name: replyName }}
+										onSubmitted={(reply) => {
+											addOptimisticReply(reply);
+											replyingToCommentId = '';
+										}}
+										onCancel={() => (replyingToCommentId = '')}
+									/>
+								</div>
+							{/if}
+						</div>
 					</div>
-				</div>
-			{/each}
-			{#if hiddenReplyCount}
-				<button
-					type="button"
-					onclick={() => (showAllReplies = true)}
-					class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
-				>
-					View {hiddenReplyCount} more {hiddenReplyCount === 1 ? 'comment' : 'comments'}
-				</button>
-			{:else if showAllReplies && directReplies.length > 2}
-				<button
-					type="button"
-					onclick={() => (showAllReplies = false)}
-					class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
-				>
-					Show fewer comments
-				</button>
-			{/if}
-		</div>
-	{/if}
+				{/each}
+				{#if hiddenReplyCount}
+					<button
+						type="button"
+						onclick={() => (showAllReplies = true)}
+						class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
+					>
+						View {hiddenReplyCount} more {hiddenReplyCount === 1 ? 'comment' : 'comments'}
+					</button>
+				{:else if showAllReplies && directReplies.length > 2}
+					<button
+						type="button"
+						onclick={() => (showAllReplies = false)}
+						class="text-[12.5px] font-bold text-primary-500 transition hover:text-primary-600"
+					>
+						Show fewer comments
+					</button>
+				{/if}
+			</div>
+			<div class="h-2"></div>
+		{/if}
+		{#if replyOpen && refreshingComments}
+			<div
+				class="mb-3 flex items-center gap-2 rounded-xl bg-[var(--ui-bg-muted)] px-3 py-2 text-[11px] font-semibold text-[var(--ui-text-muted)]"
+			>
+				<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary-500" />
+				Loading comments…
+			</div>
+		{/if}
 
-	<!-- Reply input -->
-	<div class="px-4 pt-1 pb-4 {replyOpen ? '' : 'hidden sm:block'}">
-		<ReplyComposer
-			parent={note}
-			placeholder="Reply to this note…"
-			autofocus={replyOpen}
-			focusTick={replyFocusTick}
-			onSubmitted={(reply) => {
-				addOptimisticReply(reply);
-				replyOpen = false;
-			}}
-		/>
+		<!-- Reply input -->
+		<div class="pt-1 pb-4 {replyOpen ? '' : 'hidden'}">
+			<ReplyComposer
+				parent={note}
+				placeholder="Reply to this note…"
+				autofocus={replyOpen}
+				focusTick={replyFocusTick}
+				onSubmitted={(reply) => {
+					addOptimisticReply(reply);
+					replyOpen = false;
+				}}
+				onCancel={() => (replyOpen = false)}
+			/>
+		</div>
 	</div>
 	<!-- Like confetti burst overlay -->
 	<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden">

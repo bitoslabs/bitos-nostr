@@ -5,7 +5,9 @@
  * newest-first and capped to a sane window.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import { getPow } from 'nostr-tools/nip13';
+import type { UnsignedEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
@@ -28,6 +30,63 @@ const MAX_TEXT_NOTE_CHARS = 16_000;
 const MAX_BUFFERED_REACTIONS = 2_000;
 
 type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
+
+/** Live stats streamed from the NIP-13 worker while mining. */
+export type PowProgress = {
+	hashes: number;
+	hashrate: number;
+	best: number;
+	/** Hex id of the best candidate so far (grows its zero prefix live). */
+	bestHash: string;
+	nonce: string;
+	elapsedMs: number;
+};
+
+function minePowAsync(
+	unsigned: UnsignedEvent,
+	difficulty: number,
+	options: { onProgress?: (progress: PowProgress) => void; signal?: AbortSignal } = {}
+) {
+	return new Promise<UnsignedEvent>((resolve, reject) => {
+		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
+		let settled = false;
+		const settle = (fn: () => void) => {
+			if (settled) return;
+			settled = true;
+			worker.onmessage = null;
+			worker.onerror = null;
+			worker.terminate();
+			fn();
+		};
+		const onAbort = () => settle(() => reject(new Error('Proof of Work cancelled')));
+		if (options.signal) {
+			if (options.signal.aborted) {
+				onAbort();
+				return;
+			}
+			options.signal.addEventListener('abort', onAbort, { once: true });
+		}
+		worker.onmessage = (
+			message: MessageEvent<{
+				type: 'progress' | 'done' | 'error';
+				event?: UnsignedEvent;
+				error?: string;
+				progress?: PowProgress;
+			}>
+		) => {
+			const data = message.data;
+			if (data.type === 'progress') {
+				options.onProgress?.(data.progress!);
+				return;
+			}
+			if (data.type === 'done' && data.event) settle(() => resolve(data.event!));
+			else if (data.type === 'error')
+				settle(() => reject(new Error(data.error || 'Proof of Work failed')));
+		};
+		worker.onerror = () => settle(() => reject(new Error('Proof of Work worker failed')));
+		worker.postMessage({ unsigned, difficulty });
+	});
+}
 
 type ReactionEvent = {
 	id: string;
@@ -204,12 +263,15 @@ class FeedStore {
 		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
+		const nonceTag = ev.tags.find((t) => t[0] === 'nonce');
+		const powTarget = Number(nonceTag?.[2]);
 		const pollOptions = parsePoll(ev.tags);
 		const note: FeedNote = {
 			id: ev.id,
 			pubkey: ev.pubkey,
 			content: ev.content,
 			createdAt: ev.created_at,
+			pow: nonceTag && Number.isFinite(powTarget) && powTarget > 0 ? getPow(ev.id) : undefined,
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],
@@ -617,7 +679,17 @@ class FeedStore {
 	/** Compose + sign + publish a text note. Returns the published event id. */
 	async post(
 		content: string,
-		options: { sensitive?: boolean; attachments?: PostMediaAttachment[] } = {}
+		options: {
+			sensitive?: boolean;
+			attachments?: PostMediaAttachment[];
+			pow?: number;
+			/** Live stats while the NIP-13 worker mines. */
+			onPowProgress?: (progress: PowProgress) => void;
+			/** Coarse phase updates for button / status labels. */
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			/** Aborts mining (worker is terminated, nothing is published). */
+			signal?: AbortSignal;
+		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -648,12 +720,23 @@ class FeedStore {
 			);
 		}
 		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: body,
 			created_at: Math.floor(Date.now() / 1000),
 			tags
 		};
-		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
+		// NIP-13 mining is opt-in so ordinary posts remain immediate.
+		if (options.pow && options.pow > 0) options.onPhase?.('mining');
+		const mined =
+			options.pow && options.pow > 0
+				? await minePowAsync(unsigned, options.pow, {
+						onProgress: options.onPowProgress,
+						signal: options.signal
+					})
+				: unsigned;
+		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		options.onPhase?.('publishing');
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
@@ -665,7 +748,11 @@ class FeedStore {
 	 * becomes a `["poll_option", "<id>", "<label>"]` tag. Votes arrive later as
 	 * kind-7 reactions whose content is the option id.
 	 */
-	async postPoll(question: string, options: string[]): Promise<string> {
+	async postPoll(
+		question: string,
+		options: string[],
+		publishOptions: { pow?: number } = {}
+	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
@@ -679,19 +766,22 @@ class FeedStore {
 				`Questions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`
 			);
 		}
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.TEXT_NOTE,
-				content: prompt,
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [
-					...clientTag(),
-					...extractHashtagTags(prompt),
-					...cleanOptions.map((label, i) => ['poll_option', String(i), label])
-				]
-			},
-			hexToBytes(id.sk)
-		);
+		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content: prompt,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [
+				...clientTag(),
+				...extractHashtagTags(prompt),
+				...cleanOptions.map((label, i) => ['poll_option', String(i), label])
+			]
+		};
+		const mined =
+			publishOptions.pow && publishOptions.pow > 0
+				? await minePowAsync(unsigned, publishOptions.pow)
+				: unsigned;
+		const event = finalizeEvent(mined, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
@@ -747,7 +837,18 @@ class FeedStore {
 	async reply(
 		note: FeedNote,
 		content: string,
-		options: { attachments?: PostMediaAttachment[]; extraPubkeys?: string[] } = {}
+		options: {
+			attachments?: PostMediaAttachment[];
+			extraPubkeys?: string[];
+			/** NIP-13 difficulty (leading zero bits) to mine before publishing. */
+			pow?: number;
+			/** Live stats while the NIP-13 worker mines. */
+			onPowProgress?: (progress: PowProgress) => void;
+			/** Coarse phase updates for button / status labels. */
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			/** Aborts mining (worker is terminated, nothing is published). */
+			signal?: AbortSignal;
+		} = {}
 	): Promise<FeedNote> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -794,22 +895,43 @@ class FeedStore {
 			if (eventId !== rootId && eventId !== note.id) tags.push(['e', eventId]);
 		}
 
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.TEXT_NOTE,
-				content: body,
-				created_at: Math.floor(Date.now() / 1000),
-				tags
-			},
-			hexToBytes(id.sk)
-		);
+		// NIP-13 mining is opt-in; ordinary replies remain immediate.
+		let unsigned: UnsignedEvent = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content: body,
+			created_at: Math.floor(Date.now() / 1000),
+			tags
+		};
+		if (options.pow && options.pow > 0) {
+			options.onPhase?.('mining');
+			unsigned = await minePowAsync(unsigned, options.pow, {
+				onProgress: options.onPowProgress,
+				signal: options.signal
+			});
+		}
+		options.onPhase?.('publishing');
+		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return toFeedNote(event);
 	}
 
 	/** React to a note with a ❤️ (kind 7). */
-	async react(note: FeedNote, emoji = '❤️') {
+	async react(
+		note: FeedNote,
+		emoji = '❤️',
+		options: {
+			/**
+			 * Optional NIP-13 difficulty. Reactions stay instant by default
+			 * (pow 0); pass a value only when a relay mandates a minimum
+			 * difficulty (NIP-11 `min_pow_difficulty`).
+			 */
+			pow?: number;
+			onPowProgress?: (progress: PowProgress) => void;
+			signal?: AbortSignal;
+		} = {}
+	) {
 		if (!browser) return;
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
@@ -836,15 +958,20 @@ class FeedStore {
 			this.removeMyReaction(note.id, emoji);
 			return;
 		}
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.REACTION,
-				content: emoji,
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ['e', note.id, '', note.replyTo ? 'reply' : ''], ['p', note.pubkey]]
-			},
-			hexToBytes(id.sk)
-		);
+		let unsigned: UnsignedEvent = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind: NOSTR_KINDS.REACTION,
+			content: emoji,
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [...clientTag(), ['e', note.id, '', note.replyTo ? 'reply' : ''], ['p', note.pubkey]]
+		};
+		if (options.pow && options.pow > 0) {
+			unsigned = await minePowAsync(unsigned, options.pow, {
+				onProgress: options.onPowProgress,
+				signal: options.signal
+			});
+		}
+		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
 		await publish(event);
 		this.ingestReaction(event);
 	}

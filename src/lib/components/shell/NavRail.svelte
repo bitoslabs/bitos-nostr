@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -12,8 +13,14 @@
 	import { shortKey } from '$lib/utils/format';
 
 	const nav = [
-		{ to: '/', label: 'Home Feed', icon: 'i-lucide-house' },
-		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true, requiresAuth: true },
+		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
+		{
+			to: '/messages',
+			label: 'Chats',
+			icon: 'i-lucide-message-circle-more',
+			badge: true,
+			requiresAuth: true
+		},
 		{
 			to: '/notifications',
 			label: 'Notifications',
@@ -23,6 +30,7 @@
 		},
 		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
+		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
 		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark', requiresAuth: true },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
 		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2', requiresAuth: true }
@@ -39,9 +47,40 @@
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
-	const logo = '/icons/icon-96-96.png';
 	const accountMenuId = 'nav-account-switcher';
 	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
+	let accountButton = $state<HTMLButtonElement | null>(null);
+	let accountMenuPosition = $state({ left: 12, bottom: 12 });
+
+	function positionAccountMenu() {
+		if (!accountButton) return;
+		const rect = accountButton.getBoundingClientRect();
+		accountMenuPosition = {
+			left: Math.max(12, Math.min(rect.right + 12, window.innerWidth - 268)),
+			bottom: Math.max(12, window.innerHeight - rect.bottom)
+		};
+	}
+
+	function portal(node: HTMLElement) {
+		if (!browser) return;
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	}
+
+	$effect(() => {
+		if (!accountMenuOpen || !browser) return;
+		positionAccountMenu();
+		window.addEventListener('resize', positionAccountMenu);
+		window.addEventListener('scroll', positionAccountMenu, true);
+		return () => {
+			window.removeEventListener('resize', positionAccountMenu);
+			window.removeEventListener('scroll', positionAccountMenu, true);
+		};
+	});
 
 	function accountName(account: (typeof identity.accounts)[number]) {
 		const profile = profiles.get(account.pk) ?? account.profile;
@@ -62,31 +101,41 @@
 			toasts.error((e as Error).message);
 		}
 	}
+
+	function focusComposer(event: MouseEvent) {
+		// A repeat click on /#composer does not emit `hashchange`, so explicitly
+		// notify the mounted composer when the user is already on the home feed.
+		if (page.url.pathname !== '/') return;
+		event.preventDefault();
+		if (window.location.hash !== '#composer') window.history.pushState(null, '', '#composer');
+		window.dispatchEvent(new CustomEvent('bitos:focus-composer'));
+	}
 </script>
 
-<nav class="flex h-full flex-col items-center py-5">
+<nav class="ui4-nav flex h-full flex-col p-3.5">
 	<!-- Brand -->
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="mask-squircle mb-6 grid size-11 place-items-center overflow-hidden shadow-[var(--glow-primary)] transition-transform hover:scale-105 active:scale-95"
+		class="mb-4 flex items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
-		<img src={logo} alt="" class="size-full" />
+		<img src="/icons/logo.png" alt="" class="w-20" />
+		<!-- <span class="ui4-brand-name">BitOS</span> -->
 	</a>
 
-	<div class="flex flex-1 flex-col gap-2">
+	<div class="flex flex-1 flex-col gap-1 pl-3">
 		{#each visibleNav as item (item.to)}
 			{@const active = isActive(item.to)}
 			<a
 				href={item.to}
-				class="group relative grid size-12 place-items-center transition-all"
+				class="ui4-nav-item group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
 				aria-label={item.label}
 				aria-current={active ? 'page' : undefined}
 			>
 				<span
-					class="mask-squircle absolute inset-0 transition-all {active
-						? 'bg-primary-500/12 ring-1 ring-primary-500/20 shadow-[var(--glow-primary)]'
-						: 'bg-transparent group-hover:bg-primary-500/10'}"
+					class="ui4-nav-surface absolute inset-0 rounded-xl transition-all {active
+						? 'is-active'
+						: ''}"
 					aria-hidden="true"
 				></span>
 				{#if active}
@@ -95,53 +144,76 @@
 						aria-hidden="true"
 					></span>
 				{/if}
-				<Icon
-					name={item.icon}
-					class="relative z-10 size-[18px] transition-transform {active
-						? 'scale-105 text-primary-500 dark:text-primary-300'
-						: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
-				/>
-				{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
-					<span
-						class="absolute -top-1.5 -right-1.5 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
-						>{item.notifications
-							? notificationUnread > 9
-								? '9+'
-								: notificationUnread
-							: unread > 9
-								? '9+'
-								: unread}</span
-					>
-				{/if}
-				<span
-					class="pointer-events-none absolute left-[calc(100%+12px)] z-50 hidden rounded-md bg-[var(--ui-text-highlighted)] px-2.5 py-1 text-[12px] font-medium whitespace-nowrap text-[var(--ui-bg)] opacity-0 shadow-[var(--shadow-pop)] transition-opacity group-hover:opacity-100 lg:block"
-				>
-					{item.label}
+				<span class="relative z-10 shrink-0">
+					<Icon
+						name={item.icon}
+						class="size-5 transition-transform {active
+							? 'scale-105 text-primary-500 dark:text-primary-300'
+							: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
+					/>
+					{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
+						<span
+							class="absolute -top-2.5 -right-3 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
+							>{item.notifications
+								? notificationUnread > 9
+									? '9+'
+									: notificationUnread
+								: unread > 9
+									? '9+'
+									: unread}</span
+						>
+					{/if}
 				</span>
+				<span class="relative z-10">{item.label}</span>
 			</a>
 		{/each}
 	</div>
 
-	<div class="flex flex-col items-center gap-2">
+	{#if me}
+		<div class="px-2 pb-1">
+			<a
+				href="/#composer"
+				onclick={focusComposer}
+				class="ui4-compose flex items-center justify-center gap-2 rounded-full py-2.5 font-semibold transition-all"
+			>
+				<Icon name="i-lucide-pen-line" class="size-4" />
+				<span>New Note</span>
+			</a>
+		</div>
+	{/if}
+
+	<div class="flex flex-col gap-2">
 		{#if me}
 			<div class="relative">
 				<button
+					bind:this={accountButton}
 					type="button"
 					onclick={(event) => {
 						event.stopPropagation();
+						positionAccountMenu();
 						popovers.toggle(accountMenuId);
 					}}
-					class="relative size-12 overflow-hidden mask-squircle bg-primary-500/10 p-[2px] ring-1 ring-primary-500/20 shadow-[var(--glow-primary)] transition-all hover:bg-primary-500/12 hover:ring-primary-500/35"
+					class="ui4-account relative w-full overflow-hidden rounded-xl p-2.5 text-left transition-all hover:bg-[var(--interactive-hover-bg)]"
 					aria-label="Account menu"
 					aria-expanded={accountMenuOpen}
 				>
-					<div class="mask-squircle size-full bg-[var(--surface-bg)]">
+					<div class="flex items-center gap-2.5">
 						<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+						<span class="min-w-0 flex-1">
+							<span class="block truncate text-sm font-semibold">{displayName}</span>
+							<span class="block truncate font-mono text-[11px] text-[var(--ui-text-muted)]"
+								>{shortKey(me.pk, 8, 5)}</span
+							>
+						</span>
+						<Icon name="i-lucide-ellipsis" class="size-4 text-[var(--ui-text-muted)]" />
 					</div>
 				</button>
 				{#if accountMenuOpen}
 					<div
-						class="absolute bottom-0 left-[calc(100%+12px)] z-50 w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+						use:portal
+						class="fixed z-[60] w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+						style:left={`${accountMenuPosition.left}px`}
+						style:bottom={`${accountMenuPosition.bottom}px`}
 					>
 						<a
 							href="/profile"
@@ -205,7 +277,7 @@
 		{:else}
 			<a
 				href="/welcome"
-				class="grid size-12 place-items-center rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
+				class="grid size-12 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
 				aria-label="Create or import a key"
 			>
 				<Icon name="i-lucide-log-in" class="size-[18px]" />
@@ -213,3 +285,44 @@
 		{/if}
 	</div>
 </nav>
+
+<style>
+	.ui4-brand-name {
+		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
+		background-clip: text;
+		color: transparent;
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.025em;
+	}
+	.ui4-nav-item {
+		color: var(--ui-text-muted);
+	}
+	.ui4-nav-item:hover {
+		color: var(--ui-text);
+	}
+	.ui4-nav-surface {
+		z-index: 0;
+	}
+	.ui4-nav-surface.is-active {
+		background: color-mix(in oklab, var(--ui-color-primary-500) 12%, transparent);
+	}
+	.ui4-account :global(.mask-squircle) {
+		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+	}
+	.ui4-compose {
+		background: var(--ui-color-primary-500);
+		color: #ffffff;
+		box-shadow: var(--glow-primary);
+	}
+	:global(.dark) .ui4-compose {
+		color: #050507;
+	}
+	.ui4-compose:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 0 28px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	.ui4-compose:active {
+		transform: translateY(0);
+	}
+</style>

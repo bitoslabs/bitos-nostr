@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Badge from '$lib/components/ui/Badge.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
@@ -161,12 +162,13 @@
 <h2 class="mb-1 font-display text-[24px] font-extrabold">Security</h2>
 <p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Your local keys and relay connections</p>
 
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-key-round" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Keys</h3>
-		<Badge tone="primary" class="ml-auto">local-first</Badge>
-	</div>
+<SectionCard
+	title="Keys"
+	icon="i-lucide-key-round"
+	description="Your Nostr identity keys — they never leave this device."
+	class="mb-5"
+>
+	{#snippet actions()}<Badge tone="primary">local-first</Badge>{/snippet}
 	<div class="space-y-4">
 		<div>
 			<p class="mb-1.5 text-[12px] font-semibold text-[var(--ui-text-muted)]">Public key (npub)</p>
@@ -216,18 +218,15 @@
 			</p>
 		</div>
 	</div>
-</div>
+</SectionCard>
 
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-cloud-lock" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Encrypted settings sync</h3>
-		<Badge tone="primary" class="ml-auto">NIP-04</Badge>
-	</div>
-	<p class="mb-4 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">
-		Syncs BitOS preferences, privacy, notifications, blocked users, relays, and media provider
-		settings as an encrypted app-data event. Your identity key is never included.
-	</p>
+<SectionCard
+	title="Encrypted settings sync"
+	icon="i-lucide-cloud-lock"
+	description="Syncs preferences, privacy, blocked users, relays, and media settings as an encrypted app-data event. Your identity key is never included."
+	class="mb-5"
+>
+	{#snippet actions()}<Badge tone="primary">NIP-04</Badge>{/snippet}
 	<div class="grid gap-2 sm:grid-cols-2">
 		<Button
 			color="primary"
@@ -254,16 +253,17 @@
 		<p>Last synced: {formatSyncTime(settingsSync.lastSyncedAt)}</p>
 		<p>Last remote: {formatSyncTime(settingsSync.lastRemoteAt)}</p>
 	</div>
-</div>
+</SectionCard>
 
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-radio" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Relays</h3>
-		<span class="ml-auto text-[11px] text-[var(--ui-text-dimmed)]"
-			>{relays.list.length} configured</span
-		>
-	</div>
+<SectionCard
+	title="Relays"
+	icon="i-lucide-radio"
+	description="Primary relay handles fast first queries; other read relays sync in the background. The preferred write relay gets publishes first, then BitOS fans out to the rest."
+	class="mb-5"
+>
+	{#snippet actions()}
+		<span class="text-[11px] text-[var(--ui-text-dimmed)]">{relays.list.length} configured</span>
+	{/snippet}
 	<div class="mb-3 flex gap-2">
 		<Input
 			bind:value={newRelay}
@@ -286,109 +286,113 @@
 			disabled={!relays.list.length}>Test all</Button
 		>
 	</div>
-	<p class="mb-3 text-[11.5px] leading-relaxed text-[var(--ui-text-dimmed)]">
-		Primary relay handles fast first queries. Other read relays still sync in the background and
-		merge later for better coverage. Preferred write relay gets publishes first, then BitOS fans
-		out to the other write relays in the background.
-	</p>
 	<ul
 		class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
 	>
 		{#each relays.list as r (r.url)}
 			<li class="px-3 py-2.5">
 				<div class="flex items-start gap-2.5">
-				<span
-					class="size-2 shrink-0 rounded-full {r.status === 'ok'
-						? 'bg-[var(--tone-success-text)]'
-						: r.status === 'fail'
-							? 'bg-[var(--tone-error-text)]'
-							: r.status === 'connecting'
-								? 'animate-pulse bg-primary-500'
-								: 'bg-[var(--ui-text-dimmed)]'}"
-				></span>
-				<div class="min-w-0 flex-1 leading-tight">
-					<div class="truncate font-mono text-[12px]">{r.url}</div>
-					<div class="text-[10.5px] text-[var(--ui-text-dimmed)]">
-						{r.read ? 'read' : '—'} · {r.write ? 'write' : '—'} · {r.primary ? 'primary' : 'secondary'} · {r.writePrimary ? 'preferred write' : 'normal write'}{#if r.latency != null}
-							· {r.latency}ms{/if}
-						· {formatRelayTime(r.checkedAt)}
+					<span
+						class="size-2 shrink-0 rounded-full {r.status === 'ok'
+							? 'bg-[var(--tone-success-text)]'
+							: r.status === 'fail'
+								? 'bg-[var(--tone-error-text)]'
+								: r.status === 'connecting'
+									? 'animate-pulse bg-primary-500'
+									: 'bg-[var(--ui-text-dimmed)]'}"
+					></span>
+					<div class="min-w-0 flex-1 leading-tight">
+						<div class="truncate font-mono text-[12px]">{r.url}</div>
+						<div class="text-[10.5px] text-[var(--ui-text-dimmed)]">
+							{r.read ? 'read' : '—'} · {r.write ? 'write' : '—'} · {r.primary
+								? 'primary'
+								: 'secondary'} · {r.writePrimary
+								? 'preferred write'
+								: 'normal write'}{#if r.latency != null}
+								· {r.latency}ms{/if}
+							· {formatRelayTime(r.checkedAt)}
+						</div>
 					</div>
-				</div>
-				<div class="flex shrink-0 items-center gap-0.5">
-					<button
-						type="button"
-						onclick={() => testRelay(r.url)}
-						disabled={!!testingRelays[r.url]}
-						class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold text-primary-500 transition hover:bg-primary-500/10 disabled:opacity-60"
-					>
-						<Icon
-							name={testingRelays[r.url] ? 'i-lucide-loader-circle' : 'i-lucide-wifi'}
-							class="size-3 {testingRelays[r.url] ? 'animate-spin' : ''}"
-						/>
-					</button>
-					<button
-						type="button"
-						onclick={() => makePrimaryRelay(r.url)}
-						class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.primary
-							? 'bg-primary-500/10 text-primary-600'
-							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
-						title={r.primary ? 'Primary relay' : 'Set as primary relay'}
-						aria-label={r.primary ? `Primary relay ${r.url}` : `Set ${r.url} as primary relay`}
-					>
-						<Icon name={r.primary ? 'i-lucide-radio' : 'i-lucide-circle'} class="size-3" />
-						<span>PR</span>
-					</button>
-					<button
-						type="button"
-						onclick={() => relays.toggle(r.url, 'read')}
-						class="rounded-md px-1.5 py-1 text-[10.5px] font-semibold transition {r.read
-							? 'text-primary-500'
-							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)]'}">R</button
-					>
-					<button
-						type="button"
-						onclick={() => relays.toggle(r.url, 'write')}
-						class="rounded-md px-1.5 py-1 text-[10.5px] font-semibold transition {r.write
-							? 'text-primary-500'
-							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)]'}">W</button
-					>
-					<button
-						type="button"
-						onclick={() => makeWritePrimaryRelay(r.url)}
-						class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.writePrimary
-							? 'bg-primary-500/10 text-primary-600'
-							: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
-						title={r.writePrimary ? 'Preferred write relay' : 'Set as preferred write relay'}
-						aria-label={r.writePrimary ? `Preferred write relay ${r.url}` : `Set ${r.url} as preferred write relay`}
-					>
-						<Icon name={r.writePrimary ? 'i-lucide-send' : 'i-lucide-circle-dot'} class="size-3" />
-						<span>PW</span>
-					</button>
-					<button
-						type="button"
-						onclick={() => relays.remove(r.url)}
-						class="grid size-7 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]"
-					>
-						<Icon name="i-lucide-trash-2" class="size-4" />
-					</button>
-				</div>
+					<div class="flex shrink-0 items-center gap-0.5">
+						<button
+							type="button"
+							onclick={() => testRelay(r.url)}
+							disabled={!!testingRelays[r.url]}
+							class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold text-primary-500 transition hover:bg-primary-500/10 disabled:opacity-60"
+						>
+							<Icon
+								name={testingRelays[r.url] ? 'i-lucide-loader-circle' : 'i-lucide-wifi'}
+								class="size-3 {testingRelays[r.url] ? 'animate-spin' : ''}"
+							/>
+						</button>
+						<button
+							type="button"
+							onclick={() => makePrimaryRelay(r.url)}
+							class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.primary
+								? 'bg-primary-500/10 text-primary-600'
+								: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
+							title={r.primary ? 'Primary relay' : 'Set as primary relay'}
+							aria-label={r.primary ? `Primary relay ${r.url}` : `Set ${r.url} as primary relay`}
+						>
+							<Icon name={r.primary ? 'i-lucide-radio' : 'i-lucide-circle'} class="size-3" />
+							<span>PR</span>
+						</button>
+						<button
+							type="button"
+							onclick={() => relays.toggle(r.url, 'read')}
+							class="rounded-md px-1.5 py-1 text-[10.5px] font-semibold transition {r.read
+								? 'text-primary-500'
+								: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)]'}">R</button
+						>
+						<button
+							type="button"
+							onclick={() => relays.toggle(r.url, 'write')}
+							class="rounded-md px-1.5 py-1 text-[10.5px] font-semibold transition {r.write
+								? 'text-primary-500'
+								: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)]'}">W</button
+						>
+						<button
+							type="button"
+							onclick={() => makeWritePrimaryRelay(r.url)}
+							class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition {r.writePrimary
+								? 'bg-primary-500/10 text-primary-600'
+								: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--interactive-hover-bg)] hover:text-primary-500'}"
+							title={r.writePrimary ? 'Preferred write relay' : 'Set as preferred write relay'}
+							aria-label={r.writePrimary
+								? `Preferred write relay ${r.url}`
+								: `Set ${r.url} as preferred write relay`}
+						>
+							<Icon
+								name={r.writePrimary ? 'i-lucide-send' : 'i-lucide-circle-dot'}
+								class="size-3"
+							/>
+							<span>PW</span>
+						</button>
+						<button
+							type="button"
+							onclick={() => relays.remove(r.url)}
+							class="grid size-7 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]"
+						>
+							<Icon name="i-lucide-trash-2" class="size-4" />
+						</button>
+					</div>
 				</div>
 			</li>
 		{/each}
 	</ul>
-</div>
+</SectionCard>
 
-<div class="post-card mb-5 p-5">
-	<div class="mb-1 flex items-center gap-2">
-		<Icon name="i-lucide-sparkles" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Recommended relays</h3>
-		<span class="ml-auto text-[11px] text-[var(--ui-text-dimmed)]"
+<SectionCard
+	title="Recommended relays"
+	icon="i-lucide-sparkles"
+	description="Popular, reliable relays — query reachability and add the ones you want."
+	class="mb-5"
+>
+	{#snippet actions()}
+		<span class="text-[11px] text-[var(--ui-text-dimmed)]"
 			>{recommendedNotAdded.length} available</span
 		>
-	</div>
-	<p class="mb-3 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">
-		Popular, reliable relays. Query reachability and add the ones you want — they're checked live.
-	</p>
+	{/snippet}
 	{#if recommendedNotAdded.length === 0}
 		<p
 			class="rounded-lg border border-dashed border-[var(--ui-border-muted)] px-3 py-4 text-center text-[12px] text-[var(--ui-text-dimmed)]"
@@ -404,9 +408,8 @@
 				icon={queryingRec ? 'i-lucide-loader-circle' : 'i-lucide-wifi'}
 				onclick={queryRecommended}
 				disabled={queryingRec}
-				class={queryingRec ? '[&_.iconify]:animate-spin' : ''}>{queryingRec
-					? 'Querying…'
-					: 'Query reachability'}</Button
+				class={queryingRec ? '[&_.iconify]:animate-spin' : ''}
+				>{queryingRec ? 'Querying…' : 'Query reachability'}</Button
 			>
 		</div>
 		<ul
@@ -420,9 +423,9 @@
 							? 'bg-[var(--tone-success-text)]'
 							: h?.status === 'fail'
 								? 'bg-[var(--tone-error-text)]'
-									: h?.status === 'connecting'
-										? 'animate-pulse bg-primary-500'
-										: 'bg-[var(--ui-text-dimmed)]'}"
+								: h?.status === 'connecting'
+									? 'animate-pulse bg-primary-500'
+									: 'bg-[var(--ui-text-dimmed)]'}"
 					></span>
 					<div class="min-w-0 flex-1 leading-tight">
 						<div class="flex items-center gap-1.5">
@@ -452,7 +455,8 @@
 				type="button"
 				disabled={recPage === 0}
 				onclick={() => (recPage = Math.max(0, recPage - 1))}
-				class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition {recPage === 0
+				class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition {recPage ===
+				0
 					? 'cursor-not-allowed text-[var(--ui-text-dimmed)]'
 					: 'text-primary-500 hover:bg-primary-500/10'}"
 			>
@@ -469,19 +473,16 @@
 							: 'bg-[var(--ui-border-accented)] hover:bg-[var(--ui-text-dimmed)]'}"
 					></button>
 				{/each}
-				<span
-					class="ml-1.5 text-[11px] font-medium tabular-nums text-[var(--ui-text-dimmed)]"
-				>
+				<span class="ml-1.5 text-[11px] font-medium text-[var(--ui-text-dimmed)] tabular-nums">
 					{recPage + 1}/{recTotalPages}
-				</span
-				>
+				</span>
 			</div>
 			<button
 				type="button"
 				disabled={recPage >= recTotalPages - 1}
 				onclick={() => (recPage = Math.min(recTotalPages - 1, recPage + 1))}
 				class="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition {recPage >=
-					recTotalPages - 1
+				recTotalPages - 1
 					? 'cursor-not-allowed text-[var(--ui-text-dimmed)]'
 					: 'text-primary-500 hover:bg-primary-500/10'}"
 			>
@@ -489,4 +490,4 @@
 			</button>
 		</div>
 	{/if}
-</div>
+</SectionCard>

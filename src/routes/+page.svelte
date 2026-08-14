@@ -6,7 +6,6 @@
 	import StoriesBar from '$lib/components/feed/StoriesBar.svelte';
 	import Composer from '$lib/components/feed/Composer.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
-	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import ZapLiveStrip from '$lib/components/feed/ZapLiveStrip.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -51,8 +50,6 @@
 	const filterOpen = $derived(popovers.isOpen(filterMenuId));
 	let activeFilters = $state<FeedFilter[]>(['all']);
 	let feedMode = $state<'foryou' | 'following'>('foryou');
-	let searchQuery = $state('');
-	let searchOpen = $state(false);
 	let renderedCount = $state(INITIAL_RENDER_COUNT);
 	let promotedNewIds = $state<Set<string>>(new Set());
 	let promotedNewNotes = $state<Map<string, FeedNote>>(new Map());
@@ -68,8 +65,7 @@
 	let discoverySignature = $state('');
 	let discoveryRevision = 0;
 	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
-	const normalizedSearch = $derived(searchQuery.trim().toLowerCase());
-	const useRelayFeed = $derived(!!activeTag || normalizedSearch.length >= 2);
+	const useRelayFeed = $derived(!!activeTag);
 	// Keep local matches visible while the remote search is in flight.
 	const discoveryActive = $derived(
 		algorithmPreferences.relayDiscovery.feed && feedMode === 'foryou' && !useRelayFeed
@@ -107,11 +103,7 @@
 			)
 				return false;
 			const matchesFilter = matchesActiveFilters(note);
-			return (
-				matchesFilter &&
-				(!activeTag || hasTag(note, activeTag)) &&
-				(!normalizedSearch || matchesSearch(note, normalizedSearch))
-			);
+			return matchesFilter && (!activeTag || hasTag(note, activeTag));
 		})
 	);
 	// Algorithm ranking — only on the "For you" timeline (not search/tag/following).
@@ -302,15 +294,6 @@
 		});
 	}
 
-	function matchesSearch(note: FeedNote, query: string) {
-		const profile = profiles.get(note.pubkey);
-		const displayName = profile?.display_name || profile?.name || '';
-		return [note.content, displayName, profile?.name ?? '', note.pubkey]
-			.join(' ')
-			.toLowerCase()
-			.includes(query);
-	}
-
 	function uniqueTimelineEvents(events: Event[]) {
 		const seen: Record<string, boolean> = {};
 		return events
@@ -342,20 +325,6 @@
 				limit: RELAY_RESULT_LIMIT
 			});
 		}
-		if (normalizedSearch) {
-			filters.push({
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
-				search: normalizedSearch,
-				limit: RELAY_RESULT_LIMIT
-			});
-			if (!activeTag) {
-				filters.push({
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
-					'#t': [normalizedSearch],
-					limit: RELAY_RESULT_LIMIT
-				});
-			}
-		}
 		return filters;
 	}
 
@@ -386,7 +355,7 @@
 	}
 
 	async function loadRelayFeed() {
-		const signature = `${activeTag}|${normalizedSearch}`;
+		const signature = activeTag;
 		const filters = relayFilters();
 		if (!filters.length) return;
 		relayFeedSignature = signature;
@@ -583,7 +552,7 @@
 
 	$effect(() => {
 		feedPreferences.load();
-		const signature = `${activeFilters.slice().sort().join(',')}:${activeTag}:${normalizedSearch}`;
+		const signature = `${activeFilters.slice().sort().join(',')}:${activeTag}`;
 		if (signature === lastViewSignature) return;
 		lastViewSignature = signature;
 		renderedCount = INITIAL_RENDER_COUNT;
@@ -629,14 +598,12 @@
 
 <div class="flex h-full">
 	<!-- Center feed -->
-	<div bind:this={feedScroller} class="flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
-		<div class="page-container page-container--feed py-6">
+	<div bind:this={feedScroller} class="min-w-0 flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
+		<div class="page-container page-container--feed feed-timeline py-6">
 			<!-- Header -->
 			<div class="relative z-30 mb-5 flex flex-wrap items-start justify-between gap-3">
 				<div>
-					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-						Discover
-					</h1>
+					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">Home</h1>
 					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
 						Fresh notes from the global Nostr feed
 					</p>
@@ -652,36 +619,27 @@
 								toasts.info('Refreshing feed');
 							}
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500"
+						class="icon-btn size-10"
 						aria-label={feed.pendingCount ? 'Show new notes' : 'Refresh'}
 					>
 						<Icon name="i-lucide-rotate-cw" class="size-5" />
 					</button>
-					<button
-						type="button"
-						onclick={() => {
-							searchOpen = !searchOpen;
-							if (!searchOpen) searchQuery = '';
-						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {searchOpen ||
-						normalizedSearch
-							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
-							: ''}"
-						aria-label={searchOpen ? 'Hide search' : 'Show search'}
-						aria-expanded={searchOpen}
+					<a
+						href="/discover"
+						class="icon-btn size-10 xl:hidden"
+						aria-label="Search Discover"
+						title="Search Discover"
 					>
 						<Icon name="i-lucide-search" class="size-5" />
-					</button>
+					</a>
 					<button
 						type="button"
 						onclick={(e) => {
 							e.stopPropagation();
 							popovers.toggle(filterMenuId);
 						}}
-						class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text-muted)] transition hover:text-primary-500 {!activeFilters.includes(
-							'all'
-						) || activeFilters.length > 1
-							? 'border-primary-500/30 bg-primary-500/10 text-primary-600'
+						class="icon-btn size-10 {!activeFilters.includes('all') || activeFilters.length > 1
+							? 'is-active'
 							: ''}"
 						aria-label="Filters"
 						aria-expanded={filterOpen}
@@ -715,41 +673,9 @@
 				</div>
 			</div>
 
-			{#if searchOpen}
-				<div class="mb-4 flex flex-col gap-2">
-					<div class="flex flex-wrap items-center gap-2">
-						<label class="relative min-w-0 flex-1">
-							<Icon
-								name="i-lucide-search"
-								class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--ui-text-dimmed)]"
-							/>
-							<input
-								bind:value={searchQuery}
-								type="search"
-								placeholder="Search notes, hashtags, or authors"
-								class="w-full rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] py-2.5 pr-3 pl-9 text-[13px] text-[var(--ui-text)] transition outline-none focus:border-primary-500/40 focus:ring-2 focus:ring-primary-500/15"
-							/>
-						</label>
-						{#if normalizedSearch}
-							<button
-								type="button"
-								onclick={() => (searchQuery = '')}
-								class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:text-primary-500"
-							>
-								Clear search
-							</button>
-						{/if}
-					</div>
-					<div class="flex items-center gap-1.5 text-[11px] text-[var(--ui-text-dimmed)]">
-						<Icon name="i-lucide-zap" class="size-3.5 text-primary-500" />
-						<span>Instant results, then more from your relays</span>
-					</div>
-				</div>
-			{/if}
-
 			<!-- Sticky feed tabs: For you · Following · pinned hashtags -->
 			<div
-				class="sticky top-0 z-10 -mx-5 mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-5 backdrop-blur-md"
+				class="sticky top-0 z-10 -mx-[clamp(1rem,3vw,1.5rem)] mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-[clamp(1rem,3vw,1.5rem)] backdrop-blur-md"
 			>
 				<div
 					class="flex [scrollbar-width:none] items-center gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden"
@@ -825,7 +751,7 @@
 				</div>
 			</div>
 
-			{#if !activeFilters.includes('all') || activeTag || normalizedSearch}
+			{#if !activeFilters.includes('all') || activeTag}
 				<div
 					class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-500/15 bg-primary-500/10 px-3 py-2 text-[12px]"
 				>
@@ -833,7 +759,6 @@
 						<Icon name="i-lucide-filter" class="size-4 shrink-0" />
 						<span class="truncate">
 							{activeTag ? `#${activeTag}` : activeFilterLabel}
-							{normalizedSearch ? ` · "${searchQuery.trim()}"` : ''}
 							· {filteredNotes.length} notes
 						</span>
 					</div>
@@ -847,8 +772,6 @@
 									: relayFeedStatus === 'merged'
 										? 'Merged relay results'
 										: 'Primary relay results'}
-							{:else if normalizedSearch}
-								Quick local results
 							{:else}
 								Live timeline
 							{/if}
@@ -872,7 +795,6 @@
 							href="/"
 							onclick={() => {
 								activeFilters = ['all'];
-								searchQuery = '';
 								feedMode = 'foryou';
 							}}
 							class="rounded-lg px-2 py-1 font-bold text-primary-600 transition hover:bg-primary-500/10"
@@ -890,7 +812,7 @@
 				</div>
 
 				<!-- Composer -->
-				<div class="mb-4">
+				<div class="feed-composer mb-4">
 					<Composer />
 				</div>
 			{:else}
@@ -956,8 +878,12 @@
 			{/if}
 
 			{#if newlyRevealedNotes.length && !useRelayFeed}
-				<section class="mb-5 rounded-2xl border border-primary-500/20 bg-primary-500/5 p-3">
-					<div class="mb-3 flex items-center justify-between gap-3 px-1">
+				<section
+					class="-mx-[clamp(1rem,3vw,1.5rem)] border-y border-primary-500/20 bg-primary-500/5 py-3"
+				>
+					<div
+						class="mb-0 flex items-center justify-between gap-3 px-[clamp(1rem,3vw,1.5rem)]"
+					>
 						<div class="flex min-w-0 items-center gap-2">
 							<Icon name="i-lucide-sparkles" class="size-4 shrink-0 text-primary-500" />
 							<div class="min-w-0">
@@ -976,11 +902,12 @@
 							Continue to For you
 						</button>
 					</div>
-					<div class="space-y-3">
+					<div class="divide-y divide-[var(--ui-border-muted)]">
 						{#each newlyRevealedNotes as note, i (note.id)}
 							<PostCard
 								{note}
 								index={i}
+								flat
 								onInteract={handleInteract}
 								onNoteChange={handleNoteChange}
 								onNoteHide={handleNoteHide}
@@ -1045,7 +972,6 @@
 							href="/"
 							onclick={() => {
 								activeFilters = ['all'];
-								searchQuery = '';
 								feedMode = 'foryou';
 							}}
 							class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600"
@@ -1057,7 +983,7 @@
 			{:else}
 				{#if algorithmActive && renderedNotes.length > 0}
 					<div
-						class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-500/15 bg-primary-500/5 px-3 py-2"
+						class="-mx-[clamp(1rem,3vw,1.5rem)] flex flex-wrap items-center justify-between gap-2 border-b border-primary-500/15 bg-primary-500/5 px-[clamp(1rem,3vw,1.5rem)] py-2"
 					>
 						<div class="flex min-w-0 items-center gap-2 text-[12px] font-semibold text-primary-600">
 							<Icon name="i-lucide-wand-sparkles" class="size-4 shrink-0" />
@@ -1071,11 +997,12 @@
 						</a>
 					</div>
 				{/if}
-				<div class="space-y-5">
+				<div class="-mx-[clamp(1rem,3vw,1.5rem)] divide-y divide-[var(--ui-border-muted)]">
 					{#each renderedNotes as note, i (note.id)}
 						<PostCard
 							{note}
 							index={i}
+							flat
 							onNoteChange={handleNoteChange}
 							onNoteHide={handleNoteHide}
 							rankTag={rankTagFor(note)}
@@ -1118,9 +1045,6 @@
 			{/if}
 		</div>
 	</div>
-
-	<!-- Home-only trending rail. Other pages keep the centered single-column layout. -->
-	<TrendingRail />
 </div>
 
 <RankExplainer bind:open={explainerOpen} breakdown={explainerBreakdown} />

@@ -126,7 +126,7 @@ class MediaStore {
 			return uploadViaServer(sanitized, options);
 		}
 		if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
-		return uploadWithProvider(sanitized, id, this.state);
+		return uploadWithProvider(sanitized, id, this.state, options.onProgress);
 	};
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -24,23 +25,18 @@
 <svelte:head><title>Bookmarks · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
+	<PageHeader title="Bookmarks">
+		{#snippet subtitle()}Notes you saved for later{/snippet}
+		{#snippet actions()}
+			<div class="icon-btn size-9" aria-hidden="true">
+				<Icon name="i-lucide-bookmark-check" class="size-[18px]" />
+			</div>
+		{/snippet}
+	</PageHeader>
 	<div class="page-container page-container--feed py-6">
-		<div class="mb-5 flex items-center justify-between">
-			<div>
-				<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-					Bookmarks
-				</h1>
-				<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">Notes you saved for later</p>
-			</div>
-			<div
-				class="grid size-10 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500"
-			>
-				<Icon name="i-lucide-bookmark-check" class="size-5" />
-			</div>
-		</div>
 
 		{#if bookmarks.items.length}
-			<div class="space-y-5 pb-8">
+			<div class="feed-note-list pb-8">
 				{#each validItems as item, i (item.id)}
 					<PostCard note={item.note} index={i} onNoteChange={updateNote} />
 				{/each}

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { decode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
@@ -152,22 +153,17 @@
 <svelte:head><title>Note · BitOS</title></svelte:head>
 
 <div class="h-full overflow-y-auto">
-	<div class="page-container page-container--feed py-6">
-		<header class="mb-5">
-			<a
-				href={backHref}
-				class="mb-4 inline-flex items-center gap-2 text-[13px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500"
-			>
-				<Icon name="i-lucide-arrow-left" class="size-4" />
-				{backLabel}
+	<PageHeader title="Note">
+		{#snippet subtitle()}
+			{#if noteId}<span class="font-mono">{shortKey(noteId, 10, 8)}</span>{/if}
+		{/snippet}
+		{#snippet actions()}
+			<a href={backHref} class="icon-btn size-9" aria-label={backLabel}>
+				<Icon name="i-lucide-arrow-left" class="size-[18px]" />
 			</a>
-			<h1 class="font-display text-[30px] leading-none font-extrabold tracking-tight">Note</h1>
-			{#if noteId}
-				<p class="mt-1.5 font-mono text-[12px] text-[var(--ui-text-muted)]">
-					{shortKey(noteId, 10, 8)}
-				</p>
-			{/if}
-		</header>
+		{/snippet}
+	</PageHeader>
+	<div class="page-container page-container--feed py-6">
 
 		{#if !noteId}
 			<div class="post-card py-16 text-center">

@@ -1,6 +1,6 @@
 export const STANDALONE_PUBLIC_ROUTES = new Set(['/about', '/privacy', '/terms', '/welcome']);
 
-const PROTECTED_ROUTE_PREFIXES = ['/messages', '/notifications', '/bookmarks', '/settings'];
+const PROTECTED_ROUTE_PREFIXES = ['/messages', '/notifications', '/bookmarks', '/settings', '/zaps'];
 
 export function isStandalonePublicRoute(pathname: string) {
 	return STANDALONE_PUBLIC_ROUTES.has(pathname);
@@ -47,6 +47,13 @@ export function authMessageForPath(pathname: string) {
 			title: 'Settings need an active identity',
 			description:
 				'Sign in to manage your profile, security options, media providers, and account-specific preferences.'
+		};
+	}
+	if (pathname === '/zaps') {
+		return {
+			title: 'Zaps are personal',
+			description:
+				'Sign in with your Nostr key to see zaps you have received, track sent zaps, and connect a Lightning wallet.'
 		};
 	}
 	return {

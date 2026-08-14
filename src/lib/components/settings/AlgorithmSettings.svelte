@@ -9,6 +9,7 @@
 	};
 
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import {
 		algorithmPreferences,
 		DEFAULT_RECENCY_HALF_LIFE_SECONDS,
@@ -16,11 +17,7 @@
 		signalDefinitions,
 		interactionProfile
 	} from '$lib/algorithm';
-	import {
-		PRESET_META,
-		presetConfigFor,
-		detectPreset
-	} from '$lib/algorithm/presets';
+	import { PRESET_META, presetConfigFor, detectPreset } from '$lib/algorithm/presets';
 	import { refreshWot } from '$lib/algorithm/context';
 	import type { PresetId, SurfaceId } from '$lib/algorithm/types';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -70,7 +67,9 @@
 
 	function applyPreset(surface: SurfaceId, id: Exclude<PresetId, 'custom'>) {
 		algorithmPreferences.applySurfaceConfig(surface, presetConfigFor(id, surface));
-		toasts.success(`${SURFACE_META[surface].label}: ${PRESET_META.find((p) => p.id === id)?.label}`);
+		toasts.success(
+			`${SURFACE_META[surface].label}: ${PRESET_META.find((p) => p.id === id)?.label}`
+		);
 	}
 
 	function onWeightInput(surface: SurfaceId, id: string, value: number) {
@@ -84,7 +83,7 @@
 </script>
 
 <!-- Hero / explainer -->
-<div class="post-card mb-5 p-5">
+<SectionCard class="mb-5">
 	<div class="flex items-start gap-3">
 		<div
 			class="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary-500/10 text-primary-500"
@@ -92,10 +91,10 @@
 			<Icon name="i-lucide-wand-sparkles" class="size-6" />
 		</div>
 		<div class="min-w-0 flex-1">
-			<h2 class="font-display text-[24px] font-extrabold leading-tight">Algorithm</h2>
+			<h2 class="font-display text-[24px] leading-tight font-extrabold">Algorithm</h2>
 			<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-		Tune how BitOS ranks your Feed, Bits, and Discover — fully on your device. Turn a
-				surface off for pure reverse-chronological order. Nothing leaves your browser.
+				Tune how BitOS ranks your Feed, Bits, and Discover — fully on your device. Turn a surface
+				off for pure reverse-chronological order. Nothing leaves your browser.
 			</p>
 		</div>
 	</div>
@@ -113,19 +112,17 @@
 			<p class="text-[10.5px] font-semibold text-[var(--ui-text-muted)]">Following</p>
 		</div>
 	</div>
-</div>
+</SectionCard>
 
 <!-- Global freshness -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-1 flex items-center gap-2">
-		<Icon name="i-lucide-timer" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Freshness</h3>
+<SectionCard title="Freshness" icon="i-lucide-timer" class="mb-5">
+	{#snippet actions()}
 		<span
-			class="ml-auto rounded-full bg-primary-500/10 px-2.5 py-0.5 text-[11px] font-bold text-primary-600"
+			class="rounded-full bg-primary-500/10 px-2.5 py-0.5 text-[11px] font-bold text-primary-600"
 		>
 			{freshnessLabel}
 		</span>
-	</div>
+	{/snippet}
 	<p class="mb-3 text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
 		How fast older notes fade from the top. Applies to the Recency signal across all surfaces.
 	</p>
@@ -146,7 +143,7 @@
 			</button>
 		{/each}
 	</div>
-</div>
+</SectionCard>
 
 <!-- Per-surface controls -->
 {#each SURFACES as surface (surface)}
@@ -154,7 +151,7 @@
 	{@const meta = SURFACE_META[surface]}
 	{@const total = activeWeightTotal(surface)}
 	{@const preset = surfacePreset(surface)}
-	<div class="post-card mb-5 overflow-hidden">
+	<SectionCard class="mb-5" bodyClass="">
 		<!-- Surface header + master switch -->
 		<div class="flex items-center gap-3 p-5 pb-3">
 			<div
@@ -169,7 +166,7 @@
 					<h3 class="text-[17px] font-extrabold tracking-tight">{meta.label}</h3>
 					{#if !cfg.enabled}
 						<span
-							class="rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--ui-text-dimmed)]"
+							class="rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
 						>
 							Chronological
 						</span>
@@ -211,7 +208,10 @@
 							? 'border-primary-500/50 bg-primary-500/5'
 							: ''}"
 					>
-						<Icon name="i-lucide-sliders-horizontal" class="mb-1 size-4 text-[var(--ui-text-muted)]" />
+						<Icon
+							name="i-lucide-sliders-horizontal"
+							class="mb-1 size-4 text-[var(--ui-text-muted)]"
+						/>
 						<p class="text-[12px] font-bold text-[var(--ui-text-muted)]">Custom</p>
 					</div>
 				</div>
@@ -235,8 +235,7 @@
 									: 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text-muted)]'}"
 								aria-label={`Toggle ${def.label}`}
 								aria-pressed={state?.enabled}
-								onclick={() =>
-									algorithmPreferences.toggleSignal(surface, def.id, !state?.enabled)}
+								onclick={() => algorithmPreferences.toggleSignal(surface, def.id, !state?.enabled)}
 							>
 								<Icon name={def.icon} class="size-[17px]" />
 							</button>
@@ -245,7 +244,7 @@
 								<p class="truncate text-[11px] text-[var(--ui-text-muted)]">{def.description}</p>
 							</div>
 							<span
-								class="shrink-0 rounded-full bg-[var(--ui-bg-muted)] px-2 py-0.5 text-[11px] font-bold tabular-nums text-[var(--ui-text)]"
+								class="shrink-0 rounded-full bg-[var(--ui-bg-muted)] px-2 py-0.5 text-[11px] font-bold text-[var(--ui-text)] tabular-nums"
 							>
 								{fmtPct(state?.weight ?? 0, total)}
 							</span>
@@ -280,7 +279,8 @@
 							{@const state = cfg.signals[def.id]}
 							{#if state?.enabled && state.weight > 0}
 								<div
-									style="width:{(state.weight / total) * 100}%; background:{SIGNAL_COLORS[def.id] ?? '#94a3b8'}"
+									style="width:{(state.weight / total) * 100}%; background:{SIGNAL_COLORS[def.id] ??
+										'#94a3b8'}"
 									class="h-full transition-all duration-300"
 									title={`${def.label} ${fmtPct(state.weight, total)}`}
 								></div>
@@ -291,7 +291,9 @@
 			{/if}
 
 			<!-- Diversity + surface actions -->
-			<div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3">
+			<div
+				class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3"
+			>
 				<button
 					type="button"
 					class="flex items-center gap-2.5 text-left"
@@ -323,15 +325,11 @@
 				</button>
 			</div>
 		</div>
-	</div>
+	</SectionCard>
 {/each}
 
 <!-- Advanced -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-3 flex items-center gap-2">
-		<Icon name="i-lucide-settings-2" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Advanced</h3>
-	</div>
+<SectionCard title="Advanced" icon="i-lucide-settings-2" class="mb-5">
 	<div class="space-y-2">
 		<button
 			type="button"
@@ -350,7 +348,9 @@
 		</button>
 
 		<!-- Smooth ranking: anti-jump toggle -->
-		<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
+		<div
+			class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3"
+		>
 			<Icon name="i-lucide-waves" class="size-5 text-primary-500" />
 			<div class="min-w-0 flex-1">
 				<p class="text-[13px] font-bold text-[var(--ui-text)]">Smooth ranking</p>
@@ -368,12 +368,15 @@
 		</div>
 
 		<!-- Optional public-only discovery relay layer -->
-		<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
+		<div
+			class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3"
+		>
 			<Icon name="i-lucide-radio-tower" class="size-5 text-primary-500" />
 			<div class="min-w-0 flex-1">
 				<p class="text-[13px] font-bold text-[var(--ui-text)]">Relay discovery</p>
 				<p class="text-[11px] text-[var(--ui-text-muted)]">
-					Enrich For You with public notes from curated relays outside your settings. Read-only; never publishes there.
+					Enrich For You with public notes from curated relays outside your settings. Read-only;
+					never publishes there.
 				</p>
 			</div>
 			<button
@@ -385,12 +388,17 @@
 					algorithmPreferences.setRelayDiscovery('feed', !algorithmPreferences.relayDiscovery.feed)}
 			></button>
 		</div>
-		{#each (['discover', 'reels'] as const) as discoverySurface}
-			<div class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3">
-				<Icon name={discoverySurface === 'discover' ? 'i-lucide-compass' : 'i-lucide-clapperboard'} class="size-5 text-primary-500" />
+		{#each ['discover', 'reels'] as const as discoverySurface}
+			<div
+				class="flex w-full items-center gap-3 rounded-xl border border-[var(--ui-border-muted)] p-3"
+			>
+				<Icon
+					name={discoverySurface === 'discover' ? 'i-lucide-compass' : 'i-lucide-clapperboard'}
+					class="size-5 text-primary-500"
+				/>
 				<div class="min-w-0 flex-1">
 					<p class="text-[13px] font-bold text-[var(--ui-text)]">
-					{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Bits relay discovery'}
+						{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Bits relay discovery'}
 					</p>
 					<p class="text-[11px] text-[var(--ui-text-muted)]">
 						Add public candidates from curated relays without changing your relay settings.
@@ -445,7 +453,7 @@
 			</div>
 		</button>
 	</div>
-</div>
+</SectionCard>
 
 <style>
 	/* Range input — themed to match the primary accent. */

@@ -9,6 +9,7 @@
  */
 export const settingsSections = [
 	{ key: 'account', label: 'Account', icon: 'i-lucide-user', tint: '#2F95F6', group: 'hero' },
+	{ key: 'lightning', label: 'Lightning', icon: 'i-lucide-zap', tint: '#FF9500', group: 'preferences' },
 	{ key: 'privacy', label: 'Privacy', icon: 'i-lucide-lock', tint: '#5856D6', group: 'preferences' },
 	{ key: 'notifications', label: 'Notifications', icon: 'i-lucide-bell', tint: '#FF3B30', group: 'preferences' },
 	{ key: 'appearance', label: 'Appearance', icon: 'i-lucide-palette', tint: '#FF2D92', group: 'preferences' },

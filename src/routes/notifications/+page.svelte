@@ -3,9 +3,9 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import NotificationMedia from '$lib/components/feed/NotificationMedia.svelte';
 	import OriginNotePreview from '$lib/components/feed/OriginNotePreview.svelte';
-	import TrendingRail from '$lib/components/feed/TrendingRail.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -19,9 +19,11 @@
 	} from '$lib/utils/imeta';
 	import { parseContent } from '$lib/utils/note-content';
 	import { decode as decodeBech32 } from 'nostr-tools/nip19';
+	import { getPow } from 'nostr-tools/nip13';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import type { NotificationItem } from '$lib/nostr/types';
 
-	type Filter = 'all' | 'unread' | 'mention';
+	type Filter = 'all' | 'unread' | 'mention' | 'zap' | 'like' | 'repost' | 'follow' | 'comment';
 
 	/** Semantic per-type presentation config (icon + accent color + verb). */
 	const TYPE_META: Record<NotificationItem['type'], { icon: string; color: string; verb: string }> =
@@ -56,23 +58,38 @@
 		return TYPE_META[item.type].verb;
 	}
 
-	const FILTER_LABELS: { key: Filter; label: string }[] = [
+	const PRIMARY_FILTERS: { key: Filter; label: string }[] = [
 		{ key: 'all', label: 'All' },
 		{ key: 'unread', label: 'Unread' },
-		{ key: 'mention', label: 'Mentions' }
+		{ key: 'mention', label: 'Mentions' },
+		{ key: 'comment', label: 'Replies' }
+	];
+
+	const ACTIVITY_FILTERS: { key: Filter; label: string; icon?: string }[] = [
+		{ key: 'zap', label: 'Zaps', icon: 'i-lucide-zap' },
+		{ key: 'like', label: 'Likes' },
+		{ key: 'repost', label: 'Reposts', icon: 'i-lucide-repeat-2' },
+		{ key: 'follow', label: 'Follows', icon: 'i-lucide-user-plus' }
 	];
 
 	let filter = $state<Filter>('all');
 	let query = $state('');
+	let mobileSearchOpen = $state(false);
 	let rawOpen = $state(false);
 	let rawEvent = $state('');
 
 	const unread = $derived(notifications.unreadCount);
 
+	function countFor(filterKey: Filter) {
+		if (filterKey === 'unread') return unread;
+		if (filterKey === 'all') return notifications.visible.length;
+		return notifications.countByType[filterKey] ?? 0;
+	}
+
 	const filtered = $derived(
 		notifications.visible.filter((item) => {
 			if (filter === 'unread' && item.read) return false;
-			if (filter === 'mention' && item.type !== 'mention') return false;
+			if (filter !== 'all' && filter !== 'unread' && item.type !== filter) return false;
 			if (!query.trim()) return true;
 			const q = query.trim().toLowerCase();
 			const name = actorName(item.pubkey).toLowerCase();
@@ -196,6 +213,18 @@
 	 *  A plain object (not SvelteMap) on purpose: it's a memo, never rendered. */
 	const mediaCache: Record<string, ImageMeta[]> = {};
 
+	/** Mined difficulty of the *incoming* event itself (nonce-tagged only),
+	 *  memoized per id. `item.id` is the event id, so its leading zeros are
+	 *  the receipt — same micro-badge treatment as the comment list. */
+	const powCache: Record<string, number | undefined> = {};
+	function powFor(item: NotificationItem): number | undefined {
+		if (item.id in powCache) return powCache[item.id];
+		const nonce = item.raw?.tags?.find((t) => t[0] === 'nonce');
+		const bits = nonce ? getPow(item.id) : undefined;
+		powCache[item.id] = bits;
+		return bits;
+	}
+
 	function preview(item: NotificationItem) {
 		if (item.type === 'like') return item.content || '❤️';
 		if (item.type === 'follow') return '';
@@ -304,69 +333,86 @@
 
 <div class="flex h-full">
 	<div bind:this={listEl} class="min-w-0 flex-1 overflow-y-auto">
-		<div class="page-container page-container--notifications py-6">
-			<!-- Header -->
-			<header class="mb-4 flex items-center justify-between gap-4">
-				<div>
-					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">
-						Notifications
-					</h1>
-					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
-						<span class="inline-flex items-center gap-1">
-							{#if notifications.connected}
-								<span class="live-dot"></span>
-								Live
-							{:else if notifications.loading}
-								<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
-								Connecting…
-							{:else}
-								<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
-								Offline
-							{/if}
-						</span>
-						· {unread} unread · {notifications.visible.length} activities
-					</p>
-				</div>
+		<PageHeader title="Notifications">
+			{#snippet subtitle()}
+				<span class="inline-flex items-center gap-1">
+					{#if notifications.connected}
+						<span class="live-dot"></span>
+						Live
+					{:else if notifications.loading}
+						<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+						Connecting…
+					{:else}
+						<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
+						Offline
+					{/if}
+				</span>
+				· {unread} unread · {notifications.visible.length} activities
+			{/snippet}
+			{#snippet actions()}
+				<button
+					type="button"
+					onclick={() => (mobileSearchOpen = !mobileSearchOpen)}
+					class="icon-btn size-9 sm:hidden {mobileSearchOpen ? 'is-active' : ''}"
+					aria-label="Search notifications"
+					aria-expanded={mobileSearchOpen}
+				>
+					<Icon name={mobileSearchOpen ? 'i-lucide-x' : 'i-lucide-search'} class="size-[18px]" />
+				</button>
 				<button
 					type="button"
 					onclick={() => notifications.markAllRead()}
 					disabled={!unread}
-					class="inline-flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-50"
+					class="icon-btn size-9 disabled:pointer-events-none disabled:opacity-40"
+					aria-label="Mark all read"
+					title="Mark all notifications as read"
 				>
-					<Icon name="i-lucide-check-check" class="size-4" />
-					Mark read
+					<Icon name="i-lucide-check-check" class="size-[18px]" />
 				</button>
-			</header>
-
-			<!-- Filters + search -->
-			<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-				<div class="flex flex-wrap gap-1.5">
-					{#each FILTER_LABELS as f (f.key)}
-						<button
-							type="button"
-							onclick={() => (filter = f.key)}
-							class="pill-tab flex items-center gap-1.5 {filter === f.key ? 'active' : ''}"
-						>
-							{f.label}
-							{#if f.key === 'unread' && unread}
-								<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
-									{unread}
-								</span>
-							{:else if f.key === 'mention'}
-								{@const n = notifications.countByType['mention'] ?? 0}
-								{#if n}
-									<span
-										class="rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]"
-									>
-										{n}
-									</span>
-								{/if}
-							{/if}
-						</button>
-					{/each}
+			{/snippet}
+			{#snippet tabs()}
+				<div class="flex w-full min-w-max items-center gap-1 px-[clamp(1rem,3vw,1.5rem)]">
+					<div class="flex items-center gap-1" role="tablist" aria-label="Notification filters">
+						{#each PRIMARY_FILTERS as f (f.key)}
+							{@const n = countFor(f.key)}
+							<button
+								type="button"
+								role="tab"
+								aria-selected={filter === f.key}
+								onclick={() => (filter = f.key)}
+								class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {filter ===
+								f.key
+									? 'text-primary-600'
+									: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+							>
+								{f.label}{#if f.key !== 'all' && n}<span
+										class="ml-1.5 font-mono text-[10px] opacity-70">{n}</span
+									>{/if}
+								{#if filter === f.key}<span
+										class="absolute right-2 bottom-0 left-2 h-0.5 rounded-full bg-primary-500"
+									></span>{/if}
+							</button>
+						{/each}
+					</div>
+					<div
+						class="ml-auto hidden w-[180px] shrink-0 items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-1.5 sm:flex"
+					>
+						<Icon name="i-lucide-search" class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]" />
+						<input
+							type="search"
+							bind:value={query}
+							placeholder="Search activity…"
+							aria-label="Search notifications"
+							class="w-full bg-transparent text-[12px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
+						/>
+					</div>
 				</div>
+			{/snippet}
+		</PageHeader>
+		{#if mobileSearchOpen}
+			<div class="border-b border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-4 py-2.5 sm:hidden">
 				<div
-					class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 sm:ml-auto sm:w-[220px]"
+					class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2"
 				>
 					<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 					<input
@@ -375,6 +421,43 @@
 						placeholder="Search activity…"
 						class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 					/>
+				</div>
+			</div>
+		{/if}
+		<div class="page-container page-container--notifications py-4">
+			<div class="mb-5">
+				<div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+					<span
+						class="shrink-0 text-[11px] font-bold tracking-[0.06em] text-[var(--ui-text-dimmed)] uppercase"
+						>Activity types</span
+					>
+					<div
+						class="flex w-full [scrollbar-width:none] items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+						role="tablist"
+						aria-label="Activity type filters"
+					>
+						{#each ACTIVITY_FILTERS as f (f.key)}
+							{@const n = countFor(f.key)}
+							<button
+								type="button"
+								role="tab"
+								aria-selected={filter === f.key}
+								onclick={() => (filter = f.key)}
+								class:active={filter === f.key}
+								class="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] {filter ===
+								f.key
+									? 'bg-primary-500/10 text-primary-600'
+									: ''}"
+							>
+								{#if f.icon}<Icon name={f.icon} class="size-3.5" />{/if}
+								{f.label}
+								{#if n}<span
+										class="inline-grid h-4.5 min-w-4.5 place-items-center rounded-full bg-[var(--ui-bg-accented)] px-1 text-[10px] leading-none font-bold text-[var(--ui-text-muted)]"
+										>{n}</span
+									>{/if}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
 
@@ -431,15 +514,15 @@
 				</div>
 			{:else}
 				<!-- Live region: screen readers announce fresh activity -->
-				<div role="log" aria-live="polite" aria-atomic="false" class="space-y-6">
+				<div role="log" aria-live="polite" aria-atomic="false" class="notifications-list space-y-5">
 					{#each sections as section (section.label)}
 						<section>
 							<h2
-								class="mb-2 px-1 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
+								class="mb-2 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
 							>
 								{section.label}
 							</h2>
-							<div class="space-y-2.5">
+							<div>
 								{#each section.rows as row (row.kind === 'group' ? row.first.id : row.item.id)}
 									{@const item = row.kind === 'group' ? row.first : row.item}
 									{@const meta = TYPE_META[item.type]}
@@ -449,27 +532,28 @@
 									<article
 										class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
 											? 'z-30'
-											: 'z-0'} {!item.read ? 'bg-[var(--active-surface-bg)]' : ''}"
+											: 'z-0'} {!item.read ? 'notification-row--unread' : ''}"
+										style={!item.read ? `--notification-accent: ${meta.color}` : undefined}
 									>
 										<!-- Unread accent stripe -->
 										{#if !item.read}
 											<span
-												class="absolute top-0 bottom-0 left-0 w-[3px]"
-												style="background:{meta.color}"
+												class="notification-accent absolute top-0 bottom-0 left-0 z-10 w-[3px]"
+												style="background:var(--notification-accent)"
 											></span>
 										{/if}
 
-										<div class="flex items-start gap-3 p-4 pr-14">
+										<div class="flex items-start gap-3 py-3.5 pr-12">
 											<div class="relative shrink-0">
 												{#if row.kind === 'group'}
 													{@const actors = row.items.slice(0, 3)}
-													<div class="flex -space-x-3">
+													<div class="flex -space-x-2">
 														{#each actors as g, i (g.id)}
 															<a
 																href={profileLink(g.pubkey)}
 																onclick={() => openRow(g)}
-																class="relative z-{10 -
-																	i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+																class="hex-clip relative shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:z-20 hover:bg-primary-500/40"
+																style="z-index:{10 - i}"
 																aria-label={`View ${actorName(g.pubkey)}'s profile`}
 															>
 																<Avatar
@@ -477,7 +561,7 @@
 																	name={actorName(g.pubkey)}
 																	picture={profiles.get(g.pubkey)?.picture}
 																	size={40}
-																	class="mask-squircle"
+																	shape="hex"
 																/>
 															</a>
 														{/each}
@@ -489,10 +573,10 @@
 														<Icon name={meta.icon} class="size-3" />
 													</span>
 												{:else}
-													<a
-														href={profileLink(item.pubkey)}
-														onclick={() => openRow(item)}
-														class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+												<a
+													href={profileLink(item.pubkey)}
+													onclick={() => openRow(item)}
+													class="hex-clip block size-12 shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:bg-primary-500/40"
 														aria-label={`View ${actorName(item.pubkey)}'s profile`}
 													>
 														<Avatar
@@ -500,7 +584,7 @@
 															name={actorName(item.pubkey)}
 															picture={profile?.picture}
 															size={44}
-															class="mask-squircle"
+															shape="hex"
 														/>
 													</a>
 													<span
@@ -563,6 +647,9 @@
 																	>you</span
 																>
 															{/if}
+															{#if powFor(item)}
+																<PowBadge bits={powFor(item) ?? 0} micro id={item.id} />
+															{/if}
 															{#if sourceLink(item)}
 																<a
 																	href={sourceLink(item)}
@@ -624,7 +711,7 @@
 											{@const media = mediaFor(item)}
 											<!-- Media is a sibling of the row content so its zoom buttons don't nest
 										     inside the link (matches PostCard's separation pattern). -->
-											<div class="pr-4 pb-4 pl-[72px]">
+											<div class="pb-3.5 pl-[56px]">
 												<NotificationMedia
 													{media}
 													tags={item.raw?.tags ?? []}
@@ -633,87 +720,99 @@
 											</div>
 										{/if}
 
-										<!-- Overflow actions stay outside the row links, so there are no nested interactives. -->
-										<div class="absolute top-2.5 right-2.5 z-20 shrink-0">
-											<button
-												type="button"
-												onclick={(e) => {
-													e.preventDefault();
-													e.stopPropagation();
-													popovers.toggle(menuId);
-												}}
-												class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
-													? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
-													: ''}"
-												aria-label="Notification actions"
-												aria-expanded={menuOpen}
-											>
-												<Icon name="i-lucide-ellipsis" class="size-[18px]" />
-											</button>
-											{#if menuOpen}
-												<div
-													class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
-													role="menu"
+										<!-- The overflow action uses the same far-right column as the page-level actions. -->
+										<div
+											class="absolute top-2.5 z-20 shrink-0"
+											style={item.read
+												? 'right:calc(0.625rem - clamp(1rem, 3vw, 1.5rem))'
+												: 'right:0.625rem'}
+										>
+											{@render notificationActions()}
+										</div>
+
+										<!-- The menu remains outside all row links. -->
+										{#snippet notificationActions()}
+											<div class="relative z-20 shrink-0">
+												<button
+													type="button"
+													onclick={(e) => {
+														e.preventDefault();
+														e.stopPropagation();
+														popovers.toggle(menuId);
+													}}
+													class="grid size-8 place-items-center rounded-lg text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] {menuOpen
+														? 'bg-[var(--interactive-hover-bg)] text-[var(--ui-text)]'
+														: ''}"
+													aria-label="Notification actions"
+													aria-expanded={menuOpen}
 												>
-													{#if !item.read}
+													<Icon name="i-lucide-ellipsis" class="size-[18px]" />
+												</button>
+												{#if menuOpen}
+													<div
+														class="absolute top-9 right-0 z-50 w-52 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+														role="menu"
+													>
+														{#if !item.read}
+															<button
+																type="button"
+																role="menuitem"
+																onclick={() => {
+																	notifications.markRead(item.id);
+																	popovers.close();
+																}}
+																class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+															>
+																<Icon name="i-lucide-check" class="size-4 shrink-0" />
+																Mark as read
+															</button>
+														{/if}
+														<a
+															href={`/profile/${item.pubkey}`}
+															role="menuitem"
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon name="i-lucide-user" class="size-4 shrink-0" />
+															View profile
+														</a>
 														<button
 															type="button"
 															role="menuitem"
-															onclick={() => {
-																notifications.markRead(item.id);
-																popovers.close();
-															}}
+															onclick={() => copyTarget(item)}
 															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 														>
-															<Icon name="i-lucide-check" class="size-4 shrink-0" />
-															Mark as read
+															<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
+															{item.targetId ? 'Copy note id' : 'Copy profile id'}
 														</button>
-													{/if}
-													<a
-														href={`/profile/${item.pubkey}`}
-														role="menuitem"
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-user" class="size-4 shrink-0" />
-														View profile
-													</a>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => copyTarget(item)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-fingerprint" class="size-4 shrink-0" />
-														{item.targetId ? 'Copy note id' : 'Copy profile id'}
-													</button>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => viewRawEvent(item)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
-														View raw event
-													</button>
-													<button
-														type="button"
-														role="menuitem"
-														onclick={() => muteType(item.type)}
-														class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-													>
-														<Icon
-															name={notifications.muted.has(item.type)
-																? 'i-lucide-bell-ring'
-																: 'i-lucide-bell-off'}
-															class="size-4 shrink-0"
-														/>
-														{notifications.muted.has(item.type)
-															? 'Unmute this type'
-															: 'Mute this type'}
-													</button>
-												</div>
-											{/if}
-										</div>
+														<button
+															type="button"
+															role="menuitem"
+															onclick={() => viewRawEvent(item)}
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon name="i-lucide-code-2" class="size-4 shrink-0" />
+															View raw event
+														</button>
+														<button
+															type="button"
+															role="menuitem"
+															onclick={() => muteType(item.type)}
+															class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition-colors hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+														>
+															<Icon
+																name={notifications.muted.has(item.type)
+																	? 'i-lucide-bell-ring'
+																	: 'i-lucide-bell-off'}
+																class="size-4 shrink-0"
+															/>
+															{notifications.muted.has(item.type)
+																? 'Unmute this type'
+																: 'Mute this type'}
+														</button>
+													</div>
+												{/if}
+											</div>
+										{/snippet}
 									</article>
 								{/each}
 							</div>
@@ -741,9 +840,6 @@
 			{/if}
 		</div>
 	</div>
-
-	<!-- Notifications keep the same contextual rail as the home feed. -->
-	<TrendingRail />
 </div>
 
 <Dialog bind:open={rawOpen} title="Raw event">

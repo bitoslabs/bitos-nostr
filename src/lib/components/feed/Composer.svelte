@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { npubEncode } from 'nostr-tools/nip19';
+	import { afterNavigate } from '$app/navigation';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
-	import { feed } from '$lib/nostr/feed.svelte';
+	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
 	import type { MediaProviderId } from '$lib/media/uploaders';
@@ -15,17 +16,36 @@
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
+	import PowCard from '$lib/components/ui/PowCard.svelte';
+	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
+	import { onMount, untrack } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
-import { rewriteMentions } from '$lib/utils/nip27';
-import StoryRing from './StoryRing.svelte';
-import PollComposer from './PollComposer.svelte';
+	import { rewriteMentions } from '$lib/utils/nip27';
+	import StoryRing from './StoryRing.svelte';
+	import PollComposer from './PollComposer.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
 	let text = $state('');
 	let posting = $state(false);
+	let mining = $state(false);
+	/** Coarse submit phase for the Post button label. */
+	let postPhase = $state<'idle' | 'mining' | 'publishing'>('idle');
+	// Live stats streamed from the NIP-13 worker (null when not mining).
+	let powProgress = $state<PowProgress | null>(null);
+	let mineController: AbortController | undefined;
 	let uploading = $state(false);
 	let attachments = $state<UploadedMedia[]>([]);
+	/** Files currently uploading — rendered as live progress tiles. */
+	type PendingUpload = {
+		id: string;
+		file: File;
+		preview: string;
+		percent: number;
+		deterministic: boolean;
+		error?: string;
+	};
+	let pendingUploads = $state<PendingUpload[]>([]);
 	let sensitive = $state(false);
 
 	// Per-post provider selection. Defaults to the configured default and stays
@@ -37,6 +57,9 @@ import PollComposer from './PollComposer.svelte';
 	let pollOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
+	// Start from the last difficulty the user actually published with.
+	let showPow = $state(untrack(() => powPrefs.state.showPanelByDefault));
+	let pow = $state(untrack(() => powPrefs.state.lastDifficulty));
 	let providerInitialized = $state(false);
 	let mention = $state<{ start: number; query: string } | null>(null);
 	let mentionIndex = $state(0);
@@ -72,7 +95,6 @@ import PollComposer from './PollComposer.svelte';
 			? `${text.length.toLocaleString()} / ${SOFT_LIMIT.toLocaleString()}`
 			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
 	);
-
 	const candidates = $derived.by(() => {
 		const map: Record<string, { pubkey: string; name: string; picture?: string; npub: string }> =
 			{};
@@ -108,6 +130,40 @@ import PollComposer from './PollComposer.svelte';
 	function textareaElement() {
 		return document.getElementById('composer-input') as HTMLTextAreaElement | null;
 	}
+
+	function focusFromHash() {
+		if (window.location.hash !== '#composer') return;
+		focusComposer();
+	}
+
+	function focusComposer() {
+		requestAnimationFrame(() => {
+			composerEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			const textarea = textareaElement();
+			textarea?.focus({ preventScroll: true });
+			// Route scroll restoration can run after the first animation frame.
+			// Retry once so navigation from another page consistently lands in the input.
+			window.setTimeout(() => {
+				if (document.activeElement !== textarea) textareaElement()?.focus({ preventScroll: true });
+			}, 100);
+		});
+	}
+
+	onMount(() => {
+		focusFromHash();
+		window.addEventListener('hashchange', focusFromHash);
+		window.addEventListener('bitos:focus-composer', focusComposer);
+		return () => {
+			window.removeEventListener('hashchange', focusFromHash);
+			window.removeEventListener('bitos:focus-composer', focusComposer);
+			// Unmounting mid-mining must not leak a running worker.
+			mineController?.abort();
+			// Object URLs for in-flight previews must not leak either.
+			for (const item of pendingUploads) URL.revokeObjectURL(item.preview);
+		};
+	});
+
+	afterNavigate(() => focusFromHash());
 
 	function syncMention() {
 		const el = textareaElement();
@@ -182,7 +238,6 @@ import PollComposer from './PollComposer.svelte';
 				? 'text-warm-500'
 				: 'text-primary-500'
 	);
-
 	const configuredProviders = $derived(MEDIA_PROVIDERS.filter((p) => media.isConfigured(p.id)));
 	const selectedProviderLabel = $derived(
 		providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)
@@ -190,6 +245,19 @@ import PollComposer from './PollComposer.svelte';
 	const canPost = $derived(
 		(posting || uploading || overHardLimit || (!text.trim() && attachments.length === 0)) === false
 	);
+
+	// Aggregate progress across every in-flight upload (errors count as settled).
+	const uploadStats = $derived.by(() => {
+		const active = pendingUploads.filter((p) => !p.error);
+		const errors = pendingUploads.length - active.length;
+		const percent = pendingUploads.length
+			? Math.round(
+					pendingUploads.reduce((sum, p) => sum + (p.error ? 100 : p.percent), 0) /
+						pendingUploads.length
+				)
+			: 0;
+		return { active: active.length, errors, percent };
+	});
 
 	// Keep the selection valid whenever providers/defaults change.
 	$effect(() => {
@@ -243,30 +311,60 @@ import PollComposer from './PollComposer.svelte';
 		}
 	];
 
+	function patchPending(id: string, patch: Partial<PendingUpload>) {
+		pendingUploads = pendingUploads.map((p) => (p.id === id ? { ...p, ...patch } : p));
+	}
+
+	function dropPending(id: string) {
+		const item = pendingUploads.find((p) => p.id === id);
+		if (item) URL.revokeObjectURL(item.preview);
+		pendingUploads = pendingUploads.filter((p) => p.id !== id);
+	}
+
+	async function uploadOne(item: PendingUpload) {
+		const provider = selectedProvider;
+		try {
+			const uploaded = await media.upload(item.file, provider === 'none' ? undefined : provider, {
+				pubkey: me?.pk,
+				purpose: 'note',
+				onProgress: (p) =>
+					patchPending(item.id, { percent: p.percent, deterministic: p.deterministic })
+			});
+			attachments = [...attachments, uploaded];
+			dropPending(item.id);
+			toasts.success(
+				`Uploaded ${item.file.name} via ${providerLabel(provider === 'none' ? 'server' : provider)}`
+			);
+		} catch (e) {
+			patchPending(item.id, { error: (e as Error).message });
+		}
+	}
+
+	function retryUpload(item: PendingUpload) {
+		const next = { ...item, error: undefined, percent: 0, deterministic: false };
+		pendingUploads = pendingUploads.map((p) => (p.id === item.id ? next : p));
+		uploading = true;
+		void uploadOne(next).finally(() => {
+			uploading = pendingUploads.some((p) => !p.error);
+		});
+	}
+
 	async function handleFiles(files: FileList | null) {
 		if (!files || !files.length) return;
-		const provider = selectedProvider;
 		uploading = true;
-		let ok = 0;
+		const items: PendingUpload[] = Array.from(files).map((file) => ({
+			id: crypto.randomUUID(),
+			file,
+			preview: URL.createObjectURL(file),
+			percent: 0,
+			deterministic: false
+		}));
+		// Tiles appear immediately with local previews; uploads run in parallel.
+		pendingUploads = [...pendingUploads, ...items];
 		try {
-			for (const file of Array.from(files)) {
-				try {
-					const uploaded = await media.upload(file, provider === 'none' ? undefined : provider, {
-						pubkey: me?.pk,
-						purpose: 'note'
-					});
-					attachments = [...attachments, uploaded];
-					ok++;
-				} catch (e) {
-					toasts.error(`${file.name}: ${(e as Error).message}`);
-				}
-			}
-			if (ok)
-				toasts.success(
-					`Uploaded ${ok} ${ok === 1 ? 'file' : 'files'} via ${providerLabel(provider === 'none' ? 'server' : provider)}`
-				);
+			await Promise.all(items.map((item) => uploadOne(item)));
 		} finally {
-			uploading = false;
+			uploading = pendingUploads.some((p) => !p.error);
 		}
 	}
 
@@ -280,27 +378,64 @@ import PollComposer from './PollComposer.svelte';
 		attachments = attachments.filter((_, i) => i !== idx);
 	}
 
+	function cancelMining() {
+		mineController?.abort();
+	}
+
 	async function submit() {
 		if (!canPost || posting) return;
 		posting = true;
+		mining = showPow && pow > 0;
+		const minedBits = pow;
+		const controller = new AbortController();
+		mineController = controller;
+		powProgress = null;
 		try {
+			// Let the browser paint the mining state before starting the worker.
+			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
-			await feed.post(rewriteMentions(text, allMentions), { sensitive, attachments });
+			const eventId = await feed.post(rewriteMentions(text, allMentions), {
+				sensitive,
+				attachments,
+				pow: showPow ? pow : 0,
+				onPowProgress: (progress) => (powProgress = progress),
+				onPhase: (phase) => (postPhase = phase),
+				signal: controller.signal
+			});
+			// Persist the difficulty actually used so the next composer starts there.
+			powPrefs.remember(showPow ? pow : 0);
+			powPrefs.rememberPanelVisibility(showPow);
 			text = '';
 			mentions = [];
 			mention = null;
 			attachments = [];
 			sensitive = false;
+			showPow = false;
+			pow = 0;
 			expanded = false;
-			toasts.success('Posted to Nostr');
+			toasts.success(
+				mining ? `Mined ${minedBits} bits · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
+			);
 		} catch (e) {
-			toasts.error((e as Error).message);
+			const message = (e as Error).message;
+			if (/cancelled/i.test(message)) toasts.info('Mining cancelled — nothing was posted');
+			else toasts.error(message);
 		} finally {
+			mineController = undefined;
+			powProgress = null;
+			postPhase = 'idle';
+			mining = false;
 			posting = false;
 		}
 	}
 
 	function onKey(e: KeyboardEvent) {
+		// Escape first stops an in-flight mining run (textarea stays readonly).
+		if (e.key === 'Escape' && mining) {
+			e.preventDefault();
+			cancelMining();
+			return;
+		}
 		if (mention && filteredMentions.length) {
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -327,12 +462,22 @@ import PollComposer from './PollComposer.svelte';
 	}
 </script>
 
+<svelte:window
+	onbeforeunload={(e) => {
+		// Guard against losing an in-flight post / upload / mining run.
+		if (posting || mining || uploading) {
+			e.preventDefault();
+			e.returnValue = '';
+		}
+	}}
+/>
+
 {#if me}
 	<div
 		bind:this={composerEl}
-		class="post-card p-4 transition-all duration-200 {expanded
-			? 'border-[var(--ui-border)] shadow-[var(--shadow-card-hover)] ring-1 ring-primary-500/15'
-			: ''}"
+		id="composer"
+		aria-busy={posting}
+		class="post-card -mx-[clamp(1rem,3vw,1.5rem)] border-y border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-[clamp(1rem,3vw,1.5rem)] py-4 transition-all duration-200"
 	>
 		<div class="flex items-start gap-3">
 			<StoryRing pubkey={me.pk} interactive={false}>
@@ -352,16 +497,27 @@ import PollComposer from './PollComposer.svelte';
 					oninput={syncMention}
 					onclick={syncMention}
 					onkeyup={syncMention}
+					readonly={posting}
+					role="combobox"
+					aria-autocomplete="list"
+					aria-expanded={mention && filteredMentions.length ? 'true' : 'false'}
+					aria-controls="composer-mention-listbox"
+					aria-activedescendant={mention && filteredMentions.length
+						? `composer-mention-option-${mentionIndex}`
+						: undefined}
 					class="min-h-[56px] border-transparent bg-transparent px-1 py-1.5 text-[15px] leading-relaxed placeholder:text-[var(--ui-text-dimmed)] focus:border-transparent"
 				/>
 				{#if mention && filteredMentions.length}
 					<div
+						id="composer-mention-listbox"
 						class="absolute bottom-full left-0 z-40 mb-1 w-64 max-w-full overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] shadow-[var(--shadow-pop)]"
 						role="listbox"
+						aria-label="Mention suggestions"
 					>
 						{#each filteredMentions as candidate, i (candidate.pubkey)}
 							<button
 								type="button"
+								id="composer-mention-option-{i}"
 								onpointerdown={(event) => {
 									event.preventDefault();
 									selectMention(candidate);
@@ -399,6 +555,9 @@ import PollComposer from './PollComposer.svelte';
 						{/each}
 					</div>
 				{/if}
+				{#if showPow}
+					<PowCard bind:pow {mining} progress={powProgress} oncancel={cancelMining} />
+				{/if}
 				{#if overSoftLimit}
 					<p
 						class="mt-2 flex items-center gap-1.5 text-[11.5px] {overHardLimit
@@ -412,6 +571,107 @@ import PollComposer from './PollComposer.svelte';
 							Long note. Most relays accept it, but shorter posts render best.
 						{/if}
 					</p>
+				{/if}
+
+				<!-- In-flight uploads: local preview + live progress -->
+				{#if pendingUploads.length}
+					<div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+						{#each pendingUploads as p (p.id)}
+							<div
+								class="relative aspect-square overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]"
+							>
+								{#if !p.error && p.file.type.startsWith('image/')}
+									<img src={p.preview} alt="" class="size-full object-cover opacity-70" />
+								{:else if !p.error && p.file.type.startsWith('video/')}
+									<video src={p.preview} class="size-full object-cover opacity-70" muted></video>
+								{:else}
+									<div class="grid size-full place-items-center p-2 text-center">
+										<Icon
+											name={p.error ? 'i-lucide-triangle-alert' : 'i-lucide-file'}
+											class="mx-auto size-6 {p.error
+												? 'text-[var(--tone-error-text)]'
+												: 'text-[var(--ui-text-dimmed)]'}"
+										/>
+									</div>
+								{/if}
+
+								{#if p.error}
+									<!-- Failed upload: retry or dismiss, draft stays intact -->
+									<div class="absolute inset-0 flex flex-col justify-end gap-1 bg-black/70 p-2">
+										<p class="line-clamp-2 text-[10px] leading-snug font-semibold text-white">
+											{p.file.name}: {p.error}
+										</p>
+										<div class="flex gap-1.5">
+											<button
+												type="button"
+												onclick={() => retryUpload(p)}
+												class="flex flex-1 items-center justify-center gap-1 rounded-full bg-primary-500 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-primary-600 active:scale-95"
+											>
+												<Icon name="i-lucide-rotate-ccw" class="size-3" />
+												Retry
+											</button>
+											<button
+												type="button"
+												onclick={() => dropPending(p.id)}
+												aria-label="Dismiss failed upload"
+												class="grid size-6 place-items-center rounded-full bg-white/15 text-white transition hover:bg-white/30 active:scale-95"
+											>
+												<Icon name="i-lucide-x" class="size-3" />
+											</button>
+										</div>
+									</div>
+								{:else}
+									<!-- Uploading: ring progress over a dimmed local preview -->
+									<div
+										class="absolute inset-0 grid place-items-center bg-black/45 backdrop-blur-[1px]"
+									>
+										<div class="relative grid size-12 place-items-center">
+											<svg
+												class="size-12 -rotate-90"
+												viewBox="0 0 36 36"
+												fill="none"
+												aria-hidden="true"
+											>
+												<circle
+													cx="18"
+													cy="18"
+													r="15"
+													stroke="rgba(255,255,255,0.25)"
+													stroke-width="3"
+												/>
+												<circle
+													cx="18"
+													cy="18"
+													r="15"
+													stroke="white"
+													stroke-width="3"
+													stroke-linecap="round"
+													stroke-dasharray={2 * Math.PI * 15}
+													stroke-dashoffset={2 * Math.PI * 15 * (1 - p.percent / 100)}
+													class="transition-[stroke-dashoffset] duration-200 ease-out"
+												/>
+											</svg>
+											{#if p.deterministic}
+												<span class="absolute text-[10px] font-bold text-white tabular-nums"
+													>{p.percent}%</span
+												>
+											{:else}
+												<Icon
+													name="i-lucide-loader-circle"
+													class="absolute size-5 animate-spin text-white"
+												/>
+											{/if}
+										</div>
+									</div>
+									<span
+										class="absolute top-1.5 left-1.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-bold tracking-wide text-white uppercase backdrop-blur"
+									>
+										{humanBytes(p.file.size)}
+									</span>
+								{/if}
+							</div>
+						{/each}
+					</div>
 				{/if}
 
 				<!-- Attachment previews -->
@@ -448,12 +708,12 @@ import PollComposer from './PollComposer.svelte';
 									</div>
 								{/if}
 								<div
-									class="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent opacity-0 transition group-hover:opacity-100"
+									class="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent opacity-0 transition group-hover:opacity-100 [@media(hover:none)]:opacity-100"
 								></div>
 								<button
 									type="button"
 									onclick={() => removeAttachment(i)}
-									class="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition group-hover:opacity-100 hover:bg-black/85 focus:opacity-100"
+									class="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur transition group-hover:opacity-100 hover:bg-black/85 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
 									aria-label="Remove attachment"
 								>
 									<Icon name="i-lucide-x" class="size-3.5" />
@@ -468,12 +728,19 @@ import PollComposer from './PollComposer.svelte';
 					</div>
 				{/if}
 				{#if uploading}
-					<p class="mt-2.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-primary-500">
-						<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-						Uploading via {providerLabel(
-							selectedProvider === 'none' ? 'server' : selectedProvider
-						)}…
-					</p>
+					<div class="mt-2.5 flex items-center gap-2 text-[11.5px] font-semibold text-primary-500">
+						<Icon name="i-lucide-loader-circle" class="size-3.5 shrink-0 animate-spin" />
+						<span class="truncate">
+							Uploading {uploadStats.percent}% via {providerLabel(
+								selectedProvider === 'none' ? 'server' : selectedProvider
+							)}…
+						</span>
+						{#if pendingUploads.length > 1}
+							<span class="shrink-0 text-[10px] font-medium text-[var(--ui-text-dimmed)]">
+								{pendingUploads.length - uploadStats.active} done
+							</span>
+						{/if}
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -498,14 +765,14 @@ import PollComposer from './PollComposer.svelte';
 
 		<!-- Toolbar -->
 		<div
-			class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ui-border-muted)] pt-3"
+			class="mt-3 flex flex-wrap items-center justify-between gap-2 border-[var(--ui-border-muted)] pt-3"
 		>
 			<div class="flex flex-wrap items-center gap-1">
 				{#each mediaActions as a (a.label)}
 					<button
 						type="button"
 						onclick={a.pick}
-						disabled={uploading}
+						disabled={uploading || posting}
 						title={`${a.label} · via ${selectedProviderLabel}`}
 						aria-label={a.label}
 						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:pointer-events-none disabled:opacity-40"
@@ -538,6 +805,22 @@ import PollComposer from './PollComposer.svelte';
 						</MenuItem>
 					{/each}
 				</Popover>
+				<button
+					type="button"
+					onclick={() => (showPow = !showPow)}
+					disabled={mining}
+					aria-label="Proof of Work"
+					aria-pressed={showPow}
+					title="Proof of Work"
+					class="grid size-9 place-items-center rounded-full transition disabled:pointer-events-none disabled:opacity-40 {showPow
+						? 'bg-primary-500/10 text-primary-600'
+						: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
+				>
+					<Icon
+						name={mining ? 'i-lucide-pickaxe' : 'i-lucide-shield-check'}
+						class="size-[18px] {mining ? 'animate-pulse' : ''}"
+					/>
+				</button>
 			</div>
 
 			<div class="flex flex-wrap items-center justify-end gap-1.5">
@@ -635,13 +918,22 @@ import PollComposer from './PollComposer.svelte';
 					type="button"
 					onclick={submit}
 					disabled={!canPost}
+					title="Post (Ctrl+Enter)"
 					class="flex items-center gap-1.5 rounded-full bg-primary-500 px-5 py-2 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition-all hover:bg-primary-600 hover:shadow-[0_4px_18px_rgba(47,149,246,0.35)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
 				>
 					<Icon
 						name={posting ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
 						class="size-4 {posting ? 'animate-spin' : ''}"
 					/>
-					{posting ? 'Posting…' : 'Post'}
+					{#if posting}
+						{postPhase === 'mining'
+							? 'Mining…'
+							: postPhase === 'publishing'
+								? 'Publishing…'
+								: 'Posting…'}
+					{:else}
+						Post
+					{/if}
 				</button>
 			</div>
 		</div>

@@ -1,4 +1,5 @@
 import { parsePoll, pollClosedAt, type FeedNote } from './types';
+import { getPow } from 'nostr-tools/nip13';
 
 type FeedNoteEvent = Pick<
 	{
@@ -14,6 +15,8 @@ type FeedNoteEvent = Pick<
 /** Convert a kind-1 event into the complete shape expected by feed cards. */
 export function toFeedNote(ev: FeedNoteEvent): FeedNote {
 	const replyTag = ev.tags.find((tag) => tag[0] === 'e' && tag[3] === 'reply');
+	const nonceTag = ev.tags.find((tag) => tag[0] === 'nonce');
+	const powTarget = Number(nonceTag?.[2]);
 	const options = parsePoll(ev.tags);
 
 	return {
@@ -21,6 +24,7 @@ export function toFeedNote(ev: FeedNoteEvent): FeedNote {
 		pubkey: ev.pubkey,
 		content: ev.content,
 		createdAt: ev.created_at,
+		pow: nonceTag && Number.isFinite(powTarget) && powTarget > 0 ? getPow(ev.id) : undefined,
 		tags: ev.tags,
 		replyTo: replyTag?.[1],
 		reactions: [],
