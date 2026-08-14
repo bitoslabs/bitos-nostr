@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractNotificationMedia, parseImeta } from './imeta';
+import { extractNotificationMedia, parseImeta, stripMediaUrls } from './imeta';
 
 const url =
 	'https://blossom.primal.net/9210bade26afd9847638984384e690e32ee90984a7ecf0ac55d2db593b2a3437.jpg';
@@ -23,5 +23,9 @@ describe('imeta media parsing', () => {
 
 		expect(parsed?.contentWarning).toBe('Graphic violence');
 		expect(parsed?.sensitive).toBe('true');
+	});
+
+	it('removes every rendered media URL while preserving the caption', () => {
+		expect(stripMediaUrls(`A SeedSigner build\n${url}\n${url}`, [url])).toBe('A SeedSigner build');
 	});
 });

@@ -16,7 +16,10 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { formatCompact, shortKey } from '$lib/utils/format';
 
-	let { showTrending = true }: { showTrending?: boolean } = $props();
+	let {
+		showTrending = true,
+		showSuggestions = true
+	}: { showTrending?: boolean; showSuggestions?: boolean } = $props();
 
 	const TREND_LIMIT = 6;
 	const SUGGESTION_LIMIT = 4;
@@ -279,59 +282,61 @@
 {/snippet}
 
 {#snippet afterTrending()}
-	<section class="px-3.5" aria-label="Suggested for you">
-		<h2 class="mb-3 font-display text-[18px] font-extrabold">People you might like</h2>
-		{#if !hasLoaded && loading}
-			<div class="grid grid-cols-2 gap-2.5">
-				{#each [0, 1, 2] as item (item)}<div
-						class="h-36 animate-pulse rounded-xl bg-[var(--ui-bg-muted)]"
-					></div>{/each}
-			</div>
-		{:else if visibleSuggested.length}
-			<div class="grid grid-cols-2 gap-2.5">
-				{#each visibleSuggested as person (person.pubkey)}
-					{@const profile = profiles.get(person.pubkey)}
-					{@const name = displayName(person.pubkey)}
-					<div class="rounded-xl p-2.5 transition hover:bg-[var(--interactive-hover-bg)]">
-						<div class="flex min-w-0 items-center gap-2">
-							<a
-								href={`/profile/${person.pubkey}`}
-								class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
-								aria-label={`Open ${name} profile`}
-								><Avatar pubkey={person.pubkey} {name} picture={profile?.picture} size={34} /></a
-							><a
-								href={`/profile/${person.pubkey}`}
-								class="min-w-0 transition hover:text-primary-600"
+	{#if showSuggestions}
+		<section class="px-3.5" aria-label="Suggested for you">
+			<h2 class="mb-3 font-display text-[18px] font-extrabold">People you might like</h2>
+			{#if !hasLoaded && loading}
+				<div class="grid grid-cols-2 gap-2.5">
+					{#each [0, 1, 2] as item (item)}<div
+							class="h-36 animate-pulse rounded-xl bg-[var(--ui-bg-muted)]"
+						></div>{/each}
+				</div>
+			{:else if visibleSuggested.length}
+				<div class="grid grid-cols-2 gap-2.5">
+					{#each visibleSuggested as person (person.pubkey)}
+						{@const profile = profiles.get(person.pubkey)}
+						{@const name = displayName(person.pubkey)}
+						<div class="rounded-xl p-2.5 transition hover:bg-[var(--interactive-hover-bg)]">
+							<div class="flex min-w-0 items-center gap-2">
+								<a
+									href={`/profile/${person.pubkey}`}
+									class="shrink-0 mask-squircle transition hover:ring-2 hover:ring-primary-500/30"
+									aria-label={`Open ${name} profile`}
+									><Avatar pubkey={person.pubkey} {name} picture={profile?.picture} size={34} /></a
+								><a
+									href={`/profile/${person.pubkey}`}
+									class="min-w-0 transition hover:text-primary-600"
+								>
+									<p class="truncate text-[12px] font-bold hover:underline">{name}</p>
+									<p class="truncate font-mono text-[9.5px] text-[var(--ui-text-dimmed)]">
+										{shortKey(person.pubkey, 8, 4)}
+									</p>
+								</a>
+							</div>
+							<p
+								class="mt-2 line-clamp-2 min-h-8 text-[10.5px] leading-4 text-[var(--ui-text-muted)]"
 							>
-								<p class="truncate text-[12px] font-bold hover:underline">{name}</p>
-								<p class="truncate font-mono text-[9.5px] text-[var(--ui-text-dimmed)]">
-									{shortKey(person.pubkey, 8, 4)}
-								</p>
-							</a>
+								{profileNote(person.pubkey, person.count)}
+							</p>
+							<div class="mt-2 flex items-center justify-between gap-2">
+								<span class="font-mono text-[9.5px] text-[var(--ui-text-dimmed)]"
+									>{formatCompact(person.count)} notes</span
+								>
+								<button
+									type="button"
+									onclick={() => toggleFollow(person.pubkey)}
+									class="rounded-full bg-primary-500 px-2.5 py-1 text-[10px] font-bold text-[var(--ui-text-inverted)] transition hover:bg-primary-600"
+									>Follow</button
+								>
+							</div>
 						</div>
-						<p
-							class="mt-2 line-clamp-2 min-h-8 text-[10.5px] leading-4 text-[var(--ui-text-muted)]"
-						>
-							{profileNote(person.pubkey, person.count)}
-						</p>
-						<div class="mt-2 flex items-center justify-between gap-2">
-							<span class="font-mono text-[9.5px] text-[var(--ui-text-dimmed)]"
-								>{formatCompact(person.count)} notes</span
-							>
-							<button
-								type="button"
-								onclick={() => toggleFollow(person.pubkey)}
-								class="rounded-full bg-primary-500 px-2.5 py-1 text-[10px] font-bold text-[var(--ui-text-inverted)] transition hover:bg-primary-600"
-								>Follow</button
-							>
-						</div>
-					</div>
-				{/each}
-			</div>
-		{:else if hasLoaded}
-			<p class="text-sm text-[var(--ui-text-muted)]">No new relay authors to suggest.</p>
-		{/if}
-	</section>
+					{/each}
+				</div>
+			{:else if hasLoaded}
+				<p class="text-sm text-[var(--ui-text-muted)]">No new relay authors to suggest.</p>
+			{/if}
+		</section>
+	{/if}
 {/snippet}
 
 <RightRail
