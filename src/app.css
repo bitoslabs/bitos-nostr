@@ -1268,6 +1268,7 @@ html[data-reduced-motion='true'] *::after {
 		gap: 2px;
 		align-items: center;
 		flex-wrap: wrap;
+		position: relative;
 	}
 	.hash-viz > span {
 		width: 3px;
@@ -1283,6 +1284,69 @@ html[data-reduced-motion='true'] *::after {
 		background: var(--ui-color-primary-500);
 		opacity: 1;
 		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	/* A small moving highlight confirms real PoW is under way. It is deliberately
+	 * absent while choosing a target so selection never looks like background work. */
+	.hash-viz.is-mining::after {
+		content: '';
+		position: absolute;
+		top: -3px;
+		bottom: -3px;
+		width: 18px;
+		border-radius: 999px;
+		background: linear-gradient(
+			90deg,
+			transparent,
+			color-mix(in oklab, var(--ui-color-primary-500) 62%, transparent),
+			transparent
+		);
+		filter: blur(2px);
+		pointer-events: none;
+		animation: hash-viz-mine 1.15s ease-in-out infinite;
+	}
+	.hash-viz.is-mining > span.is-on {
+		animation: hash-viz-pulse 1.15s ease-in-out infinite alternate;
+	}
+	.mining-nonce {
+		animation: mining-nonce-glow 0.55s ease-in-out infinite alternate;
+	}
+	@keyframes hash-viz-mine {
+		from {
+			transform: translateX(-18px);
+			opacity: 0.35;
+		}
+		50% {
+			opacity: 1;
+		}
+		to {
+			transform: translateX(174px);
+			opacity: 0.35;
+		}
+	}
+	@keyframes hash-viz-pulse {
+		from {
+			box-shadow: 0 0 3px color-mix(in oklab, var(--ui-color-primary-500) 35%, transparent);
+		}
+		to {
+			box-shadow: 0 0 9px color-mix(in oklab, var(--ui-color-primary-500) 80%, transparent);
+		}
+	}
+	@keyframes mining-nonce-glow {
+		from {
+			opacity: 0.6;
+			text-shadow: none;
+		}
+		to {
+			opacity: 1;
+			text-shadow: 0 0 8px color-mix(in oklab, var(--ui-color-primary-500) 55%, transparent);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.hash-viz.is-mining::after,
+		.hash-viz.is-mining > span.is-on,
+		.mining-nonce {
+			animation: none;
+		}
 	}
 
 	/* Right-rail widget container. */

@@ -28,6 +28,8 @@
 	let text = $state('');
 	let posting = $state(false);
 	let mining = $state(false);
+	let miningNonce = $state('00000000');
+	let miningNonceTimer: ReturnType<typeof setInterval> | undefined;
 	let uploading = $state(false);
 	let attachments = $state<UploadedMedia[]>([]);
 	let sensitive = $state(false);
@@ -77,6 +79,17 @@
 		text.length <= SOFT_LIMIT
 			? `${text.length.toLocaleString()} / ${SOFT_LIMIT.toLocaleString()}`
 			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
+	);
+	const powEffort = $derived(
+		pow === 0
+			? 'No extra work'
+			: pow <= 16
+				? 'Light work'
+				: pow <= 20
+					? 'Balanced work'
+					: pow <= 24
+						? 'Higher work'
+						: 'Heavy work'
 	);
 
 	const candidates = $derived.by(() => {
@@ -316,15 +329,34 @@
 		attachments = attachments.filter((_, i) => i !== idx);
 	}
 
+	function candidateNonce() {
+		return crypto.getRandomValues(new Uint32Array(1))[0].toString(16).padStart(8, '0');
+	}
+
+	function startMiningNonceAnimation() {
+		miningNonce = candidateNonce();
+		miningNonceTimer = setInterval(() => (miningNonce = candidateNonce()), 110);
+	}
+
+	function stopMiningNonceAnimation() {
+		if (!miningNonceTimer) return;
+		clearInterval(miningNonceTimer);
+		miningNonceTimer = undefined;
+	}
+
 	async function submit() {
 		if (!canPost || posting) return;
 		posting = true;
 		mining = showPow && pow > 0;
+		const minedBits = pow;
 		try {
 			// Let the browser paint the mining state before starting the worker.
-			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
+			if (mining) {
+				startMiningNonceAnimation();
+				await new Promise((resolve) => setTimeout(resolve, 50));
+			}
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
-			await feed.post(rewriteMentions(text, allMentions), {
+			const eventId = await feed.post(rewriteMentions(text, allMentions), {
 				sensitive,
 				attachments,
 				pow: showPow ? pow : 0
@@ -337,10 +369,13 @@
 			showPow = false;
 			pow = 0;
 			expanded = false;
-			toasts.success('Posted to Nostr');
+			toasts.success(
+				mining ? `Mined ${minedBits} bits · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
+			);
 		} catch (e) {
 			toasts.error((e as Error).message);
 		} finally {
+			stopMiningNonceAnimation();
 			mining = false;
 			posting = false;
 		}
@@ -459,7 +494,14 @@
 										: 'Mine a harder-to-spam note before publishing.'}
 								</p>
 							</div>
-							<span class="font-mono text-sm font-semibold text-primary-500">{pow} bits</span>
+							<div class="text-right">
+								<span class="block font-mono text-sm font-semibold text-primary-500"
+									>{pow} bits</span
+								>
+								{#if !mining}
+									<span class="text-[10px] text-[var(--ui-text-dimmed)]">{powEffort}</span>
+								{/if}
+							</div>
 						</div>
 						<input
 							type="range"
@@ -469,7 +511,21 @@
 							class="pow-slider mt-2.5 w-full"
 							aria-label="Proof of Work difficulty"
 						/>
-						<HashViz bits={pow} class="mt-2.5" />
+						<HashViz bits={pow} {mining} class="mt-2.5" />
+						{#if mining}
+							<div
+								class="mt-2 flex items-center justify-between font-mono text-[10px] text-[var(--ui-text-dimmed)]"
+							>
+								<span>Candidate nonce</span>
+								<span class="mining-nonce text-primary-500" aria-hidden="true">0x{miningNonce}</span
+								>
+							</div>
+						{/if}
+						{#if !mining}
+							<p class="mt-2 text-[10px] text-[var(--ui-text-dimmed)]">
+								Mining starts only after you post.
+							</p>
+						{/if}
 						{#if pow > 20}
 							<p class="mt-2 text-[10px] text-warm-500">
 								High difficulty may take noticeably longer to mine.
