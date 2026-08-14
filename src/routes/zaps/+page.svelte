@@ -2,7 +2,6 @@
 	import { onMount, onDestroy } from 'svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatTile from '$lib/components/ui/StatTile.svelte';
-	import WidgetCard from '$lib/components/ui/WidgetCard.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import LivePill from '$lib/components/ui/LivePill.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
@@ -30,17 +29,27 @@
 	let invoiceError = $state('');
 
 	const me = $derived(identity.current?.pk ?? '');
-	const tabOptions = $derived([
-		{ key: 'all', label: 'All Activity', count: wallet.ledger.length },
-		{ key: 'received', label: 'Received', count: wallet.countReceived },
-		{ key: 'sent', label: 'Sent', count: wallet.countSent }
-	]);
-	const filtered = $derived(
-		activeTab === 'all'
-			? wallet.ledger
-			: wallet.ledger.filter((entry) => entry.direction === activeTab)
+	const activityLedger = $derived(wallet.ledger);
+	const receivedEntries = $derived(activityLedger.filter((entry) => entry.direction === 'received'));
+	const sentEntries = $derived(activityLedger.filter((entry) => entry.direction === 'sent'));
+	const totalReceived = $derived(receivedEntries.reduce((sum, entry) => sum + entry.amountSats, 0));
+	const totalSent = $derived(sentEntries.reduce((sum, entry) => sum + entry.amountSats, 0));
+	const avgZap = $derived(
+		receivedEntries.length ? Math.round(totalReceived / receivedEntries.length) : 0
 	);
-	const avgZap = $derived(wallet.avgReceived);
+	const displayBalance = $derived(wallet.balance);
+	const displayNet = $derived(wallet.net);
+	const showingWalletBalance = $derived(wallet.balanceSource === 'wallet');
+	const tabOptions = $derived([
+		{ key: 'all', label: 'All Activity', count: activityLedger.length },
+		{ key: 'received', label: 'Received', count: receivedEntries.length },
+		{ key: 'sent', label: 'Sent', count: sentEntries.length }
+	]);
+	const displayedEntries = $derived(
+		activeTab === 'all'
+			? activityLedger
+			: activityLedger.filter((entry) => entry.direction === activeTab)
+	);
 	const walletAvailable = $derived(hasWebLN());
 
 	onMount(() => {
@@ -105,6 +114,28 @@
 		else if (wallet.error) toasts.error(wallet.error);
 	}
 
+	async function exportActivity() {
+		try {
+			await navigator.clipboard.writeText(
+				JSON.stringify(
+					activityLedger.map((entry) => ({
+						direction: entry.direction,
+						amountSats: entry.amountSats,
+						counterparty: entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey,
+						memo: entry.memo ?? '',
+						createdAt: new Date(entry.createdAt * 1000).toISOString(),
+						id: entry.id
+					})),
+					null,
+					2
+				)
+			);
+			toasts.success('Zap activity copied to clipboard');
+		} catch {
+			toasts.error('Could not copy zap activity');
+		}
+	}
+
 	async function copyEntry(entry: ZapEntry) {
 		const text = entry.bolt11 ?? entry.id;
 		try {
@@ -133,13 +164,13 @@
 						<span class="size-1.5 rounded-full bg-[var(--tone-error-text)]"></span>
 						Offline
 					{/if}
-					· {wallet.countReceived} received · {wallet.countSent} sent
+					· {receivedEntries.length} received · {sentEntries.length} sent
 				</span>
 			{/snippet}
 			{#snippet actions()}
 				<button
 					type="button"
-					onclick={() => toasts.info('Exported zap activity to clipboard')}
+					onclick={exportActivity}
 					class="icon-btn size-9"
 					aria-label="Export activity"
 				>
@@ -180,17 +211,17 @@
 				<div class="mb-5 flex items-start justify-between gap-3">
 					<div class="min-w-0">
 						<div class="text-[11px] font-semibold tracking-wider text-[var(--ui-text-muted)] uppercase">
-							{wallet.balanceSource === 'wallet' ? 'Wallet Balance' : 'Total Received'}
+							{showingWalletBalance ? 'Wallet Balance' : 'Total Received'}
 						</div>
 						<div class="mt-1 font-mono text-4xl font-bold tracking-tight">
-							{formatCompact(wallet.balance)}
+							{formatCompact(displayBalance)}
 							<span class="text-lg text-[var(--ui-color-primary-500)]">sats</span>
 						</div>
 						<div class="mt-1 text-xs text-[var(--ui-text-muted)]">
-							{#if wallet.balanceSource === 'wallet' && wallet.weblnInfo?.node?.alias}
+							{#if showingWalletBalance && wallet.weblnInfo?.node?.alias}
 								Connected · {wallet.weblnInfo.node.alias}
 							{:else}
-								Net {formatCompact(wallet.net)} sats · received minus sent
+								Net {formatCompact(displayNet)} sats · received minus sent
 							{/if}
 						</div>
 					</div>
@@ -202,7 +233,7 @@
 				</div>
 
 				<!-- Wallet connect / deposit / withdraw -->
-				{#if wallet.balanceSource === 'wallet'}
+				{#if wallet.weblnEnabled}
 					<div class="flex gap-2">
 						<Button
 							color="primary"
@@ -264,19 +295,19 @@
 			<div class="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
 				<StatTile
 					label="Received"
-					value={formatCompact(wallet.totalReceived)}
+					value={formatCompact(totalReceived)}
 					caption="sats · all time"
 					tone="accent"
 					center
 				/>
 				<StatTile
 					label="Sent"
-					value={formatCompact(wallet.totalSent)}
+					value={formatCompact(totalSent)}
 					caption="sats · tracked"
 					tone="warm"
 					center
 				/>
-				<StatTile label="Zaps" value={wallet.countReceived} caption="received" center />
+				<StatTile label="Zaps" value={receivedEntries.length} caption="received" center />
 				<StatTile
 					label="Avg Zap"
 					value={avgZap ? formatCompact(avgZap) : '—'}
@@ -287,9 +318,12 @@
 
 			<!-- ============ LEDGER ============ -->
 			{#if wallet.loading && !wallet.ledger.length}
-				<WidgetCard title="Zap Activity">
-					{#snippet actions()}<LivePill label="Live" tone="success" />{/snippet}
-					<div class="space-y-2.5 p-3.5">
+				<section aria-label="Zap activity">
+					<div class="mb-2 flex items-center justify-between px-1">
+						<h2 class="text-[15px] font-bold">Zap Activity</h2>
+						<LivePill label="Live" tone="success" />
+					</div>
+					<div class="-mx-[clamp(1rem,3vw,1.5rem)] space-y-2.5 px-[clamp(1rem,3vw,1.5rem)] py-3.5">
 						{#each [0, 1, 2] as i (i)}
 							<div class="flex items-center gap-3">
 								<div class="size-9 shrink-0 animate-pulse rounded-full bg-[var(--ui-bg-muted)]"></div>
@@ -298,7 +332,7 @@
 							</div>
 						{/each}
 					</div>
-				</WidgetCard>
+				</section>
 			{:else if !wallet.connected && !wallet.ledger.length}
 				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
 					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]">
@@ -316,7 +350,7 @@
 						<Icon name="i-lucide-refresh-ccw" class="size-4" /> Reconnect
 					</button>
 				</div>
-			{:else if !filtered.length}
+			{:else if !displayedEntries.length}
 				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
 					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]">
 						<Icon name="i-lucide-zap" class="size-7" />
@@ -340,14 +374,17 @@
 					{/if}
 				</div>
 			{:else}
-				<WidgetCard title="Zap Activity">
-					{#snippet actions()}<LivePill label="Live" tone="success" />{/snippet}
-					<div class="divide-y divide-[var(--ui-border-muted)]">
-						{#each filtered as entry (entry.id)}
+				<section aria-label="Zap activity">
+					<div class="mb-2 flex items-center justify-between px-1">
+						<h2 class="text-[15px] font-bold">Zap Activity</h2>
+						<LivePill label="Live" tone="success" />
+					</div>
+					<div class="-mx-[clamp(1rem,3vw,1.5rem)] divide-y divide-[var(--ui-border-muted)]">
+						{#each displayedEntries as entry (entry.id)}
 							<ZapLedgerRow {entry} onCopy={copyEntry} />
 						{/each}
 					</div>
-				</WidgetCard>
+				</section>
 				{#if activeTab === 'all' && wallet.countReceived >= 50}
 					<div class="py-8 text-center">
 						<button

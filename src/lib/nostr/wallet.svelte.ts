@@ -292,6 +292,7 @@ class WalletStore {
 		if (!browser) return;
 		const me = identity.current?.pk;
 		if (!me) return;
+		this.sent = [];
 		try {
 			const raw = localStorage.getItem(`${SENT_KEY}:${me}`);
 			if (!raw) return;
@@ -345,9 +346,10 @@ class WalletStore {
 		this.error = null;
 		try {
 			this.weblnInfo = await getWebLNInfo();
+			if (!this.weblnInfo) throw new Error('Your Lightning wallet could not be connected.');
 			this.weblnBalance = await weblnBalanceSats();
-			this.weblnEnabled = this.weblnInfo != null;
-			return this.weblnEnabled;
+			this.weblnEnabled = true;
+			return true;
 		} catch (e) {
 			this.weblnEnabled = false;
 			this.error = (e as Error).message || 'Could not connect wallet';
@@ -366,8 +368,10 @@ class WalletStore {
 
 	/** Refresh the live balance from the connected wallet. */
 	async refreshBalance() {
-		if (!this.weblnEnabled) return;
-		this.weblnBalance = await weblnBalanceSats();
+		if (!this.weblnEnabled) return null;
+		const balance = await weblnBalanceSats();
+		if (balance !== null) this.weblnBalance = balance;
+		return balance;
 	}
 }
 

@@ -28,6 +28,13 @@ export interface WebLNInvoice {
 	description?: string;
 }
 
+export interface WebLNInvoiceRequest {
+	/** Amount in sats. */
+	amount?: number;
+	/** Optional memo suggested to the wallet. */
+	defaultMemo?: string;
+}
+
 export interface WebLNPaymentResult {
 	preimage: string;
 }
@@ -37,7 +44,7 @@ export interface WebLNProvider {
 	disable?(): Promise<void>;
 	getInfo(): Promise<WebLNInfo>;
 	sendPayment(paymentRequest: string): Promise<WebLNPaymentResult>;
-	makeInvoice(amount: number, memo?: string): Promise<WebLNInvoice>;
+	makeInvoice(request: WebLNInvoiceRequest): Promise<WebLNInvoice>;
 	signMessage?(message: string): Promise<{ signature: string; message: string }>;
 	verifyMessage?(message: string, signature: string): Promise<boolean>;
 	/** Millisatoshis available to spend (Alby/NWC). */
@@ -130,7 +137,7 @@ export async function makeWebLNInvoice(amountSats: number, memo = ''): Promise<s
 	if (!hasWebLN()) return null;
 	try {
 		await enableWebLN();
-		const invoice = await window.webln!.makeInvoice(amountSats, memo);
+		const invoice = await window.webln!.makeInvoice({ amount: amountSats, defaultMemo: memo });
 		return invoice.paymentRequest;
 	} catch {
 		return null;

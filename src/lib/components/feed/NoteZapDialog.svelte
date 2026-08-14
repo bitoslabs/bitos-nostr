@@ -38,6 +38,7 @@
 	let isZap = $state(false);
 	let copied = $state(false);
 	let paying = $state(false);
+	let sentRecordId = $state('');
 	let stopReceipt: (() => void) | undefined;
 
 	const amount = $derived(Math.max(1, Math.round(Number(customAmount) || selectedAmount)));
@@ -54,6 +55,7 @@
 		paid = false;
 		isZap = false;
 		copied = false;
+		sentRecordId = '';
 	}
 
 	function close() {
@@ -136,7 +138,9 @@
 					'lnurl',
 					encodeBytes('lnurl', new TextEncoder().encode(lnurlEndpoint))
 				);
+				sentRecordId = zapRequest.id;
 			}
+			if (!sentRecordId) sentRecordId = `${eventId}:${amount}:${Date.now()}`;
 			const invoiceResponse = await fetch(callback);
 			if (!invoiceResponse.ok) throw new Error('Could not create a Lightning invoice.');
 			const payment = (await invoiceResponse.json()) as {
@@ -190,7 +194,7 @@
 	/** Record a successfully-sent zap into the local wallet ledger. */
 	function recordSent() {
 		wallet.recordSent({
-			id: `${eventId}:${amount}:${Math.floor(Date.now() / 1000)}`,
+			id: sentRecordId || `${eventId}:${amount}:${Date.now()}`,
 			amountSats: amount,
 			recipientPubkey,
 			targetNoteId: eventId
@@ -208,13 +212,13 @@
 		paying = true;
 		try {
 			await payWithWebLN(invoice);
-			// The receipt listener confirms the NIP-57 zap; for non-zap invoices
-			// there is no receipt, so record the sent entry optimistically here.
-			if (!isZap) {
-				paid = true;
-				recordSent();
-				onPaid?.(amount);
-			}
+			// A successful WebLN payment is definitive for the local sent history.
+			// The receipt listener remains useful for the public NIP-57 confirmation,
+			// but relay delays must not hide a completed payment from this ledger.
+			paid = true;
+			recordSent();
+			onPaid?.(amount);
+			cleanupReceipt();
 		} catch {
 			/* Wallet payment failed/cancelled — the QR/deeplink remains available. */
 		} finally {
