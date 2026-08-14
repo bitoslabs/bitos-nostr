@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import type { SettingsSectionKey } from '$lib/settings/sections';
 	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
@@ -112,8 +113,7 @@
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
 		Set your language and regional preferences
 	</p>
-	<div class="post-card mb-5 p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Language</h3>
+	<SectionCard title="Language" class="mb-5">
 		<div class="space-y-2">
 			{#each languages as lang, i (lang.l)}
 				<label
@@ -126,9 +126,8 @@
 				</label>
 			{/each}
 		</div>
-	</div>
-	<div class="post-card p-5">
-		<h3 class="mb-4 text-[15px] font-bold">Region</h3>
+	</SectionCard>
+	<SectionCard title="Region">
 		<div class="space-y-3">
 			<div>
 				<label
@@ -157,29 +156,41 @@
 				>
 			</div>
 		</div>
-	</div>
+	</SectionCard>
 {/if}
 
 {#if section === 'help'}
 	<h2 class="mb-1 font-display text-[24px] font-extrabold">Help & Support</h2>
 	<p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">Find answers and get support</p>
-	<div class="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-		{#each helpCards as h (h.t)}
-			<button
-				type="button"
-				onclick={() => toasts.info(h.t)}
-				class="post-card cursor-pointer p-5 text-left"
-			>
-				<div class="mb-3 grid size-10 place-items-center rounded-xl bg-current/10">
-					<Icon name={h.i} class="size-5 {h.c}" />
-				</div>
-				<h4 class="mb-1 text-[14px] font-bold">{h.t}</h4>
-				<p class="text-[12px] text-[var(--ui-text-muted)]">{h.d}</p>
-			</button>
-		{/each}
-	</div>
-	<div class="post-card p-5">
-		<h3 class="mb-3 text-[15px] font-bold">Popular articles</h3>
+	<SectionCard
+		title="Get help"
+		icon="i-lucide-circle-help"
+		description="Browse guides, reach the team, or report issues"
+		class="mb-5"
+	>
+		<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+			{#each helpCards as h (h.t)}
+				<button
+					type="button"
+					onclick={() => toasts.info(h.t)}
+					class="group flex items-center gap-3.5 rounded-xl border border-[var(--ui-border-muted)] p-3.5 text-left transition hover:border-primary-500/25 hover:bg-[var(--interactive-hover-bg)]"
+				>
+					<span class="grid size-10 shrink-0 place-items-center rounded-xl bg-current/10">
+						<Icon name={h.i} class="size-5 {h.c}" />
+					</span>
+					<span class="min-w-0 flex-1">
+						<span class="block text-[13.5px] font-bold">{h.t}</span>
+						<span class="block text-[11.5px] text-[var(--ui-text-muted)]">{h.d}</span>
+					</span>
+					<Icon
+						name="i-lucide-chevron-right"
+						class="size-4 shrink-0 text-[var(--ui-text-dimmed)] opacity-60 transition group-hover:translate-x-0.5"
+					/>
+				</button>
+			{/each}
+		</div>
+	</SectionCard>
+	<SectionCard title="Popular articles">
 		<div class="space-y-2">
 			{#each popularArticles as a (a)}
 				<button
@@ -191,7 +202,7 @@
 				</button>
 			{/each}
 		</div>
-	</div>
+	</SectionCard>
 {/if}
 
 {#if section === 'about'}
@@ -255,7 +266,7 @@
 	</div>
 
 	<!-- App details -->
-	<div class="post-card mb-5 p-1.5">
+	<SectionCard bodyClass="p-1.5" class="mb-5">
 		{#each aboutDetails as d, i (d.label)}
 			<div
 				class="flex items-center gap-3 px-3.5 py-3 {i !== 0
@@ -269,10 +280,10 @@
 				</dd>
 			</div>
 		{/each}
-	</div>
+	</SectionCard>
 
 	<!-- Links -->
-	<div class="post-card mb-5 p-1.5">
+	<SectionCard bodyClass="p-1.5" class="mb-5">
 		{#each aboutLinks as l, i (l.label)}
 			<a
 				href={l.href}
@@ -294,7 +305,7 @@
 				</span>
 			</a>
 		{/each}
-	</div>
+	</SectionCard>
 
 	<div class="py-4 text-center">
 		<p class="text-[12px] text-[var(--ui-text-muted)]">

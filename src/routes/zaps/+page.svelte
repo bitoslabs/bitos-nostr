@@ -2,7 +2,9 @@
 	import { onMount, onDestroy } from 'svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatTile from '$lib/components/ui/StatTile.svelte';
+	import WidgetCard from '$lib/components/ui/WidgetCard.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import LivePill from '$lib/components/ui/LivePill.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -173,8 +175,7 @@
 		<div class="page-container py-6">
 			<!-- ============ WALLET HERO ============ -->
 			<div
-				class="surface-card surface-card-hover mb-4 overflow-hidden p-5"
-				style="background:linear-gradient(135deg, color-mix(in oklab, var(--ui-color-primary-500) 10%, var(--surface-bg)), color-mix(in oklab, var(--color-warm-500) 5%, var(--surface-bg)));"
+				class="premium-card overflow-hidden border-[color-mix(in_oklab,var(--ui-color-primary-500)_22%,transparent)] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--ui-color-primary-500)_12%,transparent),color-mix(in_oklab,var(--color-warm-500)_6%,transparent))] mb-4 p-5"
 			>
 				<div class="mb-5 flex items-start justify-between gap-3">
 					<div class="min-w-0">
@@ -286,12 +287,20 @@
 
 			<!-- ============ LEDGER ============ -->
 			{#if wallet.loading && !wallet.ledger.length}
-				<div class="flex flex-col items-center gap-3 py-16 text-center">
-					<div class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"></div>
-					<p class="text-[13px] text-[var(--ui-text-muted)]">Loading zap activity from relays…</p>
-				</div>
+				<WidgetCard title="Zap Activity">
+					{#snippet actions()}<LivePill label="Live" tone="success" />{/snippet}
+					<div class="space-y-2.5 p-3.5">
+						{#each [0, 1, 2] as i (i)}
+							<div class="flex items-center gap-3">
+								<div class="size-9 shrink-0 animate-pulse rounded-full bg-[var(--ui-bg-muted)]"></div>
+								<div class="h-3 w-1/3 animate-pulse rounded bg-[var(--ui-bg-muted)]"></div>
+								<div class="ml-auto h-3 w-14 animate-pulse rounded bg-[var(--ui-bg-muted)]"></div>
+							</div>
+						{/each}
+					</div>
+				</WidgetCard>
 			{:else if !wallet.connected && !wallet.ledger.length}
-				<div class="surface-card flex flex-col items-center gap-3 p-8 py-16 text-center">
+				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
 					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]">
 						<Icon name="i-lucide-wifi-off" class="size-7" />
 					</span>
@@ -308,7 +317,7 @@
 					</button>
 				</div>
 			{:else if !filtered.length}
-				<div class="surface-card flex flex-col items-center gap-3 p-8 py-16 text-center">
+				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
 					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]">
 						<Icon name="i-lucide-zap" class="size-7" />
 					</span>
@@ -331,11 +340,14 @@
 					{/if}
 				</div>
 			{:else}
-				<div class="surface-card surface-card-hover divide-y divide-[var(--ui-border-muted)] overflow-hidden">
-					{#each filtered as entry (entry.id)}
-						<ZapLedgerRow {entry} onCopy={copyEntry} />
-					{/each}
-				</div>
+				<WidgetCard title="Zap Activity">
+					{#snippet actions()}<LivePill label="Live" tone="success" />{/snippet}
+					<div class="divide-y divide-[var(--ui-border-muted)]">
+						{#each filtered as entry (entry.id)}
+							<ZapLedgerRow {entry} onCopy={copyEntry} />
+						{/each}
+					</div>
+				</WidgetCard>
 				{#if activeTab === 'all' && wallet.countReceived >= 50}
 					<div class="py-8 text-center">
 						<button

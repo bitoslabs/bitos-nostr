@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { finalizeEvent } from 'nostr-tools/pure';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -417,7 +418,7 @@
 					Update your Nostr profile — changes are published to relays.
 				</p>
 
-				<div class="post-card mb-5 p-5">
+				<SectionCard class="mb-5">
 					{#if editingBanner}
 						<div class="-mx-5 -mt-5 mb-5 overflow-hidden rounded-t-2xl">
 							<img src={editingBanner} alt="banner preview" class="h-24 w-full object-cover" />
@@ -617,16 +618,14 @@
 						>
 						<Button color="neutral" variant="ghost" onclick={resetProfileForm}>Cancel</Button>
 					</div>
-				</div>
+				</SectionCard>
 
-				<div class="post-card mb-5 p-5">
-					<div class="mb-4 flex items-center gap-2">
-						<Icon name="i-lucide-users-round" class="size-[18px] text-primary-500" />
-						<h3 class="text-[15px] font-bold">Accounts</h3>
-						<span class="ml-auto text-[11px] text-[var(--ui-text-dimmed)]">
+				<SectionCard title="Accounts" icon="i-lucide-users-round" class="mb-5">
+					{#snippet actions()}
+						<span class="text-[11px] text-[var(--ui-text-dimmed)]">
 							{identity.accounts.length} saved
 						</span>
-					</div>
+					{/snippet}
 					<div class="space-y-2">
 						{#each identity.accounts as account (account.pk)}
 							<div
@@ -716,13 +715,9 @@
 							</div>
 						{/if}
 					</div>
-				</div>
+				</SectionCard>
 
-				<div class="post-card p-5">
-					<h3 class="mb-1 text-[15px] font-bold">Danger zone</h3>
-					<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
-						Clear local data on this device.
-					</p>
+				<SectionCard title="Danger zone" description="Clear local data on this device.">
 					<div class="space-y-2">
 						<div
 							class="flex items-center justify-between rounded-xl p-3 transition hover:bg-[var(--interactive-hover-bg)]"
@@ -751,7 +746,7 @@
 							<Button color="error" variant="subtle" onclick={logout}>Log out</Button>
 						</div>
 					</div>
-				</div>
+				</SectionCard>
 			{/if}
 
 			{#if section === 'privacy' || section === 'notifications'}

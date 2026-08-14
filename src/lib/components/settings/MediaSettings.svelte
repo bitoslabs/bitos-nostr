@@ -2,6 +2,7 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import { MEDIA_PROVIDERS, media, providerLabel } from '$lib/stores/media.svelte';
@@ -38,26 +39,22 @@
 	empty, BitOS can fall back to the server upload API when it is configured.
 </p>
 
-<div class="post-card mb-5 border-primary-500/20 bg-primary-500/5 p-4">
+<SectionCard class="mb-5 border-primary-500/20 bg-primary-500/5" bodyClass="p-4">
 	<div class="flex items-start gap-3">
 		<Icon name="i-lucide-shield-check" class="mt-0.5 size-[18px] text-primary-500" />
 		<div>
 			<h3 class="text-[14px] font-bold">Upload privacy</h3>
 			<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
-				Supported images are rewritten in your browser before upload so EXIF data like GPS
-				location is dropped. Uploads also use neutral filenames instead of the original file
-				name. Video metadata is not fully stripped yet.
+				Supported images are rewritten in your browser before upload so EXIF data like GPS location
+				is dropped. Uploads also use neutral filenames instead of the original file name. Video
+				metadata is not fully stripped yet.
 			</p>
 		</div>
 	</div>
-</div>
+</SectionCard>
 
 <!-- Default provider -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-cloud-upload" class="size-[18px] text-primary-500" />
-		<h3 class="text-[15px] font-bold">Default provider</h3>
-	</div>
+<SectionCard title="Default provider" icon="i-lucide-cloud-upload" class="mb-5">
 	<p class="mb-3 text-[12px] text-[var(--ui-text-muted)]">
 		Used by the composer unless you pick another one while posting. Selecting none keeps uploads on
 		the BitOS server fallback path.
@@ -94,19 +91,17 @@
 			</button>
 		{/each}
 	</div>
-</div>
+</SectionCard>
 
 <!-- Cloudinary -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-cloud-sun" class="size-[18px] text-accent-500" />
-		<h3 class="text-[15px] font-bold">Cloudinary</h3>
+<SectionCard title="Cloudinary" icon="i-lucide-cloud-sun" class="mb-5">
+	{#snippet actions()}
 		{#if media.isConfigured('cloudinary')}
 			{#if media.state.cloudinary.apiKey?.trim() && media.state.cloudinary.apiSecret?.trim()}
-				<Badge tone="primary" class="ml-auto">signed</Badge>
-			{:else}<Badge tone="success" class="ml-auto">connected</Badge>{/if}
+				<Badge tone="primary">signed</Badge>
+			{:else}<Badge tone="success">connected</Badge>{/if}
 		{/if}
-	</div>
+	{/snippet}
 	<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
 		Two options: (1) an <strong>unsigned upload preset</strong> (safest — no secret in the browser),
 		or (2) your <strong>API key + API secret</strong> for signed uploads with full control. Since BitOS
@@ -223,15 +218,12 @@
 				})}>Clear</Button
 		>
 	</div>
-</div>
+</SectionCard>
 
 <!-- S3 / R2 -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-4 flex items-center gap-2">
-		<Icon name="i-lucide-database" class="size-[18px] text-warm-500" />
-		<h3 class="text-[15px] font-bold">S3 / R2 / B2</h3>
-		{#if media.isConfigured('s3')}<Badge tone="success" class="ml-auto">connected</Badge>{/if}
-	</div>
+<SectionCard title="S3 / R2 / B2" icon="i-lucide-database" class="mb-5">
+	{#snippet actions()}{#if media.isConfigured('s3')}<Badge tone="success">connected</Badge
+			>{/if}{/snippet}
 	<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
 		Works with AWS S3 and S3-compatible storage. Enable CORS on the bucket to allow PUT requests
 		from this site. The secret key is stored locally on this device.
@@ -381,9 +373,9 @@
 				})}>Clear</Button
 		>
 	</div>
-</div>
+</SectionCard>
 
-<div class="post-card p-5">
+<SectionCard bodyClass="p-5">
 	<div class="flex items-start gap-2.5">
 		<Icon
 			name="i-lucide-shield-alert"
@@ -406,4 +398,4 @@
 			>
 		</div>
 	</div>
-</div>
+</SectionCard>

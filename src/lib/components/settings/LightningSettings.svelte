@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Toggle from '$lib/components/ui/Toggle.svelte';
@@ -35,8 +36,7 @@
 </p>
 
 <!-- ============ WALLET CONNECTION ============ -->
-<div class="post-card mb-5 p-5">
-	<h3 class="mb-4 text-[15px] font-bold">Wallet connection</h3>
+<SectionCard title="Wallet connection" class="mb-5">
 	{#if wallet.weblnEnabled}
 		<div
 			class="flex items-center gap-3.5 rounded-xl border border-[color-mix(in_oklab,var(--ui-color-primary-500)_22%,transparent)] bg-[color-mix(in_oklab,var(--ui-color-primary-500)_6%,transparent)] p-3.5"
@@ -47,12 +47,16 @@
 				<Icon name="i-lucide-wallet" class="size-5" />
 			</span>
 			<div class="min-w-0 flex-1">
-				<div class="truncate text-[14px] font-bold">{wallet.weblnInfo?.node.alias ?? 'Lightning wallet'}</div>
+				<div class="truncate text-[14px] font-bold">
+					{wallet.weblnInfo?.node.alias ?? 'Lightning wallet'}
+				</div>
 				<div class="truncate font-mono text-[12px] text-[var(--ui-text-muted)]">
 					connected · {formatCompact(wallet.weblnBalance ?? 0)} sats
 				</div>
 			</div>
-			<Button color="neutral" variant="subtle" size="sm" onclick={() => wallet.disconnectWallet()}>Disconnect</Button>
+			<Button color="neutral" variant="subtle" size="sm" onclick={() => wallet.disconnectWallet()}
+				>Disconnect</Button
+			>
 		</div>
 		<button
 			type="button"
@@ -70,30 +74,44 @@
 			{wallet.weblnBusy ? 'Connecting…' : 'Connect wallet'}
 		</Button>
 	{:else}
-		<div class="flex items-start gap-3 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3.5">
+		<div
+			class="flex items-start gap-3 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3.5"
+		>
 			<Icon name="i-lucide-info" class="mt-0.5 size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 			<div class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 				No Lightning wallet detected. Install
-				<a class="font-semibold text-primary-500 hover:underline" href="https://getalby.com" target="_blank" rel="noreferrer">Alby</a>
+				<a
+					class="font-semibold text-primary-500 hover:underline"
+					href="https://getalby.com"
+					target="_blank"
+					rel="noreferrer">Alby</a
+				>
 				or another
-				<a class="font-semibold text-primary-500 hover:underline" href="https://www.webln.guide/ressources/wallet-providers" target="_blank" rel="noreferrer">WebLN wallet</a>
+				<a
+					class="font-semibold text-primary-500 hover:underline"
+					href="https://www.webln.guide/ressources/wallet-providers"
+					target="_blank"
+					rel="noreferrer">WebLN wallet</a
+				>
 				to connect. Earnings you receive are still tracked on Nostr and visible on the Zaps page.
 			</div>
 		</div>
 	{/if}
-</div>
+</SectionCard>
 
 <!-- ============ DEFAULT ZAP AMOUNTS ============ -->
-<div class="post-card mb-5 p-5">
-	<div class="mb-1 flex items-center justify-between">
-		<h3 class="text-[15px] font-bold">Default zap amounts</h3>
+<SectionCard title="Default zap amounts" class="mb-5">
+	{#snippet actions()}
 		<button
 			type="button"
 			onclick={() => walletPrefs.resetAmounts()}
 			class="text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:text-primary-500"
-		>Reset</button>
-	</div>
-	<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">The quick-pick buttons shown on the zap dialog.</p>
+			>Reset</button
+		>
+	{/snippet}
+	<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">
+		The quick-pick buttons shown on the zap dialog.
+	</p>
 	<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
 		{#each walletPrefs.state.amounts as amount, i (i)}
 			<div class="relative">
@@ -103,7 +121,7 @@
 					type="number"
 					inputmode="numeric"
 					min="1"
-					class="text-center font-mono"
+					class="text-center font-mono w-full"
 					oninput={(e) => setAmount(i, e.currentTarget.value)}
 				/>
 				{#if walletPrefs.state.amounts.length > 2}
@@ -130,15 +148,18 @@
 	</div>
 
 	<div class="mt-5 border-t border-[var(--ui-border-muted)] pt-4">
-		<p class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase">
+		<p
+			class="mb-1.5 block text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+		>
 			Default amount
 		</p>
 		<div class="flex flex-wrap gap-2">
-			{#each walletPrefs.state.amounts as amount (amount)}
+			{#each walletPrefs.state.amounts as amount, i (i)}
 				<button
 					type="button"
 					onclick={() => walletPrefs.setDefaultAmount(amount)}
-					class="rounded-full border px-3.5 py-1.5 text-[12px] font-bold transition {walletPrefs.state.defaultAmount === amount
+					class="rounded-full border px-3.5 py-1.5 text-[12px] font-bold transition {walletPrefs
+						.state.defaultAmount === amount
 						? 'border-primary-500 bg-primary-500/10 text-primary-500'
 						: 'border-[var(--ui-border-muted)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]'}"
 				>
@@ -146,38 +167,61 @@
 				</button>
 			{/each}
 		</div>
-		<p class="mt-2 text-[11px] text-[var(--ui-text-dimmed)]">This amount is pre-selected when you open the zap dialog.</p>
+		<p class="mt-2 text-[11px] text-[var(--ui-text-dimmed)]">
+			This amount is pre-selected when you open the zap dialog.
+		</p>
 	</div>
-</div>
+</SectionCard>
 
 <!-- ============ ZAP PREFERENCES ============ -->
-<div class="post-card p-5">
-	<h3 class="mb-1 text-[15px] font-bold">Zap preferences</h3>
-	<p class="mb-4 text-[12px] text-[var(--ui-text-muted)]">Control how BitOS handles zaps and other reactions.</p>
+<SectionCard
+	title="Zap preferences"
+	description="Control how BitOS handles zaps and other reactions."
+>
 	<div class="space-y-3">
 		<div class="flex items-center justify-between gap-3">
 			<div class="min-w-0">
 				<p class="text-[13.5px] font-semibold">Non-zap reactions</p>
 				<p class="text-[11px] text-[var(--ui-text-muted)]">Allow likes & reposts alongside zaps</p>
 			</div>
-			<Toggle checked={walletPrefs.state.nonZapReactions} onToggle={(v) => walletPrefs.toggle('nonZapReactions', v)} label="Non-zap reactions" />
+			<Toggle
+				checked={walletPrefs.state.nonZapReactions}
+				onToggle={(v) => walletPrefs.toggle('nonZapReactions', v)}
+				label="Non-zap reactions"
+			/>
 		</div>
-		<div class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3">
+		<div
+			class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3"
+		>
 			<div class="min-w-0">
 				<p class="text-[13.5px] font-semibold">Anonymous zaps</p>
 				<p class="text-[11px] text-[var(--ui-text-muted)]">Send zaps without revealing your npub</p>
 			</div>
-			<Toggle checked={walletPrefs.state.anonymousZaps} onToggle={(v) => walletPrefs.toggle('anonymousZaps', v)} label="Anonymous zaps" />
+			<Toggle
+				checked={walletPrefs.state.anonymousZaps}
+				onToggle={(v) => walletPrefs.toggle('anonymousZaps', v)}
+				label="Anonymous zaps"
+			/>
 		</div>
-		<div class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3">
+		<div
+			class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3"
+		>
 			<div class="min-w-0">
 				<p class="text-[13.5px] font-semibold">Auto-zap on follow</p>
-				<p class="text-[11px] text-[var(--ui-text-muted)]">Send a small zap when you follow someone</p>
+				<p class="text-[11px] text-[var(--ui-text-muted)]">
+					Send a small zap when you follow someone
+				</p>
 			</div>
-			<Toggle checked={walletPrefs.state.autoZapOnFollow} onToggle={(v) => walletPrefs.toggle('autoZapOnFollow', v)} label="Auto-zap on follow" />
+			<Toggle
+				checked={walletPrefs.state.autoZapOnFollow}
+				onToggle={(v) => walletPrefs.toggle('autoZapOnFollow', v)}
+				label="Auto-zap on follow"
+			/>
 		</div>
 		{#if walletPrefs.state.autoZapOnFollow}
-			<div class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3">
+			<div
+				class="flex items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] pt-3"
+			>
 				<label for="autozap-amount" class="min-w-0">
 					<p class="text-[13.5px] font-semibold">Auto-zap amount</p>
 					<p class="text-[11px] text-[var(--ui-text-muted)]">Sats sent per new follow</p>
@@ -190,7 +234,7 @@
 					inputmode="numeric"
 					min="1"
 					size="sm"
-					class="w-24 font-mono text-center"
+					class="w-24 text-center font-mono"
 					oninput={(e) => {
 						const v = Number(e.currentTarget.value);
 						if (Number.isFinite(v)) walletPrefs.setAutoZapAmount(v);
@@ -199,4 +243,4 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</SectionCard>

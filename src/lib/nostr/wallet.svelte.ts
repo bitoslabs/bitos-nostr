@@ -139,7 +139,7 @@ class WalletStore {
 			const other = entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey;
 			return !blocks.has(other);
 		})
-		.sort((a, b) => b.createdAt - a.createdAt));
+		.sort((a, b) => b.createdAt - a.createdAt))
 
 	totalReceived = $derived(
 		this.received.reduce((sum, entry) => sum + entry.amountSats, 0)
