@@ -664,23 +664,24 @@
 					{/if}
 				</p>
 			</a>
-			{#if rankTag}
-				<button
-					type="button"
-					onclick={(e) => {
-						e.preventDefault();
-						e.stopPropagation();
-						onExplain?.();
-					}}
-					class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold transition hover:border-primary-500/40 hover:bg-primary-500/5 sm:inline-flex"
-					style="color:{rankTag.color}"
-					title="Why am I seeing this?"
-				>
-					<Icon name={rankTag.icon} class="size-3" />
-					{rankTag.label}
-				</button>
-			{/if}
+
 			<div class="flex shrink-0 items-center gap-1">
+				{#if rankTag}
+					<button
+						type="button"
+						onclick={(e) => {
+							e.preventDefault();
+							e.stopPropagation();
+							onExplain?.();
+						}}
+						class="hidden shrink-0 items-center gap-1 rounded-full border border-[var(--ui-border-muted)] px-2 py-0.5 text-[10px] font-bold transition hover:border-primary-500/40 hover:bg-primary-500/5 sm:inline-flex"
+						style="color:{rankTag.color}"
+						title="Why am I seeing this?"
+					>
+						<Icon name={rankTag.icon} class="size-3" />
+						{rankTag.label}
+					</button>
+				{/if}
 				<span
 					class="rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)]"
 					title="Nostr event kind">kind:1</span

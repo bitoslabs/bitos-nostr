@@ -56,23 +56,33 @@
 		return TYPE_META[item.type].verb;
 	}
 
-	const FILTER_LABELS: { key: Filter; label: string }[] = [
+	const PRIMARY_FILTERS: { key: Filter; label: string }[] = [
 		{ key: 'all', label: 'All' },
 		{ key: 'unread', label: 'Unread' },
-		{ key: 'zap', label: 'Zaps' },
 		{ key: 'mention', label: 'Mentions' },
-		{ key: 'comment', label: 'Replies' },
+		{ key: 'comment', label: 'Replies' }
+	];
+
+	const ACTIVITY_FILTERS: { key: Filter; label: string; icon?: string }[] = [
+		{ key: 'zap', label: 'Zaps', icon: 'i-lucide-zap' },
 		{ key: 'like', label: 'Likes' },
-		{ key: 'repost', label: 'Reposts' },
-		{ key: 'follow', label: 'Follows' }
+		{ key: 'repost', label: 'Reposts', icon: 'i-lucide-repeat-2' },
+		{ key: 'follow', label: 'Follows', icon: 'i-lucide-user-plus' }
 	];
 
 	let filter = $state<Filter>('all');
 	let query = $state('');
+	let mobileSearchOpen = $state(false);
 	let rawOpen = $state(false);
 	let rawEvent = $state('');
 
 	const unread = $derived(notifications.unreadCount);
+
+	function countFor(filterKey: Filter) {
+		if (filterKey === 'unread') return unread;
+		if (filterKey === 'all') return notifications.visible.length;
+		return notifications.countByType[filterKey] ?? 0;
+	}
 
 	const filtered = $derived(
 		notifications.visible.filter((item) => {
@@ -328,45 +338,67 @@
 			{#snippet actions()}
 				<button
 					type="button"
+					onclick={() => (mobileSearchOpen = !mobileSearchOpen)}
+					class="icon-btn size-9 sm:hidden {mobileSearchOpen ? 'is-active' : ''}"
+					aria-label="Search notifications"
+					aria-expanded={mobileSearchOpen}
+				>
+					<Icon name={mobileSearchOpen ? 'i-lucide-x' : 'i-lucide-search'} class="size-[18px]" />
+				</button>
+				<button
+					type="button"
 					onclick={() => notifications.markAllRead()}
 					disabled={!unread}
 					class="icon-btn size-9 disabled:pointer-events-none disabled:opacity-40"
 					aria-label="Mark all read"
+					title="Mark all notifications as read"
 				>
 					<Icon name="i-lucide-check-check" class="size-[18px]" />
 				</button>
 			{/snippet}
-		</PageHeader>
-		<div class="page-container page-container--notifications py-6">
-			<!-- Filters + search -->
-			<div class="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
-				<div class="flex flex-wrap gap-1.5">
-					{#each FILTER_LABELS as f (f.key)}
-						<button
-							type="button"
-							onclick={() => (filter = f.key)}
-							class="pill-tab flex items-center gap-1.5 {filter === f.key ? 'active' : ''}"
-						>
-							{f.label}
-							{#if f.key === 'unread' && unread}
-								<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
-									{unread}
-								</span>
-							{:else if f.key !== 'all' && f.key !== 'unread'}
-								{@const n = notifications.countByType[f.key] ?? 0}
-								{#if n}
-									<span
-										class="rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[10px] text-[var(--ui-text-muted)]"
-									>
-										{n}
-									</span>
-								{/if}
-							{/if}
-						</button>
-					{/each}
+			{#snippet tabs()}
+				<div class="flex w-full min-w-max items-center gap-1 px-[clamp(1rem,3vw,1.5rem)]">
+					<div class="flex items-center gap-1" role="tablist" aria-label="Notification filters">
+						{#each PRIMARY_FILTERS as f (f.key)}
+							{@const n = countFor(f.key)}
+							<button
+								type="button"
+								role="tab"
+								aria-selected={filter === f.key}
+								onclick={() => (filter = f.key)}
+								class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {filter ===
+								f.key
+									? 'text-primary-600'
+									: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+							>
+								{f.label}{#if f.key !== 'all' && n}<span
+										class="ml-1.5 font-mono text-[10px] opacity-70">{n}</span
+									>{/if}
+								{#if filter === f.key}<span
+										class="absolute right-2 bottom-0 left-2 h-0.5 rounded-full bg-primary-500"
+									></span>{/if}
+							</button>
+						{/each}
+					</div>
+					<div
+						class="ml-auto hidden w-[180px] shrink-0 items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-1.5 sm:flex"
+					>
+						<Icon name="i-lucide-search" class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]" />
+						<input
+							type="search"
+							bind:value={query}
+							placeholder="Search activity…"
+							aria-label="Search notifications"
+							class="w-full bg-transparent text-[12px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
+						/>
+					</div>
 				</div>
+			{/snippet}
+		</PageHeader>
+		{#if mobileSearchOpen}
+			<div class="border-b border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-4 py-2.5 sm:hidden">
 				<div
-					class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2 sm:ml-auto sm:w-[220px]"
+					class="flex items-center gap-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-2"
 				>
 					<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 					<input
@@ -375,6 +407,43 @@
 						placeholder="Search activity…"
 						class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 					/>
+				</div>
+			</div>
+		{/if}
+		<div class="page-container page-container--notifications py-4">
+			<div class="mb-5">
+				<div class="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+					<span
+						class="shrink-0 text-[11px] font-bold tracking-[0.06em] text-[var(--ui-text-dimmed)] uppercase"
+						>Activity types</span
+					>
+					<div
+						class="flex w-full [scrollbar-width:none] items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+						role="tablist"
+						aria-label="Activity type filters"
+					>
+						{#each ACTIVITY_FILTERS as f (f.key)}
+							{@const n = countFor(f.key)}
+							<button
+								type="button"
+								role="tab"
+								aria-selected={filter === f.key}
+								onclick={() => (filter = f.key)}
+								class:active={filter === f.key}
+								class="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] {filter ===
+								f.key
+									? 'bg-primary-500/10 text-primary-600'
+									: ''}"
+							>
+								{#if f.icon}<Icon name={f.icon} class="size-3.5" />{/if}
+								{f.label}
+								{#if n}<span
+										class="inline-grid h-4.5 min-w-4.5 place-items-center rounded-full bg-[var(--ui-bg-accented)] px-1 text-[10px] leading-none font-bold text-[var(--ui-text-muted)]"
+										>{n}</span
+									>{/if}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
 
@@ -431,20 +500,15 @@
 				</div>
 			{:else}
 				<!-- Live region: screen readers announce fresh activity -->
-				<div
-					role="log"
-					aria-live="polite"
-					aria-atomic="false"
-					class="notifications-list space-y-6"
-				>
+				<div role="log" aria-live="polite" aria-atomic="false" class="notifications-list space-y-5">
 					{#each sections as section (section.label)}
 						<section>
 							<h2
-								class="mb-2 px-1 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
+								class="mb-2 text-[11px] font-bold tracking-[0.08em] text-[var(--ui-text-dimmed)] uppercase"
 							>
 								{section.label}
 							</h2>
-							<div class="space-y-2.5">
+							<div>
 								{#each section.rows as row (row.kind === 'group' ? row.first.id : row.item.id)}
 									{@const item = row.kind === 'group' ? row.first : row.item}
 									{@const meta = TYPE_META[item.type]}
@@ -454,7 +518,7 @@
 									<article
 										class="post-card relative overflow-visible transition hover:border-primary-500/25 {menuOpen
 											? 'z-30'
-											: 'z-0'} {!item.read ? 'bg-[var(--active-surface-bg)]' : ''}"
+											: 'z-0'} {!item.read ? 'bg-primary-500/[0.035]' : ''}"
 									>
 										<!-- Unread accent stripe -->
 										{#if !item.read}
@@ -464,7 +528,7 @@
 											></span>
 										{/if}
 
-										<div class="flex items-start gap-3 p-4 pr-14">
+										<div class="flex items-start gap-3 py-3.5 pr-12">
 											<div class="relative shrink-0">
 												{#if row.kind === 'group'}
 													{@const actors = row.items.slice(0, 3)}
@@ -629,7 +693,7 @@
 											{@const media = mediaFor(item)}
 											<!-- Media is a sibling of the row content so its zoom buttons don't nest
 										     inside the link (matches PostCard's separation pattern). -->
-											<div class="pr-4 pb-4 pl-[72px]">
+											<div class="pb-3.5 pl-[56px]">
 												<NotificationMedia
 													{media}
 													tags={item.raw?.tags ?? []}
@@ -746,7 +810,6 @@
 			{/if}
 		</div>
 	</div>
-
 </div>
 
 <Dialog bind:open={rawOpen} title="Raw event">

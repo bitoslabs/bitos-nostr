@@ -777,7 +777,9 @@
 	}
 
 	function revealMoreMedia() {
-		const availableMedia = hasActiveRelaySearch ? (relaySearchData?.mediaItems ?? []) : filteredMedia;
+		const availableMedia = hasActiveRelaySearch
+			? (relaySearchData?.mediaItems ?? [])
+			: filteredMedia;
 		console.debug('[Discover pagination] Revealing media', {
 			visible: mediaVisibleCount,
 			available: availableMedia.length,
@@ -830,7 +832,10 @@
 		if (activeTab === 'tags') {
 			if (visibleTrendTags.length < activeTrendTags.length) {
 				console.debug('[Discover pagination] Revealing more tags');
-				tagsVisibleCount = Math.min(activeTrendTags.length, tagsVisibleCount + INITIAL_TAGS_VISIBLE);
+				tagsVisibleCount = Math.min(
+					activeTrendTags.length,
+					tagsVisibleCount + INITIAL_TAGS_VISIBLE
+				);
 			} else {
 				console.debug('[Discover pagination] Requesting older results for more tags');
 				void loadMoreNotes();
@@ -842,7 +847,9 @@
 
 	function observeDiscoverPagination(node: HTMLElement) {
 		if (typeof IntersectionObserver === 'undefined') {
-			console.debug('[Discover pagination] IntersectionObserver unavailable; using scroll fallback');
+			console.debug(
+				'[Discover pagination] IntersectionObserver unavailable; using scroll fallback'
+			);
 			return {};
 		}
 		const observer = new IntersectionObserver(
@@ -1167,12 +1174,14 @@
 						</div>
 					{/if}
 					{#if visibleNotes.length < filteredNotes.length || (!hasActiveRelaySearch && hasMoreNotes)}<button
-						use:observeDiscoverPagination
-						type="button"
-						onclick={showMoreNotes}
-						disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
-						class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
-						>{visibleNotes.length < filteredNotes.length ? 'Load more notes' : 'Loading older notes'}</button
+							use:observeDiscoverPagination
+							type="button"
+							onclick={showMoreNotes}
+							disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
+							class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+							>{visibleNotes.length < filteredNotes.length
+								? 'Load more notes'
+								: 'Loading older notes'}</button
 						>{/if}
 				{:else if searchingRelays}
 					<div class="space-y-3">
@@ -1229,12 +1238,14 @@
 						</div>
 					{/if}
 					{#if visibleNotes.length < filteredNotes.length || (!hasActiveRelaySearch && hasMoreNotes)}<button
-						use:observeDiscoverPagination
-						type="button"
-						onclick={showMoreNotes}
-						disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
-						class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
-						>{visibleNotes.length < filteredNotes.length ? 'Load more notes' : 'Loading older notes'}</button
+							use:observeDiscoverPagination
+							type="button"
+							onclick={showMoreNotes}
+							disabled={loadingMoreNotes && visibleNotes.length >= filteredNotes.length}
+							class="mt-3 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
+							>{visibleNotes.length < filteredNotes.length
+								? 'Load more notes'
+								: 'Loading older notes'}</button
 						>{/if}
 				{:else if loading}
 					<div class="space-y-3">
@@ -1271,7 +1282,9 @@
 							disabled={loadingMoreNotes && visibleTrendTags.length >= activeTrendTags.length}
 							class="mt-4 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
 						>
-							{visibleTrendTags.length < activeTrendTags.length ? 'Show more tags' : 'Load older tags'}
+							{visibleTrendTags.length < activeTrendTags.length
+								? 'Show more tags'
+								: 'Load older tags'}
 						</button>
 					{:else}
 						<p class="mt-4 text-center text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
@@ -1358,7 +1371,9 @@
 							disabled={loadingMoreNotes && visibleCreators.length >= rankedCreators.length}
 							class="mt-5 w-full rounded-xl border border-[var(--ui-border-muted)] py-2.5 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/5"
 						>
-							{visibleCreators.length < rankedCreators.length ? 'Load more people' : 'Load older people'}
+							{visibleCreators.length < rankedCreators.length
+								? 'Load more people'
+								: 'Load older people'}
 						</button>
 					{:else}
 						<p class="mt-5 text-center text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
@@ -1479,8 +1494,9 @@
 							<span class="sr-only">Loading media from relays</span>
 							{#each [0, 1, 2, 3, 4, 5] as item (item)}
 								<div
-									class="break-inside-avoid animate-pulse rounded-xl bg-[var(--ui-bg-muted)] {item % 3 ===
-										0
+									class="animate-pulse break-inside-avoid rounded-xl bg-[var(--ui-bg-muted)] {item %
+										3 ===
+									0
 										? 'aspect-[4/5]'
 										: item % 3 === 1
 											? 'aspect-square'
@@ -1491,23 +1507,22 @@
 					{/if}
 					<div class="mt-5 flex flex-col items-center gap-2">
 						<button
-								use:observeDiscoverPagination
-								type="button"
-								onclick={revealMoreMedia}
-								disabled={loadingMoreMedia || (!hasUnrevealedMedia && (!hasMoreMedia || hasActiveRelaySearch))}
-								class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
-							>
-								<Icon
+							use:observeDiscoverPagination
+							type="button"
+							onclick={revealMoreMedia}
+							disabled={loadingMoreMedia ||
+								(!hasUnrevealedMedia && (!hasMoreMedia || hasActiveRelaySearch))}
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500"
+						>
+							<Icon
 								name={loadingMoreMedia && !hasUnrevealedMedia
-										? 'i-lucide-loader-circle'
-										: 'i-lucide-plus'}
-								class="size-4 {loadingMoreMedia && !hasUnrevealedMedia
-										? 'animate-spin'
-										: ''}"
-								/>
-								{loadingMoreMedia
-									? 'Loading older media'
-									: hasUnrevealedMedia
+									? 'i-lucide-loader-circle'
+									: 'i-lucide-plus'}
+								class="size-4 {loadingMoreMedia && !hasUnrevealedMedia ? 'animate-spin' : ''}"
+							/>
+							{loadingMoreMedia
+								? 'Loading older media'
+								: hasUnrevealedMedia
 									? 'Load more media'
 									: hasMoreMedia && !hasActiveRelaySearch
 										? 'Load older media'
