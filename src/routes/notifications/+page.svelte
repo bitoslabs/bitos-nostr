@@ -19,6 +19,8 @@
 	} from '$lib/utils/imeta';
 	import { parseContent } from '$lib/utils/note-content';
 	import { decode as decodeBech32 } from 'nostr-tools/nip19';
+	import { getPow } from 'nostr-tools/nip13';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import type { NotificationItem } from '$lib/nostr/types';
 
 	type Filter = 'all' | 'unread' | 'mention' | 'zap' | 'like' | 'repost' | 'follow' | 'comment';
@@ -210,6 +212,18 @@
 	/** Cached media extraction per notification so live re-renders stay cheap.
 	 *  A plain object (not SvelteMap) on purpose: it's a memo, never rendered. */
 	const mediaCache: Record<string, ImageMeta[]> = {};
+
+	/** Mined difficulty of the *incoming* event itself (nonce-tagged only),
+	 *  memoized per id. `item.id` is the event id, so its leading zeros are
+	 *  the receipt — same micro-badge treatment as the comment list. */
+	const powCache: Record<string, number | undefined> = {};
+	function powFor(item: NotificationItem): number | undefined {
+		if (item.id in powCache) return powCache[item.id];
+		const nonce = item.raw?.tags?.find((t) => t[0] === 'nonce');
+		const bits = nonce ? getPow(item.id) : undefined;
+		powCache[item.id] = bits;
+		return bits;
+	}
 
 	function preview(item: NotificationItem) {
 		if (item.type === 'like') return item.content || '❤️';
@@ -632,6 +646,9 @@
 																	class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
 																	>you</span
 																>
+															{/if}
+															{#if powFor(item)}
+																<PowBadge bits={powFor(item) ?? 0} micro id={item.id} />
 															{/if}
 															{#if sourceLink(item)}
 																<a

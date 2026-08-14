@@ -7,10 +7,11 @@
 	/**
 	 * Shared NIP-13 Proof-of-Work panel used by every composer (post, reply).
 	 *
-	 * Owns only the presentation: difficulty slider + effort label, hash-viz,
-	 * live mining telemetry (hashrate, best bits, ETA, real nonce, progress
-	 * bar) and a cancel affordance. The mining itself runs in the PoW worker
-	 * via feed.post/feed.reply; the parent feeds `progress` + `mining` back in.
+	 * Owns only the presentation: semantic effort presets (one tap, no math),
+	 * an advanced fine-tune slider behind a disclosure, hash-viz, live mining
+	 * telemetry (growing zero prefix, hashrate, ETA, progress bar, nonce) and
+	 * a cancel affordance. The mining itself runs in the PoW worker via
+	 * feed.post/feed.reply; the parent feeds `progress` + `mining` back in.
 	 */
 	let {
 		pow = $bindable(0),
@@ -29,6 +30,40 @@
 		compact?: boolean;
 		oncancel?: () => void;
 	} = $props();
+
+	/** Semantic effort presets — the default path. The slider is for power users. */
+	const PRESETS = [
+		{
+			id: 'instant',
+			label: 'Instant',
+			icon: 'i-lucide-zap',
+			bits: 0,
+			hint: 'No extra work — publish immediately.'
+		},
+		{
+			id: 'shielded',
+			label: 'Shielded',
+			icon: 'i-lucide-shield-check',
+			bits: 20,
+			hint: 'Hard to spam — about a second of mining.'
+		},
+		{
+			id: 'forged',
+			label: 'Forged',
+			icon: 'i-lucide-pickaxe',
+			bits: 24,
+			hint: 'Heavy work — for posts that matter.'
+		}
+	] as const;
+
+	// Start expanded when the remembered difficulty is not a preset value.
+	let advanced = $state(pow > 0 && !PRESETS.some((preset) => preset.bits === pow));
+
+	const activePresetId = $derived(PRESETS.find((preset) => preset.bits === pow)?.id ?? null);
+
+	function applyPreset(bits: number) {
+		if (!mining) pow = bits;
+	}
 
 	const powEffort = $derived(
 		pow === 0
@@ -55,6 +90,15 @@
 		progress ? Number.parseInt(progress.nonce, 10).toString(16).padStart(8, '0') : ''
 	);
 	const hashvizBits = $derived(mining && progress ? progress.best : pow);
+
+	// Live receipt: the best candidate hash, leading zeros glowing. Re-mounts
+	// (pops) each time a longer zero prefix lands.
+	const liveChars = $derived(progress?.bestHash ? progress.bestHash.slice(0, 14) : '');
+	const liveZeroCount = $derived(
+		progress ? Math.min(Math.floor(progress.best / 4), liveChars.length) : 0
+	);
+	const liveZeros = $derived(liveChars.slice(0, liveZeroCount));
+	const liveRest = $derived(liveChars.slice(liveZeroCount));
 
 	function formatHashrate(rate: number) {
 		return rate >= 1_000_000
@@ -107,26 +151,83 @@
 		</div>
 	</div>
 
-	<input
-		type="range"
-		min="0"
-		{max}
-		bind:value={pow}
-		disabled={mining}
-		class="pow-slider mt-2.5 w-full"
-		aria-label="Proof of Work difficulty"
-	/>
+	{#if !mining}
+		<div
+			class="mt-2.5 grid grid-cols-3 gap-1.5"
+			role="radiogroup"
+			aria-label="Proof of Work effort"
+		>
+			{#each PRESETS as preset (preset.id)}
+				<button
+					type="button"
+					role="radio"
+					aria-checked={activePresetId === preset.id}
+					title={preset.hint}
+					onclick={() => applyPreset(preset.bits)}
+					class={cn(
+						'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 transition active:scale-95',
+						activePresetId === preset.id
+							? 'border-[color-mix(in_oklab,var(--ui-color-primary-500)_45%,transparent)] bg-[color-mix(in_oklab,var(--ui-color-primary-500)_12%,transparent)] text-[var(--ui-color-primary-500)]'
+							: 'border-[var(--ui-border-muted)] text-[var(--ui-text-muted)] hover:border-[color-mix(in_oklab,var(--ui-color-primary-500)_25%,transparent)] hover:text-[var(--ui-color-primary-500)]'
+					)}
+				>
+					<Icon name={preset.icon} class="size-4" />
+					<span class="text-[11px] font-bold">{preset.label}</span>
+					<span class="font-mono text-[9.5px] text-[var(--ui-text-dimmed)]"
+						>{preset.bits === 0 ? '0 bits' : `${preset.bits} bits`}</span
+					>
+				</button>
+			{/each}
+		</div>
+
+		<div class="mt-2">
+			<button
+				type="button"
+				onclick={() => (advanced = !advanced)}
+				aria-expanded={advanced}
+				class="flex items-center gap-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)] transition hover:text-[var(--ui-color-primary-500)]"
+			>
+				<Icon name={advanced ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'} class="size-3" />
+				Fine-tune difficulty
+				{#if activePresetId === null && pow > 0}
+					<span class="font-mono">· custom {pow} bits</span>
+				{/if}
+			</button>
+			{#if advanced}
+				<input
+					type="range"
+					min="0"
+					{max}
+					bind:value={pow}
+					class="pow-slider mt-2 w-full"
+					aria-label="Proof of Work difficulty"
+				/>
+			{/if}
+		</div>
+	{/if}
 
 	<HashViz bits={hashvizBits} {mining} class="mt-2.5" />
 
 	{#if mining && progress}
 		<div class="mt-2.5">
+			<!-- Live receipt: the best candidate's zero prefix growing in real time. -->
+			<p class="flex items-baseline font-mono text-[11px]" aria-label="Best candidate hash so far">
+				{#key liveZeroCount}
+					<span class="pow-live-zeros">{liveZeros}</span>
+				{/key}
+				{#if liveZeroCount > 0}
+					<span class="text-[var(--ui-text-dimmed)]" aria-hidden="true">·</span>
+				{/if}
+				<span class="text-[var(--ui-text-dimmed)]">{liveRest}…</span>
+				<span class="ml-1.5 font-sans text-[9.5px] text-[var(--ui-text-dimmed)]">
+					best {progress.best}/{pow} bits
+				</span>
+			</p>
 			<div
 				class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-mono text-[10px] text-[var(--ui-text-dimmed)]"
 			>
 				<span>
-					Best <span class="font-semibold text-primary-500">{progress.best}/{pow}</span>
-					bits · {formatHashrate(progress.hashrate)} · {formatDuration(progress.elapsedMs)} elapsed
+					{formatHashrate(progress.hashrate)} · {formatDuration(progress.elapsedMs)} elapsed
 				</span>
 				<span>≈ {formatDuration(etaMs)} left</span>
 			</div>

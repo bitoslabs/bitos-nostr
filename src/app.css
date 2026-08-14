@@ -1327,6 +1327,15 @@ html[data-reduced-motion='true'] *::after {
 	.mining-nonce {
 		animation: mining-nonce-glow 0.55s ease-in-out infinite alternate;
 	}
+	/* Live best-candidate hash while mining: the growing zero prefix pops in
+	 * when a new best lands, making progress feel physical. */
+	.pow-live-zeros {
+		display: inline-block;
+		font-weight: 700;
+		color: var(--ui-color-primary-500);
+		text-shadow: 0 0 6px color-mix(in oklab, var(--ui-color-primary-500) 55%, transparent);
+		animation: pow-zeros-pop 0.32s ease-out;
+	}
 	@keyframes hash-viz-mine {
 		from {
 			transform: translateX(-18px);
@@ -1356,6 +1365,19 @@ html[data-reduced-motion='true'] *::after {
 		to {
 			opacity: 1;
 			text-shadow: 0 0 8px color-mix(in oklab, var(--ui-color-primary-500) 55%, transparent);
+		}
+	}
+	@keyframes pow-zeros-pop {
+		from {
+			transform: scale(1.18);
+		}
+		to {
+			transform: scale(1);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.pow-live-zeros {
+			animation: none;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

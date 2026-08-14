@@ -14,6 +14,9 @@ type MineProgress = {
 	hashes: number;
 	hashrate: number;
 	best: number;
+	/** Hex id of the best candidate so far — lets the UI show the zero
+	 * prefix actually growing while mining. */
+	bestHash: string;
 	nonce: string;
 	elapsedMs: number;
 };
@@ -35,6 +38,7 @@ self.onmessage = (message: MessageEvent<MineRequest>) => {
 		const started = Date.now();
 		let hashes = 0;
 		let best = 0;
+		let bestHash = '';
 		let counter = 0;
 		let lastReport = started;
 
@@ -42,9 +46,13 @@ self.onmessage = (message: MessageEvent<MineRequest>) => {
 			try {
 				for (let i = 0; i < CHUNK_SIZE; i++) {
 					nonceTag[1] = String(++counter);
-					const zeroes = getPow(getEventHash(template));
+					const hash = getEventHash(template);
+					const zeroes = getPow(hash);
 					hashes++;
-					if (zeroes > best) best = zeroes;
+					if (zeroes > best) {
+						best = zeroes;
+						bestHash = hash;
+					}
 					if (zeroes >= difficulty) {
 						self.postMessage({ type: 'done', event: template } satisfies MineDone);
 						return;
@@ -59,6 +67,7 @@ self.onmessage = (message: MessageEvent<MineRequest>) => {
 						hashes,
 						hashrate: hashes / (elapsedMs / 1000),
 						best,
+						bestHash,
 						nonce: String(counter),
 						elapsedMs
 					} satisfies MineProgress);

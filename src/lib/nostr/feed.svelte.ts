@@ -36,6 +36,8 @@ export type PowProgress = {
 	hashes: number;
 	hashrate: number;
 	best: number;
+	/** Hex id of the best candidate so far (grows its zero prefix live). */
+	bestHash: string;
 	nonce: string;
 	elapsedMs: number;
 };
