@@ -119,8 +119,12 @@
 		aria-label="BitOS home"
 		class="mb-4 flex items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
-		<img src="/icons/logo.png" alt="" class="w-20" />
-		<!-- <span class="ui4-brand-name">BitOS</span> -->
+		<img src="/icons/logo.png" alt="" class="ui4-brand-wordmark ui4-brand-wordmark-light w-20" />
+		<img
+			src="/icons/logo-white.png"
+			alt=""
+			class="ui4-brand-wordmark ui4-brand-wordmark-dark hidden w-20"
+		/>
 	</a>
 
 	<div class="flex flex-1 flex-col gap-1 pl-3">
@@ -287,13 +291,11 @@
 </nav>
 
 <style>
-	.ui4-brand-name {
-		background: linear-gradient(135deg, var(--ui-color-primary-500), var(--color-warm-500));
-		background-clip: text;
-		color: transparent;
-		font-size: 1.5rem;
-		font-weight: 700;
-		letter-spacing: -0.025em;
+	:global(.dark) .ui4-brand-wordmark-light {
+		display: none;
+	}
+	:global(.dark) .ui4-brand-wordmark-dark {
+		display: block;
 	}
 	.ui4-nav-item {
 		color: var(--ui-text-muted);
