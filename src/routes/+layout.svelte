@@ -352,6 +352,7 @@
 	);
 	const relayTotal = $derived(relays.list.length);
 	const relayConnected = $derived(relays.list.filter((r) => r.status === 'ok').length);
+	const relayChecking = $derived(relays.list.some((r) => r.status === 'connecting'));
 
 	// All authenticated routes share a centered cluster with the desktop
 	// navigation rail; individual pages control their own content treatment.
@@ -387,7 +388,7 @@
 	<!-- Premium shell (docs/ui.html): film grain, a top
 	     throughput bar, and a responsive nav · main · right-rail grid. -->
 	<div class="grain" aria-hidden="true"></div>
-	<NetworkBar connected={relayConnected} total={relayTotal} />
+	<NetworkBar connected={relayConnected} total={relayTotal} checking={relayChecking} />
 
 	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
 		<div

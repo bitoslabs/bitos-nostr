@@ -1,29 +1,47 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-
 	/**
-	 * Slim top-of-viewport throughput bar. Reflects live relay activity by
-	 * animating its fill width between bounds. Mount once at the shell root.
+	 * Slim top-of-viewport network-health indicator. Its width is derived from
+	 * real relay checks, rather than being a decorative activity animation.
 	 */
-	let { connected = 6, total = 7 }: { connected?: number; total?: number } = $props();
+	let {
+		connected = 0,
+		total = 0,
+		checking = false
+	}: { connected?: number; total?: number; checking?: boolean } = $props();
 
-	let width = $state(30);
-
-	onMount(() => {
-		const base = (connected / Math.max(1, total)) * 100;
-		const id = window.setInterval(() => {
-			width = Math.min(96, base + Math.random() * 35);
-		}, 2200);
-		return () => window.clearInterval(id);
-	});
+	const healthy = $derived(Math.min(Math.max(connected, 0), Math.max(total, 0)));
+	const progress = $derived(total > 0 ? (healthy / total) * 100 : 0);
+	const label = $derived(
+		checking
+			? 'Checking relay connections'
+			: total === 0
+				? 'No relays configured'
+				: `${healthy} of ${total} relays connected`
+	);
+	const color = $derived(
+		healthy === total && total > 0
+			? 'bg-[linear-gradient(90deg,var(--ui-color-primary-500),var(--color-warm-500))]'
+			: healthy > 0
+				? 'bg-[linear-gradient(90deg,var(--color-warm-500),var(--ui-color-primary-500))]'
+				: 'bg-[var(--tone-error-text)]'
+	);
 </script>
 
 <div
 	class="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 bg-[var(--interactive-hover-bg)]"
-	aria-hidden="true"
+	role="progressbar"
+	aria-label={label}
+	aria-valuemin="0"
+	aria-valuemax={total}
+	aria-valuenow={checking ? undefined : healthy}
+	aria-valuetext={label}
 >
 	<div
-		class="h-full bg-[linear-gradient(90deg,var(--ui-color-primary-500),var(--color-warm-500))] transition-[width] duration-700 ease-out"
-		style="width:{width}%;box-shadow:0 0 10px color-mix(in oklab,var(--ui-color-primary-500) 45%,transparent);"
+		class="h-full {color} transition-[width] duration-700 ease-out {checking
+			? 'animate-pulse'
+			: ''}"
+		style="width:{checking
+			? Math.max(progress, 8)
+			: progress}%;box-shadow:0 0 10px color-mix(in oklab,var(--ui-color-primary-500) 45%,transparent);"
 	></div>
 </div>
