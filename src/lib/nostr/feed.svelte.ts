@@ -6,7 +6,7 @@
  */
 import { browser } from '$app/environment';
 import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
-import { getPow, minePow } from 'nostr-tools/nip13';
+import { getPow } from 'nostr-tools/nip13';
 import type { UnsignedEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
@@ -31,20 +31,57 @@ const MAX_BUFFERED_REACTIONS = 2_000;
 
 type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
 
-function minePowAsync(unsigned: UnsignedEvent, difficulty: number) {
-	return new Promise<ReturnType<typeof minePow>>((resolve, reject) => {
+/** Live stats streamed from the NIP-13 worker while mining. */
+export type PowProgress = {
+	hashes: number;
+	hashrate: number;
+	best: number;
+	nonce: string;
+	elapsedMs: number;
+};
+
+function minePowAsync(
+	unsigned: UnsignedEvent,
+	difficulty: number,
+	options: { onProgress?: (progress: PowProgress) => void; signal?: AbortSignal } = {}
+) {
+	return new Promise<UnsignedEvent>((resolve, reject) => {
 		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
+		let settled = false;
+		const settle = (fn: () => void) => {
+			if (settled) return;
+			settled = true;
+			worker.onmessage = null;
+			worker.onerror = null;
+			worker.terminate();
+			fn();
+		};
+		const onAbort = () => settle(() => reject(new Error('Proof of Work cancelled')));
+		if (options.signal) {
+			if (options.signal.aborted) {
+				onAbort();
+				return;
+			}
+			options.signal.addEventListener('abort', onAbort, { once: true });
+		}
 		worker.onmessage = (
-			message: MessageEvent<{ ok: boolean; event?: ReturnType<typeof minePow>; error?: string }>
+			message: MessageEvent<{
+				type: 'progress' | 'done' | 'error';
+				event?: UnsignedEvent;
+				error?: string;
+				progress?: PowProgress;
+			}>
 		) => {
-			worker.terminate();
-			if (message.data.ok && message.data.event) resolve(message.data.event);
-			else reject(new Error(message.data.error || 'Proof of Work failed'));
+			const data = message.data;
+			if (data.type === 'progress') {
+				options.onProgress?.(data.progress!);
+				return;
+			}
+			if (data.type === 'done' && data.event) settle(() => resolve(data.event!));
+			else if (data.type === 'error')
+				settle(() => reject(new Error(data.error || 'Proof of Work failed')));
 		};
-		worker.onerror = () => {
-			worker.terminate();
-			reject(new Error('Proof of Work worker failed'));
-		};
+		worker.onerror = () => settle(() => reject(new Error('Proof of Work worker failed')));
 		worker.postMessage({ unsigned, difficulty });
 	});
 }
@@ -640,7 +677,17 @@ class FeedStore {
 	/** Compose + sign + publish a text note. Returns the published event id. */
 	async post(
 		content: string,
-		options: { sensitive?: boolean; attachments?: PostMediaAttachment[]; pow?: number } = {}
+		options: {
+			sensitive?: boolean;
+			attachments?: PostMediaAttachment[];
+			pow?: number;
+			/** Live stats while the NIP-13 worker mines. */
+			onPowProgress?: (progress: PowProgress) => void;
+			/** Coarse phase updates for button / status labels. */
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			/** Aborts mining (worker is terminated, nothing is published). */
+			signal?: AbortSignal;
+		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -678,9 +725,16 @@ class FeedStore {
 			tags
 		};
 		// NIP-13 mining is opt-in so ordinary posts remain immediate.
+		if (options.pow && options.pow > 0) options.onPhase?.('mining');
 		const mined =
-			options.pow && options.pow > 0 ? await minePowAsync(unsigned, options.pow) : unsigned;
+			options.pow && options.pow > 0
+				? await minePowAsync(unsigned, options.pow, {
+						onProgress: options.onPowProgress,
+						signal: options.signal
+					})
+				: unsigned;
 		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		options.onPhase?.('publishing');
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });

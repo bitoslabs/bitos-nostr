@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -48,6 +49,38 @@
 	const notificationUnread = $derived(notifications.unreadCount);
 	const accountMenuId = 'nav-account-switcher';
 	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
+	let accountButton = $state<HTMLButtonElement | null>(null);
+	let accountMenuPosition = $state({ left: 12, bottom: 12 });
+
+	function positionAccountMenu() {
+		if (!accountButton) return;
+		const rect = accountButton.getBoundingClientRect();
+		accountMenuPosition = {
+			left: Math.max(12, Math.min(rect.right + 12, window.innerWidth - 268)),
+			bottom: Math.max(12, window.innerHeight - rect.bottom)
+		};
+	}
+
+	function portal(node: HTMLElement) {
+		if (!browser) return;
+		document.body.appendChild(node);
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
+	}
+
+	$effect(() => {
+		if (!accountMenuOpen || !browser) return;
+		positionAccountMenu();
+		window.addEventListener('resize', positionAccountMenu);
+		window.addEventListener('scroll', positionAccountMenu, true);
+		return () => {
+			window.removeEventListener('resize', positionAccountMenu);
+			window.removeEventListener('scroll', positionAccountMenu, true);
+		};
+	});
 
 	function accountName(account: (typeof identity.accounts)[number]) {
 		const profile = profiles.get(account.pk) ?? account.profile;
@@ -153,9 +186,11 @@
 		{#if me}
 			<div class="relative">
 				<button
+					bind:this={accountButton}
 					type="button"
 					onclick={(event) => {
 						event.stopPropagation();
+						positionAccountMenu();
 						popovers.toggle(accountMenuId);
 					}}
 					class="ui4-account relative w-full overflow-hidden rounded-xl p-2.5 text-left transition-all hover:bg-[var(--interactive-hover-bg)]"
@@ -175,7 +210,10 @@
 				</button>
 				{#if accountMenuOpen}
 					<div
-						class="absolute right-0 bottom-0 z-50 w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+						use:portal
+						class="fixed z-[60] w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
+						style:left={`${accountMenuPosition.left}px`}
+						style:bottom={`${accountMenuPosition.bottom}px`}
 					>
 						<a
 							href="/profile"

@@ -18,6 +18,17 @@ export type UploadPurpose = 'note' | 'story' | 'message' | 'profile' | 'test';
 export interface UploadOptions {
 	pubkey?: string;
 	purpose?: UploadPurpose;
+	/** Called as bytes leave the browser. `percent` is 0–100 when deterministic. */
+	onProgress?: (progress: UploadProgress) => void;
+}
+
+export interface UploadProgress {
+	loaded: number;
+	total: number;
+	/** 0–100; only meaningful when `deterministic` is true. */
+	percent: number;
+	/** False when the server did not advertise a content length (indeterminate). */
+	deterministic: boolean;
 }
 
 export interface CloudinaryConfig {
@@ -76,6 +87,69 @@ function humanBytes(n: number): string {
 export { humanBytes };
 
 /* --------------------------------------------------------------------------
+   Progress-capable HTTP upload (XHR)
+
+   fetch() cannot report upload progress; XMLHttpRequest can. The helper
+   mirrors the response handling the previous fetch() calls used (status,
+   statusText, text(), json()) and throttles progress events to whole-percent
+   steps so $state writes stay cheap.
+---------------------------------------------------------------------------- */
+
+interface XhrResponse {
+	status: number;
+	statusText: string;
+	/** True for any 2xx response — parity with fetch's Response.ok. */
+	ok: boolean;
+	text: () => Promise<string>;
+	json: () => Promise<unknown>;
+}
+
+function xhrUpload(
+	url: string,
+	init: { method: string; headers?: Record<string, string>; body: XMLHttpRequestBodyInit },
+	onProgress?: (progress: UploadProgress) => void
+): Promise<XhrResponse> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open(init.method, url);
+		for (const [name, value] of Object.entries(init.headers ?? {})) {
+			xhr.setRequestHeader(name, value);
+		}
+		let lastPercent = -1;
+		xhr.upload.onprogress = (event) => {
+			if (!onProgress) return;
+			const deterministic = event.lengthComputable && event.total > 0;
+			const percent = deterministic
+				? Math.min(99, Math.round((event.loaded / event.total) * 100))
+				: 0;
+			// Whole-percent steps keep reactive updates cheap without visible stutter.
+			if (deterministic && percent === lastPercent) return;
+			lastPercent = percent;
+			onProgress({ loaded: event.loaded, total: event.total, percent, deterministic });
+		};
+		xhr.onerror = () => reject(new Error('Network error during upload'));
+		xhr.onabort = () => reject(new Error('Upload cancelled'));
+		xhr.onload = () => {
+			const body = xhr.responseText ?? '';
+			resolve({
+				status: xhr.status,
+				statusText: xhr.statusText,
+				ok: xhr.status >= 200 && xhr.status < 300,
+				text: () => Promise.resolve(body),
+				json: () => {
+					try {
+						return Promise.resolve(JSON.parse(body) as unknown);
+					} catch {
+						return Promise.reject(new Error('Invalid JSON response'));
+					}
+				}
+			});
+		};
+		xhr.send(init.body);
+	});
+}
+
+/* --------------------------------------------------------------------------
    Cloudinary — unsigned preset OR signed (API key + secret) upload
 -------------------------------------------------------------------------- */
 
@@ -95,7 +169,8 @@ export async function signCloudinaryRequest(
 
 export async function uploadToCloudinary(
 	file: File,
-	cfg: CloudinaryConfig
+	cfg: CloudinaryConfig,
+	onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadedMedia> {
 	const cloudName = cfg.cloudName?.trim();
 	if (!cloudName) throw new Error('Cloudinary cloud name is not configured');
@@ -136,15 +211,16 @@ export async function uploadToCloudinary(
 		form.append('signature', signature);
 	}
 
-	const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
-		method: 'POST',
-		body: form
-	});
+	const res = await xhrUpload(
+		`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
+		{ method: 'POST', body: form },
+		onProgress
+	);
 
 	if (!res.ok) {
 		let detail = `${res.status} ${res.statusText}`;
 		try {
-			const body = await res.json();
+			const body = (await res.json()) as { error?: { message?: string } };
 			detail = body?.error?.message || detail;
 		} catch {
 			/* ignore non-json error bodies */
@@ -152,7 +228,12 @@ export async function uploadToCloudinary(
 		throw new Error(`Cloudinary upload failed: ${detail}`);
 	}
 
-	const data = await res.json();
+	const data = (await res.json()) as {
+		secure_url: string;
+		resource_type: string;
+		format: string;
+		bytes: number;
+	};
 	const kind =
 		data.resource_type === 'video' ? 'video' : data.resource_type === 'image' ? 'image' : 'file';
 	return {
@@ -264,7 +345,11 @@ function sanitizeName(name: string): string {
 	return name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'file';
 }
 
-export async function uploadToS3(file: File, cfg: S3Config): Promise<UploadedMedia> {
+export async function uploadToS3(
+	file: File,
+	cfg: S3Config,
+	onProgress?: (progress: UploadProgress) => void
+): Promise<UploadedMedia> {
 	const bucket = cfg.bucket?.trim();
 	const accessKey = cfg.accessKey?.trim();
 	const secretKey = cfg.secretKey?.trim();
@@ -331,16 +416,20 @@ export async function uploadToS3(file: File, cfg: S3Config): Promise<UploadedMed
 		secretKey
 	});
 
-	const res = await fetch(url, {
-		method: 'PUT',
-		headers: {
-			'x-amz-content-sha256': payloadHash,
-			'x-amz-date': amzDate,
-			'Content-Type': file.type || 'application/octet-stream',
-			Authorization: authorization
+	const res = await xhrUpload(
+		url,
+		{
+			method: 'PUT',
+			headers: {
+				'x-amz-content-sha256': payloadHash,
+				'x-amz-date': amzDate,
+				'Content-Type': file.type || 'application/octet-stream',
+				Authorization: authorization
+			},
+			body: file
 		},
-		body: file
-	});
+		onProgress
+	);
 
 	if (!res.ok) {
 		let detail = `${res.status} ${res.statusText}`;
@@ -376,19 +465,24 @@ export async function uploadToS3(file: File, cfg: S3Config): Promise<UploadedMed
 	};
 }
 
-export async function uploadViaServer(file: File, options: UploadOptions = {}): Promise<UploadedMedia> {
+export async function uploadViaServer(
+	file: File,
+	options: UploadOptions = {}
+): Promise<UploadedMedia> {
 	const params = new URLSearchParams();
 	if (options.pubkey) params.set('pubkey', options.pubkey);
 	if (options.purpose) params.set('purpose', options.purpose);
 
 	const url = `/api/media/upload${params.toString() ? `?${params}` : ''}`;
-	const res = await fetch(url, {
-		method: 'POST',
-		headers: {
-			'X-Upload-Filename': encodeURIComponent(file.name)
+	const res = await xhrUpload(
+		url,
+		{
+			method: 'POST',
+			headers: { 'X-Upload-Filename': encodeURIComponent(file.name) },
+			body: file
 		},
-		body: file
-	});
+		options.onProgress
+	);
 
 	let payload: { error?: string } & Partial<UploadedMedia> = {};
 	try {
@@ -415,9 +509,10 @@ export async function uploadViaServer(file: File, options: UploadOptions = {}): 
 export async function uploadWithProvider(
 	file: File,
 	provider: MediaProviderId,
-	settings: MediaSettings
+	settings: MediaSettings,
+	onProgress?: (progress: UploadProgress) => void
 ): Promise<UploadedMedia> {
-	if (provider === 'cloudinary') return uploadToCloudinary(file, settings.cloudinary);
-	if (provider === 's3') return uploadToS3(file, settings.s3);
+	if (provider === 'cloudinary') return uploadToCloudinary(file, settings.cloudinary, onProgress);
+	if (provider === 's3') return uploadToS3(file, settings.s3, onProgress);
 	throw new Error(`Unknown media provider: ${provider}`);
 }
