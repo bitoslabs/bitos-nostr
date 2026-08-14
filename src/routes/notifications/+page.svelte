@@ -547,13 +547,13 @@
 											<div class="relative shrink-0">
 												{#if row.kind === 'group'}
 													{@const actors = row.items.slice(0, 3)}
-													<div class="flex -space-x-3">
+													<div class="flex -space-x-2">
 														{#each actors as g, i (g.id)}
 															<a
 																href={profileLink(g.pubkey)}
 																onclick={() => openRow(g)}
 																class="relative z-{10 -
-																	i} size-10 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+																	i} shrink-0 mask-squircle ring-2 ring-[var(--surface-bg)] drop-shadow-[0_2px_8px_rgb(15_23_42_/_0.14)] transition hover:ring-2 hover:ring-primary-500/30"
 																aria-label={`View ${actorName(g.pubkey)}'s profile`}
 															>
 																<Avatar
@@ -576,7 +576,7 @@
 													<a
 														href={profileLink(item.pubkey)}
 														onclick={() => openRow(item)}
-														class="size-11 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+														class="shrink-0 mask-squircle drop-shadow-[0_2px_8px_rgb(15_23_42_/_0.14)] transition hover:ring-2 hover:ring-primary-500/30"
 														aria-label={`View ${actorName(item.pubkey)}'s profile`}
 													>
 														<Avatar
