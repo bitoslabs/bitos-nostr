@@ -900,11 +900,12 @@
 							Continue to For you
 						</button>
 					</div>
-					<div>
+					<div class="-mx-[clamp(1rem,3vw,1.5rem)] divide-y divide-[var(--ui-border-muted)]">
 						{#each newlyRevealedNotes as note, i (note.id)}
 							<PostCard
 								{note}
 								index={i}
+								flat
 								onInteract={handleInteract}
 								onNoteChange={handleNoteChange}
 								onNoteHide={handleNoteHide}
@@ -994,11 +995,12 @@
 						</a>
 					</div>
 				{/if}
-				<div class="feed-note-list space-y-5">
+				<div class="-mx-[clamp(1rem,3vw,1.5rem)] divide-y divide-[var(--ui-border-muted)]">
 					{#each renderedNotes as note, i (note.id)}
 						<PostCard
 							{note}
 							index={i}
+							flat
 							onNoteChange={handleNoteChange}
 							onNoteHide={handleNoteHide}
 							rankTag={rankTagFor(note)}
