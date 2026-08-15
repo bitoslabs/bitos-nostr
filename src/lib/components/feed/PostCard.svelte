@@ -17,6 +17,7 @@
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
@@ -946,17 +947,20 @@
 						{/if}
 					{:else if media.type === 'video'}
 						<div class="{tileClass} relative overflow-hidden bg-black">
-							<!-- svelte-ignore a11y_media_has_caption -->
-							<video
-								use:trackFeedVideo
+							<MediaPlayer
 								src={media.url}
-								controls={!shouldHideVideo(media.url)}
-								preload="metadata"
-								playsinline
-								class="{contentClass} object-cover transition {!shouldHideVideo(media.url)
+								label={`Video from ${media.host}`}
+								class="absolute inset-0"
+								mediaClass="size-full object-cover transition {!shouldHideVideo(media.url)
 									? ''
 									: 'scale-105 blur-2xl saturate-50'}"
-							></video>
+								controls={!shouldHideVideo(media.url)}
+								overlayControls
+								onMediaElement={(node) => {
+									const registration = trackFeedVideo(node as HTMLVideoElement);
+									return () => registration.destroy();
+								}}
+							/>
 							{#if !shouldHideVideo(media.url)}
 								<div
 									class="pointer-events-none absolute top-3 left-3 rounded-full bg-black/55 p-2 text-white shadow-lg"
@@ -1001,7 +1005,7 @@
 								<Icon name="i-lucide-audio-lines" class="size-4 text-primary-500" />
 								<span class="truncate">{media.host}</span>
 							</div>
-							<audio src={media.url} controls class="w-full"></audio>
+							<MediaPlayer src={media.url} kind="audio" label={`Audio from ${media.host}`} />
 						</div>
 					{:else}
 						<a

@@ -5,6 +5,7 @@
 	import { stories, type StoryAuthor } from '$lib/nostr/stories.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import StoryActivity from './StoryActivity.svelte';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -302,7 +303,12 @@
 				/>
 				<div class="min-w-0 flex-1">
 					<p class="truncate text-[13px] font-bold text-white">{displayName}</p>
-					<p class="text-[11px] text-white/70">{slide ? timeAgo(slide.createdAt) : ''}</p>
+					<p class="flex items-center gap-1.5 text-[11px] text-white/70">
+						{slide ? timeAgo(slide.createdAt) : ''}
+						{#if slide?.pow}
+							<PowBadge micro bits={slide.pow} id={slide.id} class="opacity-90" />
+						{/if}
+					</p>
 				</div>
 			</a>
 			<button
@@ -366,160 +372,164 @@
 			{/if}
 
 			<!-- Double-tap “like” burst overlay -->
-		<div class="pointer-events-none absolute inset-0 z-[45] overflow-hidden">
-			{#each likeBursts as b (b.id)}
-				<div
-					class="absolute grid size-24 place-items-center"
-					style="left:calc({b.x}px - 48px); top:calc({b.y}px - 48px)"
-				>
-					<span
-						class="like-burst-ring absolute inset-0 rounded-full bg-white/25 ring-2 ring-white/70"
-					></span>
-					<Icon
-						name="i-solar-heart-bold"
-						class="like-burst-heart relative size-24 text-[var(--tone-error-text)] drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
-					/>
-				</div>
-				{#each b.particles as p (p.id)}
-					<span
-						class="like-particle"
-						style="left:{b.x}px; top:{b.y}px; --tx:{p.tx}px; --ty:{p.ty}px; --rot:{p.rot}deg; font-size:{p.size}px; animation-duration:{p.duration}s; animation-delay:{p.delay}s"
-						>{p.emoji}</span
-					>
-				{/each}
-				{#if b.combo >= 2}
+			<div class="pointer-events-none absolute inset-0 z-[45] overflow-hidden">
+				{#each likeBursts as b (b.id)}
 					<div
-						class="absolute -translate-x-1/2 -translate-y-1/2"
-						style="left:{b.x}px; top:calc({b.y}px - 74px)"
+						class="absolute grid size-24 place-items-center"
+						style="left:calc({b.x}px - 48px); top:calc({b.y}px - 48px)"
 					>
 						<span
-							class="like-combo-badge inline-block rounded-full bg-white/95 px-2.5 py-0.5 text-[13px] font-extrabold text-[var(--tone-error-text)] shadow-lg"
-							>×{b.combo}</span
-						>
+							class="like-burst-ring absolute inset-0 rounded-full bg-white/25 ring-2 ring-white/70"
+						></span>
+						<Icon
+							name="i-solar-heart-bold"
+							class="like-burst-heart relative size-24 text-[var(--tone-error-text)] drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+						/>
 					</div>
-				{/if}
-			{/each}
-		</div>
+					{#each b.particles as p (p.id)}
+						<span
+							class="like-particle"
+							style="left:{b.x}px; top:{b.y}px; --tx:{p.tx}px; --ty:{p.ty}px; --rot:{p.rot}deg; font-size:{p.size}px; animation-duration:{p.duration}s; animation-delay:{p.delay}s"
+							>{p.emoji}</span
+						>
+					{/each}
+					{#if b.combo >= 2}
+						<div
+							class="absolute -translate-x-1/2 -translate-y-1/2"
+							style="left:{b.x}px; top:calc({b.y}px - 74px)"
+						>
+							<span
+								class="like-combo-badge inline-block rounded-full bg-white/95 px-2.5 py-0.5 text-[13px] font-extrabold text-[var(--tone-error-text)] shadow-lg"
+								>×{b.combo}</span
+							>
+						</div>
+					{/if}
+				{/each}
+			</div>
 
-		<!-- Story interactions: reply input + like + activity sheet -->
-		<div
-			class="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-3 pb-4"
-		>
-			<div class="mb-2 flex items-center justify-between gap-2">
-				<div class="inline-flex rounded-full bg-white/10 p-1 text-[11px] font-semibold text-white/85 ring-1 ring-white/10">
+			<!-- Story interactions: reply input + like + activity sheet -->
+			<div
+				class="absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-3 pb-4"
+			>
+				<div class="mb-2 flex items-center justify-between gap-2">
+					<div
+						class="inline-flex rounded-full bg-white/10 p-1 text-[11px] font-semibold text-white/85 ring-1 ring-white/10"
+					>
+						<button
+							type="button"
+							onclick={() => setReplyMode('reply')}
+							class="rounded-full px-3 py-1 transition {replyMode === 'reply'
+								? 'bg-white text-black'
+								: 'hover:bg-white/10'}"
+						>
+							Reply
+						</button>
+						<button
+							type="button"
+							onclick={() => setReplyMode('dm')}
+							class="rounded-full px-3 py-1 transition {replyMode === 'dm'
+								? 'bg-white text-black'
+								: 'hover:bg-white/10'}"
+						>
+							DM
+						</button>
+					</div>
+					<p class="text-[11px] font-semibold text-white/75">
+						{replyMode === 'reply' ? 'Visible in story activity' : 'Only sent privately'}
+					</p>
+				</div>
+				<div class="flex items-center gap-2">
+					<input
+						bind:value={replyText}
+						type="text"
+						placeholder={identity.current
+							? replyMode === 'reply'
+								? `Reply to ${displayName}…`
+								: `Message ${displayName} privately…`
+							: 'Sign in to reply'}
+						disabled={!identity.current || replying}
+						onfocus={() => (paused = true)}
+						onblur={() => (paused = false)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								void submitReplyAction();
+							}
+							if (e.key === 'Escape') {
+								replyText = '';
+								(e.currentTarget as HTMLInputElement).blur();
+							}
+						}}
+						class="h-10 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-[13px] text-white transition outline-none placeholder:text-white/60 focus:border-white/40 focus:bg-white/20 disabled:opacity-60"
+					/>
 					<button
 						type="button"
-						onclick={() => setReplyMode('reply')}
-						class="rounded-full px-3 py-1 transition {replyMode === 'reply'
-							? 'bg-white text-black'
-							: 'hover:bg-white/10'}"
+						onclick={submitReplyAction}
+						class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
+						aria-label={replyMode === 'reply'
+							? `Reply to ${displayName}`
+							: `Message ${displayName} privately`}
 					>
-						Reply
+						<Icon
+							name={replyMode === 'reply' ? 'i-lucide-message-circle-reply' : 'i-lucide-send'}
+							class="size-5"
+						/>
 					</button>
 					<button
 						type="button"
-						onclick={() => setReplyMode('dm')}
-						class="rounded-full px-3 py-1 transition {replyMode === 'dm'
-							? 'bg-white text-black'
-							: 'hover:bg-white/10'}"
+						onclick={toggleLike}
+						class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
+						aria-label={liked ? 'Unlike story' : 'Like story'}
 					>
-						DM
+						<Icon
+							name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+							class="size-5 transition {liked ? 'text-primary-500' : 'text-white'} {heartPop
+								? 'like-pop'
+								: ''}"
+						/>
+					</button>
+					<button
+						type="button"
+						onclick={() => (activityOpen = true)}
+						class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
+						aria-label="View activity"
+					>
+						<Icon name="i-lucide-chevron-up" class="size-5" />
 					</button>
 				</div>
-				<p class="text-[11px] font-semibold text-white/75">
-					{replyMode === 'reply' ? 'Visible in story activity' : 'Only sent privately'}
-				</p>
-			</div>
-			<div class="flex items-center gap-2">
-				<input
-					bind:value={replyText}
-					type="text"
-					placeholder={identity.current
-						? replyMode === 'reply'
-							? `Reply to ${displayName}…`
-							: `Message ${displayName} privately…`
-						: 'Sign in to reply'}
-					disabled={!identity.current || replying}
-					onfocus={() => (paused = true)}
-					onblur={() => (paused = false)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter') {
-							e.preventDefault();
-							void submitReplyAction();
-						}
-						if (e.key === 'Escape') {
-							replyText = '';
-							(e.currentTarget as HTMLInputElement).blur();
-						}
-					}}
-					class="h-10 flex-1 rounded-full border border-white/15 bg-white/10 px-4 text-[13px] text-white outline-none transition placeholder:text-white/60 focus:border-white/40 focus:bg-white/20 disabled:opacity-60"
-				/>
-				<button
-					type="button"
-					onclick={submitReplyAction}
-					class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
-					aria-label={replyMode === 'reply' ? `Reply to ${displayName}` : `Message ${displayName} privately`}
+				<div
+					class="mt-2 flex items-center justify-center gap-4 text-[11px] font-semibold text-white/85"
 				>
-					<Icon
-						name={replyMode === 'reply' ? 'i-lucide-message-circle-reply' : 'i-lucide-send'}
-						class="size-5"
-					/>
-				</button>
-				<button
-					type="button"
-					onclick={toggleLike}
-					class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
-					aria-label={liked ? 'Unlike story' : 'Like story'}
-				>
-					<Icon
-						name={liked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
-						class="size-5 transition {liked ? 'text-primary-500' : 'text-white'} {heartPop
-							? 'like-pop'
-							: ''}"
-					/>
-				</button>
-				<button
-					type="button"
-					onclick={() => (activityOpen = true)}
-					class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
-					aria-label="View activity"
-				>
-					<Icon name="i-lucide-chevron-up" class="size-5" />
-				</button>
-			</div>
-			<div
-				class="mt-2 flex items-center justify-center gap-4 text-[11px] font-semibold text-white/85"
-			>
-				<button
-					type="button"
-					onclick={() => (activityOpen = true)}
-					class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
-				>
-					<Icon name="i-lucide-heart" class="size-3.5" />
-					{interaction?.likeCount ?? 0}
-				</button>
-				{#if isMine}
 					<button
 						type="button"
 						onclick={() => (activityOpen = true)}
 						class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
 					>
-						<Icon name="i-lucide-eye" class="size-3.5" />
-						{interaction?.viewCount ?? 0}
+						<Icon name="i-lucide-heart" class="size-3.5" />
+						{interaction?.likeCount ?? 0}
 					</button>
-				{/if}
-				<button
-					type="button"
-					onclick={() => (activityOpen = true)}
-					class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
-				>
-					<Icon name="i-lucide-message-circle" class="size-3.5" />
-					{interaction?.replyCount ?? 0}
-				</button>
+					{#if isMine}
+						<button
+							type="button"
+							onclick={() => (activityOpen = true)}
+							class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
+						>
+							<Icon name="i-lucide-eye" class="size-3.5" />
+							{interaction?.viewCount ?? 0}
+						</button>
+					{/if}
+					<button
+						type="button"
+						onclick={() => (activityOpen = true)}
+						class="inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
+					>
+						<Icon name="i-lucide-message-circle" class="size-3.5" />
+						{interaction?.replyCount ?? 0}
+					</button>
+				</div>
 			</div>
-		</div>
 
-		<!-- Tap zones -->
+			<!-- Tap zones -->
 			<button
 				type="button"
 				class="absolute inset-y-0 left-0 z-30 w-1/3 focus:outline-none"

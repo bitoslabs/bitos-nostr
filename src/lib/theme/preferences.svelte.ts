@@ -36,7 +36,7 @@ export const DEFAULTS: Preferences = {
 	// The showcase design (docs/ui.html) is the dark premium skin, so first
 	// run opens in dark. The Appearance picker still switches light/dark/system.
 	mode: 'dark',
-	accent: 'lightning',
+	accent: 'orange',
 	neutral: 'slate',
 	rounded: 'round',
 	density: 'normal',

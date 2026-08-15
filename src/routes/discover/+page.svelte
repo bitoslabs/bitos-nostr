@@ -7,6 +7,7 @@
 	import PostCard from '$lib/components/feed/PostCard.svelte';
 	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
@@ -111,6 +112,17 @@
 	let oldestMediaEventCreatedAt = $state(0);
 	let oldestNoteEventCreatedAt = $state(0);
 	let mediaDialogOpen = $state(false);
+	/** Video durations (item.id → seconds) for the media-grid badges. */
+	let videoDurations = $state<Record<string, number>>({});
+
+	function formatDuration(seconds: number) {
+		if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+		const minutes = Math.floor(seconds / 60);
+		const remaining = Math.floor(seconds % 60)
+			.toString()
+			.padStart(2, '0');
+		return `${minutes}:${remaining}`;
+	}
 	let mediaIndex = $state(0);
 	let zoomOpen = $state(false);
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
@@ -1426,12 +1438,34 @@
 										muted
 										playsinline
 										preload="metadata"
+										onmouseenter={(event) => {
+											// Desktop hover-to-preview: scrub the tile alive like IG/TikTok grids.
+											if (shouldHideMedia(item)) return;
+											void (event.currentTarget as HTMLVideoElement).play().catch(() => {});
+										}}
+										onmouseleave={(event) => {
+											const video = event.currentTarget as HTMLVideoElement;
+											video.pause();
+											video.currentTime = 0;
+										}}
+										onloadedmetadata={(event) => {
+											const video = event.currentTarget as HTMLVideoElement;
+											if (Number.isFinite(video.duration))
+												videoDurations = { ...videoDurations, [item.id]: video.duration };
+										}}
 									></video>
 									<div
-										class="absolute top-2 right-2 grid size-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur"
+										class="absolute top-2 right-2 grid size-9 place-items-center rounded-full bg-black/55 text-white backdrop-blur transition group-hover:scale-90 group-hover:opacity-0"
 									>
 										<Icon name="i-lucide-play" class="size-4 fill-current" />
 									</div>
+									{#if videoDurations[item.id]}
+										<span
+											class="absolute right-2 bottom-2 rounded-md bg-black/65 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white tabular-nums backdrop-blur"
+										>
+											{formatDuration(videoDurations[item.id])}
+										</span>
+									{/if}
 								{:else}
 									<img
 										src={item.url}
@@ -1632,14 +1666,16 @@
 						</button>
 					</div>
 				{:else if selectedMediaItem.kind === 'video'}
-					<!-- svelte-ignore a11y_media_has_caption -->
-					<video
+					<!-- Full BitOS player: seek + buffered bar, speed, volume,
+						 buffering + retry, and a fullscreen button. -->
+					<MediaPlayer
 						src={selectedMediaItem.url}
-						class="mx-auto max-h-[80vh] w-full bg-black object-contain"
-						controls
+						label="Discover video"
+						class="relative mx-auto w-full max-w-5xl"
+						mediaClass="mx-auto max-h-[80vh] w-full bg-black object-contain"
+						overlayControls
 						autoplay
-						playsinline
-					></video>
+					/>
 				{:else}
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
 					<img
