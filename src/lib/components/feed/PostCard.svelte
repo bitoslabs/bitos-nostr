@@ -21,6 +21,7 @@
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
+	import ReportDialog from '$lib/components/ui/ReportDialog.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -104,6 +105,7 @@
 				: 'Zap'
 	);
 	const menuId = $derived(`post-menu:${note.id}`);
+	let reportOpen = $state(false);
 	const noteLink = $derived(`nostr:${noteEncode(note.id)}`);
 	const authorNpub = $derived(npubEncode(note.pubkey));
 	const rawNote = $derived(
@@ -793,6 +795,16 @@
 						<MenuItem icon="i-lucide-volume-x" onclick={muteAuthor}>Mute author</MenuItem>
 						<MenuItem tone="danger" icon="i-lucide-ban" onclick={blockAuthor}>Block author</MenuItem
 						>
+						<MenuItem
+							tone="danger"
+							icon="i-lucide-flag"
+							onclick={() => {
+								popovers.close();
+								reportOpen = true;
+							}}
+						>
+							Report note
+						</MenuItem>
 					{:else}
 						<MenuItem tone="danger" icon="i-lucide-trash-2" onclick={askDeleteNote}>
 							Delete note
@@ -1480,4 +1492,11 @@
 	bind:open={previewOpen}
 	images={previewableImageUrls}
 	bind:index={previewImageIndex}
+/>
+
+<ReportDialog
+	bind:open={reportOpen}
+	pubkey={note.pubkey}
+	noteId={note.id}
+	targetLabel={`Note by ${displayName} · ${timeAgo(note.createdAt)}`}
 />

@@ -11,6 +11,8 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { timeAgo } from '$lib/utils/format';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
+	import { parseContent } from '$lib/utils/note-content';
+	import MentionLink from './MentionLink.svelte';
 
 	let {
 		author,
@@ -31,6 +33,8 @@
 		{ id: number; x: number; y: number; particles: Particle[]; combo: number }[]
 	>([]);
 	let heartPop = $state(false);
+	/** Sensitive slides stay blurred until the viewer taps to reveal. */
+	let revealed = $state(false);
 	let combo = $state(0);
 	let burstSeq = 0;
 	let lastTap = 0;
@@ -46,6 +50,8 @@
 	const isMine = $derived(author.pubkey === identity.current?.pk);
 	const interaction = $derived(slide ? stories.getInteraction(slide.id) : undefined);
 	const liked = $derived(!!interaction?.likedByMe);
+	const isSensitive = $derived(!!slide?.sensitive && !!slide.imageUrl);
+	const hidden = $derived(isSensitive && !revealed);
 
 	// Auto-advance: restart the timer whenever the slide / pause state changes.
 	$effect(() => {
@@ -80,6 +86,7 @@
 
 	function advance() {
 		if (slideIndex < slides.length - 1) {
+			revealed = false;
 			slideIndex += 1;
 		} else if (onnext) {
 			onnext();
@@ -346,13 +353,62 @@
 		<!-- Slide -->
 		{#if slide}
 			{#if slide.imageUrl}
-				<img src={slide.imageUrl} alt="" class="size-full object-cover" />
+				<img
+					src={slide.imageUrl}
+					alt={slide.alt ?? ''}
+					class="size-full object-cover transition-all duration-200 {hidden
+						? 'scale-110 blur-2xl brightness-50'
+						: ''}"
+				/>
+				{#if hidden}
+					<button
+						type="button"
+						onclick={() => (revealed = true)}
+						class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/30"
+						aria-label="Sensitive content — tap to reveal"
+					>
+						<span
+							class="grid size-14 place-items-center rounded-full bg-black/60 ring-1 ring-white/20"
+						>
+							<Icon name="i-lucide-eye-off" class="size-6 text-white" />
+						</span>
+						<span class="px-6 text-center text-[13px] font-bold text-white">
+							Sensitive content · tap to view
+						</span>
+					</button>
+				{/if}
 				{#if slide.content.trim()}
 					<div
 						class="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-4 pb-6"
 					>
-						<p class="text-[15px] font-semibold break-words whitespace-pre-wrap text-white">
-							{slide.content}
+						<p
+							class="text-[15px] leading-snug font-semibold break-words whitespace-pre-wrap text-white"
+						>
+							{#each parseContent(slide.content) as token, i (`${i}:${token.type}:${token.value}`)}
+								{#if token.type === 'text'}
+									{token.value}
+								{:else if token.type === 'hashtag'}
+									<a
+										href={`/?tag=${encodeURIComponent(token.tag)}`}
+										onclick={onclose}
+										class="font-bold text-white underline decoration-white/50 hover:decoration-white"
+										>{token.value}</a
+									>
+								{:else if token.type === 'nostr'}
+									<MentionLink
+										value={token.value}
+										class="font-bold text-white underline decoration-white/50 hover:decoration-white"
+									/>
+								{:else}
+									<a
+										href={token.value}
+										target="_blank"
+										rel="noreferrer"
+										class="font-semibold text-white underline decoration-white/50 hover:decoration-white"
+										>{token.host}</a
+									>
+								{/if}
+							{/each}
 						</p>
 					</div>
 				{/if}

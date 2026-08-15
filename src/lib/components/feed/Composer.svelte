@@ -18,6 +18,7 @@
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import PowCard from '$lib/components/ui/PowCard.svelte';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
+	import { readDraft, createDraftWriter } from '$lib/stores/drafts';
 	import { onMount, untrack } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
 	import { rewriteMentions } from '$lib/utils/nip27';
@@ -57,6 +58,13 @@
 	let pollOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
+	// Draft persistence — debounced writes while typing. Empty text never
+	// overwrites a saved draft (closing keeps it); posting clears it.
+	const draftWriter = createDraftWriter('note');
+	$effect(() => {
+		if (!text.trim()) return;
+		draftWriter.write({ text });
+	});
 	// Start from the last difficulty the user actually published with.
 	let showPow = $state(untrack(() => powPrefs.state.showPanelByDefault));
 	let pow = $state(untrack(() => powPrefs.state.lastDifficulty));
@@ -153,9 +161,16 @@
 		focusFromHash();
 		window.addEventListener('hashchange', focusFromHash);
 		window.addEventListener('bitos:focus-composer', focusComposer);
+		// Restore a draft left from an accidental close / crash.
+		const draft = readDraft('note');
+		if (draft?.text.trim() && !text.trim()) {
+			text = draft.text;
+			toasts.info('Draft restored');
+		}
 		return () => {
 			window.removeEventListener('hashchange', focusFromHash);
 			window.removeEventListener('bitos:focus-composer', focusComposer);
+			draftWriter.flush();
 			// Unmounting mid-mining must not leak a running worker.
 			mineController?.abort();
 			// Object URLs for in-flight previews must not leak either.
@@ -405,6 +420,7 @@
 			// Persist the difficulty actually used so the next composer starts there.
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
+			draftWriter.clear();
 			text = '';
 			mentions = [];
 			mention = null;

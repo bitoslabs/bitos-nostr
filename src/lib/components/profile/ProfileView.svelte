@@ -25,6 +25,8 @@
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
+	import { receiptToZapEntry, type ZapEntry } from '$lib/nostr/wallet.svelte';
+	import ZapLedgerRow from '$lib/components/zaps/ZapLedgerRow.svelte';
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeFull } from '$lib/utils/format';
@@ -34,7 +36,7 @@
 
 	const NOTE_PAGE_LIMIT = 30;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
-	type Tab = 'posts' | 'replies' | 'media' | 'pinned' | 'liked' | 'reposts';
+	type Tab = 'posts' | 'replies' | 'media' | 'zaps' | 'pinned' | 'liked' | 'reposts';
 
 	const profile = $derived(pubkey ? profiles.get(pubkey) : undefined);
 	const displayName = $derived(
@@ -63,6 +65,10 @@
 	let pinnedNotes = $state<FeedNote[]>([]);
 	let likedNotes = $state<FeedNote[]>([]);
 	let repostedNotes = $state<FeedNote[]>([]);
+	/** Zap history for the Zaps tab — loaded on first open. */
+	let zapEntries = $state<ZapEntry[]>([]);
+	let zapsLoading = $state(false);
+	let zapsLoadedFor = $state('');
 	let bioExpanded = $state(false);
 	let npubCopied = $state(false);
 	let stuck = $state(false);
@@ -87,6 +93,7 @@
 			['posts', posts.length],
 			['replies', replies.length],
 			['media', mediaItems.length],
+			['zaps', zapEntries.length],
 			['pinned', pinnedNotes.length],
 			['liked', likedNotes.length],
 			['reposts', repostedNotes.length]
@@ -163,6 +170,35 @@
 			}
 		]);
 		return buildPageFromEvents(events);
+	}
+
+	/** Load the profile's received-zap history (kind 9735, #p = pubkey). */
+	async function loadZaps(nextPubkey: string) {
+		if (zapsLoading || zapsLoadedFor === nextPubkey) return;
+		zapsLoading = true;
+		try {
+			const events = await queryPrimaryFirst([
+				{ kinds: [NOSTR_KINDS.ZAP], '#p': [nextPubkey], limit: 100 }
+			]);
+			const entries = events
+				.map((ev) => receiptToZapEntry(ev, nextPubkey))
+				.filter((e): e is ZapEntry => !!e)
+				.sort((a, b) => b.createdAt - a.createdAt);
+			// Guard against a pubkey switch mid-flight.
+			if (pubkey === nextPubkey) {
+				zapEntries = entries;
+				zapsLoadedFor = nextPubkey;
+			}
+		} catch {
+			/* best-effort */
+		} finally {
+			zapsLoading = false;
+		}
+	}
+
+	function onTabSelect(tab: Tab) {
+		activeTab = tab;
+		if (tab === 'zaps' && pubkey) void loadZaps(pubkey);
 	}
 
 	async function loadPinnedNotes(nextPubkey: string) {
@@ -782,10 +818,10 @@
 				<div
 					class="ml-auto flex [scrollbar-width:none] gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden"
 				>
-					{#each [['posts', 'Posts'], ['replies', 'Replies'], ['media', 'Media']] as [tab, label] (tab)}
+					{#each [['posts', 'Posts'], ['replies', 'Replies'], ['media', 'Media'], ['zaps', 'Zaps']] as [tab, label] (tab)}
 						<button
 							type="button"
-							onclick={() => (activeTab = tab as Tab)}
+							onclick={() => onTabSelect(tab as Tab)}
 							class="flex items-center gap-1.5 border-b-2 px-3 py-3 text-[13px] font-bold whitespace-nowrap transition {activeTab ===
 							tab
 								? 'border-primary-500 text-[var(--ui-text)]'
@@ -872,6 +908,35 @@
 						</div>
 					</div>
 				{/each}
+			</div>
+		{:else if activeTab === 'zaps'}
+			<div class="space-y-2 pb-8">
+				{#if zapsLoading && !zapEntries.length}
+					<div
+						class="flex items-center justify-center gap-2 py-10 text-[13px] font-semibold text-[var(--ui-text-dimmed)]"
+					>
+						<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+						Loading zap history…
+					</div>
+				{:else if !zapEntries.length}
+					<div class="flex flex-col items-center gap-2 py-10 text-center">
+						<Icon name="i-lucide-zap" class="size-6 text-[var(--ui-text-dimmed)]" />
+						<p class="text-[13px] font-semibold text-[var(--ui-text-muted)]">No zaps yet</p>
+						<p class="text-[12px] text-[var(--ui-text-dimmed)]">
+							{isMe
+								? 'Zaps you receive will show up here.'
+								: `${displayName} has not received any zaps yet.`}
+						</p>
+					</div>
+				{:else}
+					<p class="px-1 text-[12px] font-semibold text-[var(--ui-text-dimmed)]">
+						{compactSats(zapEntries.reduce((sum, z) => sum + z.amountSats, 0))} sats received ·
+						{zapEntries.length} zap{zapEntries.length === 1 ? '' : 's'}
+					</p>
+					{#each zapEntries as entry (entry.id)}
+						<ZapLedgerRow {entry} />
+					{/each}
+				{/if}
 			</div>
 		{:else if activeTab === 'media'}
 			<div class="pb-8">

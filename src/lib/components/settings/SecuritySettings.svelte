@@ -5,6 +5,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
 	import { relays, RECOMMENDED } from '$lib/nostr/relays.svelte';
+	import { mergeNip65Recommendations, queryNip65RelayList } from '$lib/nostr/nip65';
 	import type { Identity } from '$lib/nostr/types';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -60,9 +61,13 @@
 	type RecHealth = { status: 'unknown' | 'connecting' | 'ok' | 'fail'; latency: number | null };
 	let recHealth = $state<Record<string, RecHealth>>({});
 	let queryingRec = $state(false);
+	let loadingNip65 = $state(false);
+	let nip65Relays = $state<Awaited<ReturnType<typeof queryNip65RelayList>>>([]);
+	let nip65Queried = $state(false);
 
+	const recommended = $derived(mergeNip65Recommendations(RECOMMENDED, nip65Relays));
 	const recommendedNotAdded = $derived(
-		RECOMMENDED.filter((r) => !relays.list.some((x) => x.url === r.url))
+		recommended.filter((r) => !relays.list.some((x) => x.url === r.url))
 	);
 
 	/** limit/offset pagination for the recommended panel. */
@@ -94,6 +99,26 @@
 			})
 		);
 		queryingRec = false;
+	}
+
+	async function loadNip65Recommendations() {
+		if (loadingNip65) return;
+		loadingNip65 = true;
+		try {
+			nip65Relays = await queryNip65RelayList(me.pk);
+			nip65Queried = true;
+			if (nip65Relays.length) {
+				toasts.success(
+					`Loaded ${nip65Relays.length} relay${nip65Relays.length === 1 ? '' : 's'} from NIP-65`
+				);
+			} else {
+				toasts.info('No NIP-65 relay list found; showing built-in recommendations');
+			}
+		} catch {
+			toasts.error('Could not query your NIP-65 relay list');
+		} finally {
+			loadingNip65 = false;
+		}
 	}
 
 	function addRecommended(url: string) {
@@ -287,7 +312,7 @@
 		>
 	</div>
 	<ul
-		class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
+		class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border-muted)]"
 	>
 		{#each relays.list as r (r.url)}
 			<li class="px-3 py-2.5">
@@ -385,7 +410,7 @@
 <SectionCard
 	title="Recommended relays"
 	icon="i-lucide-sparkles"
-	description="Popular, reliable relays — query reachability and add the ones you want."
+	description="Popular, reliable relays — optionally merge your NIP-65 relay list, then query reachability and add the ones you want."
 	class="mb-5"
 >
 	{#snippet actions()}
@@ -393,14 +418,22 @@
 			>{recommendedNotAdded.length} available</span
 		>
 	{/snippet}
-	{#if recommendedNotAdded.length === 0}
-		<p
-			class="rounded-lg border border-dashed border-[var(--ui-border-muted)] px-3 py-4 text-center text-[12px] text-[var(--ui-text-dimmed)]"
+	<div class="mb-3 flex flex-wrap items-center gap-2">
+		<Button
+			color="neutral"
+			variant="subtle"
+			size="sm"
+			icon={loadingNip65 ? 'i-lucide-loader-circle' : 'i-lucide-download'}
+			onclick={loadNip65Recommendations}
+			disabled={loadingNip65}
+			class={loadingNip65 ? '[&_.iconify]:animate-spin' : ''}
+			>{loadingNip65
+				? 'Loading NIP-65…'
+				: nip65Queried
+					? 'Refresh NIP-65'
+					: 'Load NIP-65 relays'}</Button
 		>
-			You've added all recommended relays 🎉
-		</p>
-	{:else}
-		<div class="mb-3">
+		{#if recommendedNotAdded.length > 0}
 			<Button
 				color="neutral"
 				variant="subtle"
@@ -411,9 +444,17 @@
 				class={queryingRec ? '[&_.iconify]:animate-spin' : ''}
 				>{queryingRec ? 'Querying…' : 'Query reachability'}</Button
 			>
-		</div>
+		{/if}
+	</div>
+	{#if recommendedNotAdded.length === 0}
+		<p
+			class="rounded-lg border border-dashed border-[var(--ui-border-muted)] px-3 py-4 text-center text-[12px] text-[var(--ui-text-dimmed)]"
+		>
+			You've added all recommended relays 🎉
+		</p>
+	{:else}
 		<ul
-			class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border)]"
+			class="divide-y divide-[var(--ui-border-muted)] overflow-hidden rounded-lg border border-[var(--ui-border-muted)]"
 		>
 			{#each recPageSlice as rec (rec.url)}
 				{@const h = recHealth[rec.url]}

@@ -9,6 +9,7 @@
 	import { media, providerLabel } from '$lib/stores/media.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
+	import { readDraft, createDraftWriter } from '$lib/stores/drafts';
 	import { untrack } from 'svelte';
 
 	let { open = $bindable(false), onposted = () => {} }: { open?: boolean; onposted?: () => void } =
@@ -16,6 +17,8 @@
 
 	let text = $state('');
 	let imageUrl = $state<string | undefined>(undefined);
+	let altText = $state('');
+	let sensitive = $state(false);
 	let bgIndex = $state(0);
 	let uploading = $state(false);
 	let posting = $state(false);
@@ -30,6 +33,23 @@
 	let powProgress = $state<PowProgress | null>(null);
 	let mineController: AbortController | undefined;
 	let powPanelEl = $state<HTMLDivElement | null>(null);
+
+	// Draft persistence — debounced writes while typing. Empty text never
+	// overwrites a saved draft (closing keeps it); posting clears it.
+	const draftWriter = createDraftWriter('story');
+	$effect(() => {
+		if (!text.trim()) return;
+		draftWriter.write({ text, bgIndex: imageUrl ? undefined : bgIndex });
+	});
+	$effect(() => {
+		if (!open) return;
+		const draft = untrack(() => readDraft('story'));
+		if (draft?.text.trim() && !text.trim()) {
+			text = draft.text;
+			if (typeof draft.bgIndex === 'number' && !imageUrl) bgIndex = draft.bgIndex;
+			toasts.info('Draft restored');
+		}
+	});
 
 	// IG-style gradient backgrounds for text-only stories / notes.
 	const backgrounds = [
@@ -52,11 +72,12 @@
 	function reset() {
 		text = '';
 		imageUrl = undefined;
+		altText = '';
+		sensitive = false;
 		bgIndex = 0;
 		uploading = false;
 		posting = false;
 	}
-
 	function close() {
 		open = false;
 		reset();
@@ -108,12 +129,15 @@
 				{
 					pow: showPow ? pow : 0,
 					onPowProgress: (progress) => (powProgress = progress),
-					signal: controller.signal
+					signal: controller.signal,
+					alt: imageUrl ? altText : undefined,
+					sensitive: imageUrl ? sensitive : false
 				}
 			);
 			// Persist the difficulty actually used so the next composer starts there.
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
+			draftWriter.clear();
 			toasts.success(
 				mining
 					? `Story mined ${minedBits} bits · ID ${eventId.slice(0, 7)}…`
@@ -333,6 +357,40 @@
 						<p class="-mt-2.5 text-[11px] text-[var(--ui-text-dimmed)]">
 							No image? Stories double as a 24h status note.
 						</p>
+					{/if}
+
+					{#if imageUrl}
+						<!-- Accessibility: alt text (NIP-92) + sensitive-media flag -->
+						<input
+							bind:value={altText}
+							type="text"
+							maxlength="280"
+							placeholder="Describe the image for screen readers (alt text)…"
+							disabled={mining}
+							class="w-full rounded-xl border border-[var(--ui-border)] bg-[var(--ui-bg-muted)] px-3 py-2 text-[12.5px] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/20 disabled:opacity-60"
+						/>
+						<button
+							type="button"
+							onclick={() => (sensitive = !sensitive)}
+							disabled={mining}
+							aria-pressed={sensitive}
+							class="-mt-1 flex w-full items-center gap-2 rounded-xl px-1 py-1.5 text-left transition disabled:opacity-60"
+						>
+							<span
+								class="grid size-5 shrink-0 place-items-center rounded-full border transition {sensitive
+									? 'border-warm-500 bg-warm-500/15 text-warm-500'
+									: 'border-[var(--ui-border-accented)] text-transparent'}"
+							>
+								<Icon name="i-lucide-check" class="size-3.5" />
+							</span>
+							<span
+								class="text-[12px] font-semibold {sensitive
+									? 'text-warm-500'
+									: 'text-[var(--ui-text-muted)]'}"
+							>
+								Mark as sensitive — blur until tapped
+							</span>
+						</button>
 					{/if}
 
 					{#if showPow}
