@@ -164,6 +164,8 @@ export const NOSTR_KINDS = {
 	CONTACT_LIST: 3,
 	/** NIP-51 pinned notes list. */
 	PINNED_NOTES: 10001,
+	/** NIP-65 relay list metadata. */
+	RELAY_LIST: 10002,
 	/** NIP-56 report event. */
 	REPORT: 1984,
 	ZAP: 9735,

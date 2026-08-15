@@ -85,4 +85,27 @@ describe('stories.parseSlide', () => {
 		const slide = parseSlide(fakeEvent({ content: 'plain story' }));
 		expect(slide?.pow).toBeUndefined();
 	});
+
+	it('reads alt text and the sensitive flag for image slides', () => {
+		const slide = parseSlide(
+			fakeEvent({
+				content: 'caption https://cdn.example.com/pic.png',
+				tags: [
+					['imeta', 'url https://cdn.example.com/pic.png', 'alt A sunset over the ocean'],
+					['content-warning', 'Sensitive media']
+				]
+			})
+		);
+		expect(slide?.imageUrl).toBe('https://cdn.example.com/pic.png');
+		expect(slide?.alt).toBe('A sunset over the ocean');
+		expect(slide?.sensitive).toBe(true);
+	});
+
+	it('is not sensitive without a content-warning tag', () => {
+		const slide = parseSlide(
+			fakeEvent({ tags: [['imeta', 'url https://cdn.example.com/pic.png']] })
+		);
+		expect(slide?.sensitive).toBe(false);
+		expect(slide?.alt).toBeUndefined();
+	});
 });

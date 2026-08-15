@@ -21,6 +21,7 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
+	import { publishNip65List, relayListSignature } from '$lib/nostr/nip65';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { groupSync } from '$lib/nostr/group-sync.svelte';
@@ -242,6 +243,39 @@
 	});
 
 	// React to login/logout (onboarding) at runtime: start/stop subscriptions.
+	/**
+	 * NIP-65 publisher — fires when the effective relay signature differs from
+	 * the last one we published (persisted). Debounced so tweaking several
+	 * relays in Settings produces a single kind 10002 event. First login run
+	 * publishes too if the remote list was never recorded — cheap interop win.
+	 */
+	const NIP65_SIG_KEY = 'bitos:nip65-published-sig';
+	let nip65Timer: ReturnType<typeof setTimeout> | undefined;
+	function publishRelayListIfChanged() {
+		if (!browser || !identity.current) return;
+		if (nip65Timer) clearTimeout(nip65Timer);
+		nip65Timer = setTimeout(() => {
+			nip65Timer = undefined;
+			const sig = relayListSignature(relays.list);
+			let lastPublished: string | null = null;
+			try {
+				lastPublished = localStorage.getItem(NIP65_SIG_KEY);
+			} catch {
+				/* ignore */
+			}
+			if (sig === lastPublished) return;
+			void publishNip65List(relays.list)
+				.then(() => {
+					try {
+						localStorage.setItem(NIP65_SIG_KEY, sig);
+					} catch {
+						/* ignore */
+					}
+				})
+				.catch(() => undefined); // offline — retried on next change/login
+		}, 4_000);
+	}
+
 	let lastPk = $state<string | null>(null);
 	$effect(() => {
 		const pk = identity.current?.pk ?? null;
@@ -257,6 +291,8 @@
 			preferences.reload();
 			media.reset();
 			privacyNotificationSettings.reload();
+			void mutes.flush(); // publish any pending NIP-51 changes (guard-checked)
+			void blocks.flush();
 			blocks.load();
 			mutes.load();
 			feedPreferences.reload();
@@ -278,6 +314,9 @@
 			feed.start();
 			dms.start();
 			notifications.start();
+			// NIP-51: merge mute/block lists from relays, push local-only entries.
+			void mutes.sync();
+			void blocks.sync();
 			if (shouldAutoRestoreSettings(pk, previousPk)) {
 				void restoreSyncedSettingsFor(pk);
 			}
@@ -302,6 +341,11 @@
 			stories.start();
 			dms.start();
 			notifications.start();
+			// Relay set changed — re-merge moderation lists from the new sources.
+			void mutes.sync();
+			void blocks.sync();
+			// NIP-65: republish the user's relay list (debounced, only on change).
+			void publishRelayListIfChanged();
 		}
 	});
 
@@ -347,7 +391,7 @@
 	const publicRailRoutes = new Set(['/', '/discover']);
 	const showRail = $derived(
 		(hasIdentity || publicRailRoutes.has(page.url.pathname)) &&
-		!railHiddenPrefixes.some(
+			!railHiddenPrefixes.some(
 				(p) => page.url.pathname === p || page.url.pathname.startsWith(`${p}/`)
 			)
 	);
@@ -392,9 +436,7 @@
 	<NetworkBar connected={relayConnected} total={relayTotal} checking={relayChecking} />
 
 	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
-		<div
-			class="flex w-full max-w-[var(--ui-container)] overflow-hidden"
-		>
+		<div class="flex w-full max-w-[var(--ui-container)] overflow-hidden">
 			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
 				class="z-20 hidden w-[260px] shrink-0 border-r border-[var(--ui-border-muted)] lg:flex lg:flex-col"
@@ -403,9 +445,7 @@
 			</aside>
 
 			<!-- Main view (each route renders its own premium layout) -->
-			<main
-				class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0"
-			>
+			<main class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">
 				{#if routeNeedsAuth && !hasIdentity}
 					<AuthRequired title={authMessage.title} description={authMessage.description} />
 				{:else}
@@ -415,9 +455,7 @@
 
 			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
 			{#if showRail}
-				<div
-					class="hidden w-[340px] shrink-0 overflow-y-auto xl:block"
-				>
+				<div class="hidden w-[340px] shrink-0 overflow-y-auto xl:block">
 					<AppRightRail
 						showTrending={page.url.pathname !== '/notifications'}
 						showSuggestions={hasIdentity}

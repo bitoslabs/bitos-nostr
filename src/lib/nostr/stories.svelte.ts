@@ -45,6 +45,10 @@ export interface StorySlide {
 	bg?: string;
 	/** NIP-13 difficulty (leading zero bits) when the slide was mined. */
 	pow?: number;
+	/** Alt text for the attached image (NIP-92). */
+	alt?: string;
+	/** True when the slide is marked sensitive (blurred until revealed). */
+	sensitive?: boolean;
 	createdAt: number;
 	expiresAt: number;
 }
@@ -122,6 +126,20 @@ function extractImage(ev: Pick<Event, 'content' | 'tags'>): string | undefined {
 	return ev.content.match(IMG_RE)?.[0];
 }
 
+/** Alt text for the attached image (NIP-92 `alt` line inside `imeta`). */
+function extractAlt(ev: Pick<Event, 'tags'>): string | undefined {
+	const imeta = ev.tags.find((t) => t[0] === 'imeta');
+	const altLine = imeta?.find((seg) => seg.startsWith('alt '));
+	return altLine?.slice(4) || undefined;
+}
+
+/** True when the slide carries a content warning (sensitive media). */
+function isSensitiveSlide(ev: Pick<Event, 'tags'>): boolean {
+	return ev.tags.some(
+		(t) => (t[0] === 'content-warning' || t[0] === 'warning' || t[0] === 'cw') && !!t[1]
+	);
+}
+
 function cleanStoryContent(content: string, imageUrl?: string): string {
 	if (!imageUrl) return content.trim();
 	return content
@@ -144,6 +162,8 @@ function parseSlide(ev: Event): StorySlide | null {
 		imageUrl,
 		bg: ev.tags.find((t) => t[0] === 'background')?.[1] || undefined,
 		pow: eventPow(ev),
+		alt: extractAlt(ev),
+		sensitive: isSensitiveSlide(ev),
 		createdAt: ev.created_at,
 		expiresAt
 	};
@@ -395,6 +415,10 @@ class StoriesStore {
 			pow?: number;
 			onPowProgress?: (progress: PowProgress) => void;
 			signal?: AbortSignal;
+			/** Alt text for the attached image (NIP-92 `alt` in imeta). */
+			alt?: string;
+			/** Blur the image until tapped in the viewer (content-warning tag). */
+			sensitive?: boolean;
 		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
@@ -410,9 +434,13 @@ class StoriesStore {
 			...extractHashtagTags(text)
 		];
 		if (bg && !imageUrl) tags.push(['background', bg]);
+		if (options.sensitive && imageUrl) tags.push(['content-warning', 'Sensitive media']);
 		let body = text;
 		if (imageUrl) {
-			tags.push(['imeta', `url ${imageUrl}`]);
+			const imeta = [`url ${imageUrl}`];
+			const alt = options.alt?.trim().slice(0, 280);
+			if (alt) imeta.push(`alt ${alt}`);
+			tags.push(['imeta', ...imeta]);
 			body = text ? `${text}\n${imageUrl}` : imageUrl;
 		}
 		const unsigned = {
