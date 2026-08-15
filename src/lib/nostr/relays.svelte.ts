@@ -16,7 +16,7 @@ const DEFAULTS: RelayRecord[] = [
 	{ url: 'wss://relay.damus.io', read: true, write: true, primary: true, writePrimary: true, status: 'unknown', latency: null },
 	{ url: 'wss://relay.nostr.band', read: true, write: false, primary: false, writePrimary: false, status: 'unknown', latency: null },
 	{ url: 'wss://nostr-pub.wellorder.net', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
-	{ url: 'wss://relay.0xchat.com', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null }
+	{ url: 'wss://relay.bitos.space', read: true, write: true, primary: false, writePrimary: false, status: 'unknown', latency: null },
 ];
 
 /**
@@ -31,6 +31,7 @@ export const RECOMMENDED: RecommendedRelay[] = [
 	{ url: 'wss://nostr.wine', name: 'Nostr Wine', description: 'Nostr Wine public relay' },
 	{ url: 'wss://relay.nostr.band', name: 'Nostr Band', description: 'Global feed indexer' },
 	{ url: 'wss://cache2.primal.net/v1', name: 'Primal Cache 2', description: 'Primal cache relay' },
+	{ url: 'wss://relay.bitos.space', name: 'Bitos', description: 'Bitos public relay' },
 	{ url: 'wss://relay.damus.io', name: 'Damus', description: 'Official Damus relay' },
 	{ url: 'wss://nostr-pub.wellorder.net', name: 'Wellorder', description: 'Stable public relay' },
 	{ url: 'wss://relay.0xchat.com', name: '0xChat', description: '0xChat secure messaging relay' },
@@ -38,7 +39,8 @@ export const RECOMMENDED: RecommendedRelay[] = [
 	{ url: 'wss://relay.snort.social', name: 'Snort', description: 'Snort.social public relay' },
 	{ url: 'wss://offchain.pub', name: 'Offchain', description: 'Community public relay' },
 	{ url: 'wss://relay.current.fyi', name: 'Current', description: 'Current.fyi relay' },
-	{ url: 'wss://nostr.mom', name: 'nostr.mom', description: 'Open community relay' }
+	{ url: 'wss://nostr.mom', name: 'nostr.mom', description: 'Open community relay' },
+	{ url: 'wss://nostr-02.yakihonne.com', name: 'Yakihonne', description: 'Japanese Nostr relay' },
 ];
 
 /**
