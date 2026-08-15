@@ -6,7 +6,6 @@
  */
 import { browser } from '$app/environment';
 import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
-import { getPow } from 'nostr-tools/nip13';
 import type { UnsignedEvent } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
@@ -21,6 +20,9 @@ import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
 import { clientTag } from './client-tag';
 import { extractHashtagTags } from '$lib/utils/note-content';
+import { minePowAsync, eventPow, type PowProgress } from './pow';
+
+export type { PowProgress } from './pow';
 
 const INITIAL_LIMIT = 150;
 const PAGE_LIMIT = 80;
@@ -30,63 +32,6 @@ const MAX_TEXT_NOTE_CHARS = 16_000;
 const MAX_BUFFERED_REACTIONS = 2_000;
 
 type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
-
-/** Live stats streamed from the NIP-13 worker while mining. */
-export type PowProgress = {
-	hashes: number;
-	hashrate: number;
-	best: number;
-	/** Hex id of the best candidate so far (grows its zero prefix live). */
-	bestHash: string;
-	nonce: string;
-	elapsedMs: number;
-};
-
-function minePowAsync(
-	unsigned: UnsignedEvent,
-	difficulty: number,
-	options: { onProgress?: (progress: PowProgress) => void; signal?: AbortSignal } = {}
-) {
-	return new Promise<UnsignedEvent>((resolve, reject) => {
-		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
-		let settled = false;
-		const settle = (fn: () => void) => {
-			if (settled) return;
-			settled = true;
-			worker.onmessage = null;
-			worker.onerror = null;
-			worker.terminate();
-			fn();
-		};
-		const onAbort = () => settle(() => reject(new Error('Proof of Work cancelled')));
-		if (options.signal) {
-			if (options.signal.aborted) {
-				onAbort();
-				return;
-			}
-			options.signal.addEventListener('abort', onAbort, { once: true });
-		}
-		worker.onmessage = (
-			message: MessageEvent<{
-				type: 'progress' | 'done' | 'error';
-				event?: UnsignedEvent;
-				error?: string;
-				progress?: PowProgress;
-			}>
-		) => {
-			const data = message.data;
-			if (data.type === 'progress') {
-				options.onProgress?.(data.progress!);
-				return;
-			}
-			if (data.type === 'done' && data.event) settle(() => resolve(data.event!));
-			else if (data.type === 'error')
-				settle(() => reject(new Error(data.error || 'Proof of Work failed')));
-		};
-		worker.onerror = () => settle(() => reject(new Error('Proof of Work worker failed')));
-		worker.postMessage({ unsigned, difficulty });
-	});
-}
 
 type ReactionEvent = {
 	id: string;
@@ -263,15 +208,13 @@ class FeedStore {
 		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
-		const nonceTag = ev.tags.find((t) => t[0] === 'nonce');
-		const powTarget = Number(nonceTag?.[2]);
 		const pollOptions = parsePoll(ev.tags);
 		const note: FeedNote = {
 			id: ev.id,
 			pubkey: ev.pubkey,
 			content: ev.content,
 			createdAt: ev.created_at,
-			pow: nonceTag && Number.isFinite(powTarget) && powTarget > 0 ? getPow(ev.id) : undefined,
+			pow: eventPow(ev),
 			tags: ev.tags,
 			replyTo: replyTag?.[1],
 			reactions: [],

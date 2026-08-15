@@ -1,7 +1,7 @@
 /**
  * Media upload providers — framework-agnostic helpers used by the media store.
  *
- * Two providers are supported, both of which work fully client-side:
+ * Three providers are supported, all of which work fully client-side:
  *
  *   • Cloudinary  — unsigned "upload preset" flow (the recommended, safe model
  *                   for browser uploads; the secret API key never ships to the
@@ -10,8 +10,13 @@
  *                   Web Crypto API. Works against AWS S3 and S3-compatible
  *                   stores (Cloudflare R2, MinIO, Backblaze B2, …). The bucket
  *                   must have CORS configured to allow PUT from this origin.
+ *   • Blossom     — Nostr-authorized uploads to a Blossom server. The built-in
+ *                   option uses nostr.build's free shared endpoint.
  */
-export type MediaProviderId = 'cloudinary' | 's3';
+import { finalizeEvent } from 'nostr-tools/pure';
+import { hexToBytes } from '$lib/nostr/hex';
+
+export type MediaProviderId = 'blossom' | 'cloudinary' | 's3';
 export type UploadedMediaProviderId = MediaProviderId | 'server';
 export type UploadPurpose = 'note' | 'story' | 'message' | 'profile' | 'test';
 
@@ -58,6 +63,8 @@ export interface S3Config {
 	folder?: string;
 }
 
+export const FREE_BLOSSOM_SERVER = 'https://blossom.nostr.build';
+
 export interface MediaSettings {
 	defaultProvider: MediaProviderId | 'none';
 	cloudinary: CloudinaryConfig;
@@ -70,6 +77,85 @@ export interface UploadedMedia {
 	mimeType: string;
 	bytes: number;
 	provider: UploadedMediaProviderId;
+}
+
+type BlossomDescriptor = {
+	url?: string;
+	sha256?: string;
+	size?: number;
+	type?: string;
+	nip94?: { tags?: string[][] };
+};
+
+function base64Encode(value: string): string {
+	const bytes = new TextEncoder().encode(value);
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
+}
+
+async function sha256(file: File): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+	return toHex(digest);
+}
+
+/** Upload a file with the BUD-02/BUD-11 Blossom authorization flow. */
+export async function uploadToBlossom(
+	file: File,
+	secretKey: string,
+	onProgress?: (progress: UploadProgress) => void,
+	server = FREE_BLOSSOM_SERVER
+): Promise<UploadedMedia> {
+	const hash = await sha256(file);
+	const now = Math.floor(Date.now() / 1000);
+	const host = new URL(server).host;
+	const authorization = finalizeEvent(
+		{
+			kind: 24242,
+			created_at: now,
+			tags: [
+				['t', 'upload'],
+				['x', hash],
+				['expiration', String(now + 60)],
+				['server', host]
+			],
+			content: 'Upload blob'
+		},
+		hexToBytes(secretKey)
+	);
+	const response = await xhrUpload(
+		`${server.replace(/\/$/, '')}/upload`,
+		{
+			method: 'PUT',
+			headers: {
+				Authorization: `Nostr ${base64Encode(JSON.stringify(authorization))}`,
+				'Content-Type': file.type || 'application/octet-stream'
+			},
+			body: file
+		},
+		onProgress
+	);
+	const body = await response.text();
+	if (!response.ok) {
+		throw new Error(body || `Blossom upload failed: ${response.status} ${response.statusText}`);
+	}
+	let descriptor: BlossomDescriptor;
+	try {
+		descriptor = JSON.parse(body) as BlossomDescriptor;
+	} catch {
+		throw new Error('Blossom upload succeeded without a valid response');
+	}
+	const tags = descriptor.nip94?.tags ?? [];
+	const url = descriptor.url ?? tags.find(([name]) => name === 'url')?.[1];
+	if (!url) throw new Error('Blossom upload succeeded without a media URL');
+	onProgress?.({ loaded: file.size, total: file.size, percent: 100, deterministic: true });
+	return {
+		url,
+		kind: classifyMime(descriptor.type ?? file.type),
+		mimeType: descriptor.type ?? file.type ?? 'application/octet-stream',
+		bytes: descriptor.size ?? file.size,
+		provider: 'blossom'
+	};
 }
 
 export function classifyMime(mime: string): UploadedMedia['kind'] {

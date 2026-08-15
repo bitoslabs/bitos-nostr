@@ -11,7 +11,7 @@
  * Subscriptions cover the active user + everyone they follow.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import type { Event } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
@@ -22,6 +22,7 @@ import type { Filter } from 'nostr-tools/filter';
 import { NOSTR_KINDS } from './types';
 import { clientTag } from './client-tag';
 import { extractHashtagTags } from '$lib/utils/note-content';
+import { minePowAsync, eventPow, type PowProgress } from './pow';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
 const MAX_PER_AUTHOR = 12;
@@ -42,6 +43,8 @@ export interface StorySlide {
 	imageUrl?: string;
 	/** CSS background for text-only stories (gradient or color). */
 	bg?: string;
+	/** NIP-13 difficulty (leading zero bits) when the slide was mined. */
+	pow?: number;
 	createdAt: number;
 	expiresAt: number;
 }
@@ -140,6 +143,7 @@ function parseSlide(ev: Event): StorySlide | null {
 		content: cleanStoryContent(ev.content, imageUrl),
 		imageUrl,
 		bg: ev.tags.find((t) => t[0] === 'background')?.[1] || undefined,
+		pow: eventPow(ev),
 		createdAt: ev.created_at,
 		expiresAt
 	};
@@ -376,9 +380,23 @@ class StoriesStore {
 	/**
 	 * Publish a new story slide (text + optional image + optional background).
 	 * `bg` is a CSS background value (gradient/color) stored for text-only stories.
+	 *
+	 * Options mirror feed.post: `pow` mines NIP-13 difficulty before publishing
+	 * (live stats via `onPowProgress`, cancellable via `signal`), so stories can
+	 * carry the same spam-shield as notes.
+	 *
 	 * Returns the event id.
 	 */
-	async publish(content: string, imageUrl?: string, bg?: string): Promise<string> {
+	async publish(
+		content: string,
+		imageUrl?: string,
+		bg?: string,
+		options: {
+			pow?: number;
+			onPowProgress?: (progress: PowProgress) => void;
+			signal?: AbortSignal;
+		} = {}
+	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const me = identity.current;
 		if (!me) throw new Error('No identity');
@@ -397,10 +415,22 @@ class StoriesStore {
 			tags.push(['imeta', `url ${imageUrl}`]);
 			body = text ? `${text}\n${imageUrl}` : imageUrl;
 		}
-		const event = finalizeEvent(
-			{ kind: NOSTR_KINDS.STORY_STATUS, content: body, created_at: now, tags },
-			hexToBytes(me.sk)
-		);
+		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(me.sk)),
+			kind: NOSTR_KINDS.STORY_STATUS,
+			content: body,
+			created_at: now,
+			tags
+		};
+		// NIP-13 mining is opt-in — ordinary stories stay instant (difficulty 0).
+		const mined =
+			options.pow && options.pow > 0
+				? await minePowAsync(unsigned, options.pow, {
+						onProgress: options.onPowProgress,
+						signal: options.signal
+					})
+				: unsigned;
+		const event = finalizeEvent(mined, hexToBytes(me.sk));
 		await publish(event);
 		this.ingest(event);
 		return event.id;

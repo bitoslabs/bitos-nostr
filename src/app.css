@@ -714,6 +714,37 @@
 		background: var(--color-primary-500);
 		box-shadow: 0 10px 28px rgba(47, 149, 246, 0.35);
 	}
+	/* Bitcoin-orange zap circle — the sats-first action on the reel rail. */
+	.reel-action .icon-circle.is-zap {
+		background: rgba(247, 147, 26, 0.22);
+		color: #ffb02e;
+		box-shadow: 0 8px 26px rgba(247, 147, 26, 0.3);
+	}
+	.reel-action .icon-circle.is-zap:hover {
+		background: rgba(247, 147, 26, 0.34);
+	}
+
+	/* Double-tap / zap burst particles floating up from the tap point. */
+	.reel-burst {
+		position: absolute;
+		z-index: 30;
+		pointer-events: none;
+		transform: translate(-50%, -50%) scale(0.4);
+		animation: reel-burst-rise 0.95s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+	@keyframes reel-burst-rise {
+		0% {
+			opacity: 0;
+			transform: translate(-50%, -50%) scale(0.4) rotate(0deg);
+		}
+		14% {
+			opacity: 1;
+		}
+		100% {
+			opacity: 0;
+			transform: translate(calc(-50% + var(--tx, 0px)), -260%) scale(1.05) rotate(var(--rot, 0deg));
+		}
+	}
 
 	/* Discover / profile masonry + grids */
 	.masonry {

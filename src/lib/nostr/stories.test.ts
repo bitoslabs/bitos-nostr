@@ -71,9 +71,18 @@ describe('stories.parseSlide', () => {
 	});
 
 	it('captures the `d` tag so likes/replies can target the story address', () => {
-		const slide = parseSlide(
-			fakeEvent({ content: 'vibes', tags: [['d', 'bitos-story-42-abc']] })
-		);
+		const slide = parseSlide(fakeEvent({ content: 'vibes', tags: [['d', 'bitos-story-42-abc']] }));
 		expect(slide?.d).toBe('bitos-story-42-abc');
+	});
+
+	it('reads the NIP-13 difficulty of a mined slide from its nonce tag + id', () => {
+		const id = '0'.repeat(5) + 'a'.repeat(59); // 20 leading zero bits
+		const slide = parseSlide(fakeEvent({ id, tags: [['nonce', '918273', '20']] }));
+		expect(slide?.pow).toBe(20);
+	});
+
+	it('reports no PoW when the slide was not mined', () => {
+		const slide = parseSlide(fakeEvent({ content: 'plain story' }));
+		expect(slide?.pow).toBeUndefined();
 	});
 });

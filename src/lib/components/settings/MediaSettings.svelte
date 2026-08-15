@@ -35,8 +35,9 @@
 
 <h2 class="mb-1 font-display text-[24px] font-extrabold">Media & Uploads</h2>
 <p class="mb-6 text-[13px] text-[var(--ui-text-muted)]">
-	Choose where photos and videos are hosted when you attach them to a note. If you leave these
-	empty, BitOS can fall back to the server upload API when it is configured.
+	Choose where photos and videos are hosted when you attach them to a note. Free Blossom uses your
+	Nostr account to authorize direct public uploads; BitOS can also fall back to its server upload
+	API.
 </p>
 
 <SectionCard class="mb-5 border-primary-500/20 bg-primary-500/5" bodyClass="p-4">
@@ -56,8 +57,8 @@
 <!-- Default provider -->
 <SectionCard title="Default provider" icon="i-lucide-cloud-upload" class="mb-5">
 	<p class="mb-3 text-[12px] text-[var(--ui-text-muted)]">
-		Used by the composer unless you pick another one while posting. Selecting none keeps uploads on
-		the BitOS server fallback path.
+		Used by the composer unless you pick another one while posting. Free Blossom requires a
+		signed-in Nostr account. Selecting none keeps uploads on the BitOS server fallback path.
 	</p>
 	<div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
 		<button

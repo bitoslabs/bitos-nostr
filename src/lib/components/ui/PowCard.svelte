@@ -117,7 +117,7 @@
 <div
 	class={cn(
 		'rounded-xl border border-primary-500/15 bg-primary-500/5',
-		compact ? 'mt-2 p-2.5' : 'mt-3 p-3'
+		compact ? 'mt-2 p-2 sm:p-2.5' : 'mt-2 p-2.5 sm:mt-3 sm:p-3'
 	)}
 >
 	<div class="flex items-center justify-between gap-3">
@@ -125,7 +125,7 @@
 			<p class="text-[11px] font-bold tracking-wider text-[var(--ui-text-muted)] uppercase">
 				Proof of Work
 			</p>
-			<p class="mt-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
+			<p class="mt-0.5 hidden text-[11px] text-[var(--ui-text-dimmed)] sm:block">
 				{mining
 					? 'Mining your note… keep this tab open.'
 					: 'Mine a harder-to-spam note before publishing.'}
@@ -153,7 +153,7 @@
 
 	{#if !mining}
 		<div
-			class="mt-2.5 grid grid-cols-3 gap-1.5"
+			class="mt-2 grid grid-cols-3 gap-1 sm:mt-2.5 sm:gap-1.5"
 			role="radiogroup"
 			aria-label="Proof of Work effort"
 		>
@@ -165,14 +165,14 @@
 					title={preset.hint}
 					onclick={() => applyPreset(preset.bits)}
 					class={cn(
-						'flex flex-col items-center gap-1 rounded-lg border px-2 py-2 transition active:scale-95',
+						'flex flex-col items-center gap-0.5 rounded-lg border px-1.5 py-1.5 transition active:scale-95 sm:gap-1 sm:px-2 sm:py-2',
 						activePresetId === preset.id
 							? 'border-[color-mix(in_oklab,var(--ui-color-primary-500)_45%,transparent)] bg-[color-mix(in_oklab,var(--ui-color-primary-500)_12%,transparent)] text-[var(--ui-color-primary-500)]'
 							: 'border-[var(--ui-border-muted)] text-[var(--ui-text-muted)] hover:border-[color-mix(in_oklab,var(--ui-color-primary-500)_25%,transparent)] hover:text-[var(--ui-color-primary-500)]'
 					)}
 				>
 					<Icon name={preset.icon} class="size-4" />
-					<span class="text-[11px] font-bold">{preset.label}</span>
+					<span class="text-[10px] font-bold sm:text-[11px]">{preset.label}</span>
 					<span class="font-mono text-[9.5px] text-[var(--ui-text-dimmed)]"
 						>{preset.bits === 0 ? '0 bits' : `${preset.bits} bits`}</span
 					>
@@ -254,7 +254,7 @@
 	{:else if !mining}
 		{#if pow > 0}
 			<p
-				class="mt-2 flex flex-wrap items-baseline gap-1 font-mono text-[10px] text-[var(--ui-text-dimmed)]"
+				class="mt-2 hidden flex-wrap items-baseline gap-1 font-mono text-[10px] text-[var(--ui-text-dimmed)] sm:flex"
 			>
 				<span class="font-sans">Target ID starts with</span>
 				<span

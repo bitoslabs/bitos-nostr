@@ -4,6 +4,9 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import PowBadge from '$lib/components/ui/PowBadge.svelte';
+	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
+	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
@@ -18,6 +21,21 @@
 	import { shortKey, timeAgo } from '$lib/utils/format';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { compactSats } from '$lib/utils/profile-stats';
+
+	type Burst = {
+		id: number;
+		reelId: string;
+		emoji: string;
+		/** CSS position values relative to the reel card. */
+		left: string;
+		top: string;
+		tx: number;
+		rot: number;
+		size: number;
+		delay: number;
+	};
+	let burstSeq = 0;
 
 	type ReelNote = FeedNote & { videoUrl: string };
 	type ReelsCache = {
@@ -50,7 +68,6 @@
 	let activeReelId = $state('');
 	let activeReelMuted = $state(true);
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
-	let reelProgress = $state<Record<string, number>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
@@ -61,6 +78,10 @@
 	let reelVisibility = new Map<string, number>();
 	let visibilityObserver: IntersectionObserver | null = null;
 	let oldestReelEventCreatedAt = $state(0);
+	let zapReel = $state<ReelNote | null>(null);
+	let zapOpen = $state(false);
+	let optimisticZapSats = $state<Record<string, number>>({});
+	let bursts = $state<Burst[]>([]);
 	const rankedReels = $derived.by(() => {
 		if (!reels.length) return reels;
 		if (!algorithmPreferences.isEnabled('reels')) return reels;
@@ -388,16 +409,10 @@
 		if (node) {
 			reelVideos.set(reelId, node);
 			node.muted = reelId === activeReelId ? activeReelMuted : true;
-			node.ontimeupdate = () => {
-				const progress = node.duration ? node.currentTime / node.duration : 0;
-				reelProgress = { ...reelProgress, [reelId]: Math.max(0, Math.min(1, progress)) };
-			};
 			void syncActivePlayback();
 			return;
 		}
 		reelVideos.delete(reelId);
-		const { [reelId]: _removed, ...nextProgress } = reelProgress;
-		reelProgress = nextProgress;
 	}
 
 	function registerReelCard(reelId: string, node: HTMLDivElement | null) {
@@ -458,35 +473,6 @@
 		}
 	}
 
-	function toggleActiveReelMuted() {
-		if (!activeReelId) return;
-		activeReelMuted = !activeReelMuted;
-		void syncActivePlayback();
-	}
-
-	async function openActiveReelFullscreen() {
-		const activeVideo = reelVideos.get(activeReelId);
-		if (!activeVideo) return;
-		try {
-			if (document.fullscreenElement) {
-				await document.exitFullscreen();
-				return;
-			}
-			await activeVideo.requestFullscreen();
-		} catch {
-			toasts.error('Fullscreen is not available for this video');
-		}
-	}
-
-	function trackReelVideo(node: HTMLVideoElement, reelId: string) {
-		registerReelVideo(reelId, node);
-		return {
-			destroy() {
-				registerReelVideo(reelId, null);
-			}
-		};
-	}
-
 	function createVisibilityObserver() {
 		if (typeof IntersectionObserver === 'undefined') return null;
 		return new IntersectionObserver(
@@ -533,6 +519,64 @@
 		}
 	}
 
+	/** Desktop power moves: ↑/↓ jump reels, Space/K play-pause, M mute,
+	 * F fullscreen, ←/→ seek 5s. Ignored while typing in the comments box. */
+	function handleKeydown(event: KeyboardEvent) {
+		const target = event.target as HTMLElement | null;
+		// Never steal keys while typing…
+		if (target?.closest('input, textarea, select, [contenteditable]')) return;
+		// …and let Space activate a focused control (buttons, links, dialogs).
+		if (
+			(event.key === ' ' || event.key === 'Enter') &&
+			target?.closest('button, a, [role="button"], [data-dialog]')
+		)
+			return;
+		const activeVideo = activeReelId ? reelVideos.get(activeReelId) : undefined;
+		switch (event.key) {
+			case 'ArrowDown':
+				event.preventDefault();
+				scrollToReel(1);
+				break;
+			case 'ArrowUp':
+				event.preventDefault();
+				scrollToReel(-1);
+				break;
+			case ' ':
+			case 'k':
+			case 'K':
+				event.preventDefault();
+				if (activeVideo) {
+					if (activeVideo.paused) void activeVideo.play();
+					else activeVideo.pause();
+				}
+				break;
+			case 'm':
+			case 'M':
+				activeReelMuted = !activeReelMuted;
+				break;
+			case 'f':
+			case 'F':
+				// Fullscreen the whole reel card so the rail + captions stay visible.
+				if (document.fullscreenElement) void document.exitFullscreen();
+				else if (activeReelId)
+					reelCards
+						.get(activeReelId)
+						?.requestFullscreen()
+						.catch(() => {
+							/* Fullscreen can be blocked in embedded browsers. */
+						});
+				break;
+			case 'ArrowLeft':
+				if (activeVideo && Number.isFinite(activeVideo.duration))
+					activeVideo.currentTime = Math.max(0, activeVideo.currentTime - 5);
+				break;
+			case 'ArrowRight':
+				if (activeVideo && Number.isFinite(activeVideo.duration))
+					activeVideo.currentTime = Math.min(activeVideo.duration, activeVideo.currentTime + 5);
+				break;
+		}
+	}
+
 	function commentsFor(reelId: string) {
 		return feed.notes
 			.filter((note) => note.replyTo === reelId && note.id !== reelId)
@@ -550,6 +594,55 @@
 			toasts.error((e as Error).message);
 		}
 	}
+
+	/** Double-tap anywhere on the video: like (never unlike) + a burst of
+	 * hearts at the tap point — the reflex interaction every reels app needs. */
+	async function likeAtTap(reel: ReelNote, x: number, y: number) {
+		spawnBurst(reel.id, '❤️', `${x}px`, `${y}px`, 9);
+		if (reel.reactions.some((reaction) => reaction.byMe)) return;
+		await toggleLike(reel);
+	}
+
+	function spawnBurst(reelId: string, emoji: string, left: string, top: string, count = 7) {
+		const next: Burst[] = Array.from({ length: count }, () => ({
+			id: ++burstSeq,
+			reelId,
+			emoji,
+			left,
+			top,
+			tx: Math.round((Math.random() - 0.5) * 130),
+			rot: Math.round((Math.random() - 0.5) * 60),
+			size: 16 + Math.round(Math.random() * 16),
+			delay: Math.random() * 0.18
+		}));
+		bursts = [...bursts, ...next];
+		const ids = new Set(next.map((b) => b.id));
+		setTimeout(() => (bursts = bursts.filter((b) => !ids.has(b.id))), 1000);
+	}
+
+	function zapTotalFor(reel: ReelNote) {
+		return reel.zapTotalSats + (optimisticZapSats[reel.id] ?? 0);
+	}
+
+	function openZap(reel: ReelNote) {
+		zapReel = reel;
+		zapOpen = true;
+	}
+
+	function handleZapPaid(sats: number) {
+		const reel = zapReel;
+		if (!reel) return;
+		optimisticZapSats = {
+			...optimisticZapSats,
+			[reel.id]: (optimisticZapSats[reel.id] ?? 0) + sats
+		};
+		// Sats burst floating up from the action rail — payment should feel alive.
+		spawnBurst(reel.id, '⚡', 'calc(100% - 68px)', '58%', 8);
+	}
+
+	$effect(() => {
+		if (!zapOpen) zapReel = null;
+	});
 
 	function toggleSave(reel: ReelNote) {
 		const isSaved = bookmarks.toggle(reel);
@@ -662,7 +755,9 @@
 	});
 </script>
 
-	<svelte:head><title>Bits · BitOS</title></svelte:head>
+<svelte:head><title>Bits · BitOS</title></svelte:head>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	<div
@@ -692,27 +787,34 @@
 					data-reel-id={reel.id}
 					class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 				>
-					<div class="absolute inset-x-0 top-0 z-10 px-4 pt-3">
-						<div class="h-1.5 overflow-hidden rounded-full bg-white/20">
-							<div
-								class="h-full rounded-full bg-white transition-[width] duration-150"
-								style={`width: ${(reelProgress[reel.id] ?? 0) * 100}%`}
-							></div>
-						</div>
-					</div>
-					<!-- svelte-ignore a11y_media_has_caption -->
-					<video
-						use:trackReelVideo={reel.id}
+					<MediaPlayer
 						src={reel.videoUrl}
-						class="absolute inset-0 size-full object-cover {reelCovered
+						label="Relay video note"
+						class="absolute inset-0"
+						mediaClass="absolute inset-0 size-full object-cover {reelCovered
 							? 'scale-105 blur-2xl saturate-50'
 							: ''}"
-						aria-label="Relay video note"
-						autoplay={reel.id === activeReelId}
+						variant="reel"
 						loop
-						playsinline
-						preload="metadata"
-					></video>
+						muted={reel.id === activeReelId ? activeReelMuted : true}
+						onMediaElement={(node) => {
+							registerReelVideo(reel.id, node as HTMLVideoElement);
+							return () => registerReelVideo(reel.id, null);
+						}}
+						onMutedChange={(nextMuted) => {
+							if (reel.id === activeReelId) activeReelMuted = nextMuted;
+						}}
+						onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
+					/>
+					<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true">
+						{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
+							<span
+								class="reel-burst"
+								style={`left:${burst.left}; top:${burst.top}; --tx:${burst.tx}px; --rot:${burst.rot}deg; font-size:${burst.size}px; animation-delay:${burst.delay}s`}
+								>{burst.emoji}</span
+							>
+						{/each}
+					</div>
 					{#if reelCovered}
 						<button
 							type="button"
@@ -743,25 +845,6 @@
 						<div class="flex items-center gap-2">
 							<button
 								type="button"
-								onclick={toggleActiveReelMuted}
-								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-								aria-label={activeReelMuted ? 'Turn sound on' : 'Turn sound off'}
-							>
-								<Icon
-									name={activeReelMuted ? 'i-lucide-volume-x' : 'i-lucide-volume-2'}
-									class="size-5"
-								/>
-							</button>
-							<button
-								type="button"
-								onclick={openActiveReelFullscreen}
-								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-								aria-label="Toggle fullscreen"
-							>
-								<Icon name="i-lucide-expand" class="size-5" />
-							</button>
-							<button
-								type="button"
 								onclick={() => loadReels()}
 								class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
 								aria-label="Refresh bits"
@@ -776,6 +859,20 @@
 							? 'lg:right-24'
 							: ''}"
 					>
+						<button
+							type="button"
+							onclick={() => openZap(reel)}
+							disabled={!profile?.lud16 && !profile?.lud06}
+							class="reel-action disabled:opacity-45"
+							aria-label={zapTotalFor(reel) ? `Zap — ${zapTotalFor(reel)} sats total` : 'Zap sats'}
+						>
+							<span class="icon-circle is-zap">
+								<Icon name="i-lucide-zap" class="size-5 fill-current" />
+							</span>
+							<span class="text-[11px] font-semibold tabular-nums">
+								{zapTotalFor(reel) ? `${compactSats(zapTotalFor(reel))} sats` : 'Zap'}
+							</span>
+						</button>
 						<button type="button" onclick={() => toggleLike(reel)} class="reel-action">
 							<span class="icon-circle">
 								<Icon
@@ -833,7 +930,8 @@
 						</a>
 					</div>
 
-					<div class="absolute inset-x-0 bottom-0 z-10 p-5 pr-20 text-white">
+					<!-- pb clears the auto-hiding player bar (progress + play/mute row) -->
+					<div class="absolute inset-x-0 bottom-0 z-10 p-5 pr-20 pb-[4.75rem] text-white">
 						<div class="mb-3 flex items-center gap-3">
 							<Avatar
 								pubkey={reel.pubkey}
@@ -843,13 +941,22 @@
 								class="ring-2 ring-white"
 							/>
 							<div class="min-w-0 flex-1">
-								<a href={`/profile/${reel.pubkey}`} class="truncate text-[14px] font-bold">
-									{name}
+								<a
+									href={`/profile/${reel.pubkey}`}
+									class="inline-flex min-w-0 items-center gap-1 text-[14px] font-bold"
+								>
+									<span class="truncate">{name}</span>
+									{#if profile?.nip05}
+										<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-white/85" />
+									{/if}
 								</a>
-								<p class="text-[11px] opacity-80">
-									{timeAgo(reel.createdAt)}
+								<p class="flex items-center gap-1.5 text-[11px] opacity-80">
+									<span>{timeAgo(reel.createdAt)}</span>
 									{#if reel.source === 'discovery'}
-										· discovery{/if}
+										<span>· discovery</span>{/if}
+									{#if reel.pow}
+										<PowBadge bits={reel.pow} micro id={reel.id} />
+									{/if}
 								</p>
 							</div>
 						</div>
@@ -891,217 +998,217 @@
 		{/if}
 
 		{#if reels.length}
-		<div
-			class="absolute top-1/2 right-[92px] z-30 hidden -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/25 p-1 shadow-lg ring-1 shadow-black/20 ring-white/10 backdrop-blur-md transition-[right] duration-200 sm:flex {commentReel
-				? 'lg:right-[398px]'
-				: ''}"
-		>
+			<div
+				class="absolute top-1/2 right-[92px] z-30 hidden -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/25 p-1 shadow-lg ring-1 shadow-black/20 ring-white/10 backdrop-blur-md transition-[right] duration-200 sm:flex {commentReel
+					? 'lg:right-[398px]'
+					: ''}"
+			>
+				<button
+					type="button"
+					onclick={() => scrollToReel(-1)}
+					class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
+					aria-label="Previous bit"
+				>
+					<Icon name="i-lucide-chevron-up" class="size-[18px]" />
+				</button>
+				<button
+					type="button"
+					onclick={() => scrollToReel(1)}
+					class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
+					aria-label="Next bit"
+				>
+					<Icon name="i-lucide-chevron-down" class="size-[18px]" />
+				</button>
+			</div>
+		{/if}
+
+		{#if commentReel}
 			<button
 				type="button"
-				onclick={() => scrollToReel(-1)}
-				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Previous bit"
+				class="fixed inset-0 z-40 bg-black/45 lg:hidden"
+				aria-label="Close comments"
+				onclick={() => (commentReel = null)}
+			></button>
+			<aside
+				class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0"
+				aria-label="Bit comments"
 			>
-				<Icon name="i-lucide-chevron-up" class="size-[18px]" />
-			</button>
-			<button
-				type="button"
-				onclick={() => scrollToReel(1)}
-				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Next bit"
-			>
-				<Icon name="i-lucide-chevron-down" class="size-[18px]" />
-			</button>
-		</div>
-	{/if}
-
-	{#if commentReel}
-		<button
-			type="button"
-			class="fixed inset-0 z-40 bg-black/45 lg:hidden"
-			aria-label="Close comments"
-			onclick={() => (commentReel = null)}
-		></button>
-		<aside
-			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0"
-						aria-label="Bit comments"
-		>
-			<header
-				class="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ui-border-muted)] px-4"
-			>
-				<h2 class="text-[16px] font-extrabold text-[var(--ui-text-highlighted)]">
-					Comments <span class="ml-1 text-[var(--ui-text-dimmed)]">{activeComments.length}</span>
-				</h2>
-				<div class="flex items-center gap-1">
-					<button
-						type="button"
-						onclick={() => loadComments(commentReel!, { force: true })}
-						disabled={loadingComments}
-						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
-						aria-label="Refresh comments"
-					>
-						<Icon
-							name="i-lucide-rotate-cw"
-							class="size-4 {loadingComments ? 'animate-spin' : ''}"
-						/>
-					</button>
-					<button
-						type="button"
-						onclick={() => (commentReel = null)}
-						class="grid size-9 place-items-center rounded-full bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text-highlighted)]"
-						aria-label="Close comments"
-					>
-						<Icon name="i-lucide-x" class="size-5" />
-					</button>
-				</div>
-			</header>
-
-			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-				{#if loadingComments && !activeComments.length}
-					<div class="flex h-36 items-center justify-center">
-						<div
-							class="size-6 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
-						></div>
+				<header
+					class="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ui-border-muted)] px-4"
+				>
+					<h2 class="text-[16px] font-extrabold text-[var(--ui-text-highlighted)]">
+						Comments <span class="ml-1 text-[var(--ui-text-dimmed)]">{activeComments.length}</span>
+					</h2>
+					<div class="flex items-center gap-1">
+						<button
+							type="button"
+							onclick={() => loadComments(commentReel!, { force: true })}
+							disabled={loadingComments}
+							class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+							aria-label="Refresh comments"
+						>
+							<Icon
+								name="i-lucide-rotate-cw"
+								class="size-4 {loadingComments ? 'animate-spin' : ''}"
+							/>
+						</button>
+						<button
+							type="button"
+							onclick={() => (commentReel = null)}
+							class="grid size-9 place-items-center rounded-full bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text-highlighted)]"
+							aria-label="Close comments"
+						>
+							<Icon name="i-lucide-x" class="size-5" />
+						</button>
 					</div>
-				{:else if activeComments.length}
-					<div class="space-y-6">
-						{#each activeComments as comment (comment.id)}
-							{@const commentProfile = profiles.get(comment.pubkey)}
-							{@const commentName =
-								commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
-							<div class="flex gap-3">
-								<a href={`/profile/${comment.pubkey}`} class="shrink-0">
-									<Avatar
-										pubkey={comment.pubkey}
-										name={commentName}
-										picture={commentProfile?.picture}
-										size={34}
-										frame
-									/>
-								</a>
-								<div class="min-w-0 flex-1">
-									<div class="flex items-start gap-2">
-										<div class="min-w-0 flex-1">
-											<a
-												href={`/profile/${comment.pubkey}`}
-												class="block truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
-											>
-												{commentName}
-											</a>
-											<a
-												href={`/note/${comment.id}?from=reels`}
-												class="block hover:text-primary-500"
-											>
-												<p
-													class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
+				</header>
+
+				<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+					{#if loadingComments && !activeComments.length}
+						<div class="flex h-36 items-center justify-center">
+							<div
+								class="size-6 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
+							></div>
+						</div>
+					{:else if activeComments.length}
+						<div class="space-y-6">
+							{#each activeComments as comment (comment.id)}
+								{@const commentProfile = profiles.get(comment.pubkey)}
+								{@const commentName =
+									commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
+								<div class="flex gap-3">
+									<a href={`/profile/${comment.pubkey}`} class="shrink-0">
+										<Avatar
+											pubkey={comment.pubkey}
+											name={commentName}
+											picture={commentProfile?.picture}
+											size={34}
+											frame
+										/>
+									</a>
+									<div class="min-w-0 flex-1">
+										<div class="flex items-start gap-2">
+											<div class="min-w-0 flex-1">
+												<a
+													href={`/profile/${comment.pubkey}`}
+													class="block truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
 												>
-													{comment.content}
-												</p>
-											</a>
-										</div>
-										<button
-											type="button"
-											onclick={() => likeComment(comment)}
-											class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
-											aria-label="Like comment"
-										>
-											<Icon
-												name={comment.reactions.some((reaction) => reaction.byMe)
-													? 'i-solar-heart-bold'
-													: 'i-solar-heart-linear'}
-												class="size-4 {comment.reactions.some((reaction) => reaction.byMe)
-													? 'text-primary-500'
-													: ''}"
-											/>
-											<span class="text-[11px]">
-												{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
-											</span>
-										</button>
-									</div>
-									<div
-										class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
-									>
-										<span>{timeAgo(comment.createdAt)}</span>
-										<button
-											type="button"
-											onclick={() => (commentText = `@${commentName} `)}
-											class="hover:text-[var(--ui-text-highlighted)]"
-										>
-											Reply
-										</button>
-										{#if comment.pubkey === identity.current?.pk}
+													{commentName}
+												</a>
+												<a
+													href={`/note/${comment.id}?from=reels`}
+													class="block hover:text-primary-500"
+												>
+													<p
+														class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
+													>
+														{comment.content}
+													</p>
+												</a>
+											</div>
 											<button
 												type="button"
-												onclick={() => askDeleteComment(comment)}
-												disabled={deletingCommentId === comment.id}
-												class="hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+												onclick={() => likeComment(comment)}
+												class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
+												aria-label="Like comment"
 											>
-												{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
+												<Icon
+													name={comment.reactions.some((reaction) => reaction.byMe)
+														? 'i-solar-heart-bold'
+														: 'i-solar-heart-linear'}
+													class="size-4 {comment.reactions.some((reaction) => reaction.byMe)
+														? 'text-primary-500'
+														: ''}"
+												/>
+												<span class="text-[11px]">
+													{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
+												</span>
 											</button>
-										{/if}
+										</div>
+										<div
+											class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
+										>
+											<span>{timeAgo(comment.createdAt)}</span>
+											<button
+												type="button"
+												onclick={() => (commentText = `@${commentName} `)}
+												class="hover:text-[var(--ui-text-highlighted)]"
+											>
+												Reply
+											</button>
+											{#if comment.pubkey === identity.current?.pk}
+												<button
+													type="button"
+													onclick={() => askDeleteComment(comment)}
+													disabled={deletingCommentId === comment.id}
+													class="hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+												>
+													{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
+												</button>
+											{/if}
+										</div>
 									</div>
 								</div>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<div class="flex h-44 flex-col items-center justify-center text-center">
-						<div
-							class="grid size-12 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
-						>
-							<Icon name="i-lucide-message-circle" class="size-6" />
+							{/each}
 						</div>
-						<p class="mt-3 text-[14px] font-bold text-[var(--ui-text-highlighted)]">
-							No comments yet
-						</p>
-						<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">Start the conversation.</p>
-					</div>
-				{/if}
-			</div>
-
-			<div
-				class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
-			>
-				<div class="flex items-end gap-2">
-					{#if identity.current}
-						<Avatar
-							pubkey={identity.current.pk}
-							name={currentDisplayName}
-							picture={currentProfile?.picture}
-							size={32}
-							frame
-						/>
+					{:else}
+						<div class="flex h-44 flex-col items-center justify-center text-center">
+							<div
+								class="grid size-12 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
+							>
+								<Icon name="i-lucide-message-circle" class="size-6" />
+							</div>
+							<p class="mt-3 text-[14px] font-bold text-[var(--ui-text-highlighted)]">
+								No comments yet
+							</p>
+							<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">Start the conversation.</p>
+						</div>
 					{/if}
-					<textarea
-						bind:value={commentText}
-						rows="1"
-						placeholder={identity.current
-							? 'Add a comment...'
-							: 'Create or import a key to comment'}
-						disabled={!identity.current || postingComment}
-						class="max-h-28 min-h-10 flex-1 resize-none rounded-full bg-[var(--ui-bg-accented)] px-4 py-2.5 text-[14px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-60"
-						onkeydown={(event) => {
-							if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-								event.preventDefault();
-								void submitComment();
-							}
-						}}></textarea>
-					<button
-						type="button"
-						onclick={submitComment}
-						disabled={!commentText.trim() || !identity.current || postingComment}
-						class="grid size-10 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-						aria-label="Post comment"
-					>
-						<Icon
-							name={postingComment ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
-							class="size-4 {postingComment ? 'animate-spin' : ''}"
-						/>
-					</button>
 				</div>
-			</div>
-		</aside>
-	{/if}
+
+				<div
+					class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+				>
+					<div class="flex items-end gap-2">
+						{#if identity.current}
+							<Avatar
+								pubkey={identity.current.pk}
+								name={currentDisplayName}
+								picture={currentProfile?.picture}
+								size={32}
+								frame
+							/>
+						{/if}
+						<textarea
+							bind:value={commentText}
+							rows="1"
+							placeholder={identity.current
+								? 'Add a comment...'
+								: 'Create or import a key to comment'}
+							disabled={!identity.current || postingComment}
+							class="max-h-28 min-h-10 flex-1 resize-none rounded-full bg-[var(--ui-bg-accented)] px-4 py-2.5 text-[14px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+							onkeydown={(event) => {
+								if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+									event.preventDefault();
+									void submitComment();
+								}
+							}}></textarea>
+						<button
+							type="button"
+							onclick={submitComment}
+							disabled={!commentText.trim() || !identity.current || postingComment}
+							class="grid size-10 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
+							aria-label="Post comment"
+						>
+							<Icon
+								name={postingComment ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
+								class="size-4 {postingComment ? 'animate-spin' : ''}"
+							/>
+						</button>
+					</div>
+				</div>
+			</aside>
+		{/if}
 	</div>
 
 	<Dialog bind:open={deleteCommentOpen} title="Delete comment">
@@ -1138,4 +1245,15 @@
 			</button>
 		{/snippet}
 	</Dialog>
+
+	{#if zapReel}
+		{@const zapProfile = profiles.get(zapReel.pubkey)}
+		<NoteZapDialog
+			bind:open={zapOpen}
+			recipientPubkey={zapReel.pubkey}
+			lightningAddress={zapProfile?.lud16 || zapProfile?.lud06 || ''}
+			eventId={zapReel.id}
+			onPaid={handleZapPaid}
+		/>
+	{/if}
 </div>

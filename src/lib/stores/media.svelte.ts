@@ -6,9 +6,11 @@
  * the S3 secret key lives on-device (same trust model as the Nostr nsec).
  */
 import { browser } from '$app/environment';
+import { identity } from '$lib/nostr/identity.svelte';
 import { sanitizeMediaForUpload } from '$lib/media/privacy';
 import {
 	uploadViaServer,
+	uploadToBlossom,
 	uploadWithProvider,
 	type CloudinaryConfig,
 	type MediaProviderId,
@@ -22,7 +24,7 @@ import {
 export const STORAGE_KEY = 'bitos:media';
 
 export const DEFAULTS: MediaSettings = {
-	defaultProvider: 'none',
+	defaultProvider: 'blossom',
 	cloudinary: { cloudName: '', uploadPreset: '', apiKey: '', apiSecret: '' },
 	s3: { bucket: '', region: 'us-east-1', accessKey: '', secretKey: '' }
 };
@@ -33,6 +35,12 @@ export const MEDIA_PROVIDERS: {
 	icon: string;
 	description: string;
 }[] = [
+	{
+		id: 'blossom',
+		label: 'Free Blossom',
+		icon: 'i-lucide-flower-2',
+		description: 'Public Nostr media · 20 MiB per file · signed with your account'
+	},
 	{
 		id: 'cloudinary',
 		label: 'Cloudinary',
@@ -100,6 +108,7 @@ class MediaStore {
 
 	/** Whether a provider has the minimum fields filled in. */
 	isConfigured = (id: MediaProviderId): boolean => {
+		if (id === 'blossom') return !!identity.current;
 		if (id === 'cloudinary') {
 			const c = this.state.cloudinary;
 			if (!c.cloudName.trim()) return false;
@@ -124,6 +133,11 @@ class MediaStore {
 		const id = provider ?? this.state.defaultProvider;
 		if (id === 'none') {
 			return uploadViaServer(sanitized, options);
+		}
+		if (id === 'blossom') {
+			const account = identity.current;
+			if (!account) throw new Error('Sign in to Nostr before uploading to Blossom');
+			return uploadToBlossom(sanitized, account.sk, options.onProgress);
 		}
 		if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
 		return uploadWithProvider(sanitized, id, this.state, options.onProgress);
