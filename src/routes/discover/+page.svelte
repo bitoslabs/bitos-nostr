@@ -70,13 +70,15 @@
 	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
 	const DISCOVER_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 	const MAX_CACHED_SEARCHES = 5;
-	const MAX_CACHED_TAGS = 60;
-	const MAX_CACHED_CREATORS = 40;
+	// Saved snapshots stay small for fast startup. Live lists are intentionally
+	// uncapped so a user-initiated "Load more" can keep appending results.
+	const MAX_PERSISTED_TAGS = 60;
+	const MAX_PERSISTED_CREATORS = 40;
 	const MAX_CACHED_MEDIA = 180;
-	// The initial relay query already requests 300 events. Keeping only 40 here
-	// made Discover stop after two visual pages even when more notes were ready.
+	// Keep enough events to populate notes, media, tags, and creators after relay
+	// overlap is deduplicated, without making the first Discover request too heavy.
 	const MAX_CACHED_SEARCH_NOTES = 300;
-	const DISCOVER_INITIAL_EVENT_LIMIT = 300;
+	const DISCOVER_INITIAL_EVENT_LIMIT = 120;
 	const DISCOVER_PAGE_EVENT_LIMIT = 180;
 	const DISCOVER_SEARCH_EVENT_LIMIT = 180;
 	const DISCOVER_TEXT_FALLBACK_LIMIT = 240;
@@ -302,30 +304,39 @@
 	}
 
 	function mergeTrendTags(existing: TrendTag[], incoming: TrendTag[]) {
-		const counts = new Map<string, number>();
-		for (const item of [...existing, ...incoming]) {
-			counts.set(item.tag, (counts.get(item.tag) ?? 0) + item.count);
+		// Keep the visible order stable while pagination is adding older relay
+		// results. Resorting here made existing tags jump around (or disappear at
+		// the cache cap) instead of appending the next page.
+		const tagsByName = new Map(existing.map((item) => [item.tag, { ...item }]));
+		const merged = existing.map((item) => tagsByName.get(item.tag)!);
+		for (const item of incoming) {
+			const current = tagsByName.get(item.tag);
+			if (current) {
+				current.count += item.count;
+				continue;
+			}
+			const next = { ...item };
+			tagsByName.set(item.tag, next);
+			merged.push(next);
 		}
-		return [...counts]
-			.map(([tag, count]) => ({ tag, count }))
-			.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
-			.slice(0, MAX_CACHED_TAGS);
+		return merged;
 	}
 
 	function mergeCreators(existing: Creator[], incoming: Creator[]) {
 		const creatorsByKey = new Map(existing.map((creator) => [creator.pubkey, { ...creator }]));
+		const merged = existing.map((creator) => creatorsByKey.get(creator.pubkey)!);
 		for (const creator of incoming) {
 			const current = creatorsByKey.get(creator.pubkey);
 			if (current) {
 				current.count += creator.count;
 				current.latest = Math.max(current.latest, creator.latest);
 			} else {
-				creatorsByKey.set(creator.pubkey, { ...creator });
+				const next = { ...creator };
+				creatorsByKey.set(creator.pubkey, next);
+				merged.push(next);
 			}
 		}
-		return [...creatorsByKey.values()]
-			.sort((a, b) => b.count - a.count || b.latest - a.latest)
-			.slice(0, MAX_CACHED_CREATORS);
+		return merged;
 	}
 
 	function discoveryUrls() {
@@ -448,11 +459,8 @@
 			data: {
 				trendTags: Object.entries(tags)
 					.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-					.slice(0, MAX_CACHED_TAGS)
 					.map(([tag, count]) => ({ tag, count })),
-				creators: Object.values(authors)
-					.sort((a, b) => b.count - a.count || b.latest - a.latest)
-					.slice(0, MAX_CACHED_CREATORS),
+				creators: Object.values(authors).sort((a, b) => b.count - a.count || b.latest - a.latest),
 				mediaItems: nextMedia,
 				notes: options.includeNotes ? nextNotes : undefined
 			},
@@ -461,8 +469,8 @@
 	}
 
 	function applyDiscoverData(data: Omit<DiscoverCache, 'savedAt'>) {
-		trendTags = data.trendTags.slice(0, MAX_CACHED_TAGS);
-		creators = data.creators.slice(0, MAX_CACHED_CREATORS);
+		trendTags = data.trendTags;
+		creators = data.creators;
 		mediaItems = data.mediaItems.slice(0, MAX_CACHED_MEDIA).map((item) => ({
 			...item,
 			kind: item.kind ?? 'image',
@@ -538,6 +546,8 @@
 				DISCOVER_CACHE_KEY,
 				JSON.stringify({
 					...data,
+					trendTags: data.trendTags.slice(0, MAX_PERSISTED_TAGS),
+					creators: data.creators.slice(0, MAX_PERSISTED_CREATORS),
 					discoveryEnabled: algorithmPreferences.relayDiscovery.discover,
 					savedAt: Date.now()
 				})
@@ -690,8 +700,10 @@
 			if (nextNotes.length) {
 				notes = [...notes, ...nextNotes];
 				profiles.ensure(nextNotes.map((note) => note.pubkey));
-				saveCurrentDiscoverCache();
 			}
+			// Tags and people can be new even when this page has no additional
+			// visible notes, so persist the bounded startup snapshot either way.
+			saveCurrentDiscoverCache();
 			console.debug('[Discover pagination] Older notes relay request completed', {
 				loaded: nextNotes.length,
 				hasMoreNotes,
@@ -1348,7 +1360,16 @@
 										href={`/profile/${creator.pubkey}`}
 										class="min-w-0 transition hover:text-primary-600"
 									>
-										<p class="truncate text-[14px] font-bold">{name}</p>
+										<p class="flex min-w-0 items-center gap-1 text-[14px] font-bold">
+											<span class="truncate">{name}</span>
+											{#if profile?.nip05}
+												<Icon
+													name="i-lucide-badge-check"
+													class="size-3.5 shrink-0 text-primary-500"
+													title={`NIP-05: ${profile.nip05}`}
+												/>
+											{/if}
+										</p>
 										<p class="truncate font-mono text-[10px] text-[var(--ui-text-dimmed)]">
 											{shortKey(npubEncode(creator.pubkey), 12, 4)}
 										</p>
