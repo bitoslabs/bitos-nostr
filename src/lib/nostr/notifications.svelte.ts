@@ -168,7 +168,7 @@ class NotificationsStore {
 		this.hasMore = true;
 		this.connected = false;
 		this.error = null;
-		this.unsub = subscribe([this.notificationFilter(me)], {
+		this.unsub = subscribe(this.notificationFilters(me), {
 			oneose: () => {
 				this.loading = false;
 				this.connected = true;
@@ -203,19 +203,32 @@ class NotificationsStore {
 		this.loadedFor = '';
 	};
 
-	private notificationFilter(me: string, until?: number) {
-		return {
-			kinds: [
-				NOSTR_KINDS.TEXT_NOTE,
-				NOSTR_KINDS.CONTACT_LIST,
-				NOSTR_KINDS.REACTION,
-				NOSTR_KINDS.REPOST,
-				NOSTR_KINDS.ZAP
-			],
-			'#p': [me],
-			limit: PAGE_LIMIT,
-			...(until ? { until } : {})
-		};
+	/**
+	 * Keep zap receipts in their own filter. Relay limits apply to the combined
+	 * result of a filter, so a busy account's notes/reactions could otherwise
+	 * crowd valid kind 9735 receipts out of the notification history.
+	 */
+	private notificationFilters(me: string, until?: number) {
+		const timeBound = until ? { until } : {};
+		return [
+			{
+				kinds: [
+					NOSTR_KINDS.TEXT_NOTE,
+					NOSTR_KINDS.CONTACT_LIST,
+					NOSTR_KINDS.REACTION,
+					NOSTR_KINDS.REPOST
+				],
+				'#p': [me],
+				limit: PAGE_LIMIT,
+				...timeBound
+			},
+			{
+				kinds: [NOSTR_KINDS.ZAP],
+				'#p': [me],
+				limit: PAGE_LIMIT,
+				...timeBound
+			}
+		];
 	}
 
 	async loadMore() {
@@ -234,7 +247,7 @@ class NotificationsStore {
 				if (!events.length || added === 0 || this.items.length >= MAX_ITEMS) this.hasMore = false;
 				return added;
 			};
-			const events = await queryPrimaryFirst([this.notificationFilter(me, oldest.createdAt - 1)], {
+			const events = await queryPrimaryFirst(this.notificationFilters(me, oldest.createdAt - 1), {
 				onSecondary: (mergedEvents) => {
 					applyEvents(mergedEvents);
 				}
