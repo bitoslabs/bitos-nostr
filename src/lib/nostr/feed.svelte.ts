@@ -29,6 +29,14 @@ const PAGE_LIMIT = 80;
 const MAX_NOTES = 1000;
 const MAX_PENDING_NOTES = 100;
 const MAX_TEXT_NOTE_CHARS = 16_000;
+const FEED_POST_KINDS = [
+	NOSTR_KINDS.TEXT_NOTE,
+	NOSTR_KINDS.PICTURE,
+	NOSTR_KINDS.VIDEO,
+	NOSTR_KINDS.SHORT_VIDEO,
+	NOSTR_KINDS.ADDRESSABLE_VIDEO,
+	NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+];
 const MAX_BUFFERED_REACTIONS = 2_000;
 
 type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
@@ -111,7 +119,7 @@ class FeedStore {
 		this.unsub = subscribe(
 			[
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					kinds: [...FEED_POST_KINDS, NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
 					limit: INITIAL_LIMIT
 				}
 			],
@@ -122,7 +130,7 @@ class FeedStore {
 					void this.hydrateActivity(this.notes.map((note) => note.id));
 				},
 				onevent: (ev) => {
-					if (ev.kind === NOSTR_KINDS.TEXT_NOTE)
+					if (FEED_POST_KINDS.includes(ev.kind as (typeof FEED_POST_KINDS)[number]))
 						this.ingestNote(ev, { queueIfLive: this.connected });
 					else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
 					else if (ev.kind === NOSTR_KINDS.ZAP) this.ingestZap(ev);
@@ -175,7 +183,7 @@ class FeedStore {
 			const events = await queryPrimaryFirst(
 				[
 					{
-						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						kinds: FEED_POST_KINDS,
 						limit: PAGE_LIMIT,
 						until: oldest.createdAt - 1
 					}

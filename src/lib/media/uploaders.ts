@@ -18,7 +18,7 @@ import { hexToBytes } from '$lib/nostr/hex';
 
 export type MediaProviderId = 'blossom' | 'cloudinary' | 's3';
 export type UploadedMediaProviderId = MediaProviderId | 'server';
-export type UploadPurpose = 'note' | 'story' | 'message' | 'profile' | 'test';
+export type UploadPurpose = 'note' | 'story' | 'message' | 'group' | 'profile' | 'test';
 
 export interface UploadOptions {
 	pubkey?: string;

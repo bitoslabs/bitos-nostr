@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { env } from '$env/dynamic/public';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -61,6 +61,7 @@
 	import { confirms } from '$lib/stores/confirms.svelte';
 	import { callSettings } from '$lib/stores/call-settings.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
+	import { readDraft, createDraftWriter } from '$lib/stores/drafts';
 	import {
 		playConnectedTone,
 		playOutgoingTone,
@@ -123,6 +124,9 @@
 	let newGroupName = $state('');
 	let newGroupMembers = $state('');
 	let memberInput = $state('');
+	let renameGroupOpen = $state(false);
+	let renameGroupName = $state('');
+	let renameBusy = $state(false);
 	let activeCall = $state<CallKind | null>(null);
 	let preCallKind = $state<CallKind | null>(null);
 	let showPreCall = $state(false);
@@ -1614,6 +1618,23 @@
 		}
 	}
 
+	// Per-conversation drafts — switching chats saves/restores each draft
+	// (same store the story + community composers use). `selected` keys it.
+	let draftWriter = createDraftWriter('chat:none');
+	$effect(() => {
+		const key = selected || 'none';
+		untrack(() => {
+			draftWriter.flush();
+			draftWriter = createDraftWriter(`chat:${key}`);
+			const saved = readDraft(`chat:${key}`);
+			draft = saved?.text ?? '';
+		});
+	});
+	$effect(() => {
+		if (!draft.trim()) return;
+		draftWriter.write({ text: draft });
+	});
+
 	function selectChat(key: string) {
 		popovers.close();
 		if (selected === key) return;
@@ -1843,6 +1864,44 @@
 		const failed = results.filter((result) => result.status === 'rejected').length;
 		if (failed) {
 			toasts.warning(`${failed} membership update DM${failed === 1 ? '' : 's'} could not be sent`);
+		}
+	}
+
+	/**
+	 * Rename a private group: update local state, then broadcast a
+	 * rename-group control DM so every member's client adopts the new name.
+	 */
+	async function renameGroup(groupId: string, nextName: string) {
+		const name = nextName.trim().slice(0, 60);
+		if (!name) {
+			toasts.error('Enter a group name');
+			return;
+		}
+		let updated: GroupThread | undefined;
+		groupThreads = groupThreads.map((group) => {
+			if (group.id !== groupId) return group;
+			updated = {
+				...group,
+				name,
+				initials: initialsFor(name) || group.initials,
+				messages: [
+					...group.messages,
+					{
+						id: `rename:${Date.now()}`,
+						author: 'BitOS',
+						initials: 'BI',
+						content: `Group renamed to ${name}`,
+						createdAt: Math.floor(Date.now() / 1000),
+						type: 'text'
+					}
+				]
+			};
+			return updated;
+		});
+		saveGroups();
+		if (updated && updated.name === name) {
+			await broadcastGroupControl(updated, 'rename-group', identity.current?.pk ?? '');
+			toasts.success('Group renamed');
 		}
 	}
 
@@ -2104,6 +2163,7 @@
 	async function send() {
 		const body = composedMessageBody();
 		if (!body || !selected || uploadingMessage) return;
+		draftWriter.clear();
 		draft = '';
 		messageAttachments = [];
 		if (selected.startsWith('group:')) {
@@ -2997,12 +3057,14 @@
 				placeholder="Search messages..."
 			/>
 			<div class="mt-3 flex gap-1">
-				{#each [{ k: 'all', l: 'All' }, { k: 'unread', l: 'Unread', n: unreadTotal }, { k: 'groups', l: 'Groups' }] as tab (tab.k)}
+				{#each [{ k: 'all', l: 'All' }, { k: 'unread', l: 'Unread', n: unreadTotal }, { k: 'groups', l: 'Groups', i: 'i-lucide-lock', t: 'Private groups — end-to-end encrypted, BitOS to BitOS' }] as tab (tab.k)}
 					<button
 						type="button"
 						onclick={() => (filter = tab.k as ChatFilter)}
+						title={tab.t}
 						class="pill-tab flex items-center gap-1 {filter === tab.k ? 'active' : ''}"
 					>
+						{#if tab.i}<Icon name={tab.i} class="size-3.5 shrink-0" />{/if}
 						{tab.l}
 						{#if tab.n}
 							<span class="rounded-full bg-primary-500 px-1.5 py-0.5 text-[10px] text-white">
@@ -3123,7 +3185,24 @@
 					{/if}
 				</div>
 			{/each}
-			{#if !filtered.length}
+			{#if !filtered.length && filter === 'groups'}
+				<button
+					type="button"
+					onclick={() => {
+						showNew = true;
+						newMode = 'group';
+					}}
+					class="mx-4 mt-2 flex w-[calc(100%-2rem)] flex-col items-center gap-2 rounded-2xl border border-dashed border-[var(--ui-border)] px-3 py-6 text-center transition hover:border-primary-500/40"
+				>
+					<Icon name="i-lucide-lock" class="size-5 text-primary-500" />
+					<span class="text-[12.5px] font-bold text-[var(--ui-text-muted)]"
+						>Create a private group</span
+					>
+					<span class="text-[11px] text-[var(--ui-text-dimmed)]"
+						>End-to-end encrypted, invite by DM</span
+					>
+				</button>
+			{:else if !filtered.length}
 				<p class="px-4 py-10 text-center text-[12.5px] text-[var(--ui-text-dimmed)]">
 					No conversations match this view.
 				</p>
@@ -3197,8 +3276,12 @@
 							</h2>
 							<p class="flex items-center gap-1.5 text-[12px] text-[var(--ui-text-muted)]">
 								{#if active.kind === 'group'}
-									<span class="online-dot"></span>
-									{active.onlineCount} online - {active.memberCount} members
+									<Icon
+										name="i-lucide-lock"
+										title="Private group — end-to-end encrypted"
+										class="size-3.5 text-[var(--tone-success-text)]"
+									/>
+									{active.memberCount} members - encrypted
 								{:else}
 									<Icon name="i-lucide-lock" class="size-3.5 text-[var(--tone-success-text)]" />
 									Encrypted - Secure DMs + legacy fallback
@@ -4149,12 +4232,14 @@
 
 <Dialog bind:open={showNew} title="New chat">
 	<div class="mb-4 flex gap-1">
-		{#each [{ key: 'dm', label: 'Direct' }, { key: 'group', label: 'Group' }] as option (option.key)}
+		{#each [{ key: 'dm', label: 'Direct', icon: 'i-lucide-user-round' }, { key: 'group', label: 'Private group', icon: 'i-lucide-lock' }] as option (option.key)}
 			<button
 				type="button"
 				onclick={() => (newMode = option.key as ChatKind)}
-				class="pill-tab {newMode === option.key ? 'active' : ''}"
+				title="Private groups are end-to-end encrypted via DMs — BitOS to BitOS"
+				class="pill-tab flex items-center gap-1 {newMode === option.key ? 'active' : ''}"
 			>
+				<Icon name={option.icon} class="size-3.5 shrink-0" />
 				{option.label}
 			</button>
 		{/each}
@@ -4183,10 +4268,22 @@
 				placeholder="Members, npubs, or hex keys"
 				class="w-full"
 			/>
-			<p class="text-[12px] text-[var(--ui-text-muted)]">
-				Pubkey members receive an encrypted DM invite. Accepted groups are still local until a group
-				relay protocol is connected.
-			</p>
+			<div class="space-y-2">
+				<p class="flex items-start gap-1.5 text-[12px] leading-snug text-[var(--ui-text-muted)]">
+					<Icon
+						name="i-lucide-lock"
+						class="mt-0.5 size-3.5 shrink-0 text-[var(--tone-success-text)]"
+					/>
+					Members get an encrypted invite by DM. Only BitOS members can join — messages stay end-to-end
+					encrypted.
+				</p>
+				<p class="flex items-start gap-1.5 text-[12px] leading-snug text-[var(--ui-text-dimmed)]">
+					<Icon name="i-lucide-users-round" class="mt-0.5 size-3.5 shrink-0" />
+					Want a public room anyone (from any Nostr app) can join? Create a
+					<span class="font-semibold text-[var(--ui-text-muted)]">Community</span> — see Communities in
+					the nav.
+				</p>
+			</div>
 		</div>
 	{/if}
 	{#snippet footer()}
@@ -4230,7 +4327,18 @@
 						{active.name}
 					</a>
 				{:else}
-					<p class="truncate text-[15px] font-bold">{active.name}</p>
+					<button
+						type="button"
+						onclick={() => {
+							renameGroupName = activeGroup?.name ?? active.name;
+							renameGroupOpen = true;
+						}}
+						class="flex min-w-0 items-center gap-1.5 text-left transition hover:text-primary-600 dark:hover:text-primary-300"
+						aria-label="Rename group"
+					>
+						<span class="truncate text-[15px] font-bold">{active.name}</span>
+						<Icon name="i-lucide-pencil" class="size-3.5 shrink-0 opacity-60" />
+					</button>
 				{/if}
 				<p class="mt-0.5 text-[11px] text-[var(--ui-text-muted)]">
 					{active.kind === 'group'
@@ -4244,7 +4352,7 @@
 		>
 			<Icon name="i-lucide-lock" class="mr-1 inline size-3.5 text-[var(--tone-success-text)]" />
 			{active.kind === 'group'
-				? 'This group thread is local UI state until a Nostr group protocol is connected.'
+				? 'Private group — messages fan out as end-to-end encrypted DMs (NIP-17) to each member, so only invited BitOS members can read them. Need a public room? Open Communities in the nav.'
 				: 'Messages prefer Secure DMs (NIP-17) and can still read legacy NIP-04 chats. Calls and file uploads require additional Nostr-compatible services.'}
 		</div>
 		{#if activeGroup}
@@ -5193,3 +5301,43 @@
 		/>
 	</div>
 {/if}
+
+<!-- Rename private group -->
+<Dialog bind:open={renameGroupOpen} title="Rename group">
+	<div class="space-y-3">
+		<label class="block space-y-1">
+			<span class="text-[12px] font-bold text-[var(--ui-text-muted)]">Group name</span>
+			<input
+				bind:value={renameGroupName}
+				maxlength="60"
+				class="w-full rounded-xl border border-[var(--ui-border)] bg-[var(--ui-bg-muted)] px-3 py-2 text-[13px] outline-none focus:border-primary-500"
+			/>
+		</label>
+		<p class="flex items-start gap-1.5 text-[11.5px] leading-snug text-[var(--ui-text-dimmed)]">
+			<Icon name="i-lucide-info" class="mt-px size-3.5 shrink-0" />
+			Members receive an encrypted rename update, so the new name syncs across everyone's devices.
+		</p>
+	</div>
+	{#snippet footer()}
+		<Button color="neutral" variant="subtle" onclick={() => (renameGroupOpen = false)}
+			>Cancel</Button
+		>
+		<Button
+			color="primary"
+			icon="i-lucide-check"
+			disabled={renameBusy || !renameGroupName.trim()}
+			onclick={async () => {
+				if (!activeGroup) return;
+				renameBusy = true;
+				try {
+					await renameGroup(activeGroup.id, renameGroupName);
+					renameGroupOpen = false;
+				} finally {
+					renameBusy = false;
+				}
+			}}
+		>
+			{renameBusy ? 'Saving…' : 'Rename'}
+		</Button>
+	{/snippet}
+</Dialog>

@@ -67,7 +67,7 @@ export type MessageMedia = {
 	kind: 'image' | 'video' | 'file';
 };
 
-export type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
+export type GroupControlType = 'add-member' | 'remove-member' | 'leave-group' | 'rename-group';
 export type GroupControlPayload = GroupInvite & {
 	type: GroupControlType;
 	member: string;
@@ -228,7 +228,9 @@ export function groupControlText(
 			? `A member was added to "${group.name}" on BitOS.`
 			: type === 'remove-member'
 				? `A member was removed from "${group.name}" on BitOS.`
-				: `A member left "${group.name}" on BitOS.`;
+				: type === 'rename-group'
+					? `"${group.name}" was renamed on BitOS.`
+					: `A member left "${group.name}" on BitOS.`;
 	return [
 		label,
 		'Open BitOS Messages to sync this local group membership update.',
@@ -258,13 +260,21 @@ export function parseGroupControl(content: string): GroupControlPayload | null {
 			!from ||
 			!HEX_PUBKEY.test(from) ||
 			!type ||
-			!['add-member', 'remove-member', 'leave-group'].includes(type) ||
-			!member ||
-			!HEX_PUBKEY.test(member)
+			!['add-member', 'remove-member', 'leave-group', 'rename-group'].includes(type)
 		) {
 			return null;
 		}
-		return { id, name, from: from.toLowerCase(), type, member: member.toLowerCase(), members };
+		// `member` targets a pubkey for membership actions; for rename-group it
+		// is the sender (kept for payload-shape compatibility).
+		const targetMember = member && HEX_PUBKEY.test(member) ? member : from;
+		return {
+			id,
+			name,
+			from: from.toLowerCase(),
+			type,
+			member: targetMember.toLowerCase(),
+			members
+		};
 	} catch {
 		return null;
 	}

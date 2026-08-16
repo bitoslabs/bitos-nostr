@@ -80,5 +80,5 @@ export function parseContent(content: string): ContentToken[] {
 }
 
 export function isEventReference(value: string): boolean {
-	return /^nostr:(?:note1|nevent1)/iu.test(value);
+	return /^nostr:(?:note1|nevent1|naddr1)/iu.test(value);
 }

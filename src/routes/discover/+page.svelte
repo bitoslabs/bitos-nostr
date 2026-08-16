@@ -82,6 +82,14 @@
 	const DISCOVER_PAGE_EVENT_LIMIT = 180;
 	const DISCOVER_SEARCH_EVENT_LIMIT = 180;
 	const DISCOVER_TEXT_FALLBACK_LIMIT = 240;
+	const DISCOVER_CONTENT_KINDS = [
+		NOSTR_KINDS.TEXT_NOTE,
+		NOSTR_KINDS.PICTURE,
+		NOSTR_KINDS.VIDEO,
+		NOSTR_KINDS.SHORT_VIDEO,
+		NOSTR_KINDS.ADDRESSABLE_VIDEO,
+		NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+	];
 	const INITIAL_MEDIA_VISIBLE = 24;
 	const INITIAL_NOTES_VISIBLE = 20;
 	const INITIAL_TAGS_VISIBLE = 18;
@@ -617,7 +625,7 @@
 		if (!options.background) loading = true;
 		refreshingRelays = true;
 		try {
-			const filters = [{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: DISCOVER_INITIAL_EVENT_LIMIT }];
+			const filters = [{ kinds: DISCOVER_CONTENT_KINDS, limit: DISCOVER_INITIAL_EVENT_LIMIT }];
 			let discovered: Awaited<ReturnType<typeof queryUrls>> = [];
 			const applyResults = (events: Awaited<ReturnType<typeof queryPrimaryFirst>>) => {
 				const combined = mergeEvents(events, discovered);
@@ -680,7 +688,7 @@
 		try {
 			const events = await queryUrls(relays.orderedReadUrls, [
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					kinds: DISCOVER_CONTENT_KINDS,
 					limit: DISCOVER_PAGE_EVENT_LIMIT,
 					until: oldestNoteEventCreatedAt - 1
 				}
@@ -745,7 +753,7 @@
 			while (nextMedia.length < MEDIA_PAGE_SIZE && hasMoreMedia && nextCursor > 0 && attempts < 4) {
 				const events = await queryUrls(relays.orderedReadUrls, [
 					{
-						kinds: [NOSTR_KINDS.TEXT_NOTE],
+						kinds: DISCOVER_CONTENT_KINDS,
 						limit: DISCOVER_PAGE_EVENT_LIMIT,
 						until: nextCursor - 1
 					}
@@ -979,12 +987,12 @@
 
 			const filters = [
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					kinds: DISCOVER_CONTENT_KINDS,
 					limit: DISCOVER_SEARCH_EVENT_LIMIT,
 					search: term
 				} as Filter,
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					kinds: DISCOVER_CONTENT_KINDS,
 					limit: DISCOVER_SEARCH_EVENT_LIMIT,
 					'#t': [queryTag || term.toLowerCase()]
 				} as Filter,
@@ -992,7 +1000,7 @@
 				// too, then apply the same text/tag matching locally as a reliable
 				// fallback for relays that do not implement `search`.
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					kinds: DISCOVER_CONTENT_KINDS,
 					limit: DISCOVER_TEXT_FALLBACK_LIMIT
 				} as Filter
 			];

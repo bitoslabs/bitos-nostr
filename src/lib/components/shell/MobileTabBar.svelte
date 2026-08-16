@@ -19,7 +19,13 @@
 	const tabs = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
-		{ to: '/messages', label: 'Chats', icon: 'i-lucide-message-circle-more', badge: true, requiresAuth: true },
+		{
+			to: '/messages',
+			label: 'Chats',
+			icon: 'i-lucide-message-circle-more',
+			badge: true,
+			requiresAuth: true
+		},
 		{
 			to: '/notifications',
 			label: 'Activity',
@@ -30,6 +36,12 @@
 	];
 
 	const moreItems = [
+		{
+			to: '/communities',
+			label: 'Communities',
+			icon: 'i-lucide-users-round',
+			requiresAuth: true
+		},
 		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
 		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
 		{ to: '/bookmarks', label: 'Saved', icon: 'i-lucide-bookmark', requiresAuth: true },
@@ -79,23 +91,22 @@
 >
 	{#each visibleTabs as tab (tab.to)}
 		{@const active = isActive(tab.to)}
-		<a
-			href={tab.to}
-			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
-		>
+		<a href={tab.to} class="relative flex flex-1 items-center justify-center px-1.5 py-2">
 			<span
-				class="rounded-2xl relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {active
+				class="relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-2 text-[10.5px] font-semibold transition-colors {active
 					? 'text-primary-600 dark:text-primary-300'
 					: 'text-[var(--ui-text-dimmed)]'}"
 			>
 				<span class="relative">
 					<Icon
 						name={tab.icon}
-						class="size-[22px] transition-transform {active ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+						class="size-[22px] transition-transform {active
+							? 'scale-105 text-primary-500 dark:text-primary-300'
+							: ''}"
 					/>
 					{#if (tab.badge && unread > 0) || (tab.notifications && notificationUnread > 0)}
 						<span
-							class="absolute -top-1 -right-2 z-20 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white ring-2 ring-[var(--surface-bg)] shadow-[var(--glow-primary)]"
+							class="absolute -top-1 -right-2 z-20 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
 							>{tab.notifications
 								? notificationUnread > 9
 									? '9+'
@@ -121,13 +132,15 @@
 		{#snippet trigger(open)}
 			{@const show = moreActive || open}
 			<span
-				class="rounded-2xl relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 px-2 py-2 text-[10.5px] font-semibold transition-colors {show
+				class="relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-2 text-[10.5px] font-semibold transition-colors {show
 					? 'text-primary-600 dark:text-primary-300'
 					: 'text-[var(--ui-text-dimmed)]'}"
 			>
 				<Icon
 					name="i-lucide-menu"
-					class="size-[22px] transition-transform {show ? 'scale-105 text-primary-500 dark:text-primary-300' : ''}"
+					class="size-[22px] transition-transform {show
+						? 'scale-105 text-primary-500 dark:text-primary-300'
+						: ''}"
 				/>
 				<span>More</span>
 			</span>
@@ -155,7 +168,7 @@
 
 			{#if identity.accounts.length > 1}
 				<MenuDivider />
-				<p class="px-3 pb-1 pt-0.5 text-[11px] font-semibold text-[var(--ui-text-muted)]">
+				<p class="px-3 pt-0.5 pb-1 text-[11px] font-semibold text-[var(--ui-text-muted)]">
 					Switch account
 				</p>
 				{#each identity.accounts as account (account.pk)}
@@ -175,9 +188,7 @@
 							<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
 								{accountName(account)}
 							</span>
-							<span
-								class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]"
-							>
+							<span class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]">
 								{shortKey(account.npub, 8, 5)}
 							</span>
 						</span>
@@ -195,18 +206,14 @@
 			<MenuItem
 				href={item.to}
 				icon={item.icon}
-				class={isActive(item.to)
-					? 'bg-primary-500/10 text-primary-600 dark:text-primary-400'
-					: ''}
+				class={isActive(item.to) ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400' : ''}
 			>
 				{item.label}
 			</MenuItem>
 		{/each}
 		{#if !me}
 			<MenuDivider />
-			<MenuItem href="/welcome" icon="i-lucide-log-in">
-				Create or import a key
-			</MenuItem>
+			<MenuItem href="/welcome" icon="i-lucide-log-in">Create or import a key</MenuItem>
 		{/if}
 	</Popover>
 </nav>

@@ -173,6 +173,45 @@ export function queryUrls(urls: string[], filters: Filter[]): Promise<Event[]> {
 	return runQuery([...new Set(urls)], filters);
 }
 
+/** Subscribe to filters on explicit relay URLs (e.g. NIP-29 group relays)
+ * without touching the user's configured relay list. */
+export function subscribeUrls(
+	urls: string[],
+	filters: Filter[],
+	handlers: SubscriptionHandlers
+): () => void {
+	if (!browser || !urls.length || !filters.length) return () => {};
+	const p = getPool();
+	const closers: Array<() => void> = [];
+	for (const filter of filters) {
+		const sub = p.subscribeMany([...new Set(urls)], filter, {
+			onevent: handlers.onevent,
+			oneose: handlers.oneose,
+			onclose: handlers.onclose
+		});
+		closers.push(() => {
+			try {
+				sub.close();
+			} catch {
+				/* ignore */
+			}
+		});
+	}
+	return () => closers.forEach((c) => c());
+}
+
+/** Publish to explicit relay URLs (e.g. a NIP-29 group relay). Throws when
+ * every target relay rejects, mirroring `publish()`'s behavior. */
+export async function publishUrls(urls: string[], event: Event): Promise<string[]> {
+	if (!browser) throw new Error('publishUrls() is only available in the browser');
+	if (!urls.length) throw new Error('No target relays given');
+	const { accepted, failures } = await publishToUrls([...new Set(urls)], event);
+	if (!accepted.length) {
+		throw new Error(`Failed to publish kind ${event.kind}: ${failures.join(' | ')}`);
+	}
+	return accepted;
+}
+
 /** Query the primary read relay first, then merge secondary relays in the background. */
 export async function queryPrimaryFirst(
 	filters: Filter[],

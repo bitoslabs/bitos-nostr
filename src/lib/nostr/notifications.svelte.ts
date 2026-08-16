@@ -15,9 +15,27 @@ import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
 const MAX_ITEMS = 600;
-const STORAGE_KEY = 'bitos:read-notifications';
-/** Per-type mutes persisted to localStorage (e.g. user hides likes). */
-const MUTE_KEY = 'bitos:muted-notifications';
+const MAX_READ_IDS = 200;
+const CACHE_WRITE_DEBOUNCE_MS = 200;
+const CACHE_DB = 'bitos-notifications';
+const CACHE_STORE = 'accounts';
+const READ_STATE_KEY_PREFIX = 'bitos:notification-read-state';
+const LEGACY_READ_KEY = 'bitos:read-notifications';
+const LEGACY_MUTE_KEY = 'bitos:muted-notifications';
+
+type ReadCursor = { createdAt: number; idsAtCreatedAt: string[] };
+type NotificationCache = {
+	version: 1;
+	account: string;
+	events: NotificationItem[];
+	readCursor: ReadCursor;
+	/** Events individually opened after the read cursor. Kept bounded. */
+	readIds: string[];
+	muted: NotificationItem['type'][];
+};
+type NotificationReadState = Pick<NotificationCache, 'readCursor' | 'readIds'>;
+
+const EMPTY_CURSOR: ReadCursor = { createdAt: 0, idsAtCreatedAt: [] };
 
 function eventTarget(
 	tags: string[][],
@@ -89,7 +107,10 @@ class NotificationsStore {
 	error = $state<string | null>(null);
 	/** Muted notification types (likes, follows, …) hidden from the list. */
 	muted = $state<Set<NotificationItem['type']>>(new SvelteSet());
+	private readCursor: ReadCursor = { ...EMPTY_CURSOR };
 	private readIds = new Set<string>();
+	private loadedFor = '';
+	private cacheTimer: ReturnType<typeof setTimeout> | null = null;
 	private unsub: (() => void) | null = null;
 
 	/** Visible items after per-type mute filtering (drives UI + badge). */
@@ -115,9 +136,13 @@ class NotificationsStore {
 		const me = identity.current?.pk;
 		if (!me) return;
 		this.stop();
-		this.loadRead();
-		this.loadMuted();
 		this.items = [];
+		this.readCursor = { ...EMPTY_CURSOR };
+		this.readIds.clear();
+		this.muted = new SvelteSet();
+		this.loadedFor = me;
+		this.loadReadState(me);
+		void this.loadCached(me);
 		this.loading = true;
 		this.loadingMore = false;
 		this.hasMore = true;
@@ -142,6 +167,7 @@ class NotificationsStore {
 			this.unsub();
 			this.unsub = null;
 		}
+		this.flushPersist();
 		this.connected = false;
 	};
 
@@ -152,7 +178,9 @@ class NotificationsStore {
 		this.hasMore = true;
 		this.connected = false;
 		this.error = null;
+		this.readCursor = { ...EMPTY_CURSOR };
 		this.readIds.clear();
+		this.loadedFor = '';
 	};
 
 	private notificationFilter(me: string, until?: number) {
@@ -214,6 +242,7 @@ class NotificationsStore {
 		this.items = [item, ...this.items]
 			.sort((a, b) => b.createdAt - a.createdAt)
 			.slice(0, MAX_ITEMS);
+		this.schedulePersist();
 		// Fetch the actor's profile plus anyone they mention inline so preview
 		// @names resolve.
 		profiles.ensure([item.pubkey, ...extractMentionEntities(ev.content).pubkeys]);
@@ -279,34 +308,40 @@ class NotificationsStore {
 			targetId,
 			content,
 			createdAt: ev.created_at,
-			read: this.readIds.has(ev.id),
+			read: this.isRead(ev.id, ev.created_at),
 			raw: ev,
 			...extra
 		};
 	}
 
 	markRead(id: string) {
-		if (this.readIds.has(id)) return;
+		const item = this.items.find((entry) => entry.id === id);
+		if (!item || item.read) return;
 		this.readIds.add(id);
-		this.persistRead();
+		this.trimReadIds();
 		this.items = this.items.map((item) => (item.id === id ? { ...item, read: true } : item));
+		this.persistReadState();
+		// A deliberate read action must survive an immediate refresh; event
+		// ingestion remains debounced, but read state is written straight away.
+		void this.persistCached();
 	}
 
 	/** Mark every item currently in view as read (used when the list is opened). */
 	markVisibleRead(ids: string[]) {
-		const toRead = ids.filter((id) => !this.readIds.has(id));
-		if (!toRead.length) return;
-		for (const id of toRead) this.readIds.add(id);
-		this.persistRead();
-		const next = new Set(toRead);
-		this.items = this.items.map((item) => (next.has(item.id) ? { ...item, read: true } : item));
+		const visible = this.items.filter((item) => ids.includes(item.id));
+		if (!visible.some((item) => !item.read)) return;
+		this.advanceReadCursor(visible);
+		this.items = this.items.map((item) => (ids.includes(item.id) ? { ...item, read: true } : item));
+		this.persistReadState();
+		void this.persistCached();
 	}
 
 	markAllRead() {
 		if (!this.items.some((item) => !item.read)) return;
-		for (const item of this.items) this.readIds.add(item.id);
-		this.persistRead();
+		this.advanceReadCursor(this.items);
 		this.items = this.items.map((item) => ({ ...item, read: true }));
+		this.persistReadState();
+		void this.persistCached();
 	}
 
 	toggleMute(type: NotificationItem['type']) {
@@ -314,7 +349,7 @@ class NotificationsStore {
 		if (next.has(type)) next.delete(type);
 		else next.add(type);
 		this.muted = next;
-		this.persistMuted();
+		this.schedulePersist();
 	}
 
 	setMuted(type: NotificationItem['type'], muted: boolean) {
@@ -322,40 +357,203 @@ class NotificationsStore {
 		if (muted) next.add(type);
 		else next.delete(type);
 		this.muted = next;
-		this.persistMuted();
+		this.schedulePersist();
 	}
 
-	private loadRead() {
-		this.readIds.clear();
-		if (!browser) return;
-		try {
-			const value = localStorage.getItem(STORAGE_KEY);
-			if (!value) return;
-			for (const id of JSON.parse(value) as string[]) this.readIds.add(id);
-		} catch {
-			this.readIds.clear();
+	private isRead(id: string, createdAt: number) {
+		if (createdAt < this.readCursor.createdAt) return true;
+		if (createdAt === this.readCursor.createdAt && this.readCursor.idsAtCreatedAt.includes(id))
+			return true;
+		return this.readIds.has(id);
+	}
+
+	/** Move the cursor to the newest event actually seen by the user. */
+	private advanceReadCursor(items: NotificationItem[]) {
+		const newestAt = Math.max(...items.map((item) => item.createdAt));
+		if (!Number.isFinite(newestAt) || newestAt < this.readCursor.createdAt) return;
+		const idsAtCreatedAt = items
+			.filter((item) => item.createdAt === newestAt)
+			.map((item) => item.id);
+		if (newestAt > this.readCursor.createdAt) {
+			this.readCursor = { createdAt: newestAt, idsAtCreatedAt };
+			this.readIds = new Set([...this.readIds].filter((id) => !idsAtCreatedAt.includes(id)));
+		} else {
+			this.readCursor = {
+				createdAt: newestAt,
+				idsAtCreatedAt: [...new Set([...this.readCursor.idsAtCreatedAt, ...idsAtCreatedAt])]
+			};
 		}
 	}
 
-	private persistRead() {
-		if (!browser) return;
-		localStorage.setItem(STORAGE_KEY, JSON.stringify([...this.readIds].slice(-500)));
+	private trimReadIds() {
+		if (this.readIds.size <= MAX_READ_IDS) return;
+		this.readIds = new Set([...this.readIds].slice(-MAX_READ_IDS));
 	}
 
-	private loadMuted() {
-		if (!browser) return;
+	private cacheRecord(account = this.loadedFor): NotificationCache | null {
+		if (!account) return null;
+		return {
+			version: 1,
+			account,
+			events: this.items.slice(0, MAX_ITEMS),
+			readCursor: this.readCursor,
+			readIds: [...this.readIds],
+			muted: [...this.muted]
+		};
+	}
+
+	private readStateKey(account = this.loadedFor) {
+		return account ? `${READ_STATE_KEY_PREFIX}:${account}` : '';
+	}
+
+	/** A tiny synchronous write-through guard for read actions during page unload. */
+	private persistReadState() {
+		const key = this.readStateKey();
+		if (!browser || !key) return;
 		try {
-			const value = localStorage.getItem(MUTE_KEY);
-			if (!value) return;
-			this.muted = new SvelteSet(JSON.parse(value) as NotificationItem['type'][]);
+			const state: NotificationReadState = {
+				readCursor: this.readCursor,
+				readIds: [...this.readIds]
+			};
+			localStorage.setItem(key, JSON.stringify(state));
 		} catch {
-			this.muted = new SvelteSet();
+			/* IndexedDB remains the primary cache when localStorage is unavailable. */
 		}
 	}
 
-	private persistMuted() {
-		if (!browser) return;
-		localStorage.setItem(MUTE_KEY, JSON.stringify([...this.muted]));
+	private loadReadState(account: string) {
+		try {
+			const raw = localStorage.getItem(this.readStateKey(account));
+			if (!raw) return;
+			const state = JSON.parse(raw) as Partial<NotificationReadState>;
+			if (!state.readCursor || !Array.isArray(state.readIds)) return;
+			this.readCursor = state.readCursor;
+			this.readIds = new Set(state.readIds.slice(-MAX_READ_IDS));
+		} catch {
+			/* Ignore a malformed or unavailable backup. */
+		}
+	}
+
+	private schedulePersist() {
+		if (!browser || this.cacheTimer) return;
+		this.cacheTimer = setTimeout(() => {
+			this.cacheTimer = null;
+			void this.persistCached();
+		}, CACHE_WRITE_DEBOUNCE_MS);
+	}
+
+	private flushPersist() {
+		if (!this.cacheTimer) return;
+		clearTimeout(this.cacheTimer);
+		this.cacheTimer = null;
+		void this.persistCached();
+	}
+
+	private async loadCached(account: string) {
+		const cache = await this.readCache(account);
+		if (!cache || this.loadedFor !== account || identity.current?.pk !== account) return;
+		this.mergeReadState(cache.readCursor, cache.readIds);
+		this.muted = new SvelteSet(cache.muted);
+		for (const item of cache.events) {
+			if (this.items.some((current) => current.id === item.id)) continue;
+			this.items.push({ ...item, read: this.isRead(item.id, item.createdAt) });
+		}
+		this.items = this.items
+			.map((item) => ({ ...item, read: this.isRead(item.id, item.createdAt) }))
+			.sort((a, b) => b.createdAt - a.createdAt)
+			.slice(0, MAX_ITEMS);
+		profiles.ensure(this.items.map((item) => item.pubkey));
+		this.schedulePersist();
+	}
+
+	private mergeReadState(cursor: ReadCursor, readIds: string[]) {
+		if (cursor.createdAt > this.readCursor.createdAt) {
+			this.readCursor = cursor;
+		} else if (cursor.createdAt === this.readCursor.createdAt) {
+			this.readCursor = {
+				createdAt: cursor.createdAt,
+				idsAtCreatedAt: [...new Set([...this.readCursor.idsAtCreatedAt, ...cursor.idsAtCreatedAt])]
+			};
+		}
+		this.readIds = new Set([...this.readIds, ...readIds].slice(-MAX_READ_IDS));
+	}
+
+	private async readCache(account: string): Promise<NotificationCache | null> {
+		try {
+			const db = await this.openCacheDb();
+			const value = await new Promise<unknown>((resolve, reject) => {
+				const request = db
+					.transaction(CACHE_STORE, 'readonly')
+					.objectStore(CACHE_STORE)
+					.get(account);
+				request.onsuccess = () => resolve(request.result);
+				request.onerror = () => reject(request.error);
+			});
+			db.close();
+			if (!this.isCache(value, account)) return this.readLegacyCache(account);
+			return value;
+		} catch {
+			return this.readLegacyCache(account);
+		}
+	}
+
+	private async persistCached() {
+		const cache = this.cacheRecord();
+		if (!cache) return;
+		try {
+			const db = await this.openCacheDb();
+			await new Promise<void>((resolve, reject) => {
+				const request = db
+					.transaction(CACHE_STORE, 'readwrite')
+					.objectStore(CACHE_STORE)
+					.put(cache);
+				request.onsuccess = () => resolve();
+				request.onerror = () => reject(request.error);
+			});
+			db.close();
+		} catch {
+			// IndexedDB can be disabled (private browsing); UI remains functional.
+		}
+	}
+
+	private openCacheDb(): Promise<IDBDatabase> {
+		return new Promise((resolve, reject) => {
+			const request = indexedDB.open(CACHE_DB, 1);
+			request.onupgradeneeded = () =>
+				request.result.createObjectStore(CACHE_STORE, { keyPath: 'account' });
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => reject(request.error);
+		});
+	}
+
+	private isCache(value: unknown, account: string): value is NotificationCache {
+		if (!value || typeof value !== 'object') return false;
+		const cache = value as Partial<NotificationCache>;
+		return (
+			cache.version === 1 &&
+			cache.account === account &&
+			Array.isArray(cache.events) &&
+			!!cache.readCursor &&
+			Array.isArray(cache.readIds) &&
+			Array.isArray(cache.muted)
+		);
+	}
+
+	/** One-time migration from the former global localStorage settings. */
+	private readLegacyCache(account: string): NotificationCache {
+		let readIds: string[] = [];
+		let muted: NotificationItem['type'][] = [];
+		try {
+			readIds = JSON.parse(localStorage.getItem(LEGACY_READ_KEY) ?? '[]') as string[];
+			muted = JSON.parse(
+				localStorage.getItem(LEGACY_MUTE_KEY) ?? '[]'
+			) as NotificationItem['type'][];
+			localStorage.removeItem(LEGACY_READ_KEY);
+			localStorage.removeItem(LEGACY_MUTE_KEY);
+		} catch {
+			/* ignore malformed legacy values */
+		}
+		return { version: 1, account, events: [], readCursor: { ...EMPTY_CURSOR }, readIds, muted };
 	}
 }
 

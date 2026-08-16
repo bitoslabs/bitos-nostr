@@ -38,7 +38,7 @@ type GroupThread = {
 	files: { name: string; meta: string; icon: string }[];
 };
 
-type GroupControlType = 'add-member' | 'remove-member' | 'leave-group';
+type GroupControlType = 'add-member' | 'remove-member' | 'leave-group' | 'rename-group';
 type GroupControlPayload = {
 	id: string;
 	name: string;
@@ -171,13 +171,21 @@ function parseGroupControl(content: string): GroupControlPayload | null {
 			!from ||
 			!/^[0-9a-fA-F]{64}$/.test(from) ||
 			!type ||
-			!['add-member', 'remove-member', 'leave-group'].includes(type) ||
-			!member ||
-			!/^[0-9a-fA-F]{64}$/.test(member)
+			!['add-member', 'remove-member', 'leave-group', 'rename-group'].includes(type)
 		) {
 			return null;
 		}
-		return { id, name, from: from.toLowerCase(), type, member: member.toLowerCase(), members };
+		// member targets a pubkey for membership actions; for rename-group it
+		// falls back to the sender (payload-shape compatibility).
+		const targetMember = member && /^[0-9a-fA-F]{64}$/.test(member) ? member : from;
+		return {
+			id,
+			name,
+			from: from.toLowerCase(),
+			type,
+			member: targetMember.toLowerCase(),
+			members
+		};
 	} catch {
 		return null;
 	}
@@ -190,6 +198,33 @@ function applyGroupControl(
 ): { groups: GroupThread[]; changed: boolean } {
 	const me = identity.current?.pk;
 	const ownActivityStatus = privacyNotificationSettings.state.activity ? 'Online' : 'Offline';
+	// Rename: adopt any member's rename control (the DM layer authenticates the
+	// sender as a group peer). Checked before the membership branches.
+	if (payload.type === 'rename-group') {
+		const current = groups.find((thread) => thread.id === payload.id);
+		if (!current || current.name === payload.name) {
+			return { groups, changed: false };
+		}
+		return {
+			groups: groups.map((thread) =>
+				thread.id === payload.id
+					? {
+							...thread,
+							name: payload.name,
+							initials: initialsFor(payload.name) || thread.initials,
+							messages: appendSystemMessage(
+								thread.messages,
+								`control:rename:${payload.id}:${createdAt}`,
+								`Group renamed to ${payload.name}`,
+								createdAt
+							)
+						}
+					: thread
+			),
+			changed: true
+		};
+	}
+
 	const group = groups.find((thread) => thread.id === payload.id);
 	if (!group) {
 		if (

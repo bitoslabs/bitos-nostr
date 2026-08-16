@@ -118,6 +118,8 @@ export interface DirectMessage {
 export interface Conversation {
 	peer: string;
 	lastMessage?: DirectMessage;
+	/** Last incoming-message position the user has seen. IDs handle same-second events. */
+	readCursor?: { createdAt: number; idsAtCreatedAt: string[] };
 	unread: number;
 	messages: DirectMessage[];
 }
@@ -155,6 +157,12 @@ export interface Identity {
 export const NOSTR_KINDS = {
 	METADATA: 0,
 	TEXT_NOTE: 1,
+	/** NIP-68 picture-first post. */
+	PICTURE: 20,
+	/** NIP-71 normal (typically landscape) video. */
+	VIDEO: 21,
+	/** NIP-71 short-form portrait video. */
+	SHORT_VIDEO: 22,
 	DELETE: 5,
 	REACTION: 7,
 	DIRECT_MESSAGE: 4,
@@ -166,6 +174,32 @@ export const NOSTR_KINDS = {
 	PINNED_NOTES: 10001,
 	/** NIP-65 relay list metadata. */
 	RELAY_LIST: 10002,
+	/** NIP-29 relay-based group chat message. */
+	GROUP_CHAT_MESSAGE: 9,
+	/** NIP-29 reply inside a group chat thread. */
+	GROUP_CHAT_REPLY: 10,
+	/** NIP-29 admin: create a group. */
+	GROUP_CREATE: 9007,
+	/** NIP-29 admin: add a user to a group. */
+	GROUP_ADD_USER: 9000,
+	/** NIP-29 admin: remove (kick) a user. */
+	GROUP_REMOVE_USER: 9001,
+	/** NIP-29 admin: edit group metadata (name/about/picture). */
+	GROUP_EDIT_METADATA: 9002,
+	/** NIP-29 admin: grant a permission (e.g. 'admin'). */
+	GROUP_ADD_PERMISSION: 9003,
+	/** NIP-29 admin: revoke a permission. */
+	GROUP_REMOVE_PERMISSION: 9004,
+	/** NIP-29 member: join a group. */
+	GROUP_JOIN: 9021,
+	/** NIP-29 member: leave a group. */
+	GROUP_LEAVE: 9022,
+	/** NIP-29 relay-published group metadata (addressable). */
+	GROUP_METADATA: 39000,
+	/** NIP-29 relay-published member list. */
+	GROUP_MEMBERS: 39001,
+	/** NIP-29 relay-published admin list. */
+	GROUP_ADMINS: 39002,
 	/** NIP-56 report event. */
 	REPORT: 1984,
 	ZAP: 9735,
@@ -173,5 +207,9 @@ export const NOSTR_KINDS = {
 	LIVE_ACTIVITY: 30311,
 	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
-	STORY_STATUS: 30315
+	STORY_STATUS: 30315,
+	/** NIP-71 addressable short-form portrait video. */
+	ADDRESSABLE_SHORT_VIDEO: 34236,
+	/** NIP-71 addressable normal video. */
+	ADDRESSABLE_VIDEO: 34235
 } as const;

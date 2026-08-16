@@ -20,9 +20,9 @@
 	);
 	const color = $derived(
 		healthy === total && total > 0
-			? 'bg-[linear-gradient(90deg,var(--ui-color-primary-500),var(--color-warm-500))]'
+			? 'bg-[linear-gradient(90deg,var(--color-warm-400),var(--color-warm-600))]'
 			: healthy > 0
-				? 'bg-[linear-gradient(90deg,var(--color-warm-500),var(--ui-color-primary-500))]'
+				? 'bg-[linear-gradient(90deg,var(--color-warm-500),var(--color-warm-600))]'
 				: 'bg-[var(--tone-error-text)]'
 	);
 </script>
@@ -42,6 +42,6 @@
 			: ''}"
 		style="width:{checking
 			? Math.max(progress, 8)
-			: progress}%;box-shadow:0 0 10px color-mix(in oklab,var(--ui-color-primary-500) 45%,transparent);"
+			: progress}%;box-shadow:0 0 10px color-mix(in oklab,var(--color-warm-500) 55%,transparent);"
 	></div>
 </div>
