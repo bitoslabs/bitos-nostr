@@ -17,6 +17,7 @@
 
 	onMount(() => {
 		walletPrefs.load();
+		wallet.restoreCustomNwc();
 		wallet.detectWebLN();
 	});
 

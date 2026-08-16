@@ -176,6 +176,9 @@ class WalletStore {
 
 	start = () => {
 		if (!browser) return;
+		// The app shell may have mounted before this store. Restore here too so a
+		// saved NWC connection is reliable on refresh and account switches.
+		this.restoreCustomNwc();
 		const me = identity.current?.pk;
 		if (!me) return;
 		this.stop();
