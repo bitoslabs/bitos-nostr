@@ -30,29 +30,25 @@ export function bolt11Expiry(bolt11: string): number | null {
 	for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + idx(data[i]);
 
 	// Tagged fields live between the timestamp and the fixed-width signature.
+	// Each field has a one-word type followed by a *fixed*, two-word base-32
+	// length (BOLT #11). Treating that length as a varint desynchronizes the
+	// parser after ordinary fields and can make random signature data look like
+	// an `x` expiry field.
 	const fieldsEnd = data.length - BOLT11_SIGNATURE_CHARS;
 	let i = 7;
-	while (i + 1 < fieldsEnd) {
+	while (i + 2 < fieldsEnd) {
 		const type = data[i];
-		// BOLT11 varint length: values < 31 are the length; 31 adds another
-		// 5-bit word multiplied by 32 each round (mirrors the reference impl).
-		let length = 0;
-		let multiplier = 1;
-		let j = i + 1;
-		while (j < fieldsEnd) {
-			const value = idx(data[j]);
-			if (value < 0) return null;
-			length += (value & 31) * multiplier;
-			multiplier *= 32;
-			j++;
-			if (value < 31) break;
-		}
+		const length = idx(data[i + 1]) * 32 + idx(data[i + 2]);
+		const valueStart = i + 3;
+		if (length < 0 || valueStart + length > fieldsEnd) break;
 		if (type === 'x') {
 			let expiry = 0;
-			for (let k = j; k < j + length && k < fieldsEnd; k++) expiry = expiry * 32 + idx(data[k]);
+			for (let k = valueStart; k < valueStart + length; k++) {
+				expiry = expiry * 32 + idx(data[k]);
+			}
 			return timestamp + expiry;
 		}
-		i = j + length;
+		i = valueStart + length;
 	}
 	return timestamp + BOLT11_DEFAULT_EXPIRY;
 }

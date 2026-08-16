@@ -69,11 +69,6 @@
 		recipientProfile?.display_name || recipientProfile?.name || shortKey(recipientPubkey)
 	);
 	const hasAddress = $derived(!!lightningAddress && !lightningAddress.includes('://'));
-	const walletLabel = $derived(
-		wallet.provider === 'nwc'
-			? 'NWC wallet'
-			: wallet.weblnInfo?.node?.alias?.trim() || 'browser wallet'
-	);
 	const walletBalance = $derived(wallet.weblnEnabled ? wallet.weblnBalance : null);
 	const recipientNpub = $derived(
 		(() => {
@@ -521,36 +516,42 @@
 						</div>
 					</div>
 				{/if}
-				<div class="mt-3 flex flex-wrap gap-2">
+				<div
+					class="mt-3 grid gap-2 {hasConnectedWallet()
+						? 'grid-cols-[minmax(0,1fr)_minmax(0,1fr)_44px]'
+						: 'grid-cols-[minmax(0,1fr)_44px]'}"
+				>
 					{#if hasConnectedWallet()}
 						<button
 							type="button"
 							onclick={payWithWallet}
 							disabled={paying || expired}
-							class="inline-flex min-w-[140px] flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
+							class="inline-flex h-12 min-w-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-2 text-[11px] font-bold whitespace-nowrap text-white transition hover:bg-primary-600 disabled:opacity-60"
 						>
 							<Icon
 								name={paying ? 'i-lucide-loader-circle' : 'i-lucide-wallet'}
 								class="size-3.5 {paying ? 'animate-spin' : ''}"
-							/>{paying ? 'Paying…' : `Pay with ${walletLabel}`}
+							/>{paying ? 'Paying…' : `Pay with ${wallet.provider === 'nwc' ? 'NWC' : 'browser'}`}
 						</button>
 					{/if}
 					<a
 						href={`lightning:${invoice}`}
-						class="inline-flex min-w-[130px] flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"
+						title="Open this invoice in another Lightning wallet"
+						class="inline-flex h-12 min-w-0 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-2 text-[11px] font-bold whitespace-nowrap text-white transition hover:bg-warm-600"
 					>
-						<Icon name="i-lucide-scan-line" class="size-3.5" />Use another wallet
+						<Icon name="i-lucide-scan-line" class="size-3.5" />Open wallet
 					</a>
 					<button
 						type="button"
 						onclick={() => copy(invoice, 'invoice')}
-						title="Copy invoice"
-						class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold"
+						aria-label={copied === 'invoice' ? 'Invoice copied' : 'Copy invoice'}
+						title={copied === 'invoice' ? 'Invoice copied' : 'Copy invoice'}
+						class="inline-flex size-11 items-center justify-center self-center rounded-lg border border-[var(--ui-border-muted)] text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 					>
 						<Icon
 							name={copied === 'invoice' ? 'i-lucide-check' : 'i-lucide-copy'}
-							class="size-3.5 {copied === 'invoice' ? 'text-accent-600' : ''}"
-						/>{copied === 'invoice' ? 'Copied' : 'Copy'}
+							class="size-4 {copied === 'invoice' ? 'text-accent-600' : ''}"
+						/>
 					</button>
 				</div>
 				{#if walletBalance !== null}
