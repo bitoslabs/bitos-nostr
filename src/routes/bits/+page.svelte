@@ -6,6 +6,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
+	import ReplyComposer from '$lib/components/feed/ReplyComposer.svelte';
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -42,6 +43,11 @@
 		savedAt: number;
 		reels: ReelNote[];
 	};
+	type CommentPage = {
+		loaded: boolean;
+		oldestCreatedAt: number;
+		hasMore: boolean;
+	};
 
 	const urlPattern = /https?:\/\/[^\s<>()]+/gi;
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
@@ -57,10 +63,10 @@
 	const INITIAL_RENDERED_REELS = 5;
 	const REEL_RENDER_BATCH = 5;
 	const REEL_PREFETCH_THRESHOLD = 6;
+	const COMMENTS_PAGE_SIZE = 80;
 
 	let loading = $state(true);
 	let loadingComments = $state(false);
-	let postingComment = $state(false);
 	let deletingCommentId = $state('');
 	let loadingMoreReels = $state(false);
 	let hasMoreReels = $state(true);
@@ -73,8 +79,8 @@
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
-	let commentsLoadedFor = $state('');
-	let commentText = $state('');
+	let commentPages = $state<Record<string, CommentPage>>({});
+	let commentReplyTarget = $state<{ id: string; pubkey: string; name: string } | null>(null);
 	let reelVideos = new Map<string, HTMLVideoElement>();
 	let reelCards = new Map<string, HTMLDivElement>();
 	let reelVisibility = new Map<string, number>();
@@ -98,10 +104,7 @@
 	const renderedReels = $derived(rankedReels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < reels.length);
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
-	const currentProfile = $derived(identity.current ? profiles.get(identity.current.pk) : undefined);
-	const currentDisplayName = $derived(
-		currentProfile?.display_name || currentProfile?.name || 'You'
-	);
+	const activeCommentPage = $derived(commentReel ? commentPages[commentReel.id] : undefined);
 
 	function splitTrailingPunctuation(raw: string) {
 		let core = raw;
@@ -432,7 +435,7 @@
 			const activeReel = reelAtScrollPosition();
 			if (activeReel && activeReel.id !== commentReel.id) {
 				commentReel = activeReel;
-				commentText = '';
+				commentReplyTarget = null;
 				void loadComments(activeReel);
 			}
 		}
@@ -577,7 +580,7 @@
 			const next = renderedReels[target];
 			if (next) {
 				commentReel = next;
-				commentText = '';
+				commentReplyTarget = null;
 				void loadComments(next);
 			}
 		}
@@ -715,17 +718,28 @@
 
 	async function openComments(reel: ReelNote) {
 		commentReel = reel;
-		commentText = '';
+		commentReplyTarget = null;
 		await loadComments(reel);
 	}
 
-	async function loadComments(reel: ReelNote, options: { force?: boolean } = {}) {
-		if (!options.force && commentsLoadedFor === reel.id) return;
+	async function loadComments(reel: ReelNote, options: { force?: boolean; more?: boolean } = {}) {
+		const page = commentPages[reel.id];
+		if (!options.force && !options.more && page?.loaded) return;
+		if (options.more && (!page?.hasMore || !page.oldestCreatedAt)) return;
 		loadingComments = true;
 		try {
-			const replyEvents = await queryPrimaryFirst([
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': [reel.id], limit: 200 }
-			]);
+			const filter: {
+				kinds: number[];
+				'#e': string[];
+				limit: number;
+				until?: number;
+			} = {
+				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				'#e': [reel.id],
+				limit: COMMENTS_PAGE_SIZE
+			};
+			if (options.more) filter.until = page!.oldestCreatedAt - 1;
+			const replyEvents = await queryPrimaryFirst([filter]);
 			const replies = replyEvents.map(toFeedNote).filter((note) => note.replyTo === reel.id);
 			const replyIds = replies.map((reply) => reply.id);
 			const reactions = replyIds.length
@@ -734,7 +748,21 @@
 			const withActivity = applyActivityToNotes(replies, reactions, identity.current?.pk);
 			for (const reply of withActivity) feed.upsertNote(reply);
 			profiles.ensure(withActivity.map((reply) => reply.pubkey));
-			commentsLoadedFor = reel.id;
+			const oldestInPage = replyEvents.reduce(
+				(oldest, event) => Math.min(oldest, event.created_at),
+				Number.POSITIVE_INFINITY
+			);
+			const oldestCreatedAt = Number.isFinite(oldestInPage)
+				? Math.min(page?.oldestCreatedAt || Number.POSITIVE_INFINITY, oldestInPage)
+				: page?.oldestCreatedAt || 0;
+			commentPages = {
+				...commentPages,
+				[reel.id]: {
+					loaded: true,
+					oldestCreatedAt,
+					hasMore: replyEvents.length >= COMMENTS_PAGE_SIZE && oldestCreatedAt > 0
+				}
+			};
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load comments');
 		} finally {
@@ -742,20 +770,9 @@
 		}
 	}
 
-	async function submitComment() {
-		if (!commentReel || !commentText.trim() || postingComment) return;
-		feed.upsertNote(commentReel);
-		postingComment = true;
-		try {
-			await feed.reply(commentReel, commentText);
-			commentText = '';
-			await loadComments(commentReel, { force: true });
-			toasts.success('Comment posted');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		} finally {
-			postingComment = false;
-		}
+	async function loadMoreComments() {
+		if (!commentReel || loadingComments || !activeCommentPage?.hasMore) return;
+		await loadComments(commentReel, { more: true });
 	}
 
 	async function likeComment(comment: FeedNote) {
@@ -1144,98 +1161,123 @@
 								class="size-6 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
 							></div>
 						</div>
-					{:else if activeComments.length}
+					{:else}
 						<div class="space-y-6">
-							{#each activeComments as comment (comment.id)}
-								{@const commentProfile = profiles.get(comment.pubkey)}
-								{@const commentName =
-									commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
-								<div class="flex gap-3">
-									<a href={`/profile/${comment.pubkey}`} class="shrink-0">
-										<Avatar
-											pubkey={comment.pubkey}
-											name={commentName}
-											picture={commentProfile?.picture}
-											size={34}
-											frame
-										/>
-									</a>
-									<div class="min-w-0 flex-1">
-										<div class="flex items-start gap-2">
-											<div class="min-w-0 flex-1">
-												<a
-													href={`/profile/${comment.pubkey}`}
-													class="block truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
-												>
-													{commentName}
-												</a>
-												<a
-													href={`/note/${comment.id}?from=reels`}
-													class="block hover:text-primary-500"
-												>
-													<p
-														class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
+							{#if activeCommentPage?.hasMore}
+								<button
+									type="button"
+									onclick={loadMoreComments}
+									disabled={loadingComments || !activeCommentPage?.hasMore}
+									class="mx-auto flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+								>
+									<Icon
+										name={loadingComments ? 'i-lucide-loader-circle' : 'i-lucide-chevron-up'}
+										class="size-3.5 {loadingComments ? 'animate-spin' : ''}"
+									/>
+									{loadingComments ? 'Loading comments…' : 'Load more comments'}
+								</button>
+							{/if}
+							{#if activeComments.length}
+								{#each activeComments as comment (comment.id)}
+									{@const commentProfile = profiles.get(comment.pubkey)}
+									{@const commentName =
+										commentProfile?.display_name ||
+										commentProfile?.name ||
+										shortKey(comment.pubkey)}
+									<div class="flex gap-3">
+										<a href={`/profile/${comment.pubkey}`} class="shrink-0">
+											<Avatar
+												pubkey={comment.pubkey}
+												name={commentName}
+												picture={commentProfile?.picture}
+												size={34}
+												frame
+											/>
+										</a>
+										<div class="min-w-0 flex-1">
+											<div class="flex items-start gap-2">
+												<div class="min-w-0 flex-1">
+													<a
+														href={`/profile/${comment.pubkey}`}
+														class="block truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
 													>
-														{comment.content}
-													</p>
-												</a>
-											</div>
-											<button
-												type="button"
-												onclick={() => likeComment(comment)}
-												class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
-												aria-label="Like comment"
-											>
-												<Icon
-													name={comment.reactions.some((reaction) => reaction.byMe)
-														? 'i-solar-heart-bold'
-														: 'i-solar-heart-linear'}
-													class="size-4 {comment.reactions.some((reaction) => reaction.byMe)
-														? 'text-primary-500'
-														: ''}"
-												/>
-												<span class="text-[11px]">
-													{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
-												</span>
-											</button>
-										</div>
-										<div
-											class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
-										>
-											<span>{timeAgo(comment.createdAt)}</span>
-											<button
-												type="button"
-												onclick={() => (commentText = `@${commentName} `)}
-												class="hover:text-[var(--ui-text-highlighted)]"
-											>
-												Reply
-											</button>
-											{#if comment.pubkey === identity.current?.pk}
+														{commentName}
+													</a>
+													<a
+														href={`/note/${comment.id}?from=reels`}
+														class="block hover:text-primary-500"
+													>
+														<p
+															class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
+														>
+															{comment.content}
+														</p>
+													</a>
+												</div>
 												<button
 													type="button"
-													onclick={() => askDeleteComment(comment)}
-													disabled={deletingCommentId === comment.id}
-													class="hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+													onclick={() => likeComment(comment)}
+													class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
+													aria-label="Like comment"
 												>
-													{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
+													<Icon
+														name={comment.reactions.some((reaction) => reaction.byMe)
+															? 'i-solar-heart-bold'
+															: 'i-solar-heart-linear'}
+														class="size-4 {comment.reactions.some((reaction) => reaction.byMe)
+															? 'text-primary-500'
+															: ''}"
+													/>
+													<span class="text-[11px]">
+														{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
+													</span>
 												</button>
-											{/if}
+											</div>
+											<div
+												class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
+											>
+												<span>{timeAgo(comment.createdAt)}</span>
+												<button
+													type="button"
+													onclick={() =>
+														(commentReplyTarget = {
+															id: comment.id,
+															pubkey: comment.pubkey,
+															name: commentName
+														})}
+													class="hover:text-[var(--ui-text-highlighted)]"
+												>
+													Reply
+												</button>
+												{#if comment.pubkey === identity.current?.pk}
+													<button
+														type="button"
+														onclick={() => askDeleteComment(comment)}
+														disabled={deletingCommentId === comment.id}
+														class="hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+													>
+														{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
+													</button>
+												{/if}
+											</div>
 										</div>
 									</div>
+								{/each}
+							{:else}
+								<div class="flex h-44 flex-col items-center justify-center text-center">
+									<div
+										class="grid size-12 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
+									>
+										<Icon name="i-lucide-message-circle" class="size-6" />
+									</div>
+									<p class="mt-3 text-[14px] font-bold text-[var(--ui-text-highlighted)]">
+										No comments yet
+									</p>
+									<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">
+										Start the conversation.
+									</p>
 								</div>
-							{/each}
-						</div>
-					{:else}
-						<div class="flex h-44 flex-col items-center justify-center text-center">
-							<div
-								class="grid size-12 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
-							>
-								<Icon name="i-lucide-message-circle" class="size-6" />
-							</div>
-							<p class="mt-3 text-[14px] font-bold text-[var(--ui-text-highlighted)]">
-								No comments yet
-							</p>
-							<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">Start the conversation.</p>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -1243,43 +1285,23 @@
 				<div
 					class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
 				>
-					<div class="flex items-end gap-2">
-						{#if identity.current}
-							<Avatar
-								pubkey={identity.current.pk}
-								name={currentDisplayName}
-								picture={currentProfile?.picture}
-								size={32}
-								frame
-							/>
-						{/if}
-						<textarea
-							bind:value={commentText}
-							rows="1"
-							placeholder={identity.current
-								? 'Add a comment...'
-								: 'Create or import a key to comment'}
-							disabled={!identity.current || postingComment}
-							class="max-h-28 min-h-10 flex-1 resize-none rounded-full bg-[var(--ui-bg-accented)] px-4 py-2.5 text-[14px] text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:ring-2 focus:ring-primary-500/40 disabled:cursor-not-allowed disabled:opacity-60"
-							onkeydown={(event) => {
-								if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-									event.preventDefault();
-									void submitComment();
-								}
-							}}></textarea>
-						<button
-							type="button"
-							onclick={submitComment}
-							disabled={!commentText.trim() || !identity.current || postingComment}
-							class="grid size-10 shrink-0 place-items-center rounded-full bg-primary-500 text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-							aria-label="Post comment"
-						>
-							<Icon
-								name={postingComment ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'}
-								class="size-4 {postingComment ? 'animate-spin' : ''}"
-							/>
-						</button>
-					</div>
+					{#key `${commentReel.id}:${commentReplyTarget?.id ?? ''}`}
+						<ReplyComposer
+							parent={commentReel}
+							placeholder={commentReplyTarget
+								? `Reply to ${commentReplyTarget.name}…`
+								: 'Add a comment…'}
+							autofocus={!!commentReplyTarget}
+							initialMention={commentReplyTarget
+								? { pubkey: commentReplyTarget.pubkey, name: commentReplyTarget.name }
+								: undefined}
+							onSubmitted={() => {
+								commentReplyTarget = null;
+								void loadComments(commentReel!, { force: true });
+							}}
+							onCancel={() => (commentReplyTarget = null)}
+						/>
+					{/key}
 				</div>
 			</aside>
 		{/if}

@@ -30,7 +30,9 @@
 
 	const me = $derived(identity.current?.pk ?? '');
 	const activityLedger = $derived(wallet.ledger);
-	const receivedEntries = $derived(activityLedger.filter((entry) => entry.direction === 'received'));
+	const receivedEntries = $derived(
+		activityLedger.filter((entry) => entry.direction === 'received')
+	);
 	const sentEntries = $derived(activityLedger.filter((entry) => entry.direction === 'sent'));
 	const totalReceived = $derived(receivedEntries.reduce((sum, entry) => sum + entry.amountSats, 0));
 	const totalSent = $derived(sentEntries.reduce((sum, entry) => sum + entry.amountSats, 0));
@@ -121,7 +123,8 @@
 					activityLedger.map((entry) => ({
 						direction: entry.direction,
 						amountSats: entry.amountSats,
-						counterparty: entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey,
+						counterparty:
+							entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey,
 						memo: entry.memo ?? '',
 						createdAt: new Date(entry.createdAt * 1000).toISOString(),
 						id: entry.id
@@ -189,7 +192,8 @@
 							role="tab"
 							aria-selected={activeTab === tab.key}
 							onclick={() => (activeTab = tab.key as Tab)}
-							class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {activeTab === tab.key
+							class="relative shrink-0 px-3 py-2.5 text-[12px] font-bold transition {activeTab ===
+							tab.key
 								? 'text-primary-600'
 								: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
 						>
@@ -206,11 +210,13 @@
 		<div class="page-container py-6">
 			<!-- ============ WALLET HERO ============ -->
 			<div
-				class="premium-card overflow-hidden border-[color-mix(in_oklab,var(--ui-color-primary-500)_22%,transparent)] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--ui-color-primary-500)_12%,transparent),color-mix(in_oklab,var(--color-warm-500)_6%,transparent))] mb-4 p-5"
+				class="premium-card mb-4 overflow-hidden border-[color-mix(in_oklab,var(--ui-color-primary-500)_22%,transparent)] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--ui-color-primary-500)_12%,transparent),color-mix(in_oklab,var(--color-warm-500)_6%,transparent))] p-5"
 			>
 				<div class="mb-5 flex items-start justify-between gap-3">
 					<div class="min-w-0">
-						<div class="text-[11px] font-semibold tracking-wider text-[var(--ui-text-muted)] uppercase">
+						<div
+							class="text-[11px] font-semibold tracking-wider text-[var(--ui-text-muted)] uppercase"
+						>
 							{showingWalletBalance ? 'Wallet Balance' : 'Total Received'}
 						</div>
 						<div class="mt-1 font-mono text-4xl font-bold tracking-tight">
@@ -275,6 +281,11 @@
 					<p class="mt-2 text-center text-[11px] text-[var(--ui-text-muted)]">
 						Connect Alby, Mutiny, or any WebLN wallet to deposit, withdraw, and pay zaps in one tap.
 					</p>
+					<a
+						href="/settings/lightning"
+						class="mt-2 block text-center text-[11px] font-semibold text-primary-500 hover:underline"
+						>Use a custom NWC connection</a
+					>
 				{:else}
 					<a
 						href="https://www.webln.guide/ressources/wallet-providers"
@@ -286,8 +297,14 @@
 						Install a Lightning wallet
 					</a>
 					<p class="mt-2 text-center text-[11px] text-[var(--ui-text-muted)]">
-						No wallet detected. Earnings below are tracked on Nostr — connect a wallet to spend them.
+						No wallet detected. Earnings below are tracked on Nostr — connect a wallet to spend
+						them.
 					</p>
+					<a
+						href="/settings/lightning"
+						class="mt-2 block text-center text-[11px] font-semibold text-primary-500 hover:underline"
+						>Connect a custom NWC wallet</a
+					>
 				{/if}
 			</div>
 
@@ -326,7 +343,9 @@
 					<div class="-mx-[clamp(1rem,3vw,1.5rem)] space-y-2.5 px-[clamp(1rem,3vw,1.5rem)] py-3.5">
 						{#each [0, 1, 2] as i (i)}
 							<div class="flex items-center gap-3">
-								<div class="size-9 shrink-0 animate-pulse rounded-full bg-[var(--ui-bg-muted)]"></div>
+								<div
+									class="size-9 shrink-0 animate-pulse rounded-full bg-[var(--ui-bg-muted)]"
+								></div>
 								<div class="h-3 w-1/3 animate-pulse rounded bg-[var(--ui-bg-muted)]"></div>
 								<div class="ml-auto h-3 w-14 animate-pulse rounded bg-[var(--ui-bg-muted)]"></div>
 							</div>
@@ -334,13 +353,19 @@
 					</div>
 				</section>
 			{:else if !wallet.connected && !wallet.ledger.length}
-				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
-					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]">
+				<div
+					class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center"
+				>
+					<span
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--tone-error-bg)] text-[var(--tone-error-text)]"
+					>
 						<Icon name="i-lucide-wifi-off" class="size-7" />
 					</span>
 					<div>
 						<p class="text-[15px] font-semibold">Couldn't reach relays</p>
-						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">We'll keep retrying. Tap below to try again.</p>
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+							We'll keep retrying. Tap below to try again.
+						</p>
 					</div>
 					<button
 						type="button"
@@ -351,8 +376,12 @@
 					</button>
 				</div>
 			{:else if !displayedEntries.length}
-				<div class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center">
-					<span class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]">
+				<div
+					class="flex flex-col items-center gap-3 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--surface-bg)_65%,transparent)] p-8 py-16 text-center"
+				>
+					<span
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]"
+					>
 						<Icon name="i-lucide-zap" class="size-7" />
 					</span>
 					<div>
@@ -370,7 +399,11 @@
 						</p>
 					</div>
 					{#if activeTab !== 'received'}
-						<a href="/" class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white">Browse the feed</a>
+						<a
+							href="/"
+							class="rounded-full bg-primary-500 px-4 py-2 text-[12px] font-bold text-white"
+							>Browse the feed</a
+						>
 					{/if}
 				</div>
 			{:else}
@@ -402,11 +435,15 @@
 </div>
 
 <!-- ============ DEPOSIT / WITHDRAW MODAL ============ -->
-<Dialog bind:open={invoiceModalOpen} title={invoiceModalMode === 'deposit' ? 'Deposit sats' : 'Withdraw sats'}>
+<Dialog
+	bind:open={invoiceModalOpen}
+	title={invoiceModalMode === 'deposit' ? 'Deposit sats' : 'Withdraw sats'}
+>
 	<div class="space-y-4">
 		<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 			{#if invoiceModalMode === 'deposit'}
-				Generate an invoice from your connected wallet and pay it (or share it) to top up your balance.
+				Generate an invoice from your connected wallet and pay it (or share it) to top up your
+				balance.
 			{:else}
 				Paste a Lightning invoice to pay it from your connected wallet.
 			{/if}
@@ -422,21 +459,39 @@
 					inputmode="numeric"
 					min="1"
 				/>
-				<Button color="primary" icon="i-lucide-file-plus" onclick={generateDeposit} disabled={invoiceBusy}>Generate</Button>
+				<Button
+					color="primary"
+					icon="i-lucide-file-plus"
+					onclick={generateDeposit}
+					disabled={invoiceBusy}>Generate</Button
+				>
 			</div>
 			<label class="block">
-				<span class="mb-1.5 block text-[11px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase">Memo (optional)</span>
+				<span
+					class="mb-1.5 block text-[11px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+					>Memo (optional)</span
+				>
 				<Input bind:value={invoiceMemo} placeholder="BitOS deposit" />
 			</label>
 			{#if invoiceBolt11}
 				<div class="rounded-xl bg-[var(--ui-bg-muted)] p-3">
 					<p class="mb-2 text-[12px] font-bold">Invoice ready</p>
-					<p class="break-all font-mono text-[11px] text-[var(--ui-text-muted)]">{invoiceBolt11}</p>
+					<p class="font-mono text-[11px] break-all text-[var(--ui-text-muted)]">{invoiceBolt11}</p>
 					<div class="mt-3 flex gap-2">
-						<a href={`lightning:${invoiceBolt11}`} class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600">
+						<a
+							href={`lightning:${invoiceBolt11}`}
+							class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"
+						>
 							<Icon name="i-lucide-wallet-cards" class="size-3.5" /> Open wallet
 						</a>
-						<button type="button" onclick={() => navigator.clipboard.writeText(invoiceBolt11).then(() => toasts.success('Invoice copied'))} class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold">
+						<button
+							type="button"
+							onclick={() =>
+								navigator.clipboard
+									.writeText(invoiceBolt11)
+									.then(() => toasts.success('Invoice copied'))}
+							class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold"
+						>
 							<Icon name="i-lucide-copy" class="size-3.5" /> Copy
 						</button>
 					</div>
@@ -444,20 +499,41 @@
 			{/if}
 		{:else}
 			<label class="block">
-				<span class="mb-1.5 block text-[11px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase">Lightning invoice</span>
+				<span
+					class="mb-1.5 block text-[11px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase"
+					>Lightning invoice</span
+				>
 				<Input bind:value={invoiceMemo} placeholder="lnbc1…" class="font-mono text-[12px]" />
 			</label>
 		{/if}
 
 		{#if invoiceError}
-			<p role="alert" class="rounded-xl bg-[var(--tone-warning-bg)] px-3 py-2 text-[12px] font-semibold text-[var(--tone-warning-text)]">{invoiceError}</p>
+			<p
+				role="alert"
+				class="rounded-xl bg-[var(--tone-warning-bg)] px-3 py-2 text-[12px] font-semibold text-[var(--tone-warning-text)]"
+			>
+				{invoiceError}
+			</p>
 		{/if}
 	</div>
 	{#snippet footer()}
-		<button type="button" onclick={() => (invoiceModalOpen = false)} class="rounded-lg px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]">Close</button>
+		<button
+			type="button"
+			onclick={() => (invoiceModalOpen = false)}
+			class="rounded-lg px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]"
+			>Close</button
+		>
 		{#if invoiceModalMode === 'withdraw'}
-			<button type="button" onclick={submitWithdraw} disabled={invoiceBusy} class="inline-flex items-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white disabled:opacity-60">
-				<Icon name={invoiceBusy ? 'i-lucide-loader-circle' : 'i-lucide-zap'} class="size-3.5 {invoiceBusy ? 'animate-spin' : ''}" /> Pay invoice
+			<button
+				type="button"
+				onclick={submitWithdraw}
+				disabled={invoiceBusy}
+				class="inline-flex items-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white disabled:opacity-60"
+			>
+				<Icon
+					name={invoiceBusy ? 'i-lucide-loader-circle' : 'i-lucide-zap'}
+					class="size-3.5 {invoiceBusy ? 'animate-spin' : ''}"
+				/> Pay invoice
 			</button>
 		{/if}
 	{/snippet}
