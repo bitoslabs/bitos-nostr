@@ -15,7 +15,6 @@
 	import StoryRing from './StoryRing.svelte';
 	import ReplyComposer from './ReplyComposer.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
-	import ImageLightbox from '$lib/components/ui/ImageLightbox.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
@@ -148,8 +147,9 @@
 		isLong && !expanded ? `${captionContent.slice(0, longTextLimit).trimEnd()}…` : captionContent
 	);
 	const contentTokens = $derived(parseContent(visibleContent));
-	const previewableImages = $derived(mediaAttachments.filter((media) => media.type === 'image'));
-	const previewableImageUrls = $derived(previewableImages.map((media) => media.url));
+	const previewableMedia = $derived(
+		mediaAttachments.filter((media) => media.type === 'image' || media.type === 'video')
+	);
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, MAX_VISIBLE_MEDIA));
 	const hiddenMediaCount = $derived(
@@ -164,8 +164,14 @@
 	let deleteOpen = $state(false);
 	let pendingDelete = $state<FeedNote | null>(null);
 	let deleting = $state(false);
-	let previewOpen = $state(false);
-	let previewImageIndex = $state(0);
+	// Feed tiles should be quick to scan, especially in a two-column mobile
+	// grid. Keep the full player in a focused viewer instead of putting a
+	// complete control bar inside every tile.
+	let mediaViewerOpen = $state(false);
+	let mediaViewerIndex = $state(0);
+	const selectedViewerMedia = $derived(
+		mediaViewerOpen ? (previewableMedia[mediaViewerIndex] ?? null) : null
+	);
 	let replyOpen = $state(false);
 	let replyFocusTick = $state(0);
 	let showAllReplies = $state(false);
@@ -321,10 +327,25 @@
 		popovers.close();
 	}
 
-	function previewImage(url: string) {
-		const index = previewableImages.findIndex((media) => media.url === url);
-		previewImageIndex = index >= 0 ? index : 0;
-		previewOpen = true;
+	function openMediaViewer(media: MediaAttachment) {
+		const index = previewableMedia.findIndex((candidate) => candidate.url === media.url);
+		mediaViewerIndex = index >= 0 ? index : 0;
+		mediaViewerOpen = true;
+	}
+
+	function previousViewerMedia() {
+		if (mediaViewerIndex > 0) mediaViewerIndex -= 1;
+	}
+
+	function nextViewerMedia() {
+		if (mediaViewerIndex < previewableMedia.length - 1) mediaViewerIndex += 1;
+	}
+
+	function onMediaViewerKey(event: KeyboardEvent) {
+		if (!mediaViewerOpen) return;
+		if (event.key === 'Escape') mediaViewerOpen = false;
+		else if (event.key === 'ArrowLeft') previousViewerMedia();
+		else if (event.key === 'ArrowRight') nextViewerMedia();
 	}
 
 	function trackFeedVideo(node: HTMLVideoElement) {
@@ -730,7 +751,7 @@
 					</button>
 				{/if}
 				<span
-					class="rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)]"
+					class="hidden rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1 font-mono text-[10px] text-[var(--ui-text-muted)] sm:inline"
 					title="Nostr event kind">kind:1</span
 				>
 				<button
@@ -965,7 +986,7 @@
 							<button
 								type="button"
 								class="{tileClass} group relative block w-full bg-black"
-								onclick={() => previewImage(media.url)}
+								onclick={() => openMediaViewer(media)}
 							>
 								<img
 									src={media.url}
@@ -991,26 +1012,31 @@
 						{/if}
 					{:else if media.type === 'video'}
 						<div class="{tileClass} relative overflow-hidden bg-black">
-							<MediaPlayer
+							<!-- A silent poster-like preview keeps dense mobile grids calm.
+								Tapping opens the complete player below. -->
+							<!-- svelte-ignore a11y_media_has_caption -->
+							<video
 								src={media.url}
-								label={`Video from ${media.host}`}
-								class="absolute inset-0"
-								mediaClass="size-full object-cover transition {!shouldHideVideo(media.url)
+								muted
+								playsinline
+								preload="metadata"
+								class="size-full object-cover transition {!shouldHideVideo(media.url)
 									? ''
 									: 'scale-105 blur-2xl saturate-50'}"
-								controls={!shouldHideVideo(media.url)}
-								overlayControls
-								onMediaElement={(node) => {
-									const registration = trackFeedVideo(node as HTMLVideoElement);
-									return () => registration.destroy();
-								}}
-							/>
+							></video>
 							{#if !shouldHideVideo(media.url)}
-								<div
-									class="pointer-events-none absolute top-3 left-3 rounded-full bg-black/55 p-2 text-white shadow-lg"
+								<button
+									type="button"
+									onclick={() => openMediaViewer(media)}
+									class="absolute inset-0 z-10 grid place-items-center bg-black/5 text-white transition hover:bg-black/20"
+									aria-label={`Play video from ${media.host}`}
 								>
-									<Icon name="i-lucide-play" class="size-4" />
-								</div>
+									<span
+										class="grid size-11 place-items-center rounded-full bg-black/55 shadow-lg backdrop-blur-sm"
+									>
+										<Icon name="i-lucide-play" class="ml-0.5 size-5 fill-current" />
+									</span>
+								</button>
 							{/if}
 							{#if showMoreOverlay}
 								<div
@@ -1555,11 +1581,97 @@
 	</div>
 </Dialog>
 
-<ImageLightbox
-	bind:open={previewOpen}
-	images={previewableImageUrls}
-	bind:index={previewImageIndex}
-/>
+<svelte:window onkeydown={onMediaViewerKey} />
+
+{#if mediaViewerOpen && selectedViewerMedia}
+	<!-- Shared image/video viewer, matching Discover's focused media experience. -->
+	<div
+		class="animate-fade fixed inset-0 z-[60] flex flex-col bg-black/95 text-white backdrop-blur-sm"
+	>
+		<header class="flex items-center gap-3 p-3 sm:p-4">
+			<div class="min-w-0 flex-1">
+				<p class="truncate text-[14px] font-bold">{displayName}</p>
+				<p class="text-[11px] text-white/65">{selectedViewerMedia.host}</p>
+			</div>
+			{#if previewableMedia.length > 1}
+				<span class="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-bold tabular-nums">
+					{mediaViewerIndex + 1} / {previewableMedia.length}
+				</span>
+			{/if}
+			<a
+				href={selectedViewerMedia.url}
+				target="_blank"
+				rel="noreferrer"
+				class="hidden h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold transition hover:bg-white/10 sm:inline-flex"
+			>
+				Open source
+			</a>
+			<button
+				type="button"
+				onclick={() => (mediaViewerOpen = false)}
+				class="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 transition hover:bg-white/20"
+				aria-label="Close media viewer"
+			>
+				<Icon name="i-lucide-x" class="size-5" />
+			</button>
+		</header>
+
+		<div class="relative flex min-h-0 flex-1 items-center justify-center px-2 pb-3 sm:px-5">
+			{#if previewableMedia.length > 1}
+				<button
+					type="button"
+					onclick={previousViewerMedia}
+					disabled={mediaViewerIndex === 0}
+					class="absolute top-1/2 left-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 backdrop-blur transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-30 sm:left-5"
+					aria-label="Previous media"
+				>
+					<Icon name="i-lucide-chevron-left" class="size-6" />
+				</button>
+			{/if}
+
+			{#if selectedViewerMedia.type === 'video'}
+				<MediaPlayer
+					src={selectedViewerMedia.url}
+					label={`Video from ${selectedViewerMedia.host}`}
+					class="relative mx-auto w-full max-w-5xl"
+					mediaClass="mx-auto max-h-[76vh] w-full bg-black object-contain"
+					overlayControls
+					onMediaElement={(node) => {
+						const registration = trackFeedVideo(node as HTMLVideoElement);
+						return () => registration.destroy();
+					}}
+				/>
+			{:else}
+				<img
+					src={selectedViewerMedia.url}
+					alt="Note attachment"
+					class="mx-auto max-h-[76vh] max-w-full rounded-xl object-contain"
+				/>
+			{/if}
+
+			{#if previewableMedia.length > 1}
+				<button
+					type="button"
+					onclick={nextViewerMedia}
+					disabled={mediaViewerIndex === previewableMedia.length - 1}
+					class="absolute top-1/2 right-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 backdrop-blur transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-30 sm:right-5"
+					aria-label="Next media"
+				>
+					<Icon name="i-lucide-chevron-right" class="size-6" />
+				</button>
+			{/if}
+		</div>
+
+		<a
+			href={selectedViewerMedia.url}
+			target="_blank"
+			rel="noreferrer"
+			class="mx-auto mb-4 inline-flex h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold sm:hidden"
+		>
+			Open source
+		</a>
+	</div>
+{/if}
 
 <ReportDialog
 	bind:open={reportOpen}

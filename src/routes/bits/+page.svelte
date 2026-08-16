@@ -175,7 +175,15 @@
 	}
 
 	function captionFor(reel: ReelNote) {
-		return reel.content.split(reel.mediaUrl).join(' ').replace(/\s+/g, ' ').trim();
+		// The reel itself is the media presentation. Do not repeat source URLs in
+		// the caption, including additional image/video URLs from multi-media notes.
+		let caption = reel.content.split(reel.mediaUrl).join(' ');
+		for (const match of reel.content.matchAll(urlPattern)) {
+			const { core } = splitTrailingPunctuation(match[0]);
+			if (looksLikeVideoUrl(core) || imagePattern.test(core))
+				caption = caption.split(core).join(' ');
+		}
+		return caption.replace(/\s+/g, ' ').trim();
 	}
 
 	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {

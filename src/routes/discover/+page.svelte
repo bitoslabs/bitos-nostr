@@ -282,6 +282,21 @@
 		return null;
 	}
 
+	/** Keep captions readable: media is already rendered as a tile/viewer, so
+	 * its raw source URL is redundant and very noisy on small screens. */
+	function mediaCaption(content: string, currentMediaUrl = '') {
+		let caption = currentMediaUrl ? content.split(currentMediaUrl).join('') : content;
+		for (const match of content.matchAll(urlPattern)) {
+			const { core } = splitTrailingPunctuation(match[0]);
+			if (classifyMediaUrl(core)) caption = caption.split(core).join('');
+		}
+		return caption
+			.replace(/[ \t]+\n/g, '\n')
+			.replace(/\n{3,}/g, '\n\n')
+			.replace(/[ \t]{2,}/g, ' ')
+			.trim();
+	}
+
 	function mediaFromEvent(event: { content: string; tags: string[][] }) {
 		for (const tag of event.tags.filter((tag) => tag[0] === 'imeta')) {
 			const url = imetaValue(tag, 'url');
@@ -1546,7 +1561,11 @@
 												>
 											{/if}
 										</div>
-										<p class="line-clamp-3 text-[12px] font-semibold">{item.content}</p>
+										{#if mediaCaption(item.content, item.url)}
+											<p class="line-clamp-3 text-[12px] font-semibold">
+												{mediaCaption(item.content, item.url)}
+											</p>
+										{/if}
 									</div>
 								</div>
 							</button>
@@ -1730,11 +1749,11 @@
 		</div>
 
 		<!-- Caption + mobile actions -->
-		{#if selectedMediaItem.content}
+		{#if mediaCaption(selectedMediaItem.content, selectedMediaItem.url)}
 			<footer
 				class="mx-auto max-h-28 max-w-2xl overflow-y-auto px-4 py-2 text-center text-[13px] leading-relaxed whitespace-pre-wrap text-white/90"
 			>
-				{selectedMediaItem.content}
+				{mediaCaption(selectedMediaItem.content, selectedMediaItem.url)}
 			</footer>
 		{/if}
 		<div class="flex items-center justify-center gap-2 p-3 sm:hidden">
