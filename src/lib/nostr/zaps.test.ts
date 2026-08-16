@@ -6,8 +6,8 @@ import { bolt11Expiry, lnurlSupportsZap, satsFromBolt11, zapRelayTagUrls } from 
  *
  * The timestamp vector mirrors the BOLT #11 spec example, whose data part
  * starts with `pvjluez` — the 35-bit encoding of unix 1496314658. The `x`
- * vector is synthetic: `pqqqqqq` encodes 2^30 and field `xzpu` encodes a
- * 60-second relative expiry (`z` = length 2, `pu` = 60).
+ * vector is synthetic: `pqqqqqq` encodes 2^30 and field `xqzpu` encodes a
+ * 60-second relative expiry (`qz` = two-word length 2, `pu` = 60).
  */
 
 // Filler keeps the string shaped like an invoice (≥ timestamp + signature).
@@ -19,7 +19,12 @@ describe('bolt11Expiry', () => {
 	});
 
 	it('honours an explicit x expiry field', () => {
-		expect(bolt11Expiry(`lnbc1pqqqqqqxzpu${FILLER}`)).toBe(2 ** 30 + 60);
+		expect(bolt11Expiry(`lnbc1pqqqqqqxqzpu${FILLER}`)).toBe(2 ** 30 + 60);
+	});
+
+	it('keeps tag alignment before reading an x expiry field', () => {
+		// `pq pq` is a one-word non-expiry field before `xqzpu`.
+		expect(bolt11Expiry(`lnbc1pqqqqqqpqpqxqzpu${FILLER}`)).toBe(2 ** 30 + 60);
 	});
 
 	it('accepts uppercase invoices', () => {
