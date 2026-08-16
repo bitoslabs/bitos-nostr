@@ -30,7 +30,7 @@ import {
 	weblnBalanceSats,
 	type WebLNInfo
 } from './webln';
-import { connectNwc, disconnectNwc } from './nwc';
+import { connectNwc, disconnectNwc, restoreSavedNwc } from './nwc';
 import { NOSTR_KINDS, type Event } from './types';
 
 const RECEIVED_LIMIT = 200;
@@ -338,6 +338,17 @@ class WalletStore {
 	/** Detect a WebLN provider without prompting. */
 	detectWebLN() {
 		this.weblnAvailable = hasWebLN();
+	}
+
+	/** Restore the last saved custom NWC wallet after a page refresh. */
+	restoreCustomNwc() {
+		if (!restoreSavedNwc()) return false;
+		selectWalletProvider('nwc');
+		this.provider = 'nwc';
+		this.weblnEnabled = true;
+		this.weblnInfo = { node: { alias: 'Custom NWC wallet', pubkey: '' } };
+		void this.refreshBalance();
+		return true;
 	}
 
 	/** Enable the wallet (prompts the user) and pull info + balance. */

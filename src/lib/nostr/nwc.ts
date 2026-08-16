@@ -1,7 +1,8 @@
 /** Minimal NIP-47 (Nostr Wallet Connect) client.
  *
- * The connection URI contains a spending secret, so it deliberately lives in
- * memory only. Reloading the page requires pasting the URI again.
+ * The connection URI contains a spending secret. When the user chooses a
+ * custom NWC wallet, the URI is retained in localStorage on this device so it
+ * can be restored after reload.
  */
 import { browser } from '$app/environment';
 import { nip04 } from 'nostr-tools';
@@ -23,6 +24,7 @@ interface Response {
 
 let connection: Connection | null = null;
 let pool: SimplePool | null = null;
+const STORAGE_KEY = 'bitos:nwc-wallets';
 
 function getPool() {
 	if (!browser) throw new Error('NWC is only available in the browser.');
@@ -52,10 +54,31 @@ export function connectNwc(uri: string) {
 		throw new Error('This NWC connection string is invalid.');
 	}
 	connection = { pubkey, relays: [...new Set(relays)], secret };
+	if (browser) localStorage.setItem(STORAGE_KEY, uri.trim());
+}
+
+/** Restore the last custom NWC URI saved on this device, without making a request yet. */
+export function restoreSavedNwc() {
+	if (!browser || connection) return false;
+	const uri = localStorage.getItem(STORAGE_KEY);
+	if (!uri) return false;
+	try {
+		connectNwc(uri);
+		return true;
+	} catch {
+		localStorage.removeItem(STORAGE_KEY);
+		return false;
+	}
 }
 
 export function disconnectNwc() {
 	connection = null;
+}
+
+/** Disconnect and remove the locally saved NWC spending connection. */
+export function forgetNwc() {
+	connection = null;
+	if (browser) localStorage.removeItem(STORAGE_KEY);
 }
 
 async function request(method: string, params: Record<string, unknown> = {}) {

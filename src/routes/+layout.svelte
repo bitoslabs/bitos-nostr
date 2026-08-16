@@ -240,6 +240,7 @@
 		preferences.startSystemWatcher();
 		media.load();
 		walletPrefs.load();
+		wallet.restoreCustomNwc();
 		profiles.load();
 		blocks.load();
 		mutes.load();
