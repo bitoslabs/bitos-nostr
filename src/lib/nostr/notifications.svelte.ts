@@ -97,6 +97,26 @@ function parseZapAmount(tags: string[][]): number {
 	return Number.isFinite(msat) ? Math.round(msat / 1000) : 0;
 }
 
+/**
+ * A zap receipt is published by the recipient's Lightning service. The actual
+ * zapper is the author of the signed kind 9734 request embedded in its
+ * `description` tag (NIP-57). Fall back to the receipt author for malformed
+ * or legacy receipts.
+ */
+export function zapSenderPubkey(event: Event): string {
+	const description = event.tags.find((tag) => tag[0] === 'description' && tag[1])?.[1];
+	if (!description) return event.pubkey;
+
+	try {
+		const request = JSON.parse(description) as { pubkey?: unknown };
+		return typeof request.pubkey === 'string' && request.pubkey
+			? request.pubkey.toLowerCase()
+			: event.pubkey;
+	} catch {
+		return event.pubkey;
+	}
+}
+
 class NotificationsStore {
 	items = $state<NotificationItem[]>([]);
 	loading = $state(false);
@@ -250,7 +270,7 @@ class NotificationsStore {
 
 	private toNotification(ev: Event): NotificationItem | null {
 		if (ev.kind === NOSTR_KINDS.ZAP) {
-			return this.makeItem(
+			const item = this.makeItem(
 				ev,
 				'zap',
 				eventTarget(ev.tags, { preferSecondEvent: true }),
@@ -259,6 +279,9 @@ class NotificationsStore {
 					amountSats: parseZapAmount(ev.tags)
 				}
 			);
+			// `ev.pubkey` belongs to the Lightning service that issued the receipt,
+			// while the embedded request identifies the person who sent the zap.
+			return { ...item, pubkey: zapSenderPubkey(ev) };
 		}
 		if (ev.kind === NOSTR_KINDS.REACTION && isPositiveReaction(ev.content)) {
 			const target = replyTarget(ev.tags);

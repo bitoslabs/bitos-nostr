@@ -24,10 +24,13 @@ import { blocks } from '$lib/stores/blocks.svelte';
 import { satsFromBolt11 } from './zaps';
 import {
 	hasWebLN,
+	selectWalletProvider,
+	type WalletProvider,
 	getWebLNInfo,
 	weblnBalanceSats,
 	type WebLNInfo
 } from './webln';
+import { connectNwc, disconnectNwc } from './nwc';
 import { NOSTR_KINDS, type Event } from './types';
 
 const RECEIVED_LIMIT = 200;
@@ -130,20 +133,22 @@ class WalletStore {
 	/** Live spendable balance from the connected wallet, in sats. */
 	weblnBalance = $state<number | null>(null);
 	weblnBusy = $state(false);
+	/** The wallet used for invoices, payments, and zaps. */
+	provider = $state<WalletProvider>('webln');
 
 	private unsub: (() => void) | null = null;
 
 	/** All entries, newest first, with the active user's blocks filtered out. */
-	ledger = $derived([...this.received, ...this.sent]
-		.filter((entry) => {
-			const other = entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey;
-			return !blocks.has(other);
-		})
-		.sort((a, b) => b.createdAt - a.createdAt))
-
-	totalReceived = $derived(
-		this.received.reduce((sum, entry) => sum + entry.amountSats, 0)
+	ledger = $derived(
+		[...this.received, ...this.sent]
+			.filter((entry) => {
+				const other = entry.direction === 'received' ? entry.senderPubkey : entry.recipientPubkey;
+				return !blocks.has(other);
+			})
+			.sort((a, b) => b.createdAt - a.createdAt)
 	);
+
+	totalReceived = $derived(this.received.reduce((sum, entry) => sum + entry.amountSats, 0));
 	totalSent = $derived(this.sent.reduce((sum, entry) => sum + entry.amountSats, 0));
 	countReceived = $derived(this.received.length);
 	countSent = $derived(this.sent.length);
@@ -158,7 +163,9 @@ class WalletStore {
 	 * this is the live spendable balance; otherwise it is the total sats the
 	 * account has earned (always available from relays).
 	 */
-	balance = $derived(this.weblnEnabled && this.weblnBalance !== null ? this.weblnBalance : this.totalReceived);
+	balance = $derived(
+		this.weblnEnabled && this.weblnBalance !== null ? this.weblnBalance : this.totalReceived
+	);
 	balanceSource = $derived<'wallet' | 'earned'>(
 		this.weblnEnabled && this.weblnBalance !== null ? 'wallet' : 'earned'
 	);
@@ -178,21 +185,18 @@ class WalletStore {
 		this.loading = true;
 		this.connected = false;
 		this.error = null;
-		this.unsub = subscribe(
-			[{ kinds: [NOSTR_KINDS.ZAP], '#p': [me], limit: RECEIVED_LIMIT }],
-			{
-				oneose: () => {
-					this.loading = false;
-					this.connected = true;
-					this.error = null;
-				},
-				onclose: () => {
-					this.loading = false;
-					this.connected = false;
-				},
-				onevent: (event) => this.ingestReceived(event)
-			}
-		);
+		this.unsub = subscribe([{ kinds: [NOSTR_KINDS.ZAP], '#p': [me], limit: RECEIVED_LIMIT }], {
+			oneose: () => {
+				this.loading = false;
+				this.connected = true;
+				this.error = null;
+			},
+			onclose: () => {
+				this.loading = false;
+				this.connected = false;
+			},
+			onevent: (event) => this.ingestReceived(event)
+		});
 	};
 
 	stop = () => {
@@ -258,10 +262,10 @@ class WalletStore {
 		return true;
 	}
 
-		/**
-		 * Turn a kind 9735 zap receipt into a ledger entry. (Pure parser in
-		 * `receiptToZapEntry`; see module docs.)
-		 */
+	/**
+	 * Turn a kind 9735 zap receipt into a ledger entry. (Pure parser in
+	 * `receiptToZapEntry`; see module docs.)
+	 */
 	private receiptToEntry(event: Event, me: string): ZapEntry | null {
 		return receiptToZapEntry(event, me);
 	}
@@ -345,6 +349,8 @@ class WalletStore {
 		this.weblnBusy = true;
 		this.error = null;
 		try {
+			selectWalletProvider('webln');
+			this.provider = 'webln';
 			this.weblnInfo = await getWebLNInfo();
 			if (!this.weblnInfo) throw new Error('Your Lightning wallet could not be connected.');
 			this.weblnBalance = await weblnBalanceSats();
@@ -359,7 +365,51 @@ class WalletStore {
 		}
 	}
 
+	/** Connect a direct NIP-47 wallet from its `nostr+walletconnect://` URI. */
+	async connectCustomNwc(connectionUri: string) {
+		this.weblnBusy = true;
+		this.error = null;
+		try {
+			connectNwc(connectionUri);
+			selectWalletProvider('nwc');
+			this.provider = 'nwc';
+			this.weblnInfo = await getWebLNInfo();
+			if (!this.weblnInfo) throw new Error('Your custom NWC wallet could not be connected.');
+			this.weblnBalance = await weblnBalanceSats();
+			this.weblnEnabled = true;
+			return true;
+		} catch (e) {
+			disconnectNwc();
+			this.weblnEnabled = false;
+			this.error = (e as Error).message || 'Could not connect custom NWC wallet';
+			return false;
+		} finally {
+			this.weblnBusy = false;
+		}
+	}
+
+	async selectProvider(provider: WalletProvider) {
+		this.weblnBusy = true;
+		this.error = null;
+		try {
+			selectWalletProvider(provider);
+			this.provider = provider;
+			this.weblnInfo = await getWebLNInfo();
+			if (!this.weblnInfo) throw new Error('The selected wallet could not be connected.');
+			this.weblnBalance = await weblnBalanceSats();
+			this.weblnEnabled = true;
+			return true;
+		} catch (e) {
+			this.error = (e as Error).message || 'Could not select wallet';
+			return false;
+		} finally {
+			this.weblnBusy = false;
+		}
+	}
+
 	disconnectWallet() {
+		disconnectNwc();
+		this.provider = 'webln';
 		this.weblnEnabled = false;
 		this.weblnInfo = null;
 		this.weblnBalance = null;

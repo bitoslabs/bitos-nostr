@@ -19,6 +19,7 @@
 	const STORAGE_KEY = 'bitos:gif-picker:v1';
 	const CACHE_TTL = 24 * 60 * 60 * 1000;
 	const RECENT_LIMIT = 12;
+	const GIPHY_PAGE_SIZE = 30;
 
 	export interface GifChoice {
 		url: string;
@@ -42,8 +43,11 @@
 	let recent = $state<GifItem[]>([]);
 	let tab = $state<'recent' | 'trending'>('trending');
 	let loading = $state(false);
+	let loadingMore = $state(false);
 	let loaded = $state(false);
 	let error = $state('');
+	let nextOffset = $state(0);
+	let hasMore = $state(true);
 	let debounce: ReturnType<typeof setTimeout> | undefined;
 	let controller: AbortController | undefined;
 	let storage = $state<GifStorage>({});
@@ -81,20 +85,32 @@
 		writeStorage();
 	}
 
-	async function fetchGifs(q: string) {
+	function mergeItems(current: GifItem[], incoming: GifItem[]) {
+		const byId = new Map(current.map((item) => [item.id, item]));
+		for (const item of incoming) byId.set(item.id, item);
+		return [...byId.values()];
+	}
+
+	async function fetchGifs(q: string, options: { append?: boolean } = {}) {
 		if (!browser) return;
+		if (options.append && (loading || loadingMore || !hasMore)) return;
 		controller?.abort();
 		controller = new AbortController();
-		loading = true;
+		if (options.append) loadingMore = true;
+		else loading = true;
 		error = '';
 		const normalizedQuery = q.trim().toLowerCase();
+		const offset = options.append ? nextOffset : 0;
 		try {
 			const endpoint = q.trim()
-				? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=30&rating=pg`
-				: `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_KEY}&limit=30&rating=pg`;
+				? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`
+				: `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_KEY}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`;
 			const res = await fetch(endpoint, { signal: controller.signal });
 			if (!res.ok) throw new Error(`Giphy ${res.status}`);
-			const json = (await res.json()) as { data: GiphyItem[] };
+			const json = (await res.json()) as {
+				data: GiphyItem[];
+				pagination?: { count?: number; offset?: number; total_count?: number };
+			};
 			const nextItems = json.data.map((gif) => {
 				const preview =
 					gif.images.fixed_height_small ?? gif.images.fixed_height ?? gif.images.original;
@@ -107,10 +123,17 @@
 					h: Number(preview.height ?? 120)
 				};
 			});
-			if (normalizedQuery || tab !== 'recent') items = nextItems;
+			const allItems = options.append ? mergeItems(items, nextItems) : nextItems;
+			if (normalizedQuery || tab !== 'recent') items = allItems;
+			const returnedOffset = json.pagination?.offset ?? offset;
+			const returnedCount = json.pagination?.count ?? nextItems.length;
+			nextOffset = returnedOffset + returnedCount;
+			hasMore = json.pagination?.total_count
+				? nextOffset < json.pagination.total_count
+				: nextItems.length >= GIPHY_PAGE_SIZE;
 			const savedAt = Date.now();
 			if (!normalizedQuery) {
-				storage = { ...storage, trending: { savedAt, items: nextItems } };
+				storage = { ...storage, trending: { savedAt, items: allItems } };
 				writeStorage();
 			}
 			if (!items.length && q.trim()) error = 'No GIFs found';
@@ -118,6 +141,7 @@
 			if ((e as Error).name !== 'AbortError') error = 'Could not load GIFs';
 		} finally {
 			loading = false;
+			loadingMore = false;
 			loaded = true;
 		}
 	}
@@ -137,7 +161,20 @@
 		tab = 'recent';
 		query = '';
 		items = recent;
+		hasMore = false;
 		error = '';
+	}
+
+	function showTrending() {
+		tab = 'trending';
+		items = storage.trending?.items ?? items;
+		nextOffset = items.length;
+		hasMore = true;
+		error = '';
+	}
+
+	function loadMore() {
+		void fetchGifs(query, { append: true });
 	}
 
 	// Restore useful context immediately, then revalidate it in the background.
@@ -147,6 +184,8 @@
 		const cached = storage.trending;
 		if (cached && fresh(cached)) {
 			items = cached.items;
+			nextOffset = cached.items.length;
+			hasMore = true;
 			loaded = true;
 			if (recent.length) tab = 'recent';
 		}
@@ -188,8 +227,7 @@
 				type="button"
 				onclick={(event) => {
 					event.stopPropagation();
-					tab = 'trending';
-					items = storage.trending?.items ?? items;
+					showTrending();
 				}}
 				class="rounded-md px-2 py-1 text-[11px] {tab === 'trending'
 					? 'bg-[var(--ui-bg-muted)] font-medium text-[var(--ui-text)]'
@@ -240,6 +278,23 @@
 					</button>
 				{/each}
 			</div>
+			{#if tab !== 'recent' && hasMore}
+				<button
+					type="button"
+					onclick={(event) => {
+						event.stopPropagation();
+						loadMore();
+					}}
+					disabled={loading || loadingMore}
+					class="mx-auto mt-2 flex h-8 items-center gap-1.5 rounded-full border border-[var(--ui-border-muted)] px-3 text-[11px] font-semibold text-[var(--ui-text-muted)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					<Icon
+						name={loadingMore ? 'i-lucide-loader-circle' : 'i-lucide-plus'}
+						class="size-3.5 {loadingMore ? 'animate-spin' : ''}"
+					/>
+					{loadingMore ? 'Loading GIFs…' : 'Load more GIFs'}
+				</button>
+			{/if}
 		{/if}
 	</div>
 	<p

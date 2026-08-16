@@ -7,6 +7,23 @@
  * Reference: https://www.webln.guide/developer/connecting/connect-provider
  */
 import { browser } from '$app/environment';
+import { isNwcConnected, nwcBalanceSats, nwcInfo, nwcMakeInvoice, nwcPayInvoice } from './nwc';
+
+export type WalletProvider = 'webln' | 'nwc';
+
+let activeProvider: WalletProvider = 'webln';
+
+/** Choose which connected wallet handles payments, invoices, and zaps. */
+export function selectWalletProvider(provider: WalletProvider) {
+	if (provider === 'nwc' && !isNwcConnected())
+		throw new Error('No custom NWC wallet is connected.');
+	if (provider === 'webln' && !hasWebLN()) throw new Error('No WebLN wallet is available.');
+	activeProvider = provider;
+}
+
+export function activeWalletProvider(): WalletProvider {
+	return activeProvider;
+}
 
 export interface WebLNNode {
 	alias: string;
@@ -62,6 +79,11 @@ export function hasWebLN(): boolean {
 	return browser && typeof window !== 'undefined' && !!window.webln;
 }
 
+/** Any active wallet provider: injected WebLN or a direct NIP-47 connection. */
+export function hasConnectedWallet(): boolean {
+	return activeProvider === 'nwc' ? isNwcConnected() : hasWebLN();
+}
+
 let enabling: Promise<boolean> | null = null;
 
 /**
@@ -91,6 +113,18 @@ export function resetWebLNCache() {
 
 /** Wallet node info (alias/pubkey) once enabled, or `null`. */
 export async function getWebLNInfo(): Promise<WebLNInfo | null> {
+	if (activeProvider === 'nwc' && isNwcConnected()) {
+		const info = await nwcInfo();
+		return {
+			node: {
+				alias: typeof info.alias === 'string' ? info.alias : 'Custom NWC wallet',
+				pubkey: typeof info.pubkey === 'string' ? info.pubkey : ''
+			},
+			methods: Array.isArray(info.methods)
+				? info.methods.filter((method): method is string => typeof method === 'string')
+				: []
+		};
+	}
 	if (!hasWebLN()) return null;
 	try {
 		await enableWebLN();
@@ -105,6 +139,7 @@ export async function getWebLNInfo(): Promise<WebLNInfo | null> {
  * yet enabled, or the provider doesn't expose `getBalance`.
  */
 export async function weblnBalanceSats(): Promise<number | null> {
+	if (activeProvider === 'nwc' && isNwcConnected()) return nwcBalanceSats();
 	if (!hasWebLN()) return null;
 	try {
 		await enableWebLN();
@@ -123,6 +158,7 @@ export async function weblnBalanceSats(): Promise<number | null> {
  * with a human-readable message so the caller can surface a toast.
  */
 export async function payWithWebLN(invoice: string): Promise<string> {
+	if (activeProvider === 'nwc' && isNwcConnected()) return nwcPayInvoice(invoice);
 	if (!hasWebLN()) throw new Error('No Lightning wallet found');
 	await enableWebLN();
 	const result = await window.webln!.sendPayment(invoice);
@@ -134,6 +170,7 @@ export async function payWithWebLN(invoice: string): Promise<string> {
  * Returns the BOLT11 string, or `null` when unavailable.
  */
 export async function makeWebLNInvoice(amountSats: number, memo = ''): Promise<string | null> {
+	if (activeProvider === 'nwc' && isNwcConnected()) return nwcMakeInvoice(amountSats, memo);
 	if (!hasWebLN()) return null;
 	try {
 		await enableWebLN();

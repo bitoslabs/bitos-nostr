@@ -11,7 +11,8 @@
 	import { hexToBytes } from '$lib/nostr/hex';
 	import { wallet } from '$lib/nostr/wallet.svelte';
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
-	import { hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
+	import { hasConnectedWallet, hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
+	import { isNwcConnected } from '$lib/nostr/nwc';
 
 	type Props = {
 		open?: boolean;
@@ -203,9 +204,9 @@
 
 	/** Pay the current invoice via a connected WebLN wallet (best-effort). */
 	async function maybePayWithWebLN() {
-		if (!invoice || paid || !hasWebLN()) return;
+		if (!invoice || paid || !hasConnectedWallet()) return;
 		try {
-			await enableWebLN();
+			if (hasWebLN()) await enableWebLN();
 		} catch {
 			return; // user declined to enable the wallet — fall back to QR
 		}
@@ -224,6 +225,11 @@
 		} finally {
 			paying = false;
 		}
+	}
+
+	async function selectZapWallet(provider: 'webln' | 'nwc') {
+		const ok = await wallet.selectProvider(provider);
+		if (!ok && wallet.error) error = wallet.error;
 	}
 
 	onDestroy(cleanupReceipt);
@@ -275,14 +281,46 @@
 						{isZap ? 'Zap invoice ready' : 'Invoice ready'} · {amount.toLocaleString()} sats
 					</p>{/if}
 				<QrCode value={invoice.toUpperCase()} label="Zap invoice QR code" />
+				{#if hasWebLN() && isNwcConnected() && !paid}
+					<div
+						class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 py-2"
+					>
+						<span class="text-[11px] font-semibold text-[var(--ui-text-muted)]"
+							>Pay this zap with</span
+						>
+						<div
+							class="flex rounded-md border border-[var(--ui-border-muted)] p-0.5 text-[10.5px] font-bold"
+						>
+							<button
+								type="button"
+								onclick={() => selectZapWallet('webln')}
+								class="rounded px-2 py-1 {wallet.provider === 'webln'
+									? 'bg-primary-500 text-white'
+									: 'text-[var(--ui-text-muted)]'}">WebLN</button
+							>
+							<button
+								type="button"
+								onclick={() => selectZapWallet('nwc')}
+								class="rounded px-2 py-1 {wallet.provider === 'nwc'
+									? 'bg-primary-500 text-white'
+									: 'text-[var(--ui-text-muted)]'}">NWC</button
+							>
+						</div>
+					</div>
+				{/if}
 				<div class="mt-3 flex gap-2">
-					{#if hasWebLN() && !paid}
+					{#if hasConnectedWallet() && !paid}
 						<button
 							type="button"
 							onclick={maybePayWithWebLN}
 							disabled={paying}
 							class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[12px] font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
-							><Icon name={paying ? 'i-lucide-loader-circle' : 'i-lucide-wallet'} class="size-3.5 {paying ? 'animate-spin' : ''}" />{paying ? 'Paying…' : 'Pay with wallet'}</button
+							><Icon
+								name={paying ? 'i-lucide-loader-circle' : 'i-lucide-wallet'}
+								class="size-3.5 {paying ? 'animate-spin' : ''}"
+							/>{paying
+								? 'Paying…'
+								: `Pay with ${wallet.provider === 'nwc' ? 'NWC' : 'WebLN'}`}</button
 						>
 					{/if}
 					<a
@@ -324,7 +362,11 @@
 				><Icon
 					name={loading ? 'i-lucide-loader-circle' : 'i-lucide-zap'}
 					class="size-3.5 {loading ? 'animate-spin' : ''}"
-				/>{loading ? 'Preparing…' : paid ? 'Paid' : `Zap ${amount.toLocaleString()} sats`}</button
+				/>{loading
+					? 'Preparing…'
+					: paid
+						? 'Paid'
+						: `Create ${amount.toLocaleString()} sat invoice`}</button
 			>{/if}
 	{/snippet}
 </Dialog>

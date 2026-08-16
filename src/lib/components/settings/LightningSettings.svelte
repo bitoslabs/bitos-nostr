@@ -9,9 +9,11 @@
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { hasWebLN } from '$lib/nostr/webln';
+	import { isNwcConnected } from '$lib/nostr/nwc';
 	import { formatCompact } from '$lib/utils/format';
 
 	const walletAvailable = $derived(hasWebLN());
+	let customNwcUri = $state('');
 
 	onMount(() => {
 		walletPrefs.load();
@@ -21,6 +23,25 @@
 	async function connect() {
 		const ok = await wallet.connectWallet();
 		if (ok) toasts.success(`Connected to ${wallet.weblnInfo?.node.alias ?? 'wallet'}`);
+		else if (wallet.error) toasts.error(wallet.error);
+	}
+
+	async function connectCustomNwc() {
+		if (!customNwcUri.trim()) {
+			toasts.error('Paste your Nostr Wallet Connect URI first.');
+			return;
+		}
+		const ok = await wallet.connectCustomNwc(customNwcUri);
+		if (ok) {
+			customNwcUri = '';
+			toasts.success(`Connected to ${wallet.weblnInfo?.node.alias ?? 'custom NWC wallet'}`);
+		} else if (wallet.error) toasts.error(wallet.error);
+	}
+
+	async function selectProvider(provider: 'webln' | 'nwc') {
+		const ok = await wallet.selectProvider(provider);
+		if (ok)
+			toasts.success(`Using ${provider === 'nwc' ? 'custom NWC' : 'WebLN'} for payments and zaps.`);
 		else if (wallet.error) toasts.error(wallet.error);
 	}
 
@@ -38,6 +59,36 @@
 <!-- ============ WALLET CONNECTION ============ -->
 <SectionCard title="Wallet connection" class="mb-5">
 	{#if wallet.weblnEnabled}
+		{#if walletAvailable && isNwcConnected()}
+			<div
+				class="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3"
+			>
+				<div>
+					<div class="text-[13px] font-bold">Pay with</div>
+					<div class="text-[11px] text-[var(--ui-text-muted)]">
+						This wallet is used for zaps, deposits, and withdrawals.
+					</div>
+				</div>
+				<div
+					class="flex rounded-lg border border-[var(--ui-border-muted)] p-0.5 text-[11px] font-bold"
+				>
+					<button
+						type="button"
+						onclick={() => selectProvider('webln')}
+						class="rounded-md px-2.5 py-1 {wallet.provider === 'webln'
+							? 'bg-primary-500 text-white'
+							: 'text-[var(--ui-text-muted)]'}">WebLN</button
+					>
+					<button
+						type="button"
+						onclick={() => selectProvider('nwc')}
+						class="rounded-md px-2.5 py-1 {wallet.provider === 'nwc'
+							? 'bg-primary-500 text-white'
+							: 'text-[var(--ui-text-muted)]'}">Custom NWC</button
+					>
+				</div>
+			</div>
+		{/if}
 		<div
 			class="flex items-center gap-3.5 rounded-xl border border-[color-mix(in_oklab,var(--ui-color-primary-500)_22%,transparent)] bg-[color-mix(in_oklab,var(--ui-color-primary-500)_6%,transparent)] p-3.5"
 		>
@@ -65,35 +116,59 @@
 		>
 			<Icon name="i-lucide-refresh-ccw" class="size-3.5" /> Refresh balance
 		</button>
-	{:else if walletAvailable}
-		<p class="mb-4 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-			A Lightning wallet was detected. Connect it to deposit, withdraw, and pay zaps in one tap
-			without leaving BitOS.
-		</p>
-		<Button color="primary" icon="i-lucide-plug" onclick={connect} disabled={wallet.weblnBusy}>
-			{wallet.weblnBusy ? 'Connecting…' : 'Connect wallet'}
-		</Button>
 	{:else}
-		<div
-			class="flex items-start gap-3 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3.5"
-		>
-			<Icon name="i-lucide-info" class="mt-0.5 size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
-			<div class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-				No Lightning wallet detected. Install
-				<a
-					class="font-semibold text-primary-500 hover:underline"
-					href="https://getalby.com"
-					target="_blank"
-					rel="noreferrer">Alby</a
+		{#if walletAvailable}
+			<p class="mb-4 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+				A Lightning wallet was detected. Connect it to deposit, withdraw, and pay zaps in one tap
+				without leaving BitOS.
+			</p>
+			<Button color="primary" icon="i-lucide-plug" onclick={connect} disabled={wallet.weblnBusy}>
+				{wallet.weblnBusy ? 'Connecting…' : 'Connect wallet'}
+			</Button>
+		{:else}
+			<div
+				class="flex items-start gap-3 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3.5"
+			>
+				<Icon name="i-lucide-info" class="mt-0.5 size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
+				<div class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+					No Lightning wallet detected. Install
+					<a
+						class="font-semibold text-primary-500 hover:underline"
+						href="https://getalby.com"
+						target="_blank"
+						rel="noreferrer">Alby</a
+					>
+					or another
+					<a
+						class="font-semibold text-primary-500 hover:underline"
+						href="https://www.webln.guide/ressources/wallet-providers"
+						target="_blank"
+						rel="noreferrer">WebLN wallet</a
+					>
+					to connect. Earnings you receive are still tracked on Nostr and visible on the Zaps page.
+				</div>
+			</div>
+		{/if}
+		<div class="mt-4 border-t border-[var(--ui-border-muted)] pt-4">
+			<div class="mb-1 text-[13px] font-bold">Custom Nostr Wallet Connect</div>
+			<p class="mb-3 text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
+				Paste a <code>nostr+walletconnect://</code> URI from your wallet. Its spending secret is kept
+				only until you reload this page.
+			</p>
+			<div class="flex flex-col gap-2 sm:flex-row">
+				<Input
+					bind:value={customNwcUri}
+					placeholder="nostr+walletconnect://…"
+					class="min-w-0 flex-1 font-mono text-[12px]"
+				/>
+				<Button
+					color="primary"
+					icon="i-lucide-link"
+					onclick={connectCustomNwc}
+					disabled={wallet.weblnBusy}
 				>
-				or another
-				<a
-					class="font-semibold text-primary-500 hover:underline"
-					href="https://www.webln.guide/ressources/wallet-providers"
-					target="_blank"
-					rel="noreferrer">WebLN wallet</a
-				>
-				to connect. Earnings you receive are still tracked on Nostr and visible on the Zaps page.
+					{wallet.weblnBusy ? 'Connecting…' : 'Connect NWC'}
+				</Button>
 			</div>
 		</div>
 	{/if}
@@ -121,7 +196,7 @@
 					type="number"
 					inputmode="numeric"
 					min="1"
-					class="text-center font-mono w-full"
+					class="w-full text-center font-mono"
 					oninput={(e) => setAmount(i, e.currentTarget.value)}
 				/>
 				{#if walletPrefs.state.amounts.length > 2}
