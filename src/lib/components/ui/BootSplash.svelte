@@ -29,12 +29,18 @@
 			class="hex-clip bs-pulse-soft grid size-[60px] place-items-center bg-[linear-gradient(135deg,var(--color-warm-400),var(--color-warm-600))] shadow-[0_4px_18px_color-mix(in_oklab,var(--color-warm-500)_45%,transparent)]"
 			aria-hidden="true"
 		>
-			<svg viewBox="0 0 128 128" class="size-[34px]">
+			<!-- A single perimeter trace gives the mark a compact "system online" moment. -->
+			<svg class="bs-boot-orbit" viewBox="0 0 100 100" aria-hidden="true">
+				<polygon points="25,6.7 75,6.7 100,50 75,93.3 25,93.3 0,50" />
+			</svg>
+			<svg viewBox="0 0 128 128" class="bs-symbol size-[34px]">
 				<path
+					class="bs-letter"
 					d="M40 30h34c14 0 24 8 24 21 0 9-5 15-12 17 9 2 16 8 16 19 0 14-11 23-26 23H40V30zm16 31h17c6 0 10-3 10-8s-4-8-10-8H56v16zm0 31h19c6 0 11-3 11-9s-5-9-11-9H56v18z"
 					fill="#fff"
 				/>
-				<path d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" fill="#fff" opacity=".9" />
+				<path class="bs-bolt" d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" fill="#fff" opacity=".9" />
+				<path class="bs-bolt-trace" pathLength="1" d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" />
 			</svg>
 		</div>
 		<!-- Official logo wordmark: swaps with the color mode. -->
