@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { cn } from '$lib/utils/cn';
-	import { formatCompact } from '$lib/utils/format';
 
 	/**
 	 * Lightning wallet balance card shown in the left sidebar. Displays a
