@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * Minimal "context line" preview of the note a notification is *about*
-	 * (the post someone liked, commented on, reposted, or mentioned you in).
+	 * (the post someone liked, commented on, reposted, mentioned you in, or zapped).
 	 *
 	 * Renders as a leading reply-context icon + indented excerpt — the
 	 * Twitter/X reply-context pattern — rather than a filled box. The type

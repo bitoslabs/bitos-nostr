@@ -5,11 +5,14 @@
 	import { stories, type StoryAuthor } from '$lib/nostr/stories.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import StoryActivity from './StoryActivity.svelte';
+	import NoteZapDialog from './NoteZapDialog.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { timeAgo } from '$lib/utils/format';
+	import { compactSats } from '$lib/utils/profile-stats';
+	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { parseContent } from '$lib/utils/note-content';
 	import MentionLink from './MentionLink.svelte';
@@ -41,6 +44,9 @@
 	let tapTimer: ReturnType<typeof setTimeout> | undefined;
 	let lastBurstAt = 0;
 	let comboTimer: ReturnType<typeof setTimeout> | undefined;
+	let zapOpen = $state(false);
+	/** Instant feedback per slide until the live 9735 receipt lands. */
+	let optimisticZapSats = $state<Record<string, number>>({});
 
 	const profile = $derived(profiles.get(author.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
@@ -50,12 +56,16 @@
 	const isMine = $derived(author.pubkey === identity.current?.pk);
 	const interaction = $derived(slide ? stories.getInteraction(slide.id) : undefined);
 	const liked = $derived(!!interaction?.likedByMe);
+	const lightningAddress = $derived(profile?.lud16 || profile?.lud06 || '');
+	const zapSatsTotal = $derived(
+		slide ? (interaction?.zapSats ?? 0) + (optimisticZapSats[slide.id] ?? 0) : 0
+	);
 	const isSensitive = $derived(!!slide?.sensitive && !!slide.imageUrl);
 	const hidden = $derived(isSensitive && !revealed);
 
 	// Auto-advance: restart the timer whenever the slide / pause state changes.
 	$effect(() => {
-		if (paused || confirmDeleteOpen || !slide) return;
+		if (paused || confirmDeleteOpen || zapOpen || !slide) return;
 		const ms = durationMs;
 		const t = setTimeout(() => advance(), ms);
 		return () => clearTimeout(t);
@@ -205,6 +215,25 @@
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not react');
 		}
+	}
+
+	function zapStory() {
+		if (!slide) return;
+		if (!lightningAddress) {
+			toasts.info('This author has no Lightning address');
+			return;
+		}
+		paused = true;
+		zapOpen = true;
+	}
+
+	/** Count a just-paid zap immediately; the live receipt replaces it. */
+	function handleZapPaid(sats: number) {
+		if (!slide) return;
+		optimisticZapSats = {
+			...optimisticZapSats,
+			[slide.id]: (optimisticZapSats[slide.id] ?? 0) + sats
+		};
 	}
 
 	async function submitReply() {
@@ -546,6 +575,14 @@
 					</button>
 					<button
 						type="button"
+						onclick={zapStory}
+						class="grid size-10 shrink-0 place-items-center rounded-full text-warm-400 transition hover:bg-white/15"
+						aria-label="Zap sats to this story"
+					>
+						<Icon name="i-lucide-zap" class="size-5 fill-current" />
+					</button>
+					<button
+						type="button"
 						onclick={() => (activityOpen = true)}
 						class="grid size-10 shrink-0 place-items-center rounded-full text-white transition hover:bg-white/15"
 						aria-label="View activity"
@@ -564,6 +601,17 @@
 						<Icon name="i-lucide-heart" class="size-3.5" />
 						{interaction?.likeCount ?? 0}
 					</button>
+					{#if zapSatsTotal || interaction?.zapCount}
+						<button
+							type="button"
+							onclick={zapStory}
+							class="text-warm-300 inline-flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/15"
+							aria-label="Zap this story"
+						>
+							<Icon name="i-lucide-zap" class="size-3.5 fill-current" />
+							{zapSatsTotal ? `${compactSats(zapSatsTotal)} sats` : (interaction?.zapCount ?? 0)}
+						</button>
+					{/if}
 					{#if isMine}
 						<button
 							type="button"
@@ -647,6 +695,18 @@
 </Dialog>
 
 <StoryActivity bind:open={activityOpen} {slide} {author} />
+
+{#if slide}
+	<NoteZapDialog
+		bind:open={zapOpen}
+		recipientPubkey={author.pubkey}
+		{lightningAddress}
+		eventId={slide.id}
+		eventKind={NOSTR_KINDS.STORY_STATUS}
+		onPaid={handleZapPaid}
+		onClose={() => (paused = false)}
+	/>
+{/if}
 
 <style>
 	@keyframes story-progress {

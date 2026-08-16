@@ -259,6 +259,38 @@
 		return reply.reactions.reduce((sum, reaction) => sum + reaction.count, 0);
 	}
 
+	/** Zap-a-comment state: one shared dialog, optimistic sats per comment id. */
+	let zapCommentTarget = $state<FeedNote | null>(null);
+	let zapCommentOpen = $state(false);
+	let optimisticCommentZaps = $state<Record<string, number>>({});
+
+	const zapCommentProfile = $derived(
+		zapCommentTarget ? profiles.get(zapCommentTarget.pubkey) : undefined
+	);
+	const zapCommentAddress = $derived(zapCommentProfile?.lud16 || zapCommentProfile?.lud06 || '');
+
+	function commentZapSats(reply: FeedNote) {
+		return reply.zapTotalSats + (optimisticCommentZaps[reply.id] ?? 0);
+	}
+
+	function zapComment(reply: FeedNote) {
+		const profile = profiles.get(reply.pubkey);
+		if (!profile?.lud16 && !profile?.lud06) {
+			toasts.info('This author has no Lightning address');
+			return;
+		}
+		zapCommentTarget = reply;
+		zapCommentOpen = true;
+	}
+
+	function handleCommentZapPaid(sats: number) {
+		if (!zapCommentTarget) return;
+		optimisticCommentZaps = {
+			...optimisticCommentZaps,
+			[zapCommentTarget.id]: (optimisticCommentZaps[zapCommentTarget.id] ?? 0) + sats
+		};
+	}
+
 	function childReplies(replyId: string) {
 		return allReplies
 			.filter((reply) => reply.replyTo === replyId)
@@ -1227,6 +1259,17 @@
 								</button>
 								<button
 									type="button"
+									onclick={() => zapComment(reply)}
+									class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
+									aria-label="Zap sats to this comment"
+								>
+									<Icon name="i-lucide-zap" class="size-3.5" />
+									Zap{#if commentZapSats(reply)}
+										<span class="font-semibold"> · {compactSats(commentZapSats(reply))}</span>
+									{/if}
+								</button>
+								<button
+									type="button"
 									onclick={() => startCommentReply(reply)}
 									disabled={!privacyNotificationSettings.canCommentOn(reply.pubkey)}
 									class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
@@ -1312,6 +1355,19 @@
 														{commentLiked(child) ? 'Unlike' : 'Like'}
 														{#if commentReactionCount(child)}
 															<span class="font-semibold"> · {commentReactionCount(child)}</span>
+														{/if}
+													</button>
+													<button
+														type="button"
+														onclick={() => zapComment(child)}
+														class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
+														aria-label="Zap sats to this reply"
+													>
+														<Icon name="i-lucide-zap" class="size-3" />
+														Zap{#if commentZapSats(child)}
+															<span class="font-semibold">
+																· {compactSats(commentZapSats(child))}</span
+															>
 														{/if}
 													</button>
 													<button
@@ -1429,6 +1485,17 @@
 	eventId={note.id}
 	onPaid={handleZapPaid}
 />
+
+{#if zapCommentTarget}
+	<NoteZapDialog
+		bind:open={zapCommentOpen}
+		recipientPubkey={zapCommentTarget.pubkey}
+		lightningAddress={zapCommentAddress}
+		eventId={zapCommentTarget.id}
+		onPaid={handleCommentZapPaid}
+		onClose={() => (zapCommentTarget = null)}
+	/>
+{/if}
 
 <Dialog bind:open={deleteOpen} title={`Delete ${deleteTargetLabel}`}>
 	<div class="space-y-4">

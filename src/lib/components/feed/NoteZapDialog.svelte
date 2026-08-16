@@ -16,7 +16,8 @@
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
 	import { hasConnectedWallet, hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
 	import { isNwcConnected } from '$lib/nostr/nwc';
-	import { bolt11Expiry } from '$lib/nostr/zaps';
+	import { bolt11Expiry, lnurlSupportsZap, zapRelayTagUrls } from '$lib/nostr/zaps';
+	import { queryNip65RelayList } from '$lib/nostr/nip65';
 	import { shortKey } from '$lib/utils/format';
 
 	type Props = {
@@ -24,7 +25,11 @@
 		recipientPubkey: string;
 		lightningAddress: string;
 		eventId: string;
+		/** Kind of the zapped event for the NIP-57 `k` tag (notes/comments 1, stories 30315). */
+		eventKind?: number;
 		onPaid?: (sats: number) => void;
+		/** Fired when the dialog closes (any path) so hosts can resume playback. */
+		onClose?: () => void;
 	};
 
 	let {
@@ -32,7 +37,9 @@
 		recipientPubkey,
 		lightningAddress,
 		eventId,
-		onPaid
+		eventKind = 1,
+		onPaid,
+		onClose
 	}: Props = $props();
 
 	const AUTO_CLOSE_MS = 2400;
@@ -127,6 +134,7 @@
 	function close() {
 		open = false;
 		reset();
+		onClose?.();
 	}
 
 	/** Leave a short success confirmation, then return the reader to the post. */
@@ -210,7 +218,23 @@
 			walletPrefs.setDefaultAmount(selectedAmount);
 			const callback = new URL(metadata.callback);
 			callback.searchParams.set('amount', String(millisats));
-			const supportsZap = metadata.allowsNostr === true && metadata.nostrPubkey === recipientPubkey;
+			// NIP-57: nostrPubkey is the provider's receipt-signing key, not the
+			// recipient's pubkey — requiresNostr support only, never key equality.
+			const supportsZap = lnurlSupportsZap(metadata);
+			let receiptRelays = relays.urls.slice(0, 8);
+			if (supportsZap) {
+				// The zapper publishes the 9735 receipt only to the relays in the
+				// request, so use the recipient's NIP-65 read relays (where they
+				// listen) plus a few of ours for the sender-side confirmation.
+				try {
+					const readRelays = (await queryNip65RelayList(recipientPubkey))
+						.filter((relay) => relay.read)
+						.map((relay) => relay.url);
+					receiptRelays = zapRelayTagUrls(readRelays, relays.urls);
+				} catch {
+					/* NIP-65 list unavailable — fall back to our relays. */
+				}
+			}
 			const anonymous = walletPrefs.state.anonymousZaps || !identity.current?.sk;
 			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
 			if (supportsZap) {
@@ -220,11 +244,11 @@
 						content: comment.trim(),
 						created_at: Math.floor(Date.now() / 1000),
 						tags: [
-							['relays', ...relays.urls.slice(0, 8)],
+							['relays', ...receiptRelays],
 							['amount', String(millisats)],
 							['p', recipientPubkey],
 							['e', eventId],
-							['k', '1']
+							['k', String(eventKind)]
 						]
 					},
 					anonymous ? generateSecretKey() : hexToBytes(identity.current!.sk)

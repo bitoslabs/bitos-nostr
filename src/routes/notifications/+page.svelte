@@ -701,7 +701,7 @@
 													{/if}
 												{/if}
 
-												{#if item.targetId && ['like', 'comment', 'mention', 'repost'].includes(item.type)}
+												{#if item.targetId && ['like', 'comment', 'mention', 'repost', 'zap'].includes(item.type)}
 													<OriginNotePreview noteId={item.targetId} />
 												{/if}
 											</div>

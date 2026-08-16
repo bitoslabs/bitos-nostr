@@ -20,6 +20,7 @@ import { profiles } from './profiles.svelte';
 import { hexToBytes } from './hex';
 import type { Filter } from 'nostr-tools/filter';
 import { NOSTR_KINDS } from './types';
+import { zapSats } from './zaps';
 import { clientTag } from './client-tag';
 import { extractHashtagTags } from '$lib/utils/note-content';
 import { minePowAsync, eventPow, type PowProgress } from './pow';
@@ -84,6 +85,9 @@ export interface StoryInteraction {
 	/** Distinct viewer pubkeys (👁️ reactions ∪ reply authors). */
 	views: string[];
 	replies: StoryReply[];
+	/** NIP-57 zap receipts targeting the slide (kind 9735, `#e` = slide id). */
+	zapCount: number;
+	zapSats: number;
 	likedByMe: boolean;
 	myLikeEventId?: string;
 	likeCount: number;
@@ -95,6 +99,8 @@ export const EMPTY_STORY_INTERACTION: StoryInteraction = {
 	likes: [],
 	views: [],
 	replies: [],
+	zapCount: 0,
+	zapSats: 0,
 	likedByMe: false,
 	likeCount: 0,
 	viewCount: 0,
@@ -184,7 +190,7 @@ class StoriesStore {
 	publicHasMore = $state(false);
 	private publicNextUntil: number | null = null;
 
-	/** Per-slide engagement: likes (❤️), views (👁️), and replies. */
+	/** Per-slide engagement: likes (❤️), views (👁️), replies, and zaps. */
 	interactions = $state<Record<string, StoryInteraction>>({});
 	private trackedSlides = new Map<string, StorySlide>();
 	private addressToId = new Map<string, string>();
@@ -193,6 +199,8 @@ class StoriesStore {
 		Map<string, { emoji: string; at: number; evId: string }>
 	>();
 	private repliesBySlide = new Map<string, Map<string, StoryReply>>();
+	/** slide id → (zap receipt event id → sats) — dedupes relay replays. */
+	private zapsBySlide = new Map<string, Map<string, number>>();
 	private viewedSlides = new Set<string>();
 
 	/** The current user's own active slides. */
@@ -524,6 +532,7 @@ class StoriesStore {
 		this.addressToId.clear();
 		this.reactionsBySlide.clear();
 		this.repliesBySlide.clear();
+		this.zapsBySlide.clear();
 	};
 
 	/** Like a story (kind 7 ❤️). Idempotent — relays keep the latest reaction. */
@@ -626,7 +635,12 @@ class StoriesStore {
 	private activityFilters(slides: StorySlide[]): Filter[] {
 		const ids = slides.map((s) => s.id);
 		const addresses = slides.map((s) => this.addressOf(s)).filter(Boolean) as string[];
-		const filters: Filter[] = [{ kinds: [NOSTR_KINDS.REACTION], '#e': ids }];
+		const filters: Filter[] = [
+			{ kinds: [NOSTR_KINDS.REACTION], '#e': ids },
+			// Zap receipts tag the zapped event id via `#e` (NIP-57), so they ride
+			// the same ids as reactions and keep story zap totals live.
+			{ kinds: [NOSTR_KINDS.ZAP], '#e': ids }
+		];
 		if (addresses.length) {
 			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], '#a': addresses });
 			filters.push({ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids });
@@ -641,6 +655,7 @@ class StoriesStore {
 			if (a) this.addressToId.set(a, s.id);
 			if (!this.reactionsBySlide.has(s.id)) this.reactionsBySlide.set(s.id, new Map());
 			if (!this.repliesBySlide.has(s.id)) this.repliesBySlide.set(s.id, new Map());
+			if (!this.zapsBySlide.has(s.id)) this.zapsBySlide.set(s.id, new Map());
 			if (!this.interactions[s.id]) {
 				this.interactions = { ...this.interactions, [s.id]: EMPTY_STORY_INTERACTION };
 			}
@@ -662,6 +677,16 @@ class StoriesStore {
 	}
 
 	private ingestActivity(ev: Event) {
+		if (ev.kind === NOSTR_KINDS.ZAP) {
+			const slideId = this.slideIdFromTags(ev.tags);
+			if (!slideId) return;
+			const map = this.zapsBySlide.get(slideId) ?? new Map<string, number>();
+			if (map.has(ev.id)) return; // relays replay receipts — count each once
+			map.set(ev.id, zapSats(ev));
+			this.zapsBySlide.set(slideId, map);
+			this.publishInteraction(slideId);
+			return;
+		}
 		if (ev.kind === NOSTR_KINDS.REACTION) {
 			const slideId = this.slideIdFromTags(ev.tags);
 			if (!slideId) return;
@@ -716,10 +741,21 @@ class StoriesStore {
 			}
 		}
 		for (const reply of replies) viewPubkeys.add(reply.pubkey.toLowerCase());
+		const zaps = this.zapsBySlide.get(slideId);
+		let zapCount = 0;
+		let zapSatsTotal = 0;
+		if (zaps) {
+			for (const sats of zaps.values()) {
+				zapCount += 1;
+				zapSatsTotal += sats;
+			}
+		}
 		return {
 			likes,
 			views: [...viewPubkeys],
 			replies,
+			zapCount,
+			zapSats: zapSatsTotal,
 			likedByMe: !!myLikeEventId,
 			myLikeEventId,
 			likeCount: likes.length,
