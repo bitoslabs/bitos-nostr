@@ -219,7 +219,9 @@
 	async function maybePayWithWebLN() {
 		if (!invoice || paid || !hasConnectedWallet()) return;
 		try {
-			if (hasWebLN()) await enableWebLN();
+			// Do not wake an injected wallet (such as Alby) when the user chose
+			// their saved Custom NWC wallet in Lightning settings.
+			if (wallet.provider === 'webln' && hasWebLN()) await enableWebLN();
 		} catch {
 			return; // user declined to enable the wallet — fall back to QR
 		}
