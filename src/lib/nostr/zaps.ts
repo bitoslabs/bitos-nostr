@@ -1,5 +1,62 @@
 import { NOSTR_KINDS, type Event, type FeedNote } from './types';
 
+const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+/** Seconds from invoice creation until expiry when the `x` field is absent. */
+const BOLT11_DEFAULT_EXPIRY = 3600;
+
+/** Signature tail of a BOLT11 data part (104 chars: 512-bit sig + recovery). */
+const BOLT11_SIGNATURE_CHARS = 104;
+
+/**
+ * Absolute expiry of a BOLT11 invoice, as a unix timestamp in seconds.
+ *
+ * Minimal parser per BOLT #11: reads the 35-bit timestamp from the first 7
+ * bech32 chars after the separator, then scans the tagged fields for `x`
+ * (expiry in seconds, relative to the timestamp). Returns `null` when the
+ * string is not shaped like an invoice. Used to surface a live countdown
+ * and to know when a shown invoice has gone stale.
+ */
+export function bolt11Expiry(bolt11: string): number | null {
+	const match = bolt11
+		.toLowerCase()
+		.match(/^lnbc[0-9]*[munp]?1([qpzry9x8gf2tvdw0s3jn54khce6mua7l]+)$/);
+	if (!match) return null;
+	const data = match[1];
+	const idx = (ch: string) => BECH32_CHARSET.indexOf(ch);
+	if (data.length < 7 + BOLT11_SIGNATURE_CHARS) return null;
+
+	let timestamp = 0;
+	for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + idx(data[i]);
+
+	// Tagged fields live between the timestamp and the fixed-width signature.
+	const fieldsEnd = data.length - BOLT11_SIGNATURE_CHARS;
+	let i = 7;
+	while (i + 1 < fieldsEnd) {
+		const type = data[i];
+		// BOLT11 varint length: values < 31 are the length; 31 adds another
+		// 5-bit word multiplied by 32 each round (mirrors the reference impl).
+		let length = 0;
+		let multiplier = 1;
+		let j = i + 1;
+		while (j < fieldsEnd) {
+			const value = idx(data[j]);
+			if (value < 0) return null;
+			length += (value & 31) * multiplier;
+			multiplier *= 32;
+			j++;
+			if (value < 31) break;
+		}
+		if (type === 'x') {
+			let expiry = 0;
+			for (let k = j; k < j + length && k < fieldsEnd; k++) expiry = expiry * 32 + idx(data[k]);
+			return timestamp + expiry;
+		}
+		i = j + length;
+	}
+	return timestamp + BOLT11_DEFAULT_EXPIRY;
+}
+
 export function zapTarget(ev: Pick<Event, 'tags' | 'content'>): string | undefined {
 	const direct = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
 	if (direct) return direct;
@@ -100,14 +157,15 @@ export function applyActivityToNotes(
 			reactions: reactionsByNote.get(note.id) ?? note.reactions,
 			zapCount: zapsByNote.get(note.id)?.count ?? note.zapCount,
 			zapTotalSats: zapsByNote.get(note.id)?.sats ?? note.zapTotalSats,
-			poll: note.poll && pollVotesByNote.has(note.id)
-				? {
-						...note.poll,
-						votes,
-						totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
-						myVote
-					}
-				: note.poll
+			poll:
+				note.poll && pollVotesByNote.has(note.id)
+					? {
+							...note.poll,
+							votes,
+							totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
+							myVote
+						}
+					: note.poll
 		};
 	});
 }

@@ -26,7 +26,7 @@
 	<div class="flex flex-col items-center gap-4">
 		<!-- Hex badge (regular flat-top hexagon, warm/orange gradient). -->
 		<div
-			class="hex-clip bs-pulse-soft grid size-[60px] place-items-center bg-[linear-gradient(135deg,var(--color-warm-400),var(--color-warm-600))] shadow-[0_4px_18px_color-mix(in_oklab,var(--color-warm-500)_45%,transparent)]"
+			class="hex-clip bs-pulse-soft grid size-[60px] place-items-center bg-[linear-gradient(135deg,#FFB51B,#F7931A)] shadow-[0_4px_18px_rgb(247_147_26_/_0.5)]"
 			aria-hidden="true"
 		>
 			<!-- A single perimeter trace gives the mark a compact "system online" moment. -->
@@ -39,8 +39,10 @@
 					d="M40 30h34c14 0 24 8 24 21 0 9-5 15-12 17 9 2 16 8 16 19 0 14-11 23-26 23H40V30zm16 31h17c6 0 10-3 10-8s-4-8-10-8H56v16zm0 31h19c6 0 11-3 11-9s-5-9-11-9H56v18z"
 					fill="#fff"
 				/>
-				<path class="bs-bolt" d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" fill="#fff" opacity=".9" />
+				<path class="bs-bolt" d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" fill="#fff" />
 				<path class="bs-bolt-trace" pathLength="1" d="M88 64l-22 26h13l-5 22 22-30H84l4-18z" />
+				<!-- Spark comet riding the stroke tip while the bolt draws. -->
+				<circle class="bs-spark" r="5" fill="#fff" />
 			</svg>
 		</div>
 		<!-- Official logo wordmark: swaps with the color mode. -->

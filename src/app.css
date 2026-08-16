@@ -1372,7 +1372,7 @@ html[data-reduced-motion='true'] *::after {
 		stroke-linejoin: round;
 		stroke-dasharray: 260;
 		stroke-dashoffset: 260;
-		animation: bs-orbit-trace 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+		animation: bs-orbit-trace 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 	}
 	.bs-pulse-soft::after {
 		content: '';
@@ -1386,7 +1386,7 @@ html[data-reduced-motion='true'] *::after {
 			transparent 56%
 		);
 		transform: translateX(-55%);
-		animation: bs-charge-sheen 2.8s ease-in-out infinite;
+		animation: bs-charge-sheen 2.4s ease-in-out infinite;
 	}
 	.bs-symbol {
 		position: relative;
@@ -1397,8 +1397,10 @@ html[data-reduced-motion='true'] *::after {
 		transform-box: fill-box;
 		transform-origin: center;
 	}
+	/* Fill participates in the draw: dim while tracing, flash in when the
+	 * stroke completes — the reveal moment. */
 	.bs-bolt {
-		animation: bs-bolt-charge 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+		animation: bs-bolt-fill 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 	}
 	.bs-bolt-trace {
 		fill: none;
@@ -1408,22 +1410,30 @@ html[data-reduced-motion='true'] *::after {
 		stroke-linejoin: round;
 		stroke-dasharray: 1;
 		stroke-dashoffset: 1;
-		animation: bs-bolt-draw 2.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+		animation: bs-bolt-draw 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+	}
+	/* Spark comet riding the stroke tip (same path, same easing, so it stays
+	 * locked to the draw). Progressive enhancement — hides if unsupported. */
+	.bs-spark {
+		offset-path: path('M88 64l-22 26h13l-5 22 22-30H84l4-18z');
+		offset-rotate: 0deg;
+		filter: drop-shadow(0 0 1.5px rgb(255 255 255 / 0.95));
+		animation: bs-spark-run 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 	}
 	@keyframes bs-orbit-trace {
 		0%,
-		8% {
+		6% {
 			stroke-dashoffset: 260;
 			opacity: 0;
 		}
-		12% {
+		9% {
 			opacity: 1;
 		}
-		32% {
+		26% {
 			stroke-dashoffset: 0;
 			opacity: 0.8;
 		}
-		42%,
+		30%,
 		100% {
 			stroke-dashoffset: 0;
 			opacity: 0;
@@ -1431,51 +1441,84 @@ html[data-reduced-motion='true'] *::after {
 	}
 	@keyframes bs-charge-sheen {
 		0%,
-		16%,
+		10%,
 		100% {
 			transform: translateX(-55%);
 			opacity: 0;
 		}
-		18% {
+		12% {
 			opacity: 1;
 		}
-		34% {
+		28% {
 			transform: translateX(55%);
 			opacity: 0;
 		}
 	}
-	@keyframes bs-bolt-charge {
+	/* Fill: dim while the stroke traces, flash in with a glow pop the instant
+	 * the draw completes, hold, then discharge. */
+	@keyframes bs-bolt-fill {
 		0%,
-		10%,
+		26% {
+			opacity: 0.3;
+			transform: scale(1);
+			filter: none;
+		}
+		36% {
+			opacity: 1;
+			transform: scale(1.08);
+			filter: drop-shadow(0 0 2px rgb(255 255 255 / 0.9));
+		}
+		42% {
+			transform: scale(1);
+			filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.3));
+		}
+		70% {
+			opacity: 1;
+		}
+		84%,
 		100% {
-			transform: translateY(0) scale(1);
-			filter: drop-shadow(0 0 0 rgb(255 255 255 / 0));
-		}
-		16% {
-			transform: translateY(-1px) scale(1.12);
-			filter: drop-shadow(0 0 4px rgb(255 255 255 / 0.85));
-		}
-		23% {
-			transform: translateY(0) scale(1);
-			filter: drop-shadow(0 0 1px rgb(255 255 255 / 0.25));
+			opacity: 0.3;
+			transform: scale(1);
+			filter: none;
 		}
 	}
 	@keyframes bs-bolt-draw {
 		0%,
-		13% {
+		11% {
 			stroke-dashoffset: 1;
 			opacity: 0;
 		}
-		16% {
+		13% {
 			opacity: 1;
 		}
-		30% {
+		28% {
 			stroke-dashoffset: 0;
-			opacity: 0.85;
+			opacity: 0.95;
 		}
-		40%,
+		34%,
 		100% {
 			stroke-dashoffset: 0;
+			opacity: 0;
+		}
+	}
+	/* Spark comet: locked to the same 11→28% window and easing as the stroke
+	 * draw, so it rides exactly at the tip. */
+	@keyframes bs-spark-run {
+		0%,
+		11% {
+			offset-distance: 0%;
+			opacity: 0;
+		}
+		13% {
+			opacity: 1;
+		}
+		28% {
+			offset-distance: 100%;
+			opacity: 1;
+		}
+		32%,
+		100% {
+			offset-distance: 100%;
 			opacity: 0;
 		}
 	}
@@ -1483,9 +1526,12 @@ html[data-reduced-motion='true'] *::after {
 		.bs-pulse-soft,
 		.bs-pulse-soft::after,
 		.bs-boot-orbit polygon,
-		.bs-bolt-trace,
-		.bs-bolt {
+		.bs-bolt,
+		.bs-bolt-trace {
 			animation: none;
+		}
+		.bs-spark {
+			display: none;
 		}
 	}
 
