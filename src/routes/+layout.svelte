@@ -240,6 +240,7 @@
 		preferences.startSystemWatcher();
 		media.load();
 		walletPrefs.load();
+		wallet.restoreCustomNwc();
 		profiles.load();
 		blocks.load();
 		mutes.load();
@@ -310,6 +311,7 @@
 			relays.load();
 			walletPrefs.load();
 			wallet.disconnectWallet();
+			wallet.restoreCustomNwc();
 		}
 		if (pk) {
 			// Always revalidate the active account's own metadata. This fixes imports

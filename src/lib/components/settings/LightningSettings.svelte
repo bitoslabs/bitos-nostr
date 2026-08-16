@@ -17,6 +17,7 @@
 
 	onMount(() => {
 		walletPrefs.load();
+		wallet.restoreCustomNwc();
 		wallet.detectWebLN();
 	});
 
@@ -152,8 +153,8 @@
 		<div class="mt-4 border-t border-[var(--ui-border-muted)] pt-4">
 			<div class="mb-1 text-[13px] font-bold">Custom Nostr Wallet Connect</div>
 			<p class="mb-3 text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
-				Paste a <code>nostr+walletconnect://</code> URI from your wallet. Its spending secret is kept
-				only until you reload this page.
+				Paste a <code>nostr+walletconnect://</code> URI from your wallet. It is saved locally on this
+				device so your wallet reconnects after refresh.
 			</p>
 			<div class="flex flex-col gap-2 sm:flex-row">
 				<Input
