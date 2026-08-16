@@ -17,10 +17,11 @@
 		hasWebLN,
 		makeWebLNInvoice,
 		payWithWebLN,
-		checkWebLNInvoicePaid
+		checkWebLNInvoicePaid,
+		watchWalletPayments
 	} from '$lib/nostr/webln';
 	import { bolt11Expiry } from '$lib/nostr/zaps';
-	import { formatCompact } from '$lib/utils/format';
+	import { formatCompact, shortKey } from '$lib/utils/format';
 	import type { ZapEntry } from '$lib/nostr/wallet.svelte';
 
 	type Tab = 'all' | 'received' | 'sent';
@@ -40,7 +41,15 @@
 	let nowSec = $state(Math.floor(Date.now() / 1000));
 	let depositTimer: ReturnType<typeof setInterval> | undefined;
 	let tickTimer: ReturnType<typeof setInterval> | undefined;
+	/** Auto-close after settlement so the success state cannot linger forever. */
+	let depositCloseTimer: ReturnType<typeof setTimeout> | undefined;
+	/** NIP-47 7375 push watcher — fires the moment the wallet sees the payment. */
+	let stopDepositWatch: (() => void) | undefined;
+	/** Manual check button state. */
+	let checking = $state(false);
+	let lastCheckedAt = $state<number | null>(null);
 	const DEPOSIT_POLL_MS = 4_000;
+	const DEPOSIT_CLOSE_MS = 3_000;
 
 	const me = $derived(identity.current?.pk ?? '');
 	const activityLedger = $derived(wallet.ledger);
@@ -88,6 +97,7 @@
 	onDestroy(() => {
 		wallet.stop();
 		stopDepositPolling();
+		stopDepositCloseTimer();
 	});
 
 	function openInvoice(mode: 'deposit' | 'withdraw') {
@@ -97,6 +107,7 @@
 		invoiceBolt11 = '';
 		invoiceError = '';
 		stopDepositPolling();
+		stopDepositCloseTimer();
 		depositPaid = false;
 		depositBaseline = null;
 		invoiceModalOpen = true;
@@ -107,20 +118,41 @@
 		if (tickTimer) clearInterval(tickTimer);
 		depositTimer = undefined;
 		tickTimer = undefined;
+		stopDepositWatch?.();
+		stopDepositWatch = undefined;
+	}
+
+	function stopDepositCloseTimer() {
+		if (depositCloseTimer) clearTimeout(depositCloseTimer);
+		depositCloseTimer = undefined;
+	}
+
+	function closeDepositDialog() {
+		invoiceModalOpen = false;
+		stopDepositPolling();
+		stopDepositCloseTimer();
 	}
 
 	function onDepositPaid() {
 		if (depositPaid) return;
 		depositPaid = true;
 		stopDepositPolling();
-		toasts.success(`Deposit of ${invoiceAmount} sats received`);
+		toasts.success(`Deposit of ${Number(invoiceAmount).toLocaleString()} sats received`);
 		void wallet.refreshBalance();
+		// Success confirmation, then return the user to their updated balance.
+		stopDepositCloseTimer();
+		depositCloseTimer = setTimeout(closeDepositDialog, DEPOSIT_CLOSE_MS);
 	}
 
 	/** One settlement probe. NWC answers `lookup_invoice`; injected WebLN
 	 * wallets get a best-effort balance-delta fallback (baseline + amount). */
 	async function pollDepositOnce() {
 		if (!invoiceBolt11 || depositPaid) return;
+		// An expired invoice can no longer settle — stop wasting probes.
+		if (depositExpiryAt > 0 && depositSecondsLeft === 0) {
+			stopDepositPolling();
+			return;
+		}
 		const sats = Number(invoiceAmount);
 		try {
 			const settled = await checkWebLNInvoicePaid(invoiceBolt11);
@@ -143,12 +175,33 @@
 		} catch {
 			/* keep polling — relay/wallet hiccups must not kill the watcher */
 		}
+		lastCheckedAt = Date.now();
+	}
+
+	/** Manual “Check payment” — same probe, plus honest “not yet” feedback. */
+	async function manualCheck() {
+		if (!invoiceBolt11 || depositPaid || checking) return;
+		checking = true;
+		try {
+			await pollDepositOnce();
+			if (!depositPaid) toasts.info('No payment seen yet — still watching');
+		} finally {
+			checking = false;
+		}
 	}
 
 	function startDepositPolling() {
 		stopDepositPolling();
 		depositTimer = setInterval(() => void pollDepositOnce(), DEPOSIT_POLL_MS);
 		tickTimer = setInterval(() => (nowSec = Math.floor(Date.now() / 1000)), 1_000);
+		// Push channel (NWC): the wallet notifies us the instant sats land —
+		// the same event-driven model the zap dialog uses for 9735 receipts.
+		stopDepositWatch = watchWalletPayments((notification) => {
+			const settled = notification.invoice?.toLowerCase();
+			// Match our invoice when the wallet includes it; otherwise any
+			// incoming payment while this dialog is open is the deposit.
+			if (!settled || settled === invoiceBolt11.toLowerCase()) onDepositPaid();
+		});
 	}
 
 	async function generateDeposit() {
@@ -160,13 +213,19 @@
 		invoiceBusy = true;
 		invoiceError = '';
 		stopDepositPolling();
+		stopDepositCloseTimer();
 		depositPaid = false;
 		try {
 			const bolt11 = await makeWebLNInvoice(sats, invoiceMemo.trim());
 			if (!bolt11) throw new Error('Your wallet could not generate an invoice.');
 			invoiceBolt11 = bolt11;
-			// Baseline for the balance-delta fallback (injected WebLN wallets).
-			depositBaseline = wallet.weblnEnabled ? wallet.weblnBalance : null;
+			// Baseline for the balance-delta fallback (injected WebLN wallets). Fetch
+			// it when missing — a null baseline would silently disable detection.
+			if (wallet.weblnEnabled) {
+				depositBaseline = wallet.weblnBalance ?? (await wallet.refreshBalance());
+			} else {
+				depositBaseline = null;
+			}
 			toasts.success('Deposit invoice generated');
 			startDepositPolling();
 		} catch (e) {
@@ -524,6 +583,10 @@
 <Dialog
 	bind:open={invoiceModalOpen}
 	title={invoiceModalMode === 'deposit' ? 'Deposit sats' : 'Withdraw sats'}
+	onClose={() => {
+		stopDepositPolling();
+		stopDepositCloseTimer();
+	}}
 >
 	<div class="space-y-4">
 		<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
@@ -560,89 +623,135 @@
 				<Input bind:value={invoiceMemo} class="w-full" placeholder="BitOS deposit" />
 			</label>
 			{#if depositPaid}
-				<!-- Settlement confirmed by the wallet -->
+				<!-- Settlement confirmed by the wallet — closes itself shortly. -->
 				<div
-					class="flex items-center gap-3 rounded-xl bg-[var(--tone-success-bg)] p-3 text-[var(--tone-success-text)]"
+					class="flex flex-col items-center gap-2 rounded-xl bg-[var(--tone-success-bg)] p-4 text-center"
 					role="status"
 				>
 					<span
-						class="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--tone-success-text)] text-white"
+						class="grid size-12 place-items-center rounded-full bg-[var(--tone-success-text)] text-white"
 					>
-						<Icon name="i-lucide-check" class="size-5" />
+						<Icon name="i-lucide-check" class="size-6" />
 					</span>
-					<div class="min-w-0">
-						<p class="text-[13px] font-bold">Deposit received</p>
-						<p class="text-[11.5px] text-[var(--ui-text-muted)]">
+					<div>
+						<p class="text-[14px] font-bold text-[var(--tone-success-text)]">Deposit received</p>
+						<p class="mt-0.5 text-[12px] text-[var(--ui-text-muted)]">
 							{Number(invoiceAmount).toLocaleString()} sats added to your wallet balance.
 						</p>
 					</div>
+					<div class="deposit-countdown-bar w-full max-w-[240px]"></div>
+					<p class="text-[10.5px] text-[var(--ui-text-dimmed)]">Closing…</p>
 				</div>
 			{:else if invoiceBolt11}
 				<div class="rounded-xl bg-[var(--ui-bg-muted)] p-3">
-					<div class="grid items-center gap-4 sm:grid-cols-[auto_1fr]">
-						<div class={depositExpired ? 'opacity-40 grayscale' : ''}>
+					{#if depositExpired}
+						<div
+							class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[var(--tone-warning-bg)] px-3 py-2.5 text-[12px] font-semibold text-[var(--tone-warning-text)]"
+						>
+							<span class="inline-flex items-center gap-1.5">
+								<Icon name="i-lucide-timer-off" class="size-4 shrink-0" />
+								Invoice expired unpaid — get a fresh one.
+							</span>
+							<button
+								type="button"
+								onclick={generateDeposit}
+								disabled={invoiceBusy}
+								class="rounded-lg bg-[var(--tone-warning-text)] px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-60"
+							>
+								{invoiceBusy ? 'Making…' : 'New invoice'}
+							</button>
+						</div>
+						<div class="mx-auto mt-3 w-fit opacity-40 grayscale">
+							<QrCode value={invoiceBolt11.toUpperCase()} label="Expired deposit invoice QR code" />
+						</div>
+					{:else}
+						<!-- QR first: the scannable code is the hero, details secondary. -->
+						<div class="mx-auto w-fit">
 							<QrCode
 								value={invoiceBolt11.toUpperCase()}
-								label="Lightning deposit invoice QR code"
+								label="Lightning deposit invoice QR code for {invoiceAmount} sats"
 							/>
-						</div>
-						<div class="min-w-0">
-							<p class="mb-1 flex flex-wrap items-center gap-1.5 text-[12px] font-bold">
-								{#if depositExpired}Invoice expired{:else}Invoice ready{/if}
-								{#if depositExpiryAt > 0 && !depositExpired}
-									<span
-										class="inline-flex items-center gap-1 font-mono text-[10.5px] font-semibold {depositSecondsLeft <
-										120
-											? 'text-[var(--tone-warning-text)]'
-											: 'text-[var(--ui-text-muted)]'}"
-									>
-										<Icon name="i-lucide-timer" class="size-3" />
-										{Math.floor(depositSecondsLeft / 60)}:{String(depositSecondsLeft % 60).padStart(
-											2,
-											'0'
-										)}
-									</span>
-								{/if}
-							</p>
-							<p class="mb-3 text-[11px] text-[var(--ui-text-muted)]">
-								{#if depositExpired}
-									This invoice expired unpaid — generate a fresh one to deposit.
-								{:else}
-									Scan this QR code with any Lightning wallet to deposit {invoiceAmount} sats.
-								{/if}
-							</p>
-							<p class="font-mono text-[11px] break-all text-[var(--ui-text-muted)]">
-								{invoiceBolt11}
-							</p>
-							<div class="mt-3 flex gap-2">
-								{#if !depositExpired}
-									<a
-										href={`lightning:${invoiceBolt11}`}
-										class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"
-									>
-										<Icon name="i-lucide-wallet-cards" class="size-3.5" /> Open wallet
-									</a>
-								{/if}
-								<button
-									type="button"
-									onclick={() =>
-										navigator.clipboard
-											.writeText(invoiceBolt11)
-											.then(() => toasts.success('Invoice copied'))}
-									class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold"
+							<div class="relative -mt-4 flex justify-center">
+								<span
+									class="inline-flex items-center gap-1 rounded-full bg-warm-500 px-3 py-1 text-[12.5px] font-extrabold text-white shadow-lg shadow-black/20"
 								>
-									<Icon name="i-lucide-copy" class="size-3.5" /> Copy
-								</button>
+									<Icon name="i-lucide-zap" class="size-3.5 fill-current" />
+									{Number(invoiceAmount).toLocaleString()} sats
+								</span>
 							</div>
 						</div>
-					</div>
-					{#if !depositExpired}
-						<p
-							class="mt-2 flex items-center justify-center gap-1.5 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
-						>
-							<Icon name="i-lucide-radar" class="size-3 animate-pulse" />
-							Watching for payment — updates automatically when the sats land…
+						<div class="mt-4 flex flex-wrap items-center justify-center gap-2">
+							<span class="text-[12px] font-bold">Invoice ready</span>
+							{#if depositExpiryAt > 0}
+								<span
+									class="inline-flex items-center gap-1 font-mono text-[11px] font-bold {depositSecondsLeft <
+									120
+										? 'text-[var(--tone-warning-text)]'
+										: 'text-[var(--ui-text-muted)]'}"
+								>
+									<Icon name="i-lucide-timer" class="size-3.5" />
+									{Math.floor(depositSecondsLeft / 60)}:{String(depositSecondsLeft % 60).padStart(
+										2,
+										'0'
+									)}
+								</span>
+							{/if}
+						</div>
+						<p class="mt-1 text-center text-[11px] text-[var(--ui-text-muted)]">
+							Scan with any Lightning wallet to top up your balance.
 						</p>
+						<div class="mt-3 flex flex-wrap gap-2">
+							<a
+								href={`lightning:${invoiceBolt11}`}
+								class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"
+							>
+								<Icon name="i-lucide-wallet-cards" class="size-3.5" /> Open wallet
+							</a>
+							<button
+								type="button"
+								onclick={() =>
+									navigator.clipboard
+										.writeText(invoiceBolt11)
+										.then(() => toasts.success('Invoice copied'))}
+								class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold"
+							>
+								<Icon name="i-lucide-copy" class="size-3.5" /> Copy
+							</button>
+						</div>
+						<button
+							type="button"
+							onclick={() =>
+								navigator.clipboard
+									.writeText(invoiceBolt11)
+									.then(() => toasts.success('Full invoice copied'))}
+							class="mt-2 block w-full truncate rounded-lg bg-[var(--ui-bg)] px-2.5 py-1.5 text-center font-mono text-[10.5px] text-[var(--ui-text-dimmed)] transition hover:text-[var(--ui-text-muted)]"
+							title="Copy full invoice"
+						>
+							{shortKey(invoiceBolt11, 18, 12)}
+						</button>
+						<div
+							class="mt-1 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
+						>
+							<span class="inline-flex items-center gap-1.5">
+								<Icon name="i-lucide-radar" class="size-3 animate-pulse" />
+								Watching for payment…
+							</span>
+							{#if lastCheckedAt}
+								<span>Last checked {new Date(lastCheckedAt).toLocaleTimeString()}</span>
+							{/if}
+						</div>
+						<button
+							type="button"
+							onclick={manualCheck}
+							disabled={checking || depositPaid}
+							class="mx-auto mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-1.5 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)] disabled:cursor-not-allowed disabled:opacity-60"
+						>
+							<Icon
+								name={checking ? 'i-lucide-loader-circle' : 'i-lucide-refresh-cw'}
+								class="size-3.5 {checking ? 'animate-spin' : ''}"
+							/>
+							{checking ? 'Checking…' : 'Check payment'}
+						</button>
 					{/if}
 				</div>
 			{/if}
@@ -668,9 +777,9 @@
 	{#snippet footer()}
 		<button
 			type="button"
-			onclick={() => (invoiceModalOpen = false)}
+			onclick={closeDepositDialog}
 			class="rounded-lg px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)]"
-			>Close</button
+			>{depositPaid ? 'Done' : 'Close'}</button
 		>
 		{#if invoiceModalMode === 'withdraw'}
 			<button
@@ -687,3 +796,31 @@
 		{/if}
 	{/snippet}
 </Dialog>
+
+<style>
+	/* Draining bar shown during the auto-close success window. */
+	.deposit-countdown-bar {
+		height: 3px;
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--tone-success-text) 22%, transparent);
+		overflow: hidden;
+		position: relative;
+	}
+	.deposit-countdown-bar::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: 9999px;
+		background: var(--tone-success-text);
+		transform-origin: left;
+		animation: deposit-countdown var(--deposit-close-ms, 3000ms) linear forwards;
+	}
+	@keyframes deposit-countdown {
+		from {
+			transform: scaleX(1);
+		}
+		to {
+			transform: scaleX(0);
+		}
+	}
+</style>

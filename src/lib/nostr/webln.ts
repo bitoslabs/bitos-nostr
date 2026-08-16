@@ -13,7 +13,9 @@ import {
 	nwcInfo,
 	nwcLookupInvoice,
 	nwcMakeInvoice,
-	nwcPayInvoice
+	nwcPayInvoice,
+	nwcWatchNotifications,
+	type NwcNotification
 } from './nwc';
 
 export type WalletProvider = 'webln' | 'nwc';
@@ -204,4 +206,21 @@ export async function checkWebLNInvoicePaid(bolt11: string): Promise<boolean | n
 		}
 	}
 	return null;
+}
+
+/**
+ * Real-time wallet payment notifications (NIP-47 kind 7375). NWC wallets push
+ * `payment_received` the moment sats land — same push model the zap dialog
+ * uses for kind 9735 receipts. Returns a no-op unwatch for injected WebLN
+ * wallets, which have no notification API.
+ */
+export function watchWalletPayments(
+	onPayment: (notification: NwcNotification) => void
+): () => void {
+	if (activeProvider === 'nwc' && isNwcConnected()) {
+		return nwcWatchNotifications((notification) => {
+			if (notification.type === 'payment_received') onPayment(notification);
+		});
+	}
+	return () => {};
 }

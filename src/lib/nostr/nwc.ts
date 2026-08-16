@@ -190,3 +190,59 @@ export async function nwcLookupInvoice(invoice: string): Promise<NwcInvoiceStatu
 		preimage: typeof result.preimage === 'string' ? result.preimage : undefined
 	};
 }
+
+export interface NwcNotification {
+	type: string;
+	/** BOLT11 of the settled payment, when the wallet includes it. */
+	invoice?: string;
+	/** Amount in sats (NIP-47 reports msat). */
+	amountSats?: number;
+}
+
+/**
+ * Subscribe to NIP-47 wallet notifications (kind 7375). The wallet *pushes*
+ * `payment_received` events the moment sats land — the same push pattern the
+ * zap dialog uses for kind 9735 receipts, so deposits don't depend on
+ * `lookup_invoice` being granted or on polling.
+ */
+export function nwcWatchNotifications(
+	onNotification: (notification: NwcNotification) => void
+): () => void {
+	if (!connection || !browser) return () => {};
+	const active = connection;
+	const secret = hexToBytes(active.secret);
+	const clientPubkey = getPublicKey(secret);
+	const p = getPool();
+	const sub = p.subscribeMany(
+		active.relays,
+		{ kinds: [7375], authors: [active.pubkey], '#p': [clientPubkey] },
+		{
+			onevent: async (event: Event) => {
+				try {
+					const plaintext = await nip04.decrypt(active.secret, active.pubkey, event.content);
+					const decoded = JSON.parse(plaintext) as {
+						type?: string;
+						notification?: Record<string, unknown>;
+					};
+					if (!decoded.type) return;
+					const n = decoded.notification ?? {};
+					onNotification({
+						type: decoded.type,
+						invoice: typeof n.invoice === 'string' ? n.invoice : undefined,
+						amountSats:
+							typeof n.amount === 'number' && n.amount > 0 ? Math.round(n.amount / 1000) : undefined
+					});
+				} catch {
+					/* ignore notifications we cannot decrypt */
+				}
+			}
+		}
+	);
+	return () => {
+		try {
+			sub.close();
+		} catch {
+			/* ignore */
+		}
+	};
+}

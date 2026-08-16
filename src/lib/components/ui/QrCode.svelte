@@ -2,7 +2,12 @@
 	import { onMount } from 'svelte';
 	import QRCode from 'qrcode';
 
-	let { value, label = 'QR code' }: { value: string; label?: string } = $props();
+	let {
+		value,
+		label = 'QR code',
+		size = 260,
+		class: cls = ''
+	}: { value: string; label?: string; size?: number; class?: string } = $props();
 
 	let svg = $state('');
 
@@ -11,7 +16,7 @@
 			type: 'svg',
 			errorCorrectionLevel: 'M',
 			margin: 2,
-			width: 240,
+			width: size - 20,
 			color: {
 				dark: '#111827',
 				light: '#ffffff'
@@ -25,12 +30,14 @@
 
 	$effect(() => {
 		value;
+		size;
 		void render();
 	});
 </script>
 
 <div
-	class="mx-auto grid size-[260px] place-items-center rounded-2xl border border-[var(--ui-border-muted)] bg-white p-3"
+	style={`width:${size}px;height:${size}px`}
+	class="mx-auto grid place-items-center rounded-2xl border border-[var(--ui-border-muted)] bg-white p-3 {cls}"
 	aria-label={label}
 >
 	{#if svg}
