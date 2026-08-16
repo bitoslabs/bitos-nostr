@@ -6,7 +6,8 @@
 import { browser } from '$app/environment';
 import { nip04 } from 'nostr-tools';
 import { SimplePool } from 'nostr-tools/pool';
-import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from 'nostr-tools/pure';
+import { finalizeEvent, getPublicKey, type Event } from 'nostr-tools/pure';
+import { hexToBytes } from './hex';
 
 interface Connection {
 	pubkey: string;
@@ -21,7 +22,6 @@ interface Response {
 }
 
 let connection: Connection | null = null;
-let clientSecret: Uint8Array | null = null;
 let pool: SimplePool | null = null;
 
 function getPool() {
@@ -30,7 +30,7 @@ function getPool() {
 }
 
 export function isNwcConnected() {
-	return connection !== null && clientSecret !== null;
+	return connection !== null;
 }
 
 export function connectNwc(uri: string) {
@@ -52,18 +52,18 @@ export function connectNwc(uri: string) {
 		throw new Error('This NWC connection string is invalid.');
 	}
 	connection = { pubkey, relays: [...new Set(relays)], secret };
-	clientSecret = generateSecretKey();
 }
 
 export function disconnectNwc() {
 	connection = null;
-	clientSecret = null;
 }
 
 async function request(method: string, params: Record<string, unknown> = {}) {
-	if (!connection || !clientSecret) throw new Error('No custom NWC wallet is connected.');
+	if (!connection) throw new Error('No custom NWC wallet is connected.');
 	const active = connection;
-	const secret = clientSecret;
+	// In NIP-47 the URI's `secret` is the client key. It encrypts/signs every
+	// request; generating a replacement key would make the wallet reject it.
+	const secret = hexToBytes(active.secret);
 	const content = await nip04.encrypt(
 		active.secret,
 		active.pubkey,
@@ -101,11 +101,7 @@ async function request(method: string, params: Record<string, unknown> = {}) {
 			{
 				onevent: async (response: Event) => {
 					try {
-						const plaintext = await nip04.decrypt(
-							bytesToHex(secret),
-							active.pubkey,
-							response.content
-						);
+						const plaintext = await nip04.decrypt(active.secret, active.pubkey, response.content);
 						const decoded = JSON.parse(plaintext) as Response;
 						if (decoded.error)
 							throw new Error(
@@ -130,10 +126,6 @@ async function request(method: string, params: Record<string, unknown> = {}) {
 			}
 		});
 	});
-}
-
-function bytesToHex(bytes: Uint8Array) {
-	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export async function nwcInfo() {
