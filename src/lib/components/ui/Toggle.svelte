@@ -24,7 +24,7 @@
 	aria-label={label}
 	onclick={toggle}
 	class={cn(
-		'toggle relative h-5 w-10 shrink-0 cursor-pointer rounded-full transition-colors',
+		'toggle relative shrink-0 cursor-pointer rounded-full transition-colors',
 		cls
 	)}
 	class:on={checked}
