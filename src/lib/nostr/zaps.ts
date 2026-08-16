@@ -88,6 +88,37 @@ export function zapSats(ev: Pick<Event, 'tags'>): number {
 	return bolt11 ? satsFromBolt11(bolt11) : 0;
 }
 
+/** LNURL-pay metadata subset relevant to NIP-57 zap support. */
+export interface LnurlPayMetadata {
+	allowsNostr?: boolean;
+	nostrPubkey?: string;
+}
+
+/**
+ * Whether an LNURL-pay endpoint supports NIP-57 zaps.
+ *
+ * `nostrPubkey` is the *Lightning provider's* key that will sign the kind 9735
+ * zap receipt — it is NOT the recipient's Nostr pubkey (NIP-57). Alby, LNbits,
+ * ZBD, Wallet of Satoshi and virtually every other provider use their own
+ * service key, so matching it against the recipient would wrongly disable
+ * zaps and silently send plain LNURL payments: sats arrive, but no zap
+ * receipt event is ever published, so the recipient never gets notified.
+ */
+export function lnurlSupportsZap(metadata: LnurlPayMetadata | null | undefined): boolean {
+	if (metadata?.allowsNostr !== true) return false;
+	return /^[0-9a-f]{64}$/i.test(metadata.nostrPubkey ?? '');
+}
+
+/**
+ * Relay URLs for a kind 9734 zap request's `relays` tag. The zapper publishes
+ * the kind 9735 receipt to these relays only, so they must reach the
+ * *recipient*: prefer their NIP-65 read relays, then add a few of ours so the
+ * sender's confirmation listener also sees the receipt.
+ */
+export function zapRelayTagUrls(recipientReadRelays: string[], ownUrls: string[]): string[] {
+	return [...new Set([...recipientReadRelays.slice(0, 6), ...ownUrls.slice(0, 3)])].slice(0, 8);
+}
+
 export function applyActivityToNotes(
 	notes: FeedNote[],
 	events: Event[],

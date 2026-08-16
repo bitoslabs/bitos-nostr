@@ -784,6 +784,37 @@
 		}
 	}
 
+	// --- Zap a reel comment ---
+	let zapCommentTarget = $state<FeedNote | null>(null);
+	let zapCommentOpen = $state(false);
+	let optimisticCommentZaps = $state<Record<string, number>>({});
+	const zapCommentProfile = $derived(
+		zapCommentTarget ? profiles.get(zapCommentTarget.pubkey) : undefined
+	);
+	const zapCommentAddress = $derived(zapCommentProfile?.lud16 || zapCommentProfile?.lud06 || '');
+
+	function commentZapSats(comment: FeedNote) {
+		return comment.zapTotalSats + (optimisticCommentZaps[comment.id] ?? 0);
+	}
+
+	function zapComment(comment: FeedNote) {
+		const profile = profiles.get(comment.pubkey);
+		if (!profile?.lud16 && !profile?.lud06) {
+			toasts.info('This author has no Lightning address');
+			return;
+		}
+		zapCommentTarget = comment;
+		zapCommentOpen = true;
+	}
+
+	function handleCommentZapPaid(sats: number) {
+		if (!zapCommentTarget) return;
+		optimisticCommentZaps = {
+			...optimisticCommentZaps,
+			[zapCommentTarget.id]: (optimisticCommentZaps[zapCommentTarget.id] ?? 0) + sats
+		};
+	}
+
 	function askDeleteComment(comment: FeedNote) {
 		if (comment.pubkey !== identity.current?.pk) return;
 		commentPendingDelete = comment;
@@ -1232,6 +1263,17 @@
 														{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
 													</span>
 												</button>
+												<button
+													type="button"
+													onclick={() => zapComment(comment)}
+													class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-warm-500"
+													aria-label="Zap sats to this comment"
+												>
+													<Icon name="i-lucide-zap" class="size-4 fill-current" />
+													<span class="text-[11px]">
+														{commentZapSats(comment) ? compactSats(commentZapSats(comment)) : 'Zap'}
+													</span>
+												</button>
 											</div>
 											<div
 												class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
@@ -1350,6 +1392,17 @@
 			lightningAddress={zapProfile?.lud16 || zapProfile?.lud06 || ''}
 			eventId={zapReel.id}
 			onPaid={handleZapPaid}
+		/>
+	{/if}
+
+	{#if zapCommentTarget}
+		<NoteZapDialog
+			bind:open={zapCommentOpen}
+			recipientPubkey={zapCommentTarget.pubkey}
+			lightningAddress={zapCommentAddress}
+			eventId={zapCommentTarget.id}
+			onPaid={handleCommentZapPaid}
+			onClose={() => (zapCommentTarget = null)}
 		/>
 	{/if}
 </div>

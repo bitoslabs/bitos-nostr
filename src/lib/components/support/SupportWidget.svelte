@@ -9,6 +9,8 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { subscribe } from '$lib/nostr/pool';
 	import { hexToBytes } from '$lib/nostr/hex';
+	import { lnurlSupportsZap, zapRelayTagUrls } from '$lib/nostr/zaps';
+	import { queryNip65RelayList } from '$lib/nostr/nip65';
 	import { shortKey } from '$lib/utils/format';
 
 	type Props = { compact?: boolean };
@@ -115,7 +117,20 @@
 			}
 			const callback = new URL(metadata.callback);
 			callback.searchParams.set('amount', String(millisats));
-			const supportsZap = metadata.allowsNostr === true && metadata.nostrPubkey === pubkey;
+			// NIP-57: nostrPubkey is the provider's receipt-signing key, not the
+			// recipient's pubkey — requiresNostr support only, never key equality.
+			const supportsZap = lnurlSupportsZap(metadata);
+			let receiptRelays = relays.urls.slice(0, 8);
+			if (supportsZap) {
+				try {
+					const readRelays = (await queryNip65RelayList(pubkey))
+						.filter((relay) => relay.read)
+						.map((relay) => relay.url);
+					receiptRelays = zapRelayTagUrls(readRelays, relays.urls);
+				} catch {
+					/* NIP-65 list unavailable — fall back to our relays. */
+				}
+			}
 			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
 			if (supportsZap) {
 				zapRequest = finalizeEvent(
@@ -124,7 +139,7 @@
 						content: '',
 						created_at: Math.floor(Date.now() / 1000),
 						tags: [
-							['relays', ...relays.urls.slice(0, 8)],
+							['relays', ...receiptRelays],
 							['amount', String(millisats)],
 							['p', pubkey]
 						]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bolt11Expiry, satsFromBolt11 } from './zaps';
+import { bolt11Expiry, lnurlSupportsZap, satsFromBolt11, zapRelayTagUrls } from './zaps';
 
 /**
  * BOLT11 expiry parsing tests.
@@ -44,5 +44,46 @@ describe('satsFromBolt11', () => {
 		expect(satsFromBolt11('lnbc20m1' + FILLER)).toBe(2_000_000);
 		expect(satsFromBolt11('lnbc900u1' + FILLER)).toBe(90_000);
 		expect(satsFromBolt11('lnbc50n1' + FILLER)).toBe(5);
+	});
+});
+
+describe('lnurlSupportsZap', () => {
+	it('accepts provider (zapper) keys that differ from the recipient pubkey', () => {
+		// NIP-57: nostrPubkey is the Lightning provider's receipt-signing key,
+		// not the recipient's Nostr key — must not be matched against it.
+		expect(lnurlSupportsZap({ allowsNostr: true, nostrPubkey: 'ab'.repeat(32) })).toBe(true);
+	});
+
+	it('rejects providers without nostr support or a valid signing key', () => {
+		expect(lnurlSupportsZap(undefined)).toBe(false);
+		expect(lnurlSupportsZap({})).toBe(false);
+		expect(lnurlSupportsZap({ allowsNostr: false, nostrPubkey: 'ab'.repeat(32) })).toBe(false);
+		expect(lnurlSupportsZap({ allowsNostr: true })).toBe(false);
+		expect(lnurlSupportsZap({ allowsNostr: true, nostrPubkey: 'npub1xyz' })).toBe(false);
+	});
+});
+
+describe('zapRelayTagUrls', () => {
+	it('prefers recipient read relays and appends a few of our own', () => {
+		const recipient = ['wss://a.example', 'wss://b.example', 'wss://c.example'];
+		const own = ['wss://own1.example', 'wss://own2.example'];
+		expect(zapRelayTagUrls(recipient, own)).toEqual([
+			'wss://a.example',
+			'wss://b.example',
+			'wss://c.example',
+			'wss://own1.example',
+			'wss://own2.example'
+		]);
+	});
+
+	it('deduplicates overlapping relays and caps the list', () => {
+		const recipient = Array.from({ length: 10 }, (_, i) => `wss://r${i}.example`);
+		const own = ['wss://r1.example', ...Array.from({ length: 5 }, (_, i) => `wss://o${i}.example`)];
+		expect(zapRelayTagUrls(recipient, own)).toHaveLength(8);
+		expect(new Set(zapRelayTagUrls(recipient, own)).size).toBe(8);
+	});
+
+	it('falls back to our relays when the recipient list is empty', () => {
+		expect(zapRelayTagUrls([], ['wss://only.example'])).toEqual(['wss://only.example']);
 	});
 });
