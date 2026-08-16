@@ -25,6 +25,14 @@
 	const SUGGESTION_LIMIT = 4;
 	const SAMPLE_LIMIT = 300;
 	const THROUGHPUT_WINDOW_MS = 60_000;
+	/** Rolling window for the “Sats 24h” network pulse stat. */
+	const ZAP_WINDOW_MS = 24 * 60 * 60 * 1000;
+	const ZAP_SAMPLE_LIMIT = 500;
+	/** Re-pull the zap backfill periodically — relays cap query results, so the
+	 * live total drifts low between refreshes without this. */
+	const ZAP_REFRESH_MS = 10 * 60 * 1000;
+	/** Upper bound on cached receipts so a chatty relay cannot grow memory. */
+	const MAX_TRACKED_ZAPS = 5_000;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
 	let loading = $state(false);
@@ -33,6 +41,8 @@
 	let suggested = $state<Array<{ pubkey: string; count: number; latest: number }>>([]);
 	let network = $state({ activePubkeys: 0, eventsPerMin: 0, relaysOnline: 0, sats24h: 0 });
 	const liveEventTimes = new Map<string, number>();
+	/** zap receipt id → { sats, received ms } — feeds the rolling Sats 24h total. */
+	const trackedZaps = new Map<string, { sats: number; at: number }>();
 	const me = $derived(identity.current?.pk ?? '');
 	const visibleSuggested = $derived(
 		suggested
@@ -100,6 +110,58 @@
 		};
 	}
 
+	/** Sats carried by a kind 9735 zap receipt (NIP-57 `amount` tag, msat). */
+	function zapSatsFromTags(tags: string[][]): number {
+		const amount = tags.find((tag) => tag[0] === 'amount' && tag[1])?.[1];
+		const msat = amount ? Number(amount) : 0;
+		return Number.isFinite(msat) && msat > 0 ? Math.round(msat / 1000) : 0;
+	}
+
+	/** Fold received zap receipts into the tracked set (dedup by event id). */
+	function applyZapSample(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
+		for (const event of events) {
+			if (event.kind !== NOSTR_KINDS.ZAP) continue;
+			if (trackedZaps.has(event.id)) continue;
+			trackedZaps.set(event.id, { sats: zapSatsFromTags(event.tags), at: event.created_at * 1000 });
+		}
+		refreshZapVolume();
+	}
+
+	/** Recompute Sats 24h: drop receipts older than the window, sum the rest. */
+	function refreshZapVolume() {
+		const cutoff = Date.now() - ZAP_WINDOW_MS;
+		for (const [id, zap] of trackedZaps) {
+			if (zap.at < cutoff) trackedZaps.delete(id);
+		}
+		if (trackedZaps.size > MAX_TRACKED_ZAPS) {
+			const byAge = [...trackedZaps.entries()].sort((a, b) => a[1].at - b[1].at);
+			for (const [id] of byAge.slice(0, trackedZaps.size - MAX_TRACKED_ZAPS))
+				trackedZaps.delete(id);
+		}
+		let sats24h = 0;
+		for (const zap of trackedZaps.values()) sats24h += zap.sats;
+		network = { ...network, sats24h };
+	}
+
+	/** Best-effort backfill of recent zap volume from the user's relays. */
+	async function loadZapVolume() {
+		try {
+			const events = await queryPrimaryFirst(
+				[
+					{
+						kinds: [NOSTR_KINDS.ZAP],
+						since: Math.floor((Date.now() - ZAP_WINDOW_MS) / 1000),
+						limit: ZAP_SAMPLE_LIMIT
+					}
+				],
+				{ onSecondary: applyZapSample }
+			);
+			applyZapSample(events);
+		} catch {
+			/* zap telemetry is best-effort — keep the last known total */
+		}
+	}
+
 	function applyRelaySample(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
 		const tagCounts = new Map<string, number>();
 		const authors = new Set<string>();
@@ -133,7 +195,7 @@
 			activePubkeys: authors.size,
 			eventsPerMin: liveEventTimes.size,
 			relaysOnline: relayRows.filter((relay) => relay.status === 'connected').length,
-			sats24h: 0
+			sats24h: network.sats24h // maintained by refreshZapVolume — do not reset here
 		};
 		hasLoaded = true;
 	}
@@ -179,18 +241,35 @@
 
 	onMount(() => {
 		void loadRelayData();
+		void loadZapVolume();
 		const receivedAt = Math.floor(Date.now() / 1000);
-		const unsubscribe = subscribe([{ kinds: [NOSTR_KINDS.TEXT_NOTE], since: receivedAt }], {
-			onevent: (event) => {
-				liveEventTimes.set(event.id, Date.now());
-				refreshLiveThroughput();
+		const unsubscribe = subscribe(
+			[
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], since: receivedAt },
+				// Live zap receipts keep Sats 24h growing between backfill refreshes.
+				{ kinds: [NOSTR_KINDS.ZAP], since: receivedAt }
+			],
+			{
+				onevent: (event) => {
+					if (event.kind === NOSTR_KINDS.ZAP) {
+						applyZapSample([event]);
+						return;
+					}
+					liveEventTimes.set(event.id, Date.now());
+					refreshLiveThroughput();
+				}
 			}
-		});
+		);
 		const timer = window.setInterval(refreshLiveThroughput, 5_000);
+		// Roll the 24h window and periodically re-fill the sampled zap volume.
+		const zapTimer = window.setInterval(refreshZapVolume, 30_000);
+		const zapBackfillTimer = window.setInterval(() => void loadZapVolume(), ZAP_REFRESH_MS);
 
 		return () => {
 			unsubscribe();
 			window.clearInterval(timer);
+			window.clearInterval(zapTimer);
+			window.clearInterval(zapBackfillTimer);
 		};
 	});
 </script>

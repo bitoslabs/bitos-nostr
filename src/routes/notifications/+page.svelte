@@ -630,17 +630,19 @@
 																>
 															{/if}
 														{:else}
-															<a
-																href={profileLink(item.pubkey)}
-																onclick={() => openRow(item)}
-																class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
-															>
-															{#if hasNip05(item.pubkey)}
-																<Icon
-																	name="i-lucide-badge-check"
-																	class="size-3.5 shrink-0 text-primary-500"
-																/>
-															{/if}
+															<span class="inline-flex items-center gap-1 align-text-bottom">
+																<a
+																	href={profileLink(item.pubkey)}
+																	onclick={() => openRow(item)}
+																	class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
+																>
+																{#if hasNip05(item.pubkey)}
+																	<Icon
+																		name="i-lucide-badge-check"
+																		class="size-3.5 shrink-0 text-primary-500"
+																	/>
+																{/if}
+															</span>
 															{#if identity.current?.pk === item.pubkey}
 																<span
 																	class="rounded-full bg-primary-500/15 px-1.5 py-px text-[9px] font-bold text-primary-600 uppercase"
