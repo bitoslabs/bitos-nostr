@@ -175,3 +175,18 @@ export async function nwcMakeInvoice(amountSats: number, description = '') {
 	const invoice = response.result?.invoice;
 	return typeof invoice === 'string' ? invoice : null;
 }
+
+export interface NwcInvoiceStatus {
+	settled: boolean;
+	preimage?: string;
+}
+
+/** NIP-47 `lookup_invoice`: authoritative settlement state of a BOLT11 invoice. */
+export async function nwcLookupInvoice(invoice: string): Promise<NwcInvoiceStatus | null> {
+	const response = await request('lookup_invoice', { invoice });
+	const result = response.result ?? {};
+	return {
+		settled: result.settled === true,
+		preimage: typeof result.preimage === 'string' ? result.preimage : undefined
+	};
+}

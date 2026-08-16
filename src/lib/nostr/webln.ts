@@ -7,7 +7,14 @@
  * Reference: https://www.webln.guide/developer/connecting/connect-provider
  */
 import { browser } from '$app/environment';
-import { isNwcConnected, nwcBalanceSats, nwcInfo, nwcMakeInvoice, nwcPayInvoice } from './nwc';
+import {
+	isNwcConnected,
+	nwcBalanceSats,
+	nwcInfo,
+	nwcLookupInvoice,
+	nwcMakeInvoice,
+	nwcPayInvoice
+} from './nwc';
 
 export type WalletProvider = 'webln' | 'nwc';
 
@@ -179,4 +186,22 @@ export async function makeWebLNInvoice(amountSats: number, memo = ''): Promise<s
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Settlement check for an invoice this wallet created.
+ *
+ * NIP-47 wallets answer `lookup_invoice` authoritatively (returns `true`/
+ * `false`). Injected WebLN wallets have no standard invoice-status method, so
+ * this returns `null` there and the caller can fall back to balance polling.
+ */
+export async function checkWebLNInvoicePaid(bolt11: string): Promise<boolean | null> {
+	if (activeProvider === 'nwc' && isNwcConnected()) {
+		try {
+			return (await nwcLookupInvoice(bolt11))?.settled ?? null;
+		} catch {
+			return null;
+		}
+	}
+	return null;
 }
