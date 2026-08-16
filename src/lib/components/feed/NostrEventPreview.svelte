@@ -18,6 +18,7 @@
 	import { extractMentionEntities } from '$lib/utils/nip27';
 	import NotificationMedia from './NotificationMedia.svelte';
 	import { cleanNotificationPreview, extractNotificationMedia } from '$lib/utils/imeta';
+	import CommunityInviteCard from '$lib/components/groups/CommunityInviteCard.svelte';
 
 	const eventCache = new Map<string, Event>();
 	const eventRequests = new Map<string, Promise<Event | null>>();
@@ -46,6 +47,17 @@
 	}: { value?: string; eventId?: string; compact?: boolean; inline?: boolean } = $props();
 	const reference = $derived(eventId ?? value ?? '');
 	const raw = $derived(reference.startsWith('nostr:') ? reference.slice(6) : reference);
+	/** NIP-29 group address (kind 39000) → render a Community invite card. */
+	const communityId = $derived.by(() => {
+		try {
+			const data = decode(raw);
+			if (data.type !== 'naddr') return undefined;
+			const addr = data.data as { kind: number; identifier: string };
+			return addr.kind === 39000 && addr.identifier ? addr.identifier : undefined;
+		} catch {
+			return undefined;
+		}
+	});
 	const noteId = $derived.by(() => {
 		if (eventId) return eventId;
 		try {
@@ -65,7 +77,7 @@
 	let event = $state<Event | null>(null);
 	let loading = $state(true);
 	$effect(() => {
-		if (!browser || !noteId) {
+		if (!browser || communityId || !noteId) {
 			loading = false;
 			return;
 		}
@@ -143,7 +155,11 @@
 	);
 </script>
 
-{#if loading}
+{#if communityId}
+	<div class={inline ? 'mt-1' : 'my-2'}>
+		<CommunityInviteCard groupId={communityId} {compact} />
+	</div>
+{:else if loading}
 	<div
 		class={inline
 			? 'mt-1 flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-2 py-1.5 text-[11px] text-[var(--ui-text-muted)]'

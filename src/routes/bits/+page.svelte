@@ -37,17 +37,19 @@
 	};
 	let burstSeq = 0;
 
-	type ReelNote = FeedNote & { videoUrl: string };
+	type ReelNote = FeedNote & { mediaUrl: string; mediaType: 'video' | 'image' };
 	type ReelsCache = {
 		savedAt: number;
 		reels: ReelNote[];
 	};
 
 	const urlPattern = /https?:\/\/[^\s<>()]+/gi;
+	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
 	const videoPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
 	const videoFormatPattern = /(?:[?&](?:ext|fm|format)=)(?:m3u8|m4v|mov|mp4|webm)\b/i;
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels)(?:\/|$|:|-|_)/i;
-	const REELS_CACHE_KEY = 'bitos:reels-cache:v1';
+	// v2 stores generic media cards (video or NIP-68 picture), not only videoUrl.
+	const REELS_CACHE_KEY = 'bitos:reels-cache:v2';
 	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
 	const MAX_CACHED_REELS = 120;
 	const REELS_INITIAL_EVENT_LIMIT = 400;
@@ -147,8 +149,30 @@
 		return '';
 	}
 
+	function extractImage(event: { content: string; tags: string[][] }) {
+		for (const tag of event.tags.filter((tag) => tag[0] === 'imeta')) {
+			const url = imetaValue(tag, 'url');
+			const mime = imetaValue(tag, 'm');
+			if (url && (mime?.startsWith('image/') || imagePattern.test(url))) return url;
+		}
+		for (const match of event.content.matchAll(urlPattern)) {
+			const { core } = splitTrailingPunctuation(match[0]);
+			if (imagePattern.test(core)) return core;
+		}
+		return '';
+	}
+
+	function extractReelMedia(event: { kind: number; content: string; tags: string[][] }) {
+		if (event.kind === NOSTR_KINDS.PICTURE) {
+			const url = extractImage(event);
+			return url ? { url, type: 'image' as const } : null;
+		}
+		const url = extractVideo(event);
+		return url ? { url, type: 'video' as const } : null;
+	}
+
 	function captionFor(reel: ReelNote) {
-		return reel.content.split(reel.videoUrl).join(' ').replace(/\s+/g, ' ').trim();
+		return reel.content.split(reel.mediaUrl).join(' ').replace(/\s+/g, ' ').trim();
 	}
 
 	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
@@ -169,12 +193,24 @@
 		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
 		discovered: Awaited<ReturnType<typeof queryUrls>>
 	) {
-		const seen = new Set<string>();
-		return [...configured, ...discovered].filter((event) => {
-			if (seen.has(event.id)) return false;
-			seen.add(event.id);
-			return true;
-		});
+		const newestByKey = new Map<string, (typeof configured)[number]>();
+		for (const event of [...configured, ...discovered]) {
+			const d = event.tags.find((tag) => tag[0] === 'd')?.[1];
+			const addressable =
+				(event.kind === NOSTR_KINDS.ADDRESSABLE_VIDEO ||
+					event.kind === NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO) &&
+				d;
+			const key = addressable ? `${event.kind}:${event.pubkey}:${d}` : event.id;
+			const current = newestByKey.get(key);
+			if (
+				!current ||
+				event.created_at > current.created_at ||
+				(event.created_at === current.created_at && event.id.localeCompare(current.id) < 0)
+			) {
+				newestByKey.set(key, event);
+			}
+		}
+		return [...newestByKey.values()];
 	}
 
 	function discoveryOnlyIds(
@@ -248,15 +284,23 @@
 		const seen: Record<string, true> = {};
 		const baseReels = events
 			.sort((a, b) => b.created_at - a.created_at)
-			.map((event) => ({ event, videoUrl: extractVideo(event) }))
-			.filter(({ event, videoUrl }) => {
-				if (!videoUrl || seen[event.id]) return false;
-				seen[event.id] = true;
+			.map((event) => ({ event, media: extractReelMedia(event) }))
+			.filter(({ event, media }) => {
+				const d = event.tags.find((tag) => tag[0] === 'd')?.[1];
+				const key =
+					(event.kind === NOSTR_KINDS.ADDRESSABLE_VIDEO ||
+						event.kind === NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO) &&
+					d
+						? `${event.kind}:${event.pubkey}:${d}`
+						: event.id;
+				if (!media || seen[key]) return false;
+				seen[key] = true;
 				return true;
 			})
-			.map(({ event, videoUrl }) => ({
+			.map(({ event, media }) => ({
 				...toFeedNote(event),
-				videoUrl,
+				mediaUrl: media!.url,
+				mediaType: media!.type,
 				source: discoveryIds.has(event.id) ? ('discovery' as const) : ('configured' as const)
 			}));
 		const reelIds = baseReels.map((reel) => reel.id);
@@ -272,7 +316,8 @@
 		const nextReels = applyActivityToNotes(baseReels, activity, identity.current?.pk).map(
 			(note) => ({
 				...note,
-				videoUrl: baseReels.find((reel) => reel.id === note.id)?.videoUrl ?? ''
+				mediaUrl: baseReels.find((reel) => reel.id === note.id)?.mediaUrl ?? '',
+				mediaType: baseReels.find((reel) => reel.id === note.id)?.mediaType ?? 'video'
 			})
 		);
 		for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
@@ -285,7 +330,19 @@
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
-			const filters = [{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_INITIAL_EVENT_LIMIT }];
+			const filters = [
+				{
+					kinds: [
+						NOSTR_KINDS.TEXT_NOTE,
+						NOSTR_KINDS.PICTURE,
+						NOSTR_KINDS.VIDEO,
+						NOSTR_KINDS.SHORT_VIDEO,
+						NOSTR_KINDS.ADDRESSABLE_VIDEO,
+						NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+					],
+					limit: REELS_INITIAL_EVENT_LIMIT
+				}
+			];
 			const discoveryPromise = queryUrls(discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
@@ -313,7 +370,14 @@
 		try {
 			const filters = [
 				{
-					kinds: [NOSTR_KINDS.TEXT_NOTE],
+					kinds: [
+						NOSTR_KINDS.TEXT_NOTE,
+						NOSTR_KINDS.PICTURE,
+						NOSTR_KINDS.VIDEO,
+						NOSTR_KINDS.SHORT_VIDEO,
+						NOSTR_KINDS.ADDRESSABLE_VIDEO,
+						NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+					],
 					limit: REELS_PAGE_EVENT_LIMIT,
 					until: oldestReelEventCreatedAt - 1
 				}
@@ -787,25 +851,35 @@
 					data-reel-id={reel.id}
 					class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 				>
-					<MediaPlayer
-						src={reel.videoUrl}
-						label="Relay video note"
-						class="absolute inset-0"
-						mediaClass="absolute inset-0 size-full object-cover {reelCovered
-							? 'scale-105 blur-2xl saturate-50'
-							: ''}"
-						variant="reel"
-						loop
-						muted={reel.id === activeReelId ? activeReelMuted : true}
-						onMediaElement={(node) => {
-							registerReelVideo(reel.id, node as HTMLVideoElement);
-							return () => registerReelVideo(reel.id, null);
-						}}
-						onMutedChange={(nextMuted) => {
-							if (reel.id === activeReelId) activeReelMuted = nextMuted;
-						}}
-						onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
-					/>
+					{#if reel.mediaType === 'video'}
+						<MediaPlayer
+							src={reel.mediaUrl}
+							label="Relay video note"
+							class="absolute inset-0"
+							mediaClass="absolute inset-0 size-full object-cover {reelCovered
+								? 'scale-105 blur-2xl saturate-50'
+								: ''}"
+							variant="reel"
+							loop
+							muted={reel.id === activeReelId ? activeReelMuted : true}
+							onMediaElement={(node) => {
+								registerReelVideo(reel.id, node as HTMLVideoElement);
+								return () => registerReelVideo(reel.id, null);
+							}}
+							onMutedChange={(nextMuted) => {
+								if (reel.id === activeReelId) activeReelMuted = nextMuted;
+							}}
+							onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
+						/>
+					{:else}
+						<img
+							src={reel.mediaUrl}
+							alt={reel.content || 'Relay picture note'}
+							class="absolute inset-0 size-full object-cover {reelCovered
+								? 'scale-105 blur-2xl saturate-50'
+								: ''}"
+						/>
+					{/if}
 					<div class="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true">
 						{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
 							<span

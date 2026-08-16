@@ -21,6 +21,8 @@
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<meta name="apple-mobile-web-app-title" content="BitOS" />
+		<!-- Preload the dark-mode logo so the splash swaps instantly. -->
+		<link rel="preload" as="image" href="/icons/logo-white.png" />
 		<!-- No-flash theme: apply stored color mode before first paint -->
 		<script>
 			(function () {
@@ -41,6 +43,201 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<!-- Instant splash: paints before the JS bundle loads; the SvelteKit
+		     layout removes it (fade-out) as soon as the app mounts. -->
+		<div id="boot-splash" role="status" aria-label="Loading BitOS">
+			<div class="bs-inner">
+				<!-- Brand lockup: hex badge (BitOS hex language) + official wordmark. -->
+				<div class="bs-mark" aria-hidden="true">
+					<?xml version="1.0" encoding="UTF-8"?>
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						width="664"
+						height="297"
+						viewBox="0 0 664 297"
+						role="img"
+						aria-labelledby="title desc"
+					>
+						<title id="title">BitOS lightning bolt</title>
+						<desc id="desc">
+							Lightning bolt extracted from the BitOS logo, with a yellow-to-Bitcoin-orange
+							gradient.
+						</desc>
+						<defs>
+							<linearGradient id="bolt-gradient" x1="0" y1="0" x2="1" y2="1">
+								<stop offset="0" stop-color="#FFD83D" />
+								<stop offset="0.5" stop-color="#FFB51B" />
+								<stop offset="1" stop-color="#F7931A" />
+							</linearGradient>
+						</defs>
+						<path
+							fill="#fff"
+							fill-rule="evenodd"
+							d="M 0,296
+           C 37,254 69,222 99,195
+           C 135,163 168,139 199,121
+           L 313,51
+           C 317,49 320,52 318,57
+           L 306,119
+           C 370,81 429,55 484,36
+           C 547,14 606,3 664,0
+           C 619,14 580,29 548,45
+           C 508,65 472,83 441,99
+           C 397,122 354,149 312,180
+           L 231,243
+           C 227,246 228,241 229,236
+           L 241,160
+           C 195,184 148,211 101,241
+           C 65,264 31,282 0,296 Z"
+						/>
+					</svg>
+				</div>
+				<!-- Official logo: dark artwork on light bg, white variant in dark mode. -->
+				<img
+					class="bs-logo bs-logo-light"
+					src="/icons/logo.png"
+					alt="BitOS"
+					width="156"
+					height="62"
+				/>
+				<img
+					class="bs-logo bs-logo-dark"
+					src="/icons/logo-white.png"
+					alt="BitOS"
+					width="1904"
+					height="651"
+				/>
+				<div class="bs-pow" aria-hidden="true">
+					<span></span><span></span><span></span><span></span><span></span><span></span
+					><span></span>
+				</div>
+				<noscript><p class="bs-noscript">BitOS needs JavaScript to run.</p></noscript>
+			</div>
+			<style>
+				#boot-splash {
+					position: fixed;
+					inset: 0;
+					z-index: 9999;
+					display: grid;
+					place-items: center;
+					background: #f4f7fb;
+					pointer-events: none;
+					transition:
+						opacity 0.3s ease,
+						visibility 0.3s ease;
+				}
+				html.dark #boot-splash {
+					background: #0a0a0f;
+				}
+				.bs-inner {
+					display: flex;
+					flex-direction: column;
+					align-items: center;
+					gap: 16px;
+				}
+				/* Hex badge — regular flat-top hexagon, orange to match the progress bar. */
+				.bs-mark {
+					width: 60px;
+					height: 60px;
+					display: grid;
+					place-items: center;
+					background: linear-gradient(135deg, #F7931A, #F7931A);
+					clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
+					filter: drop-shadow(0 4px 18px #f7931a);
+					animation: bs-pulse 2s ease-in-out infinite;
+				}
+				.bs-mark svg {
+					width: 34px;
+					height: 34px;
+				}
+				.bs-logo {
+					display: block;
+					height: 26px;
+					width: auto;
+				}
+				.bs-logo-dark {
+					display: none;
+				}
+				html.dark .bs-logo-light {
+					display: none;
+				}
+				html.dark .bs-logo-dark {
+					display: block;
+				}
+				.bs-pow {
+					display: flex;
+					gap: 3px;
+				}
+				.bs-pow span {
+					width: 3px;
+					height: 9px;
+					border-radius: 1px;
+					background: #F7931A; /* warm-500 — orange, matches the top progress bar */
+					opacity: 0.18;
+					animation: bs-sweep 1.2s ease-in-out infinite;
+				}
+				.bs-pow span:nth-child(1) {
+					animation-delay: 0s;
+				}
+				.bs-pow span:nth-child(2) {
+					animation-delay: 0.12s;
+				}
+				.bs-pow span:nth-child(3) {
+					animation-delay: 0.24s;
+				}
+				.bs-pow span:nth-child(4) {
+					animation-delay: 0.36s;
+				}
+				.bs-pow span:nth-child(5) {
+					animation-delay: 0.48s;
+				}
+				.bs-pow span:nth-child(6) {
+					animation-delay: 0.6s;
+				}
+				.bs-pow span:nth-child(7) {
+					animation-delay: 0.72s;
+				}
+				@keyframes bs-sweep {
+					0%,
+					100% {
+						opacity: 0.18;
+						box-shadow: 0 0 6px rgba(255, 117, 95, 0);
+					}
+					35% {
+						opacity: 1;
+						box-shadow: 0 0 6px rgba(255, 117, 95, 0.55);
+					}
+				}
+				@keyframes bs-pulse {
+					0%,
+					100% {
+						transform: scale(1);
+					}
+					50% {
+						transform: scale(1.04);
+					}
+				}
+				@media (prefers-reduced-motion: reduce) {
+					.bs-mark,
+					.bs-pow span {
+						animation: none;
+					}
+					.bs-pow span {
+						opacity: 0.6;
+					}
+				}
+				#boot-splash.bs-out {
+					opacity: 0;
+					visibility: hidden;
+				}
+				.bs-noscript {
+					margin: 0;
+					font-size: 12px;
+					font-family: 'JetBrains Mono', monospace;
+					color: #a7afbf;
+				}
+			</style>
+		</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

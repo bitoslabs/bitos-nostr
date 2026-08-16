@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="664" height="297" viewBox="0 0 664 297"
+     role="img" aria-labelledby="title desc">
+  <title id="title">BitOS lightning bolt</title>
+  <desc id="desc">Lightning bolt extracted from the BitOS logo, with a yellow-to-Bitcoin-orange gradient.</desc>
+  <defs>
+    <linearGradient id="bolt-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFD83D"/>
+      <stop offset="0.5" stop-color="#FFB51B"/>
+      <stop offset="1" stop-color="#F7931A"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#bolt-gradient)" fill-rule="evenodd"
+        d="M 0,296
+           C 37,254 69,222 99,195
+           C 135,163 168,139 199,121
+           L 313,51
+           C 317,49 320,52 318,57
+           L 306,119
+           C 370,81 429,55 484,36
+           C 547,14 606,3 664,0
+           C 619,14 580,29 548,45
+           C 508,65 472,83 441,99
+           C 397,122 354,149 312,180
+           L 231,243
+           C 227,246 228,241 229,236
+           L 241,160
+           C 195,184 148,211 101,241
+           C 65,264 31,282 0,296 Z"/>
+</svg>

@@ -24,6 +24,7 @@
 	import { publishNip65List, relayListSignature } from '$lib/nostr/nip65';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { nip29 } from '$lib/nostr/groups.svelte';
 	import { groupSync } from '$lib/nostr/group-sync.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
@@ -35,6 +36,7 @@
 	import { authMessageForPath, isProtectedRoute, isStandalonePublicRoute } from '$lib/auth/access';
 	import PublicShell from '$lib/components/PublicShell.svelte';
 	import AuthRequired from '$lib/components/auth/AuthRequired.svelte';
+	import BootSplash from '$lib/components/ui/BootSplash.svelte';
 	import IncomingCallOverlay from '$lib/components/calls/IncomingCallOverlay.svelte';
 	import NavRail from '$lib/components/shell/NavRail.svelte';
 	import MobileTabBar from '$lib/components/shell/MobileTabBar.svelte';
@@ -221,6 +223,12 @@
 	}
 
 	onMount(() => {
+		// Dismiss the static splash from app.html once the app has mounted.
+		const splash = document.getElementById('boot-splash');
+		if (splash) {
+			splash.classList.add('bs-out');
+			setTimeout(() => splash.remove(), 400);
+		}
 		if ('serviceWorker' in navigator) {
 			void navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch((e) => {
 				/* PWA support is best-effort. */
@@ -293,6 +301,8 @@
 			privacyNotificationSettings.reload();
 			void mutes.flush(); // publish any pending NIP-51 changes (guard-checked)
 			void blocks.flush();
+			nip29.stop();
+			nip29.clear();
 			blocks.load();
 			mutes.load();
 			feedPreferences.reload();
@@ -314,6 +324,7 @@
 			feed.start();
 			dms.start();
 			notifications.start();
+			nip29.start();
 			// NIP-51: merge mute/block lists from relays, push local-only entries.
 			void mutes.sync();
 			void blocks.sync();
@@ -416,12 +427,8 @@
 />
 
 {#if !identity.ready}
-	<!-- brief boot state -->
-	<div class="grid h-screen place-items-center">
-		<div
-			class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
-		></div>
-	</div>
+	<!-- brief boot state (static twin lives in app.html) -->
+	<BootSplash />
 {:else if isShowcase}
 	<!-- Full-bleed premium UI showcase — owns the whole viewport. -->
 	{@render children?.()}

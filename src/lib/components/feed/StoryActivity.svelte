@@ -50,6 +50,35 @@
 			: 'background:linear-gradient(135deg, var(--color-primary-600), var(--color-accent-500))'
 	);
 
+	/**
+	 * Author analytics — aggregate engagement across ALL of this author's
+	 * active slides (not just the open one): totals, engagement rate and the
+	 * top-performing slide. Readers never see this card.
+	 */
+	const analytics = $derived.by(() => {
+		const perSlide = author.slides.map((s) => ({
+			slide: s,
+			...stories.getInteraction(s.id)
+		}));
+		const views = perSlide.reduce((sum, x) => sum + x.viewCount, 0);
+		const likes = perSlide.reduce((sum, x) => sum + x.likeCount, 0);
+		const replies = perSlide.reduce((sum, x) => sum + x.replyCount, 0);
+		const top = [...perSlide].sort((a, b) => b.viewCount - a.viewCount)[0];
+		const spanHours = Math.max(
+			1,
+			Math.round((Date.now() / 1000 - author.slides[author.slides.length - 1].createdAt) / 3600)
+		);
+		return {
+			slideCount: perSlide.length,
+			views,
+			likes,
+			replies,
+			engagement: views > 0 ? Math.round(((likes + replies) / views) * 100) : 0,
+			viewsPerHour: Math.round(views / spanHours),
+			topSlide: top && top.viewCount > 0 ? top.slide : undefined
+		};
+	});
+
 	function nameOf(pubkey: string) {
 		const p = profiles.get(pubkey);
 		return p?.display_name || p?.name || shortKey(pubkey);
@@ -153,7 +182,7 @@
 		>
 			<!-- Mobile sheet grabber -->
 			<div
-				class="absolute left-1/2 top-2 z-30 hidden h-1 w-10 -translate-x-1/2 rounded-full bg-[var(--ui-border-accented)] sm:block"
+				class="absolute top-2 left-1/2 z-30 hidden h-1 w-10 -translate-x-1/2 rounded-full bg-[var(--ui-border-accented)] sm:block"
 				aria-hidden="true"
 			></div>
 
@@ -211,13 +240,66 @@
 
 					{#if slide?.content?.trim()}
 						<p
-							class="mt-2.5 line-clamp-2 text-[12.5px] font-medium leading-snug break-words text-white/85 [text-shadow:0_1px_4px_rgba(0,0,0,0.45)]"
+							class="mt-2.5 line-clamp-2 text-[12.5px] leading-snug font-medium break-words text-white/85 [text-shadow:0_1px_4px_rgba(0,0,0,0.45)]"
 						>
 							{slide.content}
 						</p>
 					{/if}
 				</div>
 			</div>
+
+			<!-- AUTHOR ANALYTICS SUMMARY -->
+			{#if isAuthor && analytics.views + analytics.likes + analytics.replies > 0}
+				{@const stats = [
+					{
+						label: 'Views',
+						value: analytics.views,
+						icon: 'i-lucide-eye'
+					},
+					{
+						label: 'Likes',
+						value: analytics.likes,
+						icon: 'i-lucide-heart'
+					},
+					{
+						label: 'Replies',
+						value: analytics.replies,
+						icon: 'i-lucide-message-circle'
+					},
+					{
+						label: 'Engaged',
+						value: `${analytics.engagement}%`,
+						icon: 'i-lucide-trending-up'
+					}
+				]}
+				<div
+					class="grid shrink-0 grid-cols-4 gap-1.5 border-b border-[var(--ui-border)] bg-[var(--surface-bg)] px-3 py-2.5"
+					aria-label="Your story analytics"
+				>
+					{#each stats as stat (stat.label)}
+						<div
+							class="flex flex-col items-center gap-0.5 rounded-xl bg-[var(--ui-bg-muted)] px-1 py-1.5"
+						>
+							<Icon name={stat.icon} class="size-3.5 text-primary-500" />
+							<span class="text-[14px] leading-none font-extrabold tabular-nums">{stat.value}</span>
+							<span
+								class="text-[9.5px] font-semibold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
+								>{stat.label}</span
+							>
+						</div>
+					{/each}
+					<p class="col-span-4 mt-0.5 text-center text-[10.5px] text-[var(--ui-text-dimmed)]">
+						{analytics.slideCount} active slide{analytics.slideCount === 1 ? '' : 's'} ·
+						{analytics.viewsPerHour}/hour
+						{#if analytics.topSlide && analytics.slideCount > 1}
+							· best: “{analytics.topSlide.content.slice(0, 24) || 'photo slide'}{analytics.topSlide
+								.content.length > 24
+								? '…'
+								: ''}”
+						{/if}
+					</p>
+				</div>
+			{/if}
 
 			<!-- SEGMENTED STAT TABS -->
 			<div
@@ -285,8 +367,7 @@
 														class="truncate text-[12.5px] font-bold text-[var(--ui-text)] transition hover:text-primary-500"
 														>{nameOf(reply.pubkey)}</a
 													>
-													<time
-														class="ml-auto shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
+													<time class="ml-auto shrink-0 text-[11px] text-[var(--ui-text-dimmed)]"
 														>{timeAgo(reply.createdAt)}</time
 													>
 												</div>
@@ -310,10 +391,7 @@
 							{#if (interaction?.likes.length ?? 0) > 0}
 								<ul class="space-y-0.5">
 									{#each interaction!.likes as like, i (like.pubkey)}
-										<li
-											class="fade-up"
-											style="animation-delay:{Math.min(i, 8) * 0.035}s"
-										>
+										<li class="fade-up" style="animation-delay:{Math.min(i, 8) * 0.035}s">
 											<a
 												href={`/profile/${like.pubkey}`}
 												class="group flex items-center gap-3 rounded-xl p-2 transition hover:bg-[var(--ui-bg-muted)]"
@@ -398,9 +476,7 @@
 
 			<!-- COMPOSER -->
 			{#if identity.current}
-				<div
-					class="shrink-0 border-t border-[var(--ui-border)] bg-[var(--surface-bg)] px-3 py-2.5"
-				>
+				<div class="shrink-0 border-t border-[var(--ui-border)] bg-[var(--surface-bg)] px-3 py-2.5">
 					<div class="flex items-center gap-2">
 						<Avatar
 							pubkey={identity.current.pk}
@@ -420,7 +496,7 @@
 									void submitReply();
 								}
 							}}
-							class="h-10 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-4 text-[13px] text-[var(--ui-text)] outline-none transition placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500/40 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/25 disabled:opacity-60"
+							class="h-10 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-4 text-[13px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500/40 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/25 disabled:opacity-60"
 						/>
 						<button
 							type="button"

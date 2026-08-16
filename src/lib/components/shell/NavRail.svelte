@@ -6,6 +6,7 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
+	import { nip29 } from '$lib/nostr/groups.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
@@ -30,6 +31,13 @@
 		},
 		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
+		{
+			to: '/communities',
+			label: 'Communities',
+			icon: 'i-lucide-users-round',
+			communities: true,
+			requiresAuth: true
+		},
 		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
 		{ to: '/bookmarks', label: 'Bookmarks', icon: 'i-lucide-bookmark', requiresAuth: true },
 		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
@@ -47,6 +55,7 @@
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
+	const communitiesUnread = $derived(nip29.groups.reduce((sum, g) => sum + g.unread, 0));
 	const accountMenuId = 'nav-account-switcher';
 	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
 	let accountButton = $state<HTMLButtonElement | null>(null);
@@ -155,16 +164,20 @@
 							? 'scale-105 text-primary-500 dark:text-primary-300'
 							: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
 					/>
-					{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0)}
+					{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0) || (item.communities && communitiesUnread > 0)}
 						<span
 							class="absolute -top-2.5 -right-3 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
 							>{item.notifications
 								? notificationUnread > 9
 									? '9+'
 									: notificationUnread
-								: unread > 9
-									? '9+'
-									: unread}</span
+								: item.communities
+									? communitiesUnread > 9
+										? '9+'
+										: communitiesUnread
+									: unread > 9
+										? '9+'
+										: unread}</span
 						>
 					{/if}
 				</span>

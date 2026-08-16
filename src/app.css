@@ -1283,9 +1283,11 @@ html[data-reduced-motion='true'] *::after {
    respects the user's accent selection.
    ========================================================================== */
 @layer components {
-	/* Hexagon avatar clip-path (fallback to squircle via border-radius). */
+	/* Hexagon avatar clip-path (fallback to squircle via border-radius).
+	   Regular flat-top hexagon: all six sides equal (side = 50% of width),
+	   so the vertical span is width * √3/2 ≈ 6.7%–93.3%. */
 	.hex-clip {
-		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
+		clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
 		border-radius: 24%;
 	}
 
@@ -1308,6 +1310,60 @@ html[data-reduced-motion='true'] *::after {
 	.pow-bar > span.is-filled {
 		opacity: 1;
 		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	/* Boot/splash variant: segments sweep in a loop while the app initializes. */
+	/* Boot/splash variant: segments sweep in a loop while the app initializes.
+	 * Orange (warm) to match the top header progress bar. */
+	.pow-bar > span.pow-boot-seg {
+		background: var(--color-warm-500);
+		animation: pow-boot-sweep 1.2s ease-in-out infinite;
+	}
+	@keyframes pow-boot-sweep {
+		0%,
+		100% {
+			opacity: 0.18;
+			box-shadow: none;
+		}
+		35% {
+			opacity: 1;
+			box-shadow: 0 0 6px color-mix(in oklab, var(--color-warm-500) 55%, transparent);
+		}
+	}
+	/* Skeleton placeholders: a soft highlight sweeps across while data loads. */
+	.shimmer {
+		position: relative;
+		overflow: hidden;
+	}
+	.shimmer::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		transform: translateX(-100%);
+		background: linear-gradient(
+			90deg,
+			transparent,
+			color-mix(in oklab, var(--ui-text) 7%, transparent),
+			transparent
+		);
+		animation: shimmer-sweep 1.6s ease-in-out infinite;
+	}
+	@keyframes shimmer-sweep {
+		to {
+			transform: translateX(100%);
+		}
+	}
+	/* Gentle logo pulse for the boot screen (echoes the static splash). */
+	.bs-pulse-soft {
+		animation: bs-pulse-soft 2s ease-in-out infinite;
+	}
+	@keyframes bs-pulse-soft {
+		0%,
+		100% {
+			transform: scale(1);
+		}
+		50% {
+			transform: scale(1.04);
+		}
 	}
 
 	/* Hash digest visualization (32 leading bits). */

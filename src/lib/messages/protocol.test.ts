@@ -66,6 +66,38 @@ describe('message protocol helpers', () => {
 		});
 	});
 
+	it('round-trips rename-group controls without a target member', () => {
+		const renamed: GroupThread = { ...group, name: 'Core Team v2' };
+		// The control builder is called with the already-renamed group; the
+		// sender pubkey is passed as the member field (compat shape).
+		const parsed = parseGroupControl(groupControlText(renamed, ALICE, 'rename-group', ALICE));
+		expect(parsed).toEqual({
+			id: group.id,
+			name: 'Core Team v2',
+			from: ALICE,
+			type: 'rename-group',
+			member: ALICE,
+			members: [ALICE, BOB]
+		});
+	});
+
+	it('falls back to the sender when a rename control omits member', () => {
+		const text = [
+			'"Core Team" was renamed on BitOS.',
+			'Open BitOS Messages to sync this local group membership update.',
+			`bitos://group-control?${new URLSearchParams({
+				id: group.id,
+				name: 'Core Team v2',
+				from: ALICE,
+				type: 'rename-group'
+			}).toString()}`
+		].join('\n\n');
+		const parsed = parseGroupControl(text);
+		expect(parsed?.type).toBe('rename-group');
+		expect(parsed?.name).toBe('Core Team v2');
+		expect(parsed?.member).toBe(ALICE); // sender fallback
+	});
+
 	it('round-trips call signals', () => {
 		const parsed = parseCallSignal(
 			callSignalText({

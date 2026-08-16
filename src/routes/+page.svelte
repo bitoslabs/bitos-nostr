@@ -6,6 +6,7 @@
 	import StoriesBar from '$lib/components/feed/StoriesBar.svelte';
 	import Composer from '$lib/components/feed/Composer.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
+	import PostCardSkeleton from '$lib/components/feed/PostCardSkeleton.svelte';
 	import ZapLiveStrip from '$lib/components/feed/ZapLiveStrip.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -848,9 +849,9 @@
 								<div class="flex -space-x-2">
 									{#each pendingAuthors as author, index (author.pubkey)}
 										<div
-											class="rounded-full ring-2 ring-primary-500/40 {index === 0
-												? 'ring-white/80'
-												: 'ring-primary-500/30'} {index === 3 ? 'hidden sm:block' : ''}"
+											class="hex-clip relative p-[2px] {index === 0
+												? 'bg-white/80'
+												: 'bg-primary-500/40'} {index === 3 ? 'hidden sm:block' : ''}"
 										>
 											<Avatar
 												pubkey={author.pubkey}
@@ -881,9 +882,7 @@
 				<section
 					class="-mx-[clamp(1rem,3vw,1.5rem)] border-y border-primary-500/20 bg-primary-500/5 py-3"
 				>
-					<div
-						class="mb-0 flex items-center justify-between gap-3 px-[clamp(1rem,3vw,1.5rem)]"
-					>
+					<div class="mb-0 flex items-center justify-between gap-3 px-[clamp(1rem,3vw,1.5rem)]">
 						<div class="flex min-w-0 items-center gap-2">
 							<Icon name="i-lucide-sparkles" class="size-4 shrink-0 text-primary-500" />
 							<div class="min-w-0">
@@ -921,11 +920,21 @@
 
 			<!-- Posts -->
 			{#if feed.loading && !feed.notes.length}
-				<div class="flex flex-col items-center gap-3 py-20 text-center">
-					<div
-						class="size-7 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
-					></div>
-					<p class="text-[13px] text-[var(--ui-text-muted)]">Fetching notes from relays…</p>
+				<div role="status" aria-label="Loading feed">
+					<p
+						class="flex items-center justify-center gap-2 pt-5 pb-1 font-mono text-[11px] text-[var(--ui-text-dimmed)]"
+					>
+						<span class="relative flex size-2">
+							<span
+								class="absolute inline-flex size-full animate-ping rounded-full bg-warm-500 opacity-60"
+							></span>
+							<span class="relative inline-flex size-2 rounded-full bg-warm-500"></span>
+						</span>
+						Fetching notes from relays…
+					</p>
+					{#each Array(4) as _, i (i)}
+						<PostCardSkeleton index={i} />
+					{/each}
 				</div>
 			{:else if !feed.notes.length}
 				<div class="post-card flex flex-col items-center gap-3 py-16 text-center">
