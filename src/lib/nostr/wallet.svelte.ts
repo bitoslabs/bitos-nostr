@@ -403,17 +403,26 @@ class WalletStore {
 	}
 
 	async selectProvider(provider: WalletProvider) {
+		const previousProvider = this.provider;
+		const previousEnabled = this.weblnEnabled;
 		this.weblnBusy = true;
 		this.error = null;
 		try {
 			selectWalletProvider(provider);
+			// Selecting a provider must not depend on `get_info`: several valid
+			// WebLN/NWC wallets only authorize when a payment is requested.
 			this.provider = provider;
-			this.weblnInfo = await getWebLNInfo();
-			if (!this.weblnInfo) throw new Error('The selected wallet could not be connected.');
-			this.weblnBalance = await weblnBalanceSats();
 			this.weblnEnabled = true;
 			return true;
 		} catch (e) {
+			// A failed switch must not strand the user on a wallet that cannot pay.
+			try {
+				selectWalletProvider(previousProvider);
+			} catch {
+				/* The previous provider was removed; preserve the original error. */
+			}
+			this.provider = previousProvider;
+			this.weblnEnabled = previousEnabled;
 			this.error = (e as Error).message || 'Could not select wallet';
 			return false;
 		} finally {

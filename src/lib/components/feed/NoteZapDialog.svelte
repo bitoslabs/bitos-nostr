@@ -36,13 +36,16 @@
 	let error = $state('');
 	let loading = $state(false);
 	let paid = $state(false);
+	let receiptConfirmed = $state(false);
 	let isZap = $state(false);
 	let copied = $state(false);
 	let paying = $state(false);
 	let sentRecordId = $state('');
 	let stopReceipt: (() => void) | undefined;
+	let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const amount = $derived(Math.max(1, Math.round(Number(customAmount) || selectedAmount)));
+	const walletLabel = $derived(wallet.provider === 'nwc' ? 'custom wallet' : 'browser wallet');
 
 	function cleanupReceipt() {
 		stopReceipt?.();
@@ -51,9 +54,12 @@
 
 	function reset() {
 		cleanupReceipt();
+		if (closeTimer) clearTimeout(closeTimer);
+		closeTimer = undefined;
 		invoice = '';
 		error = '';
 		paid = false;
+		receiptConfirmed = false;
 		isZap = false;
 		copied = false;
 		sentRecordId = '';
@@ -62,6 +68,12 @@
 	function close() {
 		open = false;
 		reset();
+	}
+
+	/** Leave a short success confirmation, then return the reader to the post. */
+	function closeAfterPayment() {
+		if (closeTimer) return;
+		closeTimer = setTimeout(() => close(), 1800);
 	}
 
 	function selectAmount(sats: number) {
@@ -165,9 +177,11 @@
 								const receipt = JSON.parse(description) as { id?: string };
 								if (receipt.id !== requestId) return;
 								paid = true;
+								receiptConfirmed = true;
 								recordSent();
 								onPaid?.(amount);
 								cleanupReceipt();
+								closeAfterPayment();
 							} catch {
 								/* Ignore malformed receipts. */
 							}
@@ -175,9 +189,8 @@
 					}
 				);
 			}
-			// Auto-pay through a connected WebLN wallet so the user never has to
-			// leave the app. Falls through to the QR/deeplink flow on failure.
-			void maybePayWithWebLN();
+			// Keep payment explicit: the user can choose NWC/WebLN or use the QR
+			// invoice with another Lightning wallet.
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not prepare the zap.';
 		} finally {
@@ -219,9 +232,12 @@
 			paid = true;
 			recordSent();
 			onPaid?.(amount);
-			cleanupReceipt();
-		} catch {
-			/* Wallet payment failed/cancelled — the QR/deeplink remains available. */
+			closeAfterPayment();
+			// Keep listening so the UI can distinguish a settled invoice from a
+			// publicly confirmed NIP-57 zap receipt.
+		} catch (e) {
+			error =
+				e instanceof Error ? e.message : 'Wallet payment failed. You can still use the invoice.';
 		} finally {
 			paying = false;
 		}
@@ -238,8 +254,8 @@
 <Dialog bind:open title="Zap this note" onClose={close}>
 	<div class="space-y-4">
 		<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-			Send sats directly to the author. When supported, this creates a NIP-57 zap linked to this
-			note.
+			Send sats directly to the author. Create an invoice, then pay with your connected wallet or
+			any Lightning app.
 		</p>
 		<div class="grid grid-cols-4 gap-2">
 			{#each amounts as sats}
@@ -276,7 +292,14 @@
 		{#if invoice}
 			<div class="rounded-2xl bg-[var(--ui-bg-muted)] p-3">
 				{#if paid}<p class="mb-2 flex items-center gap-2 text-[13px] font-bold text-accent-600">
-						<Icon name="i-lucide-check" class="size-4" /> Zap paid · {amount.toLocaleString()} sats
+						<Icon name="i-lucide-check" class="size-4" />
+						{#if isZap && !receiptConfirmed}
+							Payment sent · confirming zap…
+						{:else if isZap}
+							Zap confirmed · {amount.toLocaleString()} sats sent
+						{:else}
+							Invoice paid · {amount.toLocaleString()} sats
+						{/if}
 					</p>{:else}<p class="mb-2 text-[13px] font-bold">
 						{isZap ? 'Zap invoice ready' : 'Invoice ready'} · {amount.toLocaleString()} sats
 					</p>{/if}
@@ -285,9 +308,7 @@
 					<div
 						class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 py-2"
 					>
-						<span class="text-[11px] font-semibold text-[var(--ui-text-muted)]"
-							>Pay this zap with</span
-						>
+						<span class="text-[11px] font-semibold text-[var(--ui-text-muted)]">Choose wallet</span>
 						<div
 							class="flex rounded-md border border-[var(--ui-border-muted)] p-0.5 text-[10.5px] font-bold"
 						>
@@ -296,14 +317,14 @@
 								onclick={() => selectZapWallet('webln')}
 								class="rounded px-2 py-1 {wallet.provider === 'webln'
 									? 'bg-primary-500 text-white'
-									: 'text-[var(--ui-text-muted)]'}">WebLN</button
+									: 'text-[var(--ui-text-muted)]'}">Browser wallet</button
 							>
 							<button
 								type="button"
 								onclick={() => selectZapWallet('nwc')}
 								class="rounded px-2 py-1 {wallet.provider === 'nwc'
 									? 'bg-primary-500 text-white'
-									: 'text-[var(--ui-text-muted)]'}">NWC</button
+									: 'text-[var(--ui-text-muted)]'}">Custom wallet</button
 							>
 						</div>
 					</div>
@@ -320,13 +341,13 @@
 								class="size-3.5 {paying ? 'animate-spin' : ''}"
 							/>{paying
 								? 'Paying…'
-								: `Pay with ${wallet.provider === 'nwc' ? 'NWC' : 'WebLN'}`}</button
+								: `Pay ${amount.toLocaleString()} sats with ${walletLabel}`}</button
 						>
 					{/if}
 					<a
 						href={`lightning:${invoice}`}
 						class="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-warm-500 px-3 py-2 text-[12px] font-bold text-white hover:bg-warm-600"
-						><Icon name="i-lucide-wallet-cards" class="size-3.5" />Open wallet</a
+						><Icon name="i-lucide-wallet-cards" class="size-3.5" />Use another wallet</a
 					>
 					<button
 						type="button"
@@ -334,15 +355,15 @@
 						class="inline-flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[12px] font-bold"
 						><Icon name={copied ? 'i-lucide-check' : 'i-lucide-copy'} class="size-3.5" />{copied
 							? 'Copied'
-							: 'Copy'}</button
+							: 'Copy invoice'}</button
 					>
 				</div>
 				{#if isZap && !paid}<p class="mt-2 text-[10.5px] text-[var(--ui-text-dimmed)]">
 						Listening for the zap receipt on Nostr…
 					</p>{/if}
 				{#if !isZap}<p class="mt-2 text-[10.5px] text-[var(--ui-text-dimmed)]">
-						This provider does not support Nostr zap receipts, so this payment will not appear in
-						the public zap total.
+						This payment will not appear in the public zap total because the recipient does not
+						support zap receipts.
 					</p>{/if}
 			</div>
 		{/if}
@@ -366,7 +387,7 @@
 					? 'Preparing…'
 					: paid
 						? 'Paid'
-						: `Create ${amount.toLocaleString()} sat invoice`}</button
+						: `Create invoice · ${amount.toLocaleString()} sats`}</button
 			>{/if}
 	{/snippet}
 </Dialog>
