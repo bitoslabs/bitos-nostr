@@ -52,6 +52,7 @@
 	} = $props();
 
 	let media = $state<HTMLMediaElement>();
+	let player = $state<HTMLDivElement>();
 	let isPlaying = $state(false);
 	let currentTime = $state(0);
 	let duration = $state(0);
@@ -220,9 +221,9 @@
 				await document.exitFullscreen();
 				return;
 			}
-			// Reels: fullscreen the whole card so the action rail + captions + this
-			// bar stay visible. Elsewhere (feed cards, dialogs) the media itself.
-			const stage = media.closest('.reel-card') ?? media;
+			// Reels retain their whole card. Elsewhere fullscreen the shared player
+			// shell, keeping our BitOS control overlay visible with the video.
+			const stage = media.closest('.reel-card') ?? player ?? media;
 			await stage.requestFullscreen();
 		} catch {
 			// Fullscreen is optional and can be disabled by an embedded browser.
@@ -305,6 +306,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	bind:this={player}
 	class="media-player {variant === 'reel' ? 'media-player-reel' : ''} {overlayControls
 		? 'media-player-overlay'
 		: ''} {className}"
@@ -588,12 +590,28 @@
 	onfullscreenchange={() =>
 		(isFullscreen =
 			document.fullscreenElement === media ||
+			document.fullscreenElement === player ||
 			document.fullscreenElement === media?.closest?.('.reel-card'))}
 />
 
 <style>
 	.media-player {
 		min-width: 0;
+	}
+	/* Fullscreen the component shell, not only the <video>, so its designed
+	 * control layer remains part of the fullscreen experience. */
+	.media-player:fullscreen {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
+		max-width: none;
+		background: #000;
+	}
+	.media-player:fullscreen video {
+		max-height: 100vh !important;
 	}
 	.media-player audio {
 		display: block;
