@@ -34,6 +34,21 @@ export const DEFAULTS: WalletPrefs = {
 	autoZapAmount: 21
 };
 
+/** Keep quick-pick amounts valid and unique for keyed UI lists. */
+function normalizeAmounts(value: unknown): number[] {
+	if (!Array.isArray(value)) return [...DEFAULTS.amounts];
+
+	const amounts = [
+		...new Set(
+			value
+				.filter((amount): amount is number => typeof amount === 'number' && Number.isFinite(amount))
+				.map((amount) => Math.max(1, Math.floor(amount)))
+		)
+	].slice(0, 6);
+
+	return amounts.length >= 2 ? amounts : [...DEFAULTS.amounts];
+}
+
 class WalletPrefsStore {
 	state = $state<WalletPrefs>(structuredClone(DEFAULTS));
 
@@ -44,9 +59,8 @@ class WalletPrefsStore {
 			if (raw) {
 				const parsed = JSON.parse(raw) as Partial<WalletPrefs>;
 				this.state = { ...structuredClone(DEFAULTS), ...parsed };
-				if (!Array.isArray(this.state.amounts) || this.state.amounts.length < 2) {
-					this.state.amounts = [...DEFAULTS.amounts];
-				}
+				this.state.amounts = normalizeAmounts(this.state.amounts);
+				this.persist();
 			}
 		} catch {
 			/* ignore malformed storage */
@@ -60,12 +74,15 @@ class WalletPrefsStore {
 	setAmount = (index: number, value: number) => {
 		const next = [...this.state.amounts];
 		next[index] = Math.max(1, Math.floor(value));
-		this.state.amounts = next;
+		this.state.amounts = normalizeAmounts(next);
 		this.persist();
 	};
 
 	addAmount = () => {
-		this.state.amounts = [...this.state.amounts, 100];
+		const candidates = [50, 250, 750, 2500, 5000];
+		const amount = candidates.find((candidate) => !this.state.amounts.includes(candidate));
+		if (amount === undefined) return;
+		this.state.amounts = [...this.state.amounts, amount];
 		this.persist();
 	};
 
