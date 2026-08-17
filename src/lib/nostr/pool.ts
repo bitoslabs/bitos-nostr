@@ -89,10 +89,16 @@ function dedupeEvents(events: Event[]): Event[] {
 	});
 }
 
-async function runQuery(urls: string[], filters: Filter[]): Promise<Event[]> {
+async function runQuery(
+	urls: string[],
+	filters: Filter[],
+	params?: { maxWait?: number }
+): Promise<Event[]> {
 	if (!urls.length || !filters.length) return [];
 	const p = getPool();
-	const settled = await Promise.allSettled(filters.map((filter) => p.querySync(urls, filter)));
+	const settled = await Promise.allSettled(
+		filters.map((filter) => p.querySync(urls, filter, params))
+	);
 	const batches = settled
 		.filter((result): result is PromiseFulfilledResult<Event[]> => result.status === 'fulfilled')
 		.map((result) => result.value);
@@ -168,9 +174,13 @@ export function queryOnce(filters: Filter[]): Promise<Event[]> {
 
 /** Query explicit read-only relay URLs without changing the user's relay
  * settings. Used by the optional discovery layer for public feed candidates. */
-export function queryUrls(urls: string[], filters: Filter[]): Promise<Event[]> {
+export function queryUrls(
+	urls: string[],
+	filters: Filter[],
+	params?: { maxWait?: number }
+): Promise<Event[]> {
 	if (!browser) return Promise.resolve([]);
-	return runQuery([...new Set(urls)], filters);
+	return runQuery([...new Set(urls)], filters, params);
 }
 
 /** Subscribe to filters on explicit relay URLs (e.g. NIP-29 group relays)
