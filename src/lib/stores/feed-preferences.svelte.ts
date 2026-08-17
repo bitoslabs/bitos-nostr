@@ -5,10 +5,12 @@ const MAX_PINNED_TAGS = 8;
 
 type FeedPreferencesState = {
 	pinnedTags: string[];
+	hiddenTrendTags: string[];
 };
 
 const DEFAULTS: FeedPreferencesState = {
-	pinnedTags: []
+	pinnedTags: [],
+	hiddenTrendTags: []
 };
 
 function normalizeTag(tag: string) {
@@ -29,7 +31,13 @@ class FeedPreferencesStore {
 			this.state = {
 				...DEFAULTS,
 				...parsed,
-				pinnedTags: (parsed.pinnedTags ?? []).map(normalizeTag).filter(Boolean).slice(0, MAX_PINNED_TAGS)
+				pinnedTags: (parsed.pinnedTags ?? [])
+					.map(normalizeTag)
+					.filter(Boolean)
+					.slice(0, MAX_PINNED_TAGS),
+				hiddenTrendTags: [
+					...new Set((parsed.hiddenTrendTags ?? []).map(normalizeTag).filter(Boolean))
+				]
 			};
 		} catch {
 			/* ignore malformed storage */
@@ -64,6 +72,19 @@ class FeedPreferencesStore {
 	isPinned(tag: string) {
 		this.load();
 		return this.state.pinnedTags.includes(normalizeTag(tag));
+	}
+
+	hideTrendTag(tag: string) {
+		this.load();
+		const normalized = normalizeTag(tag);
+		if (!normalized || this.state.hiddenTrendTags.includes(normalized)) return;
+		this.state.hiddenTrendTags = [...this.state.hiddenTrendTags, normalized];
+		this.persist();
+	}
+
+	isTrendHidden(tag: string) {
+		this.load();
+		return this.state.hiddenTrendTags.includes(normalizeTag(tag));
 	}
 }
 

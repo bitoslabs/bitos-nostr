@@ -24,6 +24,7 @@
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
+	import GifPicker from './GifPicker.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
@@ -89,6 +90,42 @@
 
 	const attachMenuId = 'composer-attach-menu';
 	const providerMenuId = 'composer-provider-menu';
+	const gifMenuId = 'composer-gif-menu';
+	const emojiMenuId = 'composer-emoji-menu';
+	const COMPOSER_EMOJIS = [
+		'😀',
+		'😂',
+		'🤣',
+		'😊',
+		'😍',
+		'🥰',
+		'😘',
+		'😎',
+		'🤔',
+		'🥳',
+		'😴',
+		'🤯',
+		'🥺',
+		'😭',
+		'😢',
+		'😡',
+		'👍',
+		'👎',
+		'👏',
+		'🙌',
+		'🙏',
+		'💪',
+		'🫂',
+		'👀',
+		'❤️',
+		'🔥',
+		'✨',
+		'⚡',
+		'🎉',
+		'💯',
+		'💩',
+		'🐮'
+	];
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
@@ -391,6 +428,29 @@
 
 	function removeAttachment(idx: number) {
 		attachments = attachments.filter((_, i) => i !== idx);
+	}
+
+	function insertAtCursor(value: string) {
+		const el = textareaElement();
+		if (!el) {
+			text += value;
+			return;
+		}
+		const start = el.selectionStart ?? text.length;
+		const end = el.selectionEnd ?? text.length;
+		text = text.slice(0, start) + value + text.slice(end);
+		const position = start + value.length;
+		queueMicrotask(() => {
+			el.focus();
+			el.setSelectionRange(position, position);
+		});
+	}
+
+	function pickGif(gif: { url: string; preview: string }) {
+		attachments = [
+			...attachments,
+			{ url: gif.url, kind: 'image', mimeType: 'image/gif', bytes: 0, provider: 'server' }
+		];
 	}
 
 	function cancelMining() {
@@ -799,6 +859,47 @@
 						/>
 					</button>
 				{/each}
+				<Popover
+					id={gifMenuId}
+					placement="top-start"
+					width="auto"
+					class="w-72 max-w-[80vw] p-0 sm:w-80"
+					label="Pick a GIF"
+					triggerClass="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-warm-500"
+					triggerActiveClass="bg-primary-500/10 text-primary-600"
+				>
+					{#snippet trigger()}
+						<Icon name="i-lucide-film" class="size-[18px]" />
+						<span class="sr-only">GIF</span>
+					{/snippet}
+					<GifPicker onpick={pickGif} />
+				</Popover>
+				<Popover
+					id={emojiMenuId}
+					placement="top-start"
+					width="auto"
+					class="w-60 p-1"
+					label="Add emoji"
+					triggerClass="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+					triggerActiveClass="bg-primary-500/10 text-primary-600"
+				>
+					{#snippet trigger()}
+						<Icon name="i-lucide-smile" class="size-[18px]" />
+						<span class="sr-only">Emoji</span>
+					{/snippet}
+					<div class="grid grid-cols-8 gap-0.5">
+						{#each COMPOSER_EMOJIS as emoji (emoji)}
+							<button
+								type="button"
+								onclick={() => insertAtCursor(emoji)}
+								aria-label={`Insert ${emoji}`}
+								class="grid size-7 place-items-center rounded-md text-[16px] transition hover:bg-[var(--interactive-hover-bg)]"
+							>
+								{emoji}
+							</button>
+						{/each}
+					</div>
+				</Popover>
 				<Popover
 					id={attachMenuId}
 					placement="top-start"

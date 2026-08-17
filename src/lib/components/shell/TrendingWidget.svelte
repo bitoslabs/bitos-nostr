@@ -3,7 +3,15 @@
 	import { formatCompact } from '$lib/utils/format';
 
 	/** A trending tag entry for the TrendingWidget. */
-	export type Trend = { tag: string; category: string; notes: number; sats: number; showSats?: boolean };
+	export type Trend = {
+		tag: string;
+		category: string;
+		notes: number;
+		sats: number;
+		showSats?: boolean;
+		/** Note counts in consecutive time buckets, oldest first. */
+		bars?: number[];
+	};
 
 	/**
 	 * Ranked list of trending tags (right rail + explore). Each row shows the
@@ -31,7 +39,8 @@
 					</div>
 					<div class="mt-0.5 font-semibold text-[var(--ui-color-primary-500)]">{t.tag}</div>
 					<div class="mt-0.5 font-mono text-xs text-[var(--ui-text-muted)]">
-						{formatCompact(t.notes)} notes{#if t.showSats !== false} · {formatCompact(t.sats)} sats{/if}
+						{formatCompact(t.notes)} notes{#if t.showSats !== false}
+							· {formatCompact(t.sats)} sats{/if}
 					</div>
 				</button>
 			</li>
