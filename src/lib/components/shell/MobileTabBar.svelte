@@ -2,19 +2,18 @@
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
-	import Popover from '$lib/components/ui/Popover.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
-	import { popovers } from '$lib/stores/popovers.svelte';
-	import { toasts } from '$lib/stores/toasts.svelte';
-	import { shortKey } from '$lib/utils/format';
 
-	/** iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is). */
+	/**
+	 * iOS-style bottom tab bar for mobile (hidden on lg+ where the rail is).
+	 * The last tab is "You": the logged-in avatar, linking to the /more hub
+	 * (profile card, quick tiles, accounts, settings) instead of a cramped
+	 * popover. Guests get a neutral icon and a sign-in funnel on /more.
+	 */
 
 	const tabs = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
@@ -35,18 +34,15 @@
 		}
 	];
 
-	const moreItems = [
-		{
-			to: '/communities',
-			label: 'Communities',
-			icon: 'i-lucide-users-round',
-			requiresAuth: true
-		},
-		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
-		{ to: '/zaps', label: 'Zaps', icon: 'i-lucide-zap', requiresAuth: true },
-		{ to: '/bookmarks', label: 'Saved', icon: 'i-lucide-bookmark', requiresAuth: true },
-		{ to: '/profile', label: 'Profile', icon: 'i-lucide-user', requiresAuth: true },
-		{ to: '/settings', label: 'Account', icon: 'i-lucide-settings-2', requiresAuth: true }
+	// Routes that live behind the "You" tab — the avatar lights up for them.
+	const youPrefixes = [
+		'/more',
+		'/communities',
+		'/bits',
+		'/zaps',
+		'/bookmarks',
+		'/profile',
+		'/settings'
 	];
 
 	function isActive(to: string) {
@@ -56,33 +52,17 @@
 
 	const me = $derived(identity.current);
 	const visibleTabs = $derived(tabs.filter((item) => me || !item.requiresAuth));
-	const visibleMoreItems = $derived(moreItems.filter((item) => me || !item.requiresAuth));
 	const displayName = $derived(
 		me?.pk ? profiles.get(me.pk)?.display_name || profiles.get(me.pk)?.name || 'You' : ''
 	);
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
-	const moreActive = $derived(visibleMoreItems.some((item) => isActive(item.to)));
-
-	function accountName(account: (typeof identity.accounts)[number]) {
-		const profile = profiles.get(account.pk) ?? account.profile;
-		return profile?.display_name || profile?.name || shortKey(account.npub, 8, 6);
-	}
-
-	function accountPicture(account: (typeof identity.accounts)[number]) {
-		return (profiles.get(account.pk) ?? account.profile)?.picture;
-	}
-
-	function switchAccount(pubkey: string) {
-		if (identity.current?.pk === pubkey) return;
-		try {
-			identity.switchTo(pubkey);
-			popovers.close();
-			toasts.info('Switched account');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
-	}
+	const youActive = $derived(
+		page.url.pathname === '/more' ||
+			youPrefixes.some(
+				(prefix) => page.url.pathname === prefix || page.url.pathname.startsWith(`${prefix}/`)
+			)
+	);
 </script>
 
 <nav
@@ -91,7 +71,11 @@
 >
 	{#each visibleTabs as tab (tab.to)}
 		{@const active = isActive(tab.to)}
-		<a href={tab.to} class="relative flex flex-1 items-center justify-center px-1.5 py-2">
+		<a
+			href={tab.to}
+			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
+			aria-current={active ? 'page' : undefined}
+		>
 			<span
 				class="relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-2 text-[10.5px] font-semibold transition-colors {active
 					? 'text-primary-600 dark:text-primary-300'
@@ -121,99 +105,58 @@
 			</span>
 		</a>
 	{/each}
-	<Popover
-		id="mobile-more"
-		placement="top-end"
-		width="md"
-		rootClass="flex-1"
-		label="More navigation"
-		triggerClass="relative flex w-full items-center justify-center px-1.5 py-2"
+
+	<!-- You: avatar → /more hub -->
+	<a
+		href="/more"
+		class="relative flex flex-1 items-center justify-center px-1.5 py-2"
+		aria-current={youActive ? 'page' : undefined}
+		aria-label="You — profile and more"
 	>
-		{#snippet trigger(open)}
-			{@const show = moreActive || open}
+		<span
+			class="relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-2 text-[10.5px] font-semibold transition-colors {youActive
+				? 'text-primary-600 dark:text-primary-300'
+				: 'text-[var(--ui-text-dimmed)]'}"
+		>
 			<span
-				class="relative flex w-full max-w-[88px] flex-col items-center justify-center gap-0.5 rounded-2xl px-2 py-2 text-[10.5px] font-semibold transition-colors {show
-					? 'text-primary-600 dark:text-primary-300'
-					: 'text-[var(--ui-text-dimmed)]'}"
+				class="relative grid size-7 place-items-center transition-transform duration-200 {youActive
+					? 'scale-110'
+					: 'scale-100'}"
 			>
-				<Icon
-					name="i-lucide-menu"
-					class="size-[22px] transition-transform {show
-						? 'scale-105 text-primary-500 dark:text-primary-300'
-						: ''}"
-				/>
-				<span>More</span>
+				<!-- Soft aura behind the active hex frame -->
+				<span
+					class="absolute inset-[-2px] rounded-full bg-primary-500/40 blur-[5px] transition-opacity duration-200 {youActive
+						? 'opacity-100'
+						: 'opacity-0'}"
+					aria-hidden="true"
+				></span>
+				<!-- Hex frame: the outline follows the brand hex geometry
+				     (clip-path clips box-shadows, so the border is a clipped backdrop layer) -->
+				<span
+					class="hex-clip absolute inset-0 transition-colors duration-200 {youActive
+						? 'bg-gradient-to-br from-primary-400 to-primary-600 dark:from-primary-300 dark:to-primary-500'
+						: 'bg-[var(--ui-border-muted)]'}"
+					aria-hidden="true"
+				></span>
+				{#if me}
+					<Avatar
+						pubkey={me.pk}
+						name={displayName}
+						picture={profiles.get(me.pk)?.picture}
+						size={24}
+						shape="hex"
+						class="relative"
+					/>
+				{:else}
+					<Icon
+						name="i-lucide-user-round"
+						class="relative size-[15px] transition-colors duration-200 {youActive
+							? 'text-primary-500 dark:text-primary-300'
+							: 'text-[var(--ui-text-dimmed)]'}"
+					/>
+				{/if}
 			</span>
-		{/snippet}
-
-		{#if me}
-			<a
-				href="/profile"
-				class="mb-1 flex items-center gap-2.5 rounded-lg px-3 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
-			>
-				<Avatar
-					pubkey={me.pk}
-					name={displayName}
-					picture={profiles.get(me.pk)?.picture}
-					size={34}
-					frame
-				/>
-				<span class="min-w-0">
-					<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]"
-						>{displayName}</span
-					>
-					<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
-				</span>
-			</a>
-
-			{#if identity.accounts.length > 1}
-				<MenuDivider />
-				<p class="px-3 pt-0.5 pb-1 text-[11px] font-semibold text-[var(--ui-text-muted)]">
-					Switch account
-				</p>
-				{#each identity.accounts as account (account.pk)}
-					<button
-						type="button"
-						onclick={() => switchAccount(account.pk)}
-						class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition hover:bg-[var(--interactive-hover-bg)]"
-					>
-						<Avatar
-							pubkey={account.pk}
-							name={accountName(account)}
-							picture={accountPicture(account)}
-							size={30}
-							frame
-						/>
-						<span class="min-w-0 flex-1">
-							<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
-								{accountName(account)}
-							</span>
-							<span class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]">
-								{shortKey(account.npub, 8, 5)}
-							</span>
-						</span>
-						{#if account.active}
-							<Icon name="i-lucide-check" class="size-4 shrink-0 text-primary-500" />
-						{/if}
-					</button>
-				{/each}
-			{/if}
-
-			<MenuDivider />
-		{/if}
-
-		{#each visibleMoreItems as item (item.to)}
-			<MenuItem
-				href={item.to}
-				icon={item.icon}
-				class={isActive(item.to) ? 'bg-primary-500/10 text-primary-600 dark:text-primary-400' : ''}
-			>
-				{item.label}
-			</MenuItem>
-		{/each}
-		{#if !me}
-			<MenuDivider />
-			<MenuItem href="/welcome" icon="i-lucide-log-in">Create or import a key</MenuItem>
-		{/if}
-	</Popover>
+			<span>You</span>
+		</span>
+	</a>
 </nav>

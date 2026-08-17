@@ -35,6 +35,10 @@
 			eventsPerMin?: number;
 			relaysOnline?: number;
 			sats24h?: number;
+			throughput?: number[];
+			throughputBucketSeconds?: number;
+			history?: number[];
+			events24h?: number;
 		};
 		onSearch?: (value: string) => void;
 		onSubmit?: (value: string) => void;

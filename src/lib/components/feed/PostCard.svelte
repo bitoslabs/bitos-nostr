@@ -914,7 +914,7 @@
 				{/if}
 				{#if note.pow}
 					<div class="mt-2">
-						<PowBadge bits={note.pow} showLabel={false} id={note.id} />
+						<PowBadge bits={note.pow} id={note.id} />
 					</div>
 				{/if}
 			</div>

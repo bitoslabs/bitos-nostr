@@ -13,6 +13,8 @@
 		bars = 30,
 		height = 32,
 		color = 'var(--ui-color-primary-500)',
+		labels = [],
+		fill = false,
 		class: cls
 	}: {
 		data?: number[];
@@ -20,6 +22,10 @@
 		bars?: number;
 		height?: number;
 		color?: string;
+		/** Optional hover labels for data buckets, oldest first. */
+		labels?: string[];
+		/** Spread a short series across the available chart width. */
+		fill?: boolean;
 		class?: string;
 	} = $props();
 
@@ -42,16 +48,13 @@
 	});
 </script>
 
-<div
-	class={cn('flex items-end gap-[3px]', cls)}
-	style="height:{height}px"
-	aria-hidden="true"
->
+<div class={cn('flex items-end gap-[3px]', cls)} style="height:{height}px" aria-hidden="true">
 	{#each liveSeries as v, i (i)}
 		<span
-			class="w-[3px] rounded-sm"
+			class="rounded-sm {fill ? 'min-w-[2px] flex-1' : 'w-[3px]'}"
 			style="height:{Math.round(v * height)}px;background:{color};opacity:{0.3 +
 				(i / liveSeries.length) * 0.7};transition:height 0.5s ease, opacity 0.5s ease;"
+			title={labels[i]}
 		></span>
 	{/each}
 </div>

@@ -13,7 +13,7 @@ export const POW_PREFS_KEY = 'bitos:pow-prefs';
 export interface PowPrefsState {
 	/** Difficulty (leading zero bits) of the last successfully published mined event. */
 	lastDifficulty: number;
-	/** Whether PoW controls stay visible in composers once expanded once. */
+	/** Whether PoW controls are initially visible in composers. Always false on reload. */
 	showPanelByDefault: boolean;
 }
 
@@ -39,7 +39,9 @@ class PowPrefsStore {
 				const parsed = JSON.parse(raw) as Partial<PowPrefsState>;
 				this.state = {
 					lastDifficulty: clamp(Number(parsed.lastDifficulty ?? 0)),
-					showPanelByDefault: !!parsed.showPanelByDefault
+					// PoW is opt-in for each new composer. Ignore an older saved value so
+					// a panel left open in a previous post never reopens after refresh.
+					showPanelByDefault: false
 				};
 			}
 		} catch {
@@ -62,8 +64,10 @@ class PowPrefsStore {
 		this.persist();
 	};
 
-	rememberPanelVisibility = (visible: boolean) => {
-		this.state = { ...this.state, showPanelByDefault: visible };
+	rememberPanelVisibility = (_visible: boolean) => {
+		void _visible;
+		// Keep the persisted value false too, including for existing preferences.
+		this.state = { ...this.state, showPanelByDefault: false };
 		this.persist();
 	};
 }

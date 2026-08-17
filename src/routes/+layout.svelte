@@ -444,7 +444,9 @@
 	<div class="grain" aria-hidden="true"></div>
 	<NetworkBar connected={relayConnected} total={relayTotal} checking={relayChecking} />
 
-	<div class="relative z-10 flex h-screen w-full justify-center overflow-hidden">
+	<!-- Keep this shell out of its own stacking context. Full-screen viewers rendered
+	     by page content must be able to layer above the mobile tab bar. -->
+	<div class="relative flex h-screen w-full justify-center overflow-hidden">
 		<div class="flex w-full max-w-[var(--ui-container)] overflow-hidden">
 			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
