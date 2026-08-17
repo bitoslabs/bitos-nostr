@@ -514,7 +514,7 @@
 				Scan with any Nostr app to find <strong class="text-[var(--ui-text)]">{displayName}</strong>
 			</p>
 			<div class="mt-4 flex justify-center">
-				<QrCode value={`nostr:${me.npub}`} label="Your Nostr profile QR" size={250} />
+				<QrCode value={`nostr:${me.npub}`} theme='matrix'  label="Your Nostr profile QR" size={250} />
 			</div>
 			<p
 				class="mx-auto mt-4 max-w-[300px] font-mono text-[10.5px] break-all text-[var(--ui-text-dimmed)]"
