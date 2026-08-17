@@ -41,6 +41,8 @@ export const RECOMMENDED: RecommendedRelay[] = [
 	{ url: 'wss://relay.current.fyi', name: 'Current', description: 'Current.fyi relay' },
 	{ url: 'wss://nostr.mom', name: 'nostr.mom', description: 'Open community relay' },
 	{ url: 'wss://nostr-02.yakihonne.com', name: 'Yakihonne', description: 'Japanese Nostr relay' },
+	{ url: 'wss://relay.ditto.pub', name: 'Ditto', description: 'Ditto.pub public relay' },
+	
 ];
 
 /**
