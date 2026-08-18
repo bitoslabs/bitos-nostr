@@ -21,6 +21,7 @@
 	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
+	import { hasNip05 } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { compactSats } from '$lib/utils/profile-stats';
@@ -1448,12 +1449,15 @@
 								</span>
 								<span class="text-[11px] font-semibold">Save</span>
 							</button>
-							<a
-								href={`/profile/${reel.pubkey}`}
-								class="spin-slow mt-2 size-10 overflow-hidden mask-squircle border-2 border-white"
-								aria-label="Open profile"
-							>
-								<Avatar pubkey={reel.pubkey} {name} picture={profile?.picture} size={40} />
+							<a href={`/profile/${reel.pubkey}`} class="spin-slow mt-2" aria-label="Open profile">
+								<Avatar
+									pubkey={reel.pubkey}
+									{name}
+									picture={profile?.picture}
+									verified={hasNip05(profile)}
+									size={40}
+									frame
+								/>
 							</a>
 						</div>
 
@@ -1464,8 +1468,9 @@
 									pubkey={reel.pubkey}
 									{name}
 									picture={profile?.picture}
+									verified={hasNip05(profile)}
 									size={40}
-									class="ring-2 ring-white"
+									frame
 								/>
 								<div class="min-w-0 flex-1">
 									<a
@@ -1677,6 +1682,7 @@
 											pubkey={comment.pubkey}
 											name={commentName}
 											picture={commentProfile?.picture}
+											verified={hasNip05(commentProfile)}
 											size={34}
 											frame
 										/>

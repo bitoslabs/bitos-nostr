@@ -703,12 +703,13 @@
 	.reel-action .icon-circle {
 		width: 46px;
 		height: 46px;
-		border-radius: 50%;
+		clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
 		background: rgba(255, 255, 255, 0.16);
 		backdrop-filter: blur(10px);
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 	}
 	.reel-action .icon-circle.is-active {
 		background: var(--color-primary-500);
@@ -976,6 +977,9 @@
 	}
 	.spin-slow {
 		animation: pulse-spin 8s linear infinite;
+		clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
+		border: 2px solid rgba(255, 255, 255, 0.72);
+		box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-color-primary-500) 32%, transparent);
 	}
 	@keyframes pulse-spin {
 		from {

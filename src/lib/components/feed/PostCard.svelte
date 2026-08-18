@@ -25,6 +25,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
+	import { hasNip05 } from '$lib/utils/verification';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
@@ -63,7 +64,11 @@
 		rankTag,
 		onExplain,
 		onInteract,
-		flat = false
+		flat = false,
+		/** Apply the active primary colour as a readable tint over video thumbnails. */
+		showVideoCover = true,
+		/** Cover strength from 0 (transparent) to 1 (solid primary colour). */
+		videoCoverOpacity = 0.52
 	}: {
 		note: FeedNote;
 		index?: number;
@@ -74,6 +79,8 @@
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
 		/** Use the surrounding list's dividers instead of an individual card surface. */
 		flat?: boolean;
+		showVideoCover?: boolean;
+		videoCoverOpacity?: number;
 	} = $props();
 
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
@@ -249,6 +256,11 @@
 
 	function mediaContentClass(count: number) {
 		return count <= 2 ? 'aspect-video' : 'size-full';
+	}
+
+	function videoCoverStyle() {
+		const opacity = Math.min(1, Math.max(0, videoCoverOpacity));
+		return `--video-cover-opacity: ${opacity};`;
 	}
 
 	function compactSats(count: number) {
@@ -698,7 +710,13 @@
 		not under the avatar. -->
 	<a href={`/profile/${note.pubkey}`} class="shrink-0" aria-label={displayName}>
 		<StoryRing pubkey={note.pubkey} interactive={false}>
-			<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			<Avatar
+				pubkey={note.pubkey}
+				name={displayName}
+				picture={profile?.picture}
+				verified={hasNip05(profile)}
+				size={44}
+			/>
 		</StoryRing>
 	</a>
 	<!-- Content column: name, body, media and actions all share one left edge. -->
@@ -708,7 +726,7 @@
 			<a href={`/profile/${note.pubkey}`} class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
-					{#if profile?.nip05}<Icon
+					{#if hasNip05(profile)}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
 						/>{/if}
@@ -1025,6 +1043,14 @@
 									: 'scale-105 blur-2xl saturate-50'}"
 							></video>
 							{#if !shouldHideVideo(media.url)}
+								{#if showVideoCover}
+									<!-- The primary token is rewritten by the active theme, so this
+										cover follows both the colour and requested opacity. -->
+									<span
+										class="video-cover pointer-events-none absolute inset-0 z-5"
+										style={videoCoverStyle()}
+									></span>
+								{/if}
 								<button
 									type="button"
 									onclick={() => openMediaViewer(media)}
@@ -1237,6 +1263,7 @@
 								pubkey={reply.pubkey}
 								name={replyName}
 								picture={replyProfile?.picture}
+								verified={hasNip05(replyProfile)}
 								size={28}
 							/>
 						</a>
@@ -1248,7 +1275,7 @@
 								>
 									{replyName}
 								</a>
-								{#if replyProfile?.nip05}
+								{#if hasNip05(replyProfile)}
 									<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
 								{/if}
 								{#if identity.current?.pk === reply.pubkey}
@@ -1332,6 +1359,7 @@
 													pubkey={child.pubkey}
 													name={childName}
 													picture={childProfile?.picture}
+													verified={hasNip05(childProfile)}
 													size={22}
 												/>
 											</a>
@@ -1343,7 +1371,7 @@
 													>
 														{childName}
 													</a>
-													{#if childProfile?.nip05}
+													{#if hasNip05(childProfile)}
 														<Icon
 															name="i-lucide-badge-check"
 															class="size-3 shrink-0 text-primary-500"
@@ -1679,3 +1707,15 @@
 	noteId={note.id}
 	targetLabel={`Note by ${displayName} · ${timeAgo(note.createdAt)}`}
 />
+
+<style>
+	.video-cover {
+		background: linear-gradient(
+			155deg,
+			color-mix(in oklab, var(--ui-color-primary-500) 72%, transparent),
+			var(--ui-color-primary-500)
+		);
+		opacity: var(--video-cover-opacity, 0.52);
+		transition: opacity 180ms ease;
+	}
+</style>

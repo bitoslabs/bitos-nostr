@@ -838,7 +838,12 @@
 									href={`/profile/${person.pubkey}`}
 									class="min-w-0 transition hover:text-primary-600"
 								>
-									<p class="truncate text-[12px] font-bold hover:underline">{name}</p>
+									<p class="flex items-center gap-1 text-[12px] font-bold">
+										<span class="truncate hover:underline">{name}</span>
+										{#if profile?.nip05}
+											<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+										{/if}
+									</p>
 									<p class="truncate font-mono text-[9.5px] text-[var(--ui-text-dimmed)]">
 										{shortKey(person.pubkey, 8, 4)}
 									</p>

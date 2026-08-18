@@ -116,7 +116,8 @@
 							pubkey={alert.from}
 							name={alert.callerName}
 							size={48}
-							class="relative mask-squircle"
+							shape="squircle"
+							class="relative"
 						/>
 						<span
 							class="absolute -right-1 -bottom-1 grid size-6 place-items-center rounded-full bg-primary-500 text-white ring-2 ring-[var(--surface-bg)]"
