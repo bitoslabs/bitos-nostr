@@ -12,6 +12,7 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey } from '$lib/utils/format';
+	import { hasNip05 } from '$lib/utils/verification';
 
 	const nav = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
@@ -215,7 +216,13 @@
 					aria-expanded={accountMenuOpen}
 				>
 					<div class="flex items-center gap-2.5">
-						<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={44} />
+						<Avatar
+							pubkey={me.pk}
+							name={displayName}
+							picture={myProfile?.picture}
+							verified={hasNip05(myProfile)}
+							size={44}
+						/>
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-sm font-semibold">{displayName}</span>
 							<span class="block truncate font-mono text-[11px] text-[var(--ui-text-muted)]"
@@ -237,7 +244,13 @@
 							onclick={() => popovers.close()}
 							class="mb-1 flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
 						>
-							<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={34} />
+							<Avatar
+								pubkey={me.pk}
+								name={displayName}
+								picture={myProfile?.picture}
+								verified={hasNip05(myProfile)}
+								size={34}
+							/>
 							<span class="min-w-0">
 								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
 									{displayName}
@@ -261,6 +274,7 @@
 										pubkey={account.pk}
 										name={accountName(account)}
 										picture={accountPicture(account)}
+										verified={hasNip05(profiles.get(account.pk) ?? account.profile)}
 										size={30}
 									/>
 									<span class="min-w-0 flex-1">

@@ -54,7 +54,7 @@
 					</div>
 					{#if main.verified}
 						<span
-							class="absolute -right-1 -bottom-1 grid place-items-center rounded-full bg-[var(--tone-success-text)] text-black ring-2 ring-[var(--surface-bg)]"
+							class="absolute -right-1 -bottom-1 grid place-items-center rounded-full bg-[var(--tone-success-text)] text-[var(--ui-text-inverted)] ring-2 ring-[var(--surface-bg)]"
 							style="width:13px;height:13px"
 							aria-label="Verified"
 							title="Verified"

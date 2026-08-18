@@ -25,6 +25,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
+	import { hasNip05 } from '$lib/utils/verification';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
@@ -63,7 +64,11 @@
 		rankTag,
 		onExplain,
 		onInteract,
-		flat = false
+		flat = false,
+		/** Apply the active primary colour as a readable tint over video thumbnails. */
+		showVideoCover = true,
+		/** Cover strength from 0 (transparent) to 1 (solid primary colour). */
+		videoCoverOpacity = 0.52
 	}: {
 		note: FeedNote;
 		index?: number;
@@ -74,6 +79,8 @@
 		onInteract?: (note: FeedNote, kind: 'react' | 'save', active: boolean) => void;
 		/** Use the surrounding list's dividers instead of an individual card surface. */
 		flat?: boolean;
+		showVideoCover?: boolean;
+		videoCoverOpacity?: number;
 	} = $props();
 
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
@@ -251,6 +258,11 @@
 		return count <= 2 ? 'aspect-video' : 'size-full';
 	}
 
+	function videoCoverStyle() {
+		const opacity = Math.min(1, Math.max(0, videoCoverOpacity));
+		return `--video-cover-opacity: ${opacity};`;
+	}
+
 	function compactSats(count: number) {
 		if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
 		if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}K`;
@@ -297,10 +309,17 @@
 		};
 	}
 
-	function childReplies(replyId: string) {
-		return allReplies
-			.filter((reply) => reply.replyTo === replyId)
-			.sort((a, b) => a.createdAt - b.createdAt);
+	/** All replies under a top-level comment, flattened to a single level
+	 * (X-style threading): a reply to a sub-reply still renders directly under
+	 * the original comment — the thread never nests deeper than two levels. */
+	function descendantReplies(commentId: string, seen: string[] = []): FeedNote[] {
+		if (seen.includes(commentId)) return [];
+		const out: FeedNote[] = [];
+		for (const reply of allReplies) {
+			if (reply.replyTo !== commentId) continue;
+			out.push(reply, ...descendantReplies(reply.id, [...seen, commentId]));
+		}
+		return out.sort((a, b) => a.createdAt - b.createdAt);
 	}
 
 	function addOptimisticReply(reply: FeedNote) {
@@ -689,6 +708,123 @@
 	});
 </script>
 
+<!-- Level-2 replies under a top-level comment (reply to a comment). Every
+	reply gets the same action row — like, zap, reply, hide, delete. Replying
+	here posts a NIP-10 reply to this comment, but the result renders flat at
+	level 2 under the same top-level comment: the thread stays 2 levels max. -->
+{#snippet subReply(comment: FeedNote)}
+	{@const commentProfile = profiles.get(comment.pubkey)}
+	{@const commentName =
+		commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
+	<div class="flex gap-2">
+		<a href={`/profile/${comment.pubkey}`} class="shrink-0">
+			<Avatar
+				pubkey={comment.pubkey}
+				name={commentName}
+				picture={commentProfile?.picture}
+				verified={hasNip05(commentProfile)}
+				size={22}
+			/>
+		</a>
+		<div class="min-w-0 flex-1">
+			<div class="flex min-w-0 items-center gap-1.5">
+				<a
+					href={`/profile/${comment.pubkey}`}
+					class="truncate text-[12px] font-bold hover:text-primary-500"
+				>
+					{commentName}
+				</a>
+				{#if hasNip05(commentProfile)}
+					<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+				{/if}
+				{#if identity.current?.pk === comment.pubkey}
+					<span
+						class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
+						>you</span
+					>
+				{/if}
+				{#if comment.pow}
+					<PowBadge bits={comment.pow} micro id={comment.id} />
+				{/if}
+				<time
+					class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
+					title={timeFull(comment.createdAt)}>{timeAgo(comment.createdAt)}</time
+				>
+			</div>
+			<CommentBody content={comment.content} tags={comment.tags} compact />
+			<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
+				<button
+					type="button"
+					onclick={() => reactToComment(comment)}
+					class="inline-flex items-center gap-1 {commentLiked(comment)
+						? 'text-[var(--tone-error-text)]'
+						: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
+				>
+					<Icon
+						name={commentLiked(comment) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+						class="size-3"
+					/>
+					{commentLiked(comment) ? 'Unlike' : 'Like'}
+					{#if commentReactionCount(comment)}
+						<span class="font-semibold"> · {commentReactionCount(comment)}</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					onclick={() => zapComment(comment)}
+					class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
+					aria-label="Zap sats to this reply"
+				>
+					<Icon name="i-lucide-zap" class="size-3" />
+					Zap{#if commentZapSats(comment)}
+						<span class="font-semibold"> · {compactSats(commentZapSats(comment))}</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					onclick={() => startCommentReply(comment)}
+					disabled={!privacyNotificationSettings.canCommentOn(comment.pubkey)}
+					class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
+				>
+					Reply
+				</button>
+				<button
+					type="button"
+					onclick={() => hideComment(comment)}
+					class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+				>
+					Hide
+				</button>
+				{#if identity.current?.pk === comment.pubkey}
+					<button
+						type="button"
+						onclick={() => askDeleteComment(comment)}
+						class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+					>
+						Delete
+					</button>
+				{/if}
+			</div>
+
+			{#if replyingToCommentId === comment.id}
+				<div class="mt-3">
+					<ReplyComposer
+						parent={comment}
+						placeholder={`Reply to ${commentName}…`}
+						autofocus
+						initialMention={{ pubkey: comment.pubkey, name: commentName }}
+						onSubmitted={(reply) => {
+							addOptimisticReply(reply);
+							replyingToCommentId = '';
+						}}
+						onCancel={() => (replyingToCommentId = '')}
+					/>
+				</div>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
 <article
 	bind:this={articleEl}
 	class="{flat ? '' : 'post-card'} fade-up relative flex gap-3 overflow-visible px-4 pt-4"
@@ -698,7 +834,13 @@
 		not under the avatar. -->
 	<a href={`/profile/${note.pubkey}`} class="shrink-0" aria-label={displayName}>
 		<StoryRing pubkey={note.pubkey} interactive={false}>
-			<Avatar pubkey={note.pubkey} name={displayName} picture={profile?.picture} size={44} />
+			<Avatar
+				pubkey={note.pubkey}
+				name={displayName}
+				picture={profile?.picture}
+				verified={hasNip05(profile)}
+				size={44}
+			/>
 		</StoryRing>
 	</a>
 	<!-- Content column: name, body, media and actions all share one left edge. -->
@@ -708,7 +850,7 @@
 			<a href={`/profile/${note.pubkey}`} class="min-w-0 flex-1 leading-tight">
 				<p class="flex min-w-0 items-center gap-1.5 text-[14px] font-bold">
 					<span class="truncate">{displayName}</span>
-					{#if profile?.nip05}<Icon
+					{#if hasNip05(profile)}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
 						/>{/if}
@@ -1025,6 +1167,14 @@
 									: 'scale-105 blur-2xl saturate-50'}"
 							></video>
 							{#if !shouldHideVideo(media.url)}
+								{#if showVideoCover}
+									<!-- The primary token is rewritten by the active theme, so this
+										cover follows both the colour and requested opacity. -->
+									<span
+										class="video-cover pointer-events-none absolute inset-0 z-5"
+										style={videoCoverStyle()}
+									></span>
+								{/if}
 								<button
 									type="button"
 									onclick={() => openMediaViewer(media)}
@@ -1230,13 +1380,14 @@
 					{@const replyProfile = profiles.get(reply.pubkey)}
 					{@const replyName =
 						replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
-					{@const children = childReplies(reply.id)}
+					{@const children = descendantReplies(reply.id)}
 					<div class="flex gap-2.5">
 						<a href={`/profile/${reply.pubkey}`} class="shrink-0">
 							<Avatar
 								pubkey={reply.pubkey}
 								name={replyName}
 								picture={replyProfile?.picture}
+								verified={hasNip05(replyProfile)}
 								size={28}
 							/>
 						</a>
@@ -1248,7 +1399,7 @@
 								>
 									{replyName}
 								</a>
-								{#if replyProfile?.nip05}
+								{#if hasNip05(replyProfile)}
 									<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
 								{/if}
 								{#if identity.current?.pk === reply.pubkey}
@@ -1322,99 +1473,8 @@
 
 							{#if children.length}
 								<div class="mt-3 space-y-2 border-l border-[var(--ui-border-muted)] pl-3">
-									{#each children.slice(0, 3) as child (child.id)}
-										{@const childProfile = profiles.get(child.pubkey)}
-										{@const childName =
-											childProfile?.display_name || childProfile?.name || shortKey(child.pubkey)}
-										<div class="flex gap-2">
-											<a href={`/profile/${child.pubkey}`} class="shrink-0">
-												<Avatar
-													pubkey={child.pubkey}
-													name={childName}
-													picture={childProfile?.picture}
-													size={22}
-												/>
-											</a>
-											<div class="min-w-0 flex-1">
-												<div class="flex min-w-0 items-center gap-1.5">
-													<a
-														href={`/profile/${child.pubkey}`}
-														class="truncate text-[12px] font-bold hover:text-primary-500"
-													>
-														{childName}
-													</a>
-													{#if childProfile?.nip05}
-														<Icon
-															name="i-lucide-badge-check"
-															class="size-3 shrink-0 text-primary-500"
-														/>
-													{/if}
-													{#if identity.current?.pk === child.pubkey}
-														<span
-															class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
-															>you</span
-														>
-													{/if}
-													{#if child.pow}
-														<PowBadge bits={child.pow} micro id={child.id} />
-													{/if}
-													<time
-														class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
-														title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
-													>
-												</div>
-												<CommentBody content={child.content} tags={child.tags} compact />
-												<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
-													<button
-														type="button"
-														onclick={() => reactToComment(child)}
-														class="inline-flex items-center gap-1 {commentLiked(child)
-															? 'text-[var(--tone-error-text)]'
-															: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
-													>
-														<Icon
-															name={commentLiked(child)
-																? 'i-solar-heart-bold'
-																: 'i-solar-heart-linear'}
-															class="size-3"
-														/>
-														{commentLiked(child) ? 'Unlike' : 'Like'}
-														{#if commentReactionCount(child)}
-															<span class="font-semibold"> · {commentReactionCount(child)}</span>
-														{/if}
-													</button>
-													<button
-														type="button"
-														onclick={() => zapComment(child)}
-														class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
-														aria-label="Zap sats to this reply"
-													>
-														<Icon name="i-lucide-zap" class="size-3" />
-														Zap{#if commentZapSats(child)}
-															<span class="font-semibold">
-																· {compactSats(commentZapSats(child))}</span
-															>
-														{/if}
-													</button>
-													<button
-														type="button"
-														onclick={() => hideComment(child)}
-														class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
-													>
-														Hide
-													</button>
-													{#if identity.current?.pk === child.pubkey}
-														<button
-															type="button"
-															onclick={() => askDeleteComment(child)}
-															class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
-														>
-															Delete
-														</button>
-													{/if}
-												</div>
-											</div>
-										</div>
+									{#each children as child (child.id)}
+										{@render subReply(child)}
 									{/each}
 								</div>
 							{/if}
@@ -1679,3 +1739,15 @@
 	noteId={note.id}
 	targetLabel={`Note by ${displayName} · ${timeAgo(note.createdAt)}`}
 />
+
+<style>
+	.video-cover {
+		background: linear-gradient(
+			155deg,
+			color-mix(in oklab, var(--ui-color-primary-500) 72%, transparent),
+			var(--ui-color-primary-500)
+		);
+		opacity: var(--video-cover-opacity, 0.52);
+		transition: opacity 180ms ease;
+	}
+</style>

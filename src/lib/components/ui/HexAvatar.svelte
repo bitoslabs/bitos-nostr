@@ -41,9 +41,9 @@
 <span class={cn('relative inline-block shrink-0', cls)} style="width:{size}px;height:{size}px">
 	<span
 		class="hex-clip block size-full overflow-hidden"
-		style="{ring
+		style={ring
 			? `padding:2px;background:linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500));`
-			: ''}"
+			: ''}
 	>
 		<span
 			class="block size-full"
@@ -67,13 +67,13 @@
 		</span>
 	</span>
 	{#if verified}
+		<!-- NIP-05 verified badge — z-index above the hexagon layers, ring for
+		     separation (design: .hex-avatar.verified::after, z-index 2 + border). -->
 		<span
-			class="absolute -right-0.5 -bottom-0.5 grid place-items-center rounded-full bg-[var(--tone-success-text)] text-black glow-success"
-			style="width:{badgeSize}px;height:{badgeSize}px;font-size:{Math.round(
-				badgeSize * 0.5
-			)}px"
-			aria-label="Verified"
-			title="Verified"
+			class="glow-success absolute -right-0.5 -bottom-0.5 z-[2] grid place-items-center rounded-full bg-[var(--tone-success-text)] text-[var(--ui-text-inverted)] ring-[1.5px] ring-[var(--surface-bg)]"
+			style="width:{badgeSize}px;height:{badgeSize}px;font-size:{Math.round(badgeSize * 0.5)}px"
+			aria-label="Verified (NIP-05)"
+			title="Verified (NIP-05)"
 		>
 			<svg viewBox="0 0 24 24" class="size-[60%]" fill="currentColor" aria-hidden="true">
 				<path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z" />

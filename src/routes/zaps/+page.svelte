@@ -377,7 +377,7 @@
 						</div>
 					</div>
 					<span
-						class="hex-clip grid size-11 shrink-0 place-items-center bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500))] text-black"
+						class="hex-clip grid size-11 shrink-0 place-items-center border-[2px] border-white/75 bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500))] text-black"
 					>
 						<Icon name="i-lucide-zap" class="size-5" />
 					</span>

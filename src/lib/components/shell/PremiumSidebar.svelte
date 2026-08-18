@@ -158,6 +158,7 @@
 					pubkey={account.pubkey ?? account.npub}
 					verified={account.verified}
 					size={36}
+					ring
 				/>
 				<div class="min-w-0 flex-1">
 					<div class="truncate text-sm font-semibold">{account.name}</div>

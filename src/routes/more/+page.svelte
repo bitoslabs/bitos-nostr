@@ -13,6 +13,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { confirms } from '$lib/stores/confirms.svelte';
 	import { shortKey } from '$lib/utils/format';
+	import { hasNip05 } from '$lib/utils/verification';
 
 	/**
 	 * Mobile "You" hub — the avatar tab in the bottom bar lands here. A calm,
@@ -167,9 +168,27 @@
 				class="rise group flex items-center gap-4 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-4 transition hover:border-primary-500/40"
 				style="--d:0"
 			>
-				<Avatar pubkey={me.pk} name={displayName} picture={myProfile?.picture} size={56} frame />
+				<Avatar
+					pubkey={me.pk}
+					name={displayName}
+					picture={myProfile?.picture}
+					verified={hasNip05(myProfile)}
+					size={56}
+					frame
+				/>
 				<span class="min-w-0 flex-1">
-					<span class="block truncate text-[17px] leading-tight font-bold">{displayName}</span>
+					<span
+						class="flex items-center gap-1.5 text-[17px] leading-tight font-bold"
+						title={hasNip05(myProfile) ? 'NIP-05 verified' : undefined}
+					>
+						<span class="truncate">{displayName}</span>
+						{#if hasNip05(myProfile)}
+							<Icon
+								name="i-lucide-badge-check"
+								class="size-4 shrink-0 text-[var(--tone-success-text)]"
+							/>
+						{/if}
+					</span>
 					<span class="mt-1 block truncate font-mono text-[11.5px] text-[var(--ui-text-muted)]">
 						{shortKey(me.npub, 12, 8)}
 					</span>
@@ -234,7 +253,7 @@
 				style="--d:3"
 			>
 				<span
-					class="grid size-9 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] {walletLive
+					class="hex-clip grid size-9 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] {walletLive
 						? 'bg-warm-500/15 text-warm-500'
 						: 'bg-primary-500/10 text-primary-500'}"
 				>
@@ -278,9 +297,13 @@
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<span
-							class="grid size-10 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] bg-primary-500/10 text-primary-500 transition group-hover:bg-primary-500/15"
+							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
 						>
-							<Icon name={tile.icon} class="size-5" />
+							<span
+								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+							>
+								<Icon name={tile.icon} class="size-5" />
+							</span>
 						</span>
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
@@ -306,9 +329,13 @@
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<span
-							class="grid size-10 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] bg-primary-500/10 text-primary-500 transition group-hover:bg-primary-500/15"
+							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
 						>
-							<Icon name={tile.icon} class="size-5" />
+							<span
+								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+							>
+								<Icon name={tile.icon} class="size-5" />
+							</span>
 						</span>
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
@@ -334,9 +361,13 @@
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<span
-							class="grid size-10 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] bg-primary-500/10 text-primary-500 transition group-hover:bg-primary-500/15"
+							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
 						>
-							<Icon name={tile.icon} class="size-5" />
+							<span
+								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+							>
+								<Icon name={tile.icon} class="size-5" />
+							</span>
 						</span>
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
@@ -368,12 +399,24 @@
 									pubkey={account.pk}
 									name={accountName(account)}
 									picture={accountPicture(account)}
+									verified={hasNip05(profiles.get(account.pk) ?? account.profile)}
 									size={34}
 									frame
 								/>
 								<span class="min-w-0 flex-1">
-									<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
-										{accountName(account)}
+									<span
+										class="flex items-center gap-1 text-[13px] font-bold text-[var(--ui-text)]"
+										title={hasNip05(profiles.get(account.pk) ?? account.profile)
+											? 'NIP-05 verified'
+											: undefined}
+									>
+										<span class="truncate">{accountName(account)}</span>
+										{#if hasNip05(profiles.get(account.pk) ?? account.profile)}
+											<Icon
+												name="i-lucide-badge-check"
+												class="size-3.5 shrink-0 text-[var(--tone-success-text)]"
+											/>
+										{/if}
 									</span>
 									<span class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]">
 										{shortKey(account.npub, 8, 5)}
@@ -436,9 +479,13 @@
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
 						<span
-							class="grid size-10 shrink-0 place-items-center rounded-[var(--ui-radius-sm)] bg-primary-500/10 text-primary-500 transition group-hover:bg-primary-500/15"
+							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
 						>
-							<Icon name={tile.icon} class="size-5" />
+							<span
+								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+							>
+								<Icon name={tile.icon} class="size-5" />
+							</span>
 						</span>
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
@@ -465,7 +512,16 @@
 						? 'border-t border-[var(--ui-border-muted)]'
 						: ''}"
 				>
-					<Icon name={item.icon} class="size-[17px] shrink-0 text-[var(--ui-text-dimmed)]" />
+					<!-- Same hex border treatment as the tiles above -->
+					<span
+						class="hex-clip box-border grid size-8 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500"
+					>
+						<span
+							class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+						>
+							<Icon name={item.icon} class="size-[15px]" />
+						</span>
+					</span>
 					{item.label}
 					<Icon
 						name="i-lucide-chevron-right"
@@ -477,10 +533,15 @@
 				href="/about"
 				class="flex items-center gap-3 border-t border-[var(--ui-border-muted)] px-4 py-3 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 			>
-				<Icon
-					name="i-lucide-git-branch"
-					class="size-[17px] shrink-0 text-[var(--ui-text-dimmed)]"
-				/>
+				<span
+					class="hex-clip box-border grid size-8 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500"
+				>
+					<span
+						class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
+					>
+						<Icon name="i-lucide-git-branch" class="size-[15px]" />
+					</span>
+				</span>
 				Version
 				<span class="ml-auto font-mono text-[11.5px] text-[var(--ui-text-dimmed)]">
 					v{APP_VERSION}
@@ -514,7 +575,12 @@
 				Scan with any Nostr app to find <strong class="text-[var(--ui-text)]">{displayName}</strong>
 			</p>
 			<div class="mt-4 flex justify-center">
-				<QrCode value={`nostr:${me.npub}`} theme='matrix'  label="Your Nostr profile QR" size={250} />
+				<QrCode
+					value={`nostr:${me.npub}`}
+					theme="matrix"
+					label="Your Nostr profile QR"
+					size={250}
+				/>
 			</div>
 			<p
 				class="mx-auto mt-4 max-w-[300px] font-mono text-[10.5px] break-all text-[var(--ui-text-dimmed)]"

@@ -115,9 +115,12 @@
 		{/if}
 
 		<span
-			class="absolute inset-x-3 bottom-3 truncate text-left text-[13px] font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
+			class="absolute inset-x-3 bottom-3 flex items-center gap-1 text-left text-[13px] font-bold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
 		>
-			{nameFor(author.pubkey)}
+			<span class="truncate">{nameFor(author.pubkey)}</span>
+			{#if profiles.get(author.pubkey)?.nip05}
+				<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-white/90" />
+			{/if}
 		</span>
 	</button>
 {/snippet}
