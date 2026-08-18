@@ -65,8 +65,8 @@
 	const imagePathPattern =
 		/(?:^|\/)(?:avatar|avatars|cdn-cgi\/image|image|images|img|media|photo|photos|picture|resize|thumbnail|thumb|upload|uploads)(?:\/|$|:|-|_)/i;
 	const videoPathPattern = /(?:^|\/)(?:video|videos|reel|reels|upload)(?:\/|$|:|-|_)/i;
-	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v7';
-	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v7';
+	const DISCOVER_CACHE_KEY = 'bitos:discover-cache:v8';
+	const DISCOVER_SEARCH_CACHE_KEY = 'bitos:discover-search-cache:v8';
 	const DISCOVER_CACHE_TTL_MS = 10 * 60 * 1000;
 	const DISCOVER_SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
 	const MAX_CACHED_SEARCHES = 5;
@@ -75,9 +75,12 @@
 	const MAX_PERSISTED_TAGS = 60;
 	const MAX_PERSISTED_CREATORS = 40;
 	const MAX_CACHED_MEDIA = 180;
+	// The persisted cache keeps only a tiny slice of notes; search results for
+	// notes are never cached at all and always reload fresh from relays.
+	const MAX_CACHED_NOTES = 10;
 	// Keep enough events to populate notes, media, tags, and creators after relay
 	// overlap is deduplicated, without making the first Discover request too heavy.
-	const MAX_CACHED_SEARCH_NOTES = 300;
+	const MAX_DISCOVER_NOTES = 300;
 	const DISCOVER_INITIAL_EVENT_LIMIT = 120;
 	const DISCOVER_PAGE_EVENT_LIMIT = 180;
 	const DISCOVER_SEARCH_EVENT_LIMIT = 180;
@@ -425,7 +428,7 @@
 		const nextMedia: MediaItem[] = [];
 		const nextNotes: FeedNote[] = [];
 		const mediaLimit = options.mediaLimit ?? MAX_CACHED_MEDIA;
-		const noteLimit = options.noteLimit ?? MAX_CACHED_SEARCH_NOTES;
+		const noteLimit = options.noteLimit ?? MAX_DISCOVER_NOTES;
 		const sortedEvents = [...events].sort((a, b) => b.created_at - a.created_at);
 
 		for (const event of sortedEvents) {
@@ -501,7 +504,7 @@
 			sensitiveReason: item.sensitiveReason ?? '',
 			source: item.source ?? 'configured'
 		}));
-		notes = (data.notes ?? []).slice(0, MAX_CACHED_SEARCH_NOTES);
+		notes = (data.notes ?? []).slice(0, MAX_DISCOVER_NOTES);
 		oldestNoteEventCreatedAt = data.oldestNoteEventCreatedAt ?? notes.at(-1)?.createdAt ?? 0;
 		hasMoreNotes = data.hasMoreNotes ?? false;
 		notesVisibleCount = INITIAL_NOTES_VISIBLE;
@@ -571,6 +574,8 @@
 					...data,
 					trendTags: data.trendTags.slice(0, MAX_PERSISTED_TAGS),
 					creators: data.creators.slice(0, MAX_PERSISTED_CREATORS),
+					// Only a tiny slice of notes is persisted; the rest reloads from relays.
+					notes: data.notes?.slice(0, MAX_CACHED_NOTES),
 					discoveryEnabled: algorithmPreferences.relayDiscovery.discover,
 					savedAt: Date.now()
 				})
@@ -581,7 +586,7 @@
 	}
 
 	function saveCurrentDiscoverCache() {
-		const cachedNotes = notes.slice(0, MAX_CACHED_SEARCH_NOTES);
+		const cachedNotes = notes.slice(0, MAX_CACHED_NOTES);
 		saveDiscoverCache({
 			trendTags,
 			creators,
@@ -601,7 +606,15 @@
 			const entry = cached.queries.find((item) => item.query === queryValue);
 			if (!entry?.savedAt || Date.now() - entry.savedAt > DISCOVER_SEARCH_CACHE_TTL_MS) return null;
 			if (entry.discoveryEnabled && !algorithmPreferences.relayDiscovery.discover) return null;
-			return entry.data;
+			if (
+				!Array.isArray(entry.data?.trendTags) ||
+				!Array.isArray(entry.data?.creators) ||
+				!Array.isArray(entry.data?.mediaItems)
+			)
+				return null;
+			// Note results are never restored from cache; the live relay query
+			// always refills them.
+			return { ...entry.data, notes: undefined };
 		} catch {
 			return null;
 		}
@@ -614,7 +627,9 @@
 			const nextQueries = [
 				{
 					query: queryValue,
-					data,
+					// Notes are never persisted here — only tags, creators, and media.
+					// Note search results always reload fresh from relays.
+					data: { ...data, notes: undefined },
 					discoveryEnabled: algorithmPreferences.relayDiscovery.discover,
 					savedAt: Date.now()
 				},
@@ -646,7 +661,7 @@
 				const combined = mergeEvents(events, discovered);
 				const { data, sortedEvents } = buildDiscoverData(combined, {
 					includeNotes: true,
-					noteLimit: MAX_CACHED_SEARCH_NOTES,
+					noteLimit: MAX_DISCOVER_NOTES,
 					discoveryIds: discoveryOnlyIds(events, discovered)
 				});
 				applyDiscoverData(data);
@@ -989,15 +1004,14 @@
 		mediaVisibleCount = INITIAL_MEDIA_VISIBLE;
 		notesVisibleCount = INITIAL_NOTES_VISIBLE;
 		try {
+			// Cached searches only paint tags, creators, and media instantly. Notes
+			// are never served from cache, so keep querying the relays below to
+			// refresh the full result set (including notes) fresh.
 			const cached = loadCachedDiscoverSearch(term);
-			if (cached?.notes) {
-				if (searchToken !== relaySearchToken) return;
-				relaySearchData = cached;
+			if (cached && searchToken === relaySearchToken) {
+				relaySearchData = { ...cached, notes: [] };
 				profiles.ensure(cached.creators.map((creator) => creator.pubkey));
 				profiles.ensure(cached.mediaItems.map((item) => item.pubkey));
-				profiles.ensure(cached.notes.map((note) => note.pubkey));
-				searchingRelays = false;
-				return;
 			}
 
 			const filters = [
@@ -1027,7 +1041,7 @@
 				);
 				relaySearchData = buildDiscoverData(matchingEvents, {
 					mediaLimit: MAX_CACHED_MEDIA,
-					noteLimit: MAX_CACHED_SEARCH_NOTES,
+					noteLimit: MAX_DISCOVER_NOTES,
 					includeNotes: true,
 					discoveryIds: discoveryOnlyIds(events, discovered)
 				}).data;

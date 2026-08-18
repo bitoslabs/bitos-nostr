@@ -49,7 +49,7 @@
 
 	let feedScroller: HTMLDivElement | undefined = $state();
 	const filterOpen = $derived(popovers.isOpen(filterMenuId));
-	let activeFilters = $state<FeedFilter[]>(['all']);
+	let activeFilters = $state<FeedFilter[]>(['originals']);
 	let feedMode = $state<'foryou' | 'following'>('foryou');
 	let renderedCount = $state(INITIAL_RENDER_COUNT);
 	let promotedNewIds = $state<Set<string>>(new Set());

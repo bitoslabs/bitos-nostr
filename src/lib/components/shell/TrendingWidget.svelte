@@ -9,8 +9,6 @@
 		notes: number;
 		sats: number;
 		showSats?: boolean;
-		/** Note counts in consecutive time buckets, oldest first. */
-		bars?: number[];
 	};
 
 	/**

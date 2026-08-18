@@ -35,7 +35,13 @@
 	const LIVE_THROUGHPUT_CACHE_KEY = 'bitos:live-throughput:v1';
 	const TREND_WINDOW_MS = 24 * 60 * 60_000;
 	const TREND_BUCKETS = 24;
-	const TREND_CACHE_KEY = 'bitos:trending-tags:v1';
+	// The persisted trend cache stores just tag names with their total note
+	// counts — no chart buckets or event ids — so the rail paints instantly on
+	// startup while the live relay query rebuilds the ranking.
+	const TREND_CACHE_KEY = 'bitos:trending-tags:v3';
+	const TREND_CACHE_TTL_MS = 24 * 60 * 60_000;
+	const MAX_CACHED_TREND_TAGS = 12;
+	const TREND_SAVE_DEBOUNCE_MS = 5_000;
 	const MAX_TRACKED_TREND_EVENTS = 5_000;
 	const TREND_DAILY_RETENTION_DAYS = 30;
 	const TREND_HOUR_MS = 60 * 60_000;
@@ -68,15 +74,16 @@
 	const liveEventTimes = new SvelteMap<string, number>();
 	/** Five-minute observed-event buckets, retained locally for seven days. */
 	const telemetryBuckets = new SvelteMap<number, number>();
-	let telemetrySaveTimer: ReturnType<typeof window.setTimeout> | undefined;
-	let liveRenderTimer: ReturnType<typeof window.setTimeout> | undefined;
-	/** ID, timestamp, and hashtags only — no note content is stored. */
+	let telemetrySaveTimer: number | undefined;
+	let liveRenderTimer: number | undefined;
+	/** ID, timestamp, and hashtags only — no note content is stored. Kept in
+	 * memory for this session only; just the ranked tag names are persisted. */
 	const trendEvents = new SvelteMap<string, { tags: string[]; at: number }>();
-	/** UTC-hour start → tag → observed-note count. Drives the 24h chart. */
+	/** UTC-hour start → tag → observed-note count. Drives 24h/7d ranking. */
 	const trendHourlyTotals = new SvelteMap<number, SvelteMap<string, number>>();
 	const trendDailyTotals = new SvelteMap<string, SvelteMap<string, number>>();
 	let lastTrendPruneAt = 0;
-	let trendSaveTimer: ReturnType<typeof window.setTimeout> | undefined;
+	let trendSaveTimer: number | undefined;
 	/** zap receipt id → { sats, received ms } — feeds the rolling Sats 24h total. */
 	const trackedZaps = new SvelteMap<string, { sats: number; at: number }>();
 	const me = $derived(identity.current?.pk ?? '');
@@ -243,95 +250,6 @@
 		}, LIVE_RENDER_DEBOUNCE_MS);
 	}
 
-	function saveTrendCache() {
-		try {
-			localStorage.setItem(
-				TREND_CACHE_KEY,
-				JSON.stringify({
-					version: 3,
-					events: [...trendEvents],
-					hourly: [...trendHourlyTotals].map(([hour, tags]) => [hour, [...tags]]),
-					daily: [...trendDailyTotals].map(([day, tags]) => [day, [...tags]])
-				})
-			);
-		} catch {
-			/* Storage is optional; the live trending view still works. */
-		}
-	}
-
-	function scheduleTrendSave() {
-		if (trendSaveTimer) return;
-		trendSaveTimer = window.setTimeout(() => {
-			trendSaveTimer = undefined;
-			saveTrendCache();
-		}, 5_000);
-	}
-
-	function loadTrendCache() {
-		try {
-			const cached = JSON.parse(localStorage.getItem(TREND_CACHE_KEY) ?? '[]') as unknown;
-			const cachedObject =
-				cached && typeof cached === 'object' && !Array.isArray(cached) ? cached : null;
-			const eventEntries = Array.isArray(cached)
-				? cached
-				: (cachedObject as { events?: unknown })?.events;
-			const hourlyEntries = (cachedObject as { hourly?: unknown })?.hourly;
-			const dailyEntries = (cachedObject as { daily?: unknown })?.daily;
-			if (!Array.isArray(eventEntries)) return;
-			for (const entry of eventEntries) {
-				if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string') continue;
-				const [id, value] = entry;
-				if (!value || typeof value !== 'object') continue;
-				const { tags, at } = value as { tags?: unknown; at?: unknown };
-				if (typeof at !== 'number' || !Array.isArray(tags)) continue;
-				const normalizedTags = tags.filter((tag): tag is string => typeof tag === 'string');
-				if (normalizedTags.length === tags.length)
-					trendEvents.set(id, { tags: normalizedTags, at });
-			}
-			if (Array.isArray(dailyEntries)) {
-				for (const entry of dailyEntries) {
-					if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string') continue;
-					const [day, tags] = entry;
-					if (!Array.isArray(tags)) continue;
-					const totals = new SvelteMap<string, number>();
-					for (const tagEntry of tags) {
-						if (!Array.isArray(tagEntry) || tagEntry.length !== 2) continue;
-						const [tag, count] = tagEntry;
-						if (typeof tag === 'string' && typeof count === 'number' && count > 0)
-							totals.set(tag, count);
-					}
-					if (totals.size) trendDailyTotals.set(day, totals);
-				}
-			}
-			if (Array.isArray(hourlyEntries)) {
-				for (const entry of hourlyEntries) {
-					if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'number') continue;
-					const [hour, tags] = entry;
-					if (!Array.isArray(tags)) continue;
-					const totals = new SvelteMap<string, number>();
-					for (const tagEntry of tags) {
-						if (!Array.isArray(tagEntry) || tagEntry.length !== 2) continue;
-						const [tag, count] = tagEntry;
-						if (typeof tag === 'string' && typeof count === 'number' && count > 0)
-							totals.set(tag, count);
-					}
-					if (totals.size) trendHourlyTotals.set(hour, totals);
-				}
-			}
-			if (!trendDailyTotals.size) {
-				for (const event of trendEvents.values()) incrementTrendDailyTotals(event.tags, event.at);
-				scheduleTrendSave();
-			}
-			if (!trendHourlyTotals.size) {
-				for (const event of trendEvents.values()) incrementTrendHourlyTotals(event.tags, event.at);
-				scheduleTrendSave();
-			}
-		} catch {
-			/* Ignore malformed or unavailable local cache. */
-		}
-		refreshTrends();
-	}
-
 	function utcDay(at: number) {
 		return new Date(at).toISOString().slice(0, 10);
 	}
@@ -399,68 +317,47 @@
 			trendEvents.set(event.id, { tags, at });
 			incrementTrendHourlyTotals(tags, at);
 			incrementTrendDailyTotals(tags, at);
-			scheduleTrendSave();
 		}
 	}
 
 	function refreshTrends(now = Date.now()) {
 		const tagCounts = new SvelteMap<string, number>();
-		const tagBuckets = new SvelteMap<string, number[]>();
 		const hiddenTags = new Set(feedPreferences.state.hiddenTrendTags);
 		const activeDays = trendRange === 'day' ? 1 : 7;
-		const activeBuckets = trendRange === 'day' ? TREND_BUCKETS : activeDays;
 
 		if (now - lastTrendPruneAt >= TREND_HOUR_MS || trendEvents.size > MAX_TRACKED_TREND_EVENTS) {
-			let pruned = false;
 			const cutoff = now - TREND_WINDOW_MS;
 			for (const [id, event] of trendEvents) {
-				if (event.at < cutoff) {
-					trendEvents.delete(id);
-					pruned = true;
-				}
+				if (event.at < cutoff) trendEvents.delete(id);
 			}
 			if (trendEvents.size > MAX_TRACKED_TREND_EVENTS) {
 				const oldest = [...trendEvents.entries()].sort((a, b) => a[1].at - b[1].at);
 				for (const [id] of oldest.slice(0, trendEvents.size - MAX_TRACKED_TREND_EVENTS))
 					trendEvents.delete(id);
-				pruned = true;
 			}
 			const retainedDays = new Set(recentUtcDays(now, TREND_DAILY_RETENTION_DAYS));
 			for (const day of trendDailyTotals.keys()) {
-				if (!retainedDays.has(day)) {
-					trendDailyTotals.delete(day);
-					pruned = true;
-				}
+				if (!retainedDays.has(day)) trendDailyTotals.delete(day);
 			}
 			const retainedHours = new Set(recentUtcHours(now, TREND_BUCKETS));
 			for (const hour of trendHourlyTotals.keys()) {
-				if (!retainedHours.has(hour)) {
-					trendHourlyTotals.delete(hour);
-					pruned = true;
-				}
+				if (!retainedHours.has(hour)) trendHourlyTotals.delete(hour);
 			}
 			lastTrendPruneAt = now;
-			if (pruned) scheduleTrendSave();
 		}
 
 		if (trendRange === 'day') {
-			for (const [hourIndex, hour] of recentUtcHours(now, TREND_BUCKETS).entries()) {
+			for (const hour of recentUtcHours(now, TREND_BUCKETS)) {
 				for (const [tag, count] of trendHourlyTotals.get(hour) ?? []) {
 					if (hiddenTags.has(tag)) continue;
 					tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + count);
-					const buckets = tagBuckets.get(tag) ?? Array<number>(TREND_BUCKETS).fill(0);
-					buckets[hourIndex] = count;
-					tagBuckets.set(tag, buckets);
 				}
 			}
 		} else {
-			for (const [dayIndex, day] of recentUtcDays(now, activeDays).entries()) {
+			for (const day of recentUtcDays(now, activeDays)) {
 				for (const [tag, count] of trendDailyTotals.get(day) ?? []) {
 					if (hiddenTags.has(tag)) continue;
 					tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + count);
-					const buckets = tagBuckets.get(tag) ?? Array<number>(activeBuckets).fill(0);
-					buckets[dayIndex] = count;
-					tagBuckets.set(tag, buckets);
 				}
 			}
 		}
@@ -472,9 +369,67 @@
 				category: 'Nostr',
 				notes,
 				sats: 0,
-				showSats: false,
-				bars: tagBuckets.get(tag) ?? []
+				showSats: false
 			}));
+		scheduleTrendSave();
+	}
+
+	/** Persist just the ranked tags with their total note counts — a dozen
+	 * small entries, so startup paint is instant and cheap. */
+	function saveTrendNames() {
+		trendSaveTimer = undefined;
+		try {
+			localStorage.setItem(
+				TREND_CACHE_KEY,
+				JSON.stringify({
+					savedAt: Date.now(),
+					tags: trends
+						.slice(0, MAX_CACHED_TREND_TAGS)
+						.map((trend) => ({ tag: trend.tag, notes: trend.notes }))
+				})
+			);
+		} catch {
+			/* Storage is optional; the live trending view still works. */
+		}
+	}
+
+	function scheduleTrendSave() {
+		if (trendSaveTimer) return;
+		trendSaveTimer = window.setTimeout(saveTrendNames, TREND_SAVE_DEBOUNCE_MS);
+	}
+
+	/** Paint the cached tags (name + count) immediately; the live relay query
+	 * replaces them with a fresh ranking as soon as it responds. */
+	function loadTrendNames() {
+		try {
+			const cached = JSON.parse(localStorage.getItem(TREND_CACHE_KEY) ?? 'null') as {
+				savedAt?: number;
+				tags?: unknown;
+			} | null;
+			if (!cached?.savedAt || Date.now() - cached.savedAt > TREND_CACHE_TTL_MS) return;
+			if (!Array.isArray(cached.tags)) return;
+			const entries = cached.tags.filter(
+				(entry): entry is { tag: string; notes: number } =>
+					!!entry &&
+					typeof entry === 'object' &&
+					typeof (entry as { tag?: unknown }).tag === 'string' &&
+					typeof (entry as { notes?: unknown }).notes === 'number' &&
+					(entry as { tag: string }).tag !== ''
+			);
+			const hidden = feedPreferences.state.hiddenTrendTags;
+			trends = entries
+				.filter((entry) => !hidden.includes(entry.tag))
+				.slice(0, TREND_LIMIT)
+				.map((entry) => ({
+					tag: entry.tag,
+					category: 'Nostr',
+					notes: entry.notes,
+					sats: 0,
+					showSats: false
+				}));
+		} catch {
+			/* Ignore malformed or unavailable local cache. */
+		}
 	}
 
 	/** Sats carried by a kind 9735 zap receipt (NIP-57 `amount` tag, msat). */
@@ -616,16 +571,7 @@
 			totals.delete(tag);
 			if (!totals.size) trendDailyTotals.delete(day);
 		}
-		scheduleTrendSave();
 		refreshTrends();
-	}
-
-	function trendBucketLabel(index: number, count: number, length: number) {
-		if (trendRange === 'week') {
-			return `${recentUtcDays(Date.now(), length)[index]}: ${count} ${count === 1 ? 'note' : 'notes'}`;
-		}
-		const hoursAgo = length - index - 1;
-		return `${hoursAgo ? `${hoursAgo}h ago` : 'Now'}: ${count} ${count === 1 ? 'note' : 'notes'}`;
 	}
 
 	async function toggleFollow(pubkey: string) {
@@ -638,10 +584,18 @@
 	}
 
 	onMount(() => {
+		// Drop the legacy heavy trend cache (event ids + hourly/daily counts).
+		try {
+			localStorage.removeItem('bitos:trending-tags:v1');
+			localStorage.removeItem('bitos:trending-tags:v2');
+		} catch {
+			/* Storage access is optional; the live view still works. */
+		}
 		loadTelemetry();
 		loadLiveThroughput();
 		feedPreferences.load();
-		loadTrendCache();
+		// Instant paint from the names-only cache while the relay query runs.
+		loadTrendNames();
 		void loadRelayData();
 		void loadZapVolume();
 		const receivedAt = Math.floor(Date.now() / 1000);
@@ -682,10 +636,12 @@
 			window.clearInterval(zapBackfillTimer);
 			if (telemetrySaveTimer) window.clearTimeout(telemetrySaveTimer);
 			if (liveRenderTimer) window.clearTimeout(liveRenderTimer);
-			if (trendSaveTimer) window.clearTimeout(trendSaveTimer);
+			if (trendSaveTimer) {
+				window.clearTimeout(trendSaveTimer);
+				saveTrendNames();
+			}
 			saveTelemetry();
 			saveLiveThroughput();
-			saveTrendCache();
 		};
 	});
 </script>
@@ -736,7 +692,6 @@
 		{:else if trends.length}
 			<div class="grid grid-cols-2 gap-x-2 gap-y-2 px-3.5">
 				{#each trends as trend, index (trend.tag)}
-					{@const peak = Math.max(...(trend.bars ?? []), 1)}
 					<div
 						class="group min-w-0 rounded-xl p-2.5 transition hover:bg-[var(--interactive-hover-bg)]"
 					>
@@ -757,23 +712,7 @@
 							</p>
 							<p class="mt-1 font-mono text-[10.5px] text-[var(--ui-text-muted)]">
 								{formatCompact(trend.notes)} notes · {trendRange === 'day' ? '24h' : '7d'}
-								{#if trend.showSats !== false && trend.sats > 0}
-									<span class="ml-1.5 text-[var(--ui-color-primary-500)]"
-										>{formatCompact(trend.sats)} sats</span
-									>
-								{/if}
 							</p>
-							<div class="mt-2 flex h-6 items-end justify-between gap-[2px]">
-								{#each trend.bars ?? [] as count, barIndex (barIndex)}
-									<span
-										class="min-w-[2px] flex-1 rounded-sm {count > 0
-											? 'bg-[var(--ui-color-primary-500)]'
-											: 'bg-[var(--ui-border-muted)]'}"
-										style={`height:${count > 0 ? Math.max(14, (count / peak) * 100) : 8}%; opacity:${count > 0 ? 0.45 + (barIndex / (trend.bars?.length || 1)) * 0.55 : 0.65}`}
-										title={trendBucketLabel(barIndex, count, trend.bars?.length ?? 0)}
-									></span>
-								{/each}
-							</div>
 						</a>
 						<div
 							class="mt-1 flex gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100"

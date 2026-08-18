@@ -309,10 +309,17 @@
 		};
 	}
 
-	function childReplies(replyId: string) {
-		return allReplies
-			.filter((reply) => reply.replyTo === replyId)
-			.sort((a, b) => a.createdAt - b.createdAt);
+	/** All replies under a top-level comment, flattened to a single level
+	 * (X-style threading): a reply to a sub-reply still renders directly under
+	 * the original comment — the thread never nests deeper than two levels. */
+	function descendantReplies(commentId: string, seen: string[] = []): FeedNote[] {
+		if (seen.includes(commentId)) return [];
+		const out: FeedNote[] = [];
+		for (const reply of allReplies) {
+			if (reply.replyTo !== commentId) continue;
+			out.push(reply, ...descendantReplies(reply.id, [...seen, commentId]));
+		}
+		return out.sort((a, b) => a.createdAt - b.createdAt);
 	}
 
 	function addOptimisticReply(reply: FeedNote) {
@@ -700,6 +707,123 @@
 		if (identity.current) profiles.ensure([identity.current.pk]);
 	});
 </script>
+
+<!-- Level-2 replies under a top-level comment (reply to a comment). Every
+	reply gets the same action row — like, zap, reply, hide, delete. Replying
+	here posts a NIP-10 reply to this comment, but the result renders flat at
+	level 2 under the same top-level comment: the thread stays 2 levels max. -->
+{#snippet subReply(comment: FeedNote)}
+	{@const commentProfile = profiles.get(comment.pubkey)}
+	{@const commentName =
+		commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
+	<div class="flex gap-2">
+		<a href={`/profile/${comment.pubkey}`} class="shrink-0">
+			<Avatar
+				pubkey={comment.pubkey}
+				name={commentName}
+				picture={commentProfile?.picture}
+				verified={hasNip05(commentProfile)}
+				size={22}
+			/>
+		</a>
+		<div class="min-w-0 flex-1">
+			<div class="flex min-w-0 items-center gap-1.5">
+				<a
+					href={`/profile/${comment.pubkey}`}
+					class="truncate text-[12px] font-bold hover:text-primary-500"
+				>
+					{commentName}
+				</a>
+				{#if hasNip05(commentProfile)}
+					<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+				{/if}
+				{#if identity.current?.pk === comment.pubkey}
+					<span
+						class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
+						>you</span
+					>
+				{/if}
+				{#if comment.pow}
+					<PowBadge bits={comment.pow} micro id={comment.id} />
+				{/if}
+				<time
+					class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
+					title={timeFull(comment.createdAt)}>{timeAgo(comment.createdAt)}</time
+				>
+			</div>
+			<CommentBody content={comment.content} tags={comment.tags} compact />
+			<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
+				<button
+					type="button"
+					onclick={() => reactToComment(comment)}
+					class="inline-flex items-center gap-1 {commentLiked(comment)
+						? 'text-[var(--tone-error-text)]'
+						: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
+				>
+					<Icon
+						name={commentLiked(comment) ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+						class="size-3"
+					/>
+					{commentLiked(comment) ? 'Unlike' : 'Like'}
+					{#if commentReactionCount(comment)}
+						<span class="font-semibold"> · {commentReactionCount(comment)}</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					onclick={() => zapComment(comment)}
+					class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
+					aria-label="Zap sats to this reply"
+				>
+					<Icon name="i-lucide-zap" class="size-3" />
+					Zap{#if commentZapSats(comment)}
+						<span class="font-semibold"> · {compactSats(commentZapSats(comment))}</span>
+					{/if}
+				</button>
+				<button
+					type="button"
+					onclick={() => startCommentReply(comment)}
+					disabled={!privacyNotificationSettings.canCommentOn(comment.pubkey)}
+					class="text-[var(--ui-text-dimmed)] hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
+				>
+					Reply
+				</button>
+				<button
+					type="button"
+					onclick={() => hideComment(comment)}
+					class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
+				>
+					Hide
+				</button>
+				{#if identity.current?.pk === comment.pubkey}
+					<button
+						type="button"
+						onclick={() => askDeleteComment(comment)}
+						class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+					>
+						Delete
+					</button>
+				{/if}
+			</div>
+
+			{#if replyingToCommentId === comment.id}
+				<div class="mt-3">
+					<ReplyComposer
+						parent={comment}
+						placeholder={`Reply to ${commentName}…`}
+						autofocus
+						initialMention={{ pubkey: comment.pubkey, name: commentName }}
+						onSubmitted={(reply) => {
+							addOptimisticReply(reply);
+							replyingToCommentId = '';
+						}}
+						onCancel={() => (replyingToCommentId = '')}
+					/>
+				</div>
+			{/if}
+		</div>
+	</div>
+{/snippet}
 
 <article
 	bind:this={articleEl}
@@ -1256,7 +1380,7 @@
 					{@const replyProfile = profiles.get(reply.pubkey)}
 					{@const replyName =
 						replyProfile?.display_name || replyProfile?.name || shortKey(reply.pubkey)}
-					{@const children = childReplies(reply.id)}
+					{@const children = descendantReplies(reply.id)}
 					<div class="flex gap-2.5">
 						<a href={`/profile/${reply.pubkey}`} class="shrink-0">
 							<Avatar
@@ -1349,100 +1473,8 @@
 
 							{#if children.length}
 								<div class="mt-3 space-y-2 border-l border-[var(--ui-border-muted)] pl-3">
-									{#each children.slice(0, 3) as child (child.id)}
-										{@const childProfile = profiles.get(child.pubkey)}
-										{@const childName =
-											childProfile?.display_name || childProfile?.name || shortKey(child.pubkey)}
-										<div class="flex gap-2">
-											<a href={`/profile/${child.pubkey}`} class="shrink-0">
-												<Avatar
-													pubkey={child.pubkey}
-													name={childName}
-													picture={childProfile?.picture}
-													verified={hasNip05(childProfile)}
-													size={22}
-												/>
-											</a>
-											<div class="min-w-0 flex-1">
-												<div class="flex min-w-0 items-center gap-1.5">
-													<a
-														href={`/profile/${child.pubkey}`}
-														class="truncate text-[12px] font-bold hover:text-primary-500"
-													>
-														{childName}
-													</a>
-													{#if hasNip05(childProfile)}
-														<Icon
-															name="i-lucide-badge-check"
-															class="size-3 shrink-0 text-primary-500"
-														/>
-													{/if}
-													{#if identity.current?.pk === child.pubkey}
-														<span
-															class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
-															>you</span
-														>
-													{/if}
-													{#if child.pow}
-														<PowBadge bits={child.pow} micro id={child.id} />
-													{/if}
-													<time
-														class="shrink-0 text-[10.5px] text-[var(--ui-text-dimmed)]"
-														title={timeFull(child.createdAt)}>{timeAgo(child.createdAt)}</time
-													>
-												</div>
-												<CommentBody content={child.content} tags={child.tags} compact />
-												<div class="mt-1 flex items-center gap-3 text-[11px] font-bold">
-													<button
-														type="button"
-														onclick={() => reactToComment(child)}
-														class="inline-flex items-center gap-1 {commentLiked(child)
-															? 'text-[var(--tone-error-text)]'
-															: 'text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]'}"
-													>
-														<Icon
-															name={commentLiked(child)
-																? 'i-solar-heart-bold'
-																: 'i-solar-heart-linear'}
-															class="size-3"
-														/>
-														{commentLiked(child) ? 'Unlike' : 'Like'}
-														{#if commentReactionCount(child)}
-															<span class="font-semibold"> · {commentReactionCount(child)}</span>
-														{/if}
-													</button>
-													<button
-														type="button"
-														onclick={() => zapComment(child)}
-														class="inline-flex items-center gap-1 text-[var(--ui-text-dimmed)] transition hover:text-warm-500"
-														aria-label="Zap sats to this reply"
-													>
-														<Icon name="i-lucide-zap" class="size-3" />
-														Zap{#if commentZapSats(child)}
-															<span class="font-semibold">
-																· {compactSats(commentZapSats(child))}</span
-															>
-														{/if}
-													</button>
-													<button
-														type="button"
-														onclick={() => hideComment(child)}
-														class="text-[var(--ui-text-dimmed)] hover:text-primary-500"
-													>
-														Hide
-													</button>
-													{#if identity.current?.pk === child.pubkey}
-														<button
-															type="button"
-															onclick={() => askDeleteComment(child)}
-															class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
-														>
-															Delete
-														</button>
-													{/if}
-												</div>
-											</div>
-										</div>
+									{#each children as child (child.id)}
+										{@render subReply(child)}
 									{/each}
 								</div>
 							{/if}
