@@ -3,6 +3,8 @@
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import Logo from '$lib/components/ui/Logo.svelte';
+	import HexMark from '$lib/components/ui/HexMark.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
@@ -14,6 +16,8 @@
 	import { shortKey } from '$lib/utils/format';
 	import { hasNip05 } from '$lib/utils/verification';
 
+	// Full section list. Guests see every item; `requiresAuth` items render
+	// locked (not clickable) until login.
 	const nav = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
 		{
@@ -51,7 +55,6 @@
 	}
 
 	const me = $derived(identity.current);
-	const visibleNav = $derived(nav.filter((item) => me || !item.requiresAuth));
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
@@ -129,61 +132,76 @@
 		aria-label="BitOS home"
 		class="mb-4 flex items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
-		<img src="/icons/logo.png" alt="" class="ui4-brand-wordmark ui4-brand-wordmark-light w-20" />
-		<img
-			src="/icons/logo-white.png"
-			alt=""
-			class="ui4-brand-wordmark ui4-brand-wordmark-dark hidden w-20"
-		/>
+		<Logo height={28} />
 	</a>
 
 	<div class="flex flex-1 flex-col gap-1 pl-3">
-		{#each visibleNav as item (item.to)}
+		{#each nav as item (item.to)}
 			{@const active = isActive(item.to)}
-			<a
-				href={item.to}
-				class="ui4-nav-item group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
-				aria-label={item.label}
-				aria-current={active ? 'page' : undefined}
-			>
-				<span
-					class="ui4-nav-surface absolute inset-0 rounded-xl transition-all {active
-						? 'is-active'
-						: ''}"
-					aria-hidden="true"
-				></span>
-				{#if active}
+			{@const locked = !me && item.requiresAuth}
+			{#if locked}
+				<!-- Guest: section stays visible but cannot be accessed without a key. -->
+				<div
+					class="relative flex cursor-not-allowed items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium opacity-55 select-none"
+					aria-disabled="true"
+					title="Sign in to unlock {item.label}"
+				>
+					<span class="shrink-0">
+						<Icon name={item.icon} class="size-5 text-[var(--ui-text-dimmed)]" />
+					</span>
+					<span class="flex-1 text-[var(--ui-text-muted)]">{item.label}</span>
+					<Icon
+						name="i-lucide-lock"
+						class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
+						title="Login required"
+					/>
+				</div>
+			{:else}
+				<a
+					href={item.to}
+					class="ui4-nav-item group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
+					aria-label={item.label}
+					aria-current={active ? 'page' : undefined}
+				>
 					<span
-						class="absolute left-0 z-10 h-7 w-1 rounded-r-full bg-primary-500 shadow-[var(--glow-primary)]"
+						class="ui4-nav-surface absolute inset-0 rounded-xl transition-all {active
+							? 'is-active'
+							: ''}"
 						aria-hidden="true"
 					></span>
-				{/if}
-				<span class="relative z-10 shrink-0">
-					<Icon
-						name={item.icon}
-						class="size-5 transition-transform {active
-							? 'scale-105 text-primary-500 dark:text-primary-300'
-							: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
-					/>
-					{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0) || (item.communities && communitiesUnread > 0)}
+					{#if active}
 						<span
-							class="absolute -top-2.5 -right-3 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
-							>{item.notifications
-								? notificationUnread > 9
-									? '9+'
-									: notificationUnread
-								: item.communities
-									? communitiesUnread > 9
-										? '9+'
-										: communitiesUnread
-									: unread > 9
-										? '9+'
-										: unread}</span
-						>
+							class="absolute top-1/2 left-0 z-10 h-7 w-1 -translate-y-1/2 rounded-r-full bg-primary-500 shadow-[var(--glow-primary)]"
+							aria-hidden="true"
+						></span>
 					{/if}
-				</span>
-				<span class="relative z-10">{item.label}</span>
-			</a>
+					<span class="relative z-10 shrink-0">
+						<Icon
+							name={item.icon}
+							class="size-5 transition-transform {active
+								? 'scale-105 text-primary-500 dark:text-primary-300'
+								: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
+						/>
+						{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0) || (item.communities && communitiesUnread > 0)}
+							<span
+								class="absolute -top-2.5 -right-3 z-30 grid min-w-[1.2rem] place-items-center rounded-full bg-warm-500 px-1 py-[1px] text-[9px] leading-none font-extrabold text-white shadow-[var(--glow-primary)] ring-2 ring-[var(--surface-bg)]"
+								>{item.notifications
+									? notificationUnread > 9
+										? '9+'
+										: notificationUnread
+									: item.communities
+										? communitiesUnread > 9
+											? '9+'
+											: communitiesUnread
+										: unread > 9
+											? '9+'
+											: unread}</span
+							>
+						{/if}
+					</span>
+					<span class="relative z-10 flex-1">{item.label}</span>
+				</a>
+			{/if}
 		{/each}
 	</div>
 
@@ -306,24 +324,35 @@
 				{/if}
 			</div>
 		{:else}
-			<a
-				href="/welcome"
-				class="grid size-12 place-items-center rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-primary-500 transition hover:border-primary-500/30 hover:bg-primary-500/10"
-				aria-label="Create or import a key"
-			>
-				<Icon name="i-lucide-log-in" class="size-[18px]" />
-			</a>
+			<!-- Guest: full login card with help text (replaces icon-only button). -->
+			<div class="px-2">
+				<div
+					class="rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5"
+				>
+					<div class="flex items-center gap-2.5">
+						<!-- BitOS brand hex badge (HexMark) -->
+						<HexMark size={36} class="rounded-[22%]" />
+						<p class="text-[13px] leading-snug font-bold">Sign in to unlock everything</p>
+					</div>
+					<p class="mt-2 text-[11.5px] leading-relaxed text-[var(--ui-text-muted)]">
+						Create or import your Nostr key to access chats, notifications, zaps, bookmarks, and
+						settings.
+					</p>
+					<a
+						href="/welcome"
+						class="ui4-compose mt-3 flex items-center justify-center gap-2 rounded-full py-2.5 text-[13px] font-semibold"
+						aria-label="Login — create or import a key"
+					>
+						<img src="/bitos-lightning-bolt.svg" alt="" draggable="false" class="h-4 w-auto" />
+						<span>Login</span>
+					</a>
+				</div>
+			</div>
 		{/if}
 	</div>
 </nav>
 
 <style>
-	:global(.dark) .ui4-brand-wordmark-light {
-		display: none;
-	}
-	:global(.dark) .ui4-brand-wordmark-dark {
-		display: block;
-	}
 	.ui4-nav-item {
 		color: var(--ui-text-muted);
 	}

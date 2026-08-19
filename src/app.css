@@ -12,6 +12,12 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
+/* Class-based dark mode: `dark:` utilities follow the `.dark` class that
+   preferences.apply() toggles on <html> (seeded pre-paint by app.html), not
+   the OS media query — so the theme toggle, logos, and surfaces stay in sync
+   even when the app theme differs from the system theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* DaisyUI-style avatar mask backed by the shared SVG asset, with a
    border-radius fallback for environments where CSS masking is unavailable. */
 @utility mask-squircle {

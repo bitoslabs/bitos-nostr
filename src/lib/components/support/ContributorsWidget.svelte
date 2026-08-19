@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { decode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import HexIcon from '$lib/components/ui/HexIcon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { shortKey } from '$lib/utils/format';
@@ -43,13 +44,9 @@
 		? 'p-4'
 		: 'p-5 sm:p-6'}"
 >
-	<div class="flex items-start gap-3">
-		<div
-			class="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary-500/10 text-primary-500"
-		>
-			<Icon name="i-lucide-heart-handshake" class="size-5" />
-		</div>
-		<div>
+	<div class="flex items-start gap-3.5">
+		<HexIcon icon="i-lucide-heart-handshake" size={44} />
+		<div class="min-w-0">
 			<h2 class="font-display text-[18px] font-extrabold tracking-tight">Contributors</h2>
 			<p class="mt-1 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">
 				People helping BitOS grow as an open, independent Nostr client.
