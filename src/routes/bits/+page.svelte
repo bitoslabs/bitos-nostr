@@ -1045,6 +1045,15 @@
 		bitsSession.renderedReelCount = renderedReelCount;
 	});
 
+	// The Explore grid reveals tiles through its own counter (exploreVisible),
+	// so it never passes through renderMoreReels' profile prefetch. Keep author
+	// metadata (names/avatars) flowing for exactly the tiles on screen;
+	// profiles.ensure dedupes in-flight requests and skips fresh (12h) entries.
+	$effect(() => {
+		if (bitsMode !== 'explore') return;
+		void profiles.ensure(visibleExploreReels.map((reel) => reel.pubkey));
+	});
+
 	onMount(() => {
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
@@ -1218,8 +1227,20 @@
 								<span
 									class="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-2 pt-7 text-white opacity-90 transition group-hover:opacity-100"
 								>
-									<span class="line-clamp-1 text-[11px] leading-tight font-semibold">
-										{captionFor(reel) || name}
+									{#if captionFor(reel)}
+										<span class="line-clamp-1 text-[11px] leading-tight font-semibold">
+											{captionFor(reel)}
+										</span>
+									{/if}
+									<span class="flex min-w-0 items-center gap-1">
+										<Avatar
+											pubkey={reel.pubkey}
+											{name}
+											picture={profile?.picture}
+											size={16}
+											shape="hex"
+										/>
+										<span class="truncate text-[10px] font-bold">{name}</span>
 									</span>
 									<span class="flex items-center gap-2 text-[10px] font-bold">
 										<span class="inline-flex items-center gap-0.5">
