@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { noteEncode } from 'nostr-tools/nip19';
+	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -126,6 +127,12 @@
 	let activeReelMuted = $state(true);
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let commentReel = $state<ReelNote | null>(null);
+	// --- Bits video search (caption + author, local instant + NIP-50 relays) ---
+	let bitsSearchOpen = $state(false);
+	let bitsSearch = $state('');
+	let searchingBits = $state(false);
+	let bitsSearchResults = $state<ReelNote[]>([]);
+	let relaySearchToken = 0;
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
 	let commentPages = $state<Record<string, CommentPage>>({});
@@ -168,6 +175,84 @@
 		...rankedReels.filter((reel) => reel.mediaType !== 'video')
 	]);
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
+	const bitsSearchQuery = $derived(bitsSearch.trim().toLowerCase());
+
+	function bitAuthorName(reel: ReelNote) {
+		const profile = profiles.get(reel.pubkey);
+		return profile?.display_name || profile?.name || shortKey(reel.pubkey);
+	}
+
+	function bitMatchesQuery(reel: ReelNote) {
+		if (!bitsSearchQuery) return false;
+		return (
+			captionFor(reel).toLowerCase().includes(bitsSearchQuery) ||
+			reel.content.toLowerCase().includes(bitsSearchQuery) ||
+			bitAuthorName(reel).toLowerCase().includes(bitsSearchQuery)
+		);
+	}
+
+	/** Instant local matches (already loaded bits) + relay results, deduped. */
+	const bitSearchMatches = $derived.by(() => {
+		if (!bitsSearchQuery) return [];
+		const local = exploreReels.filter((reel) => bitMatchesQuery(reel));
+		const localIds = new Set(local.map((reel) => reel.id));
+		const remote = bitsSearchResults.filter(
+			(reel) => !localIds.has(reel.id) && bitMatchesQuery(reel)
+		);
+		return [...local, ...remote];
+	});
+
+	/** Relay search runs debounced while the overlay is open; NIP-50 `search`
+	 *  is optional on relays, so hits are also matched locally afterwards. */
+	async function searchBitsRelays(term: string) {
+		const token = ++relaySearchToken;
+		searchingBits = true;
+		try {
+			const filters = [
+				{ kinds: REEL_MEDIA_KINDS, limit: 80, search: term },
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 120, search: term }
+			] as Filter[];
+			const events = await queryUrls(relays.orderedReadUrls, filters, {
+				maxWait: REELS_PAGE_MAX_WAIT_MS
+			});
+			if (token !== relaySearchToken) return;
+			const mediaEvents = events.filter((event) => !!extractReelMedia(event));
+			if (!mediaEvents.length) {
+				bitsSearchResults = [];
+				return;
+			}
+			const found = await buildReelsFromEvents(mediaEvents, new Set());
+			if (token !== relaySearchToken) return;
+			bitsSearchResults = found;
+			profiles.ensure(found.map((reel) => reel.pubkey));
+		} catch {
+			/* Search is best-effort; local matches still render. */
+		} finally {
+			if (token === relaySearchToken) searchingBits = false;
+		}
+	}
+
+	$effect(() => {
+		if (!bitsSearchOpen) return;
+		const term = bitsSearch.trim();
+		if (!term) {
+			bitsSearchResults = [];
+			return;
+		}
+		const timer = setTimeout(() => void searchBitsRelays(term), 400);
+		return () => clearTimeout(timer);
+	});
+
+	/** Tap a result: splice into the feed if needed, then jump the snap player
+	 *  straight to it (same path the Explore grid uses). */
+	async function openBitResult(reel: ReelNote) {
+		bitsSearchOpen = false;
+		if (!reels.some((item) => item.id === reel.id)) {
+			applyReels([reel], { append: true });
+			await tick();
+		}
+		await openFromExplore(reel);
+	}
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
 	const activeCommentTree = $derived(
 		commentReel
@@ -711,6 +796,14 @@
 	/** Desktop power moves: ↑/↓ jump reels, Space/K play-pause, M mute,
 	 * F fullscreen, ←/→ seek 5s. Ignored while typing in the comments box. */
 	function handleKeydown(event: KeyboardEvent) {
+		// The search overlay owns the keyboard while open; Esc dismisses it.
+		if (bitsSearchOpen) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				bitsSearchOpen = false;
+			}
+			return;
+		}
 		const target = event.target as HTMLElement | null;
 		// Never steal keys while typing…
 		if (target?.closest('input, textarea, select, [contenteditable]')) return;
@@ -1008,15 +1101,40 @@
 	// --- Explore grid (Bits · Explore tab) ----------------------------------
 
 	function switchBitsMode(mode: BitsMode) {
-		if (bitsMode === mode) return;
+		// Re-tapping the active tab is the standard "back to top" shortcut. It
+		// replaces the old forced reset: position survives tab switches, and
+		// returning to the top is an explicit user action instead of a penalty.
+		if (bitsMode === mode) {
+			const scroller = mode === 'explore' ? exploreScroller : reelScroller;
+			scroller?.scrollTo({ top: 0, behavior: 'smooth' });
+			return;
+		}
 		bitsMode = mode;
 		if (mode === 'explore') {
-			exploreVisible = EXPLORE_INITIAL_VISIBLE;
-			requestAnimationFrame(() => exploreScroller?.scrollTo({ top: 0 }));
+			// Coming back to the grid must land on the tiles the user left behind
+			// (tap tile → For you → Explore = same spot, not a scroll-from-scratch).
+			// The scroller remounts in this branch, so restore after the DOM is
+			// ready; exploreVisible already holds the revealed window and the scroll
+			// offset lives in the session (kept fresh by handleExploreScroll).
+			void tick().then(() => {
+				requestAnimationFrame(() => {
+					exploreScroller?.scrollTo({ top: bitsSession.exploreScrollTop });
+				});
+			});
 		} else {
 			// Fresh player mount: keep the first window visible and let the
 			// visibility observer re-elect the active reel.
 			renderedReelCount = Math.max(INITIAL_RENDERED_REELS, renderedReelCount);
+			// Mirror of the grid fix: resume the snap player at the reel the user
+			// last watched instead of dropping them back on reel 0.
+			void tick().then(() => {
+				requestAnimationFrame(() => {
+					if (reelScroller && bitsSession.activeReelIndex > 0)
+						reelScroller.scrollTo({
+							top: bitsSession.activeReelIndex * reelScroller.clientHeight
+						});
+				});
+			});
 		}
 	}
 
@@ -1079,6 +1197,9 @@
 			revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true };
 			return;
 		}
+		// Snapshot the grid offset before leaving: onscroll keeps the session
+		// fresh, but persisting here guarantees the return-to-Explore restore.
+		if (exploreScroller) bitsSession.exploreScrollTop = exploreScroller.scrollTop;
 		const index = rankedReels.findIndex((item) => item.id === reel.id);
 		bitsMode = 'foryou';
 		if (index < 0) return;
@@ -1644,9 +1765,12 @@
 		</div>
 	{/if}
 
-	<!-- Sticky top bar: Bits wordmark · view tabs · refresh -->
+	<!-- Sticky top bar: Bits wordmark · view tabs · refresh. Shrinks with the
+	     comments panel so the tabs stay centered over the video area (lg). -->
 	<div
-		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-gradient-to-b from-black/55 via-black/25 to-transparent px-4 pt-4 pb-12 text-white"
+		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-gradient-to-b from-black/55 via-black/25 to-transparent px-4 pt-4 pb-12 text-white transition-[padding] duration-200 {commentReel
+			? 'lg:pr-[390px]'
+			: ''}"
 	>
 		<h2
 			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold text-white drop-shadow sm:block"
@@ -1673,15 +1797,187 @@
 				</button>
 			{/each}
 		</div>
-		<button
-			type="button"
-			onclick={() => loadReels()}
-			class="pointer-events-auto grid size-10 place-items-center justify-self-end rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-			aria-label="Refresh bits"
-		>
-			<Icon name="i-lucide-rotate-cw" class="size-5" />
-		</button>
+		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
+			<button
+				type="button"
+				onclick={() => (bitsSearchOpen = true)}
+				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+				aria-label="Search bits"
+			>
+				<Icon name="i-lucide-search" class="size-5" />
+			</button>
+			<button
+				type="button"
+				onclick={() => loadReels()}
+				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+				aria-label="Refresh bits"
+			>
+				<Icon name="i-lucide-rotate-cw" class="size-5" />
+			</button>
+		</div>
 	</div>
+
+	<!-- Bits video search: instant local matches + NIP-50 relay search -->
+	{#if bitsSearchOpen}
+		<div class="fixed inset-0 z-[60] flex flex-col bg-[var(--ui-bg)] text-[var(--ui-text)]">
+			<header
+				class="flex h-16 shrink-0 items-center gap-2 border-b border-[var(--ui-border-muted)] px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:h-14 sm:pt-4"
+			>
+				<div class="relative flex min-w-0 flex-1 items-center">
+					<Icon
+						name="i-lucide-search"
+						class="pointer-events-none absolute left-4 size-4 text-[var(--ui-text-dimmed)]"
+					/>
+					<input
+						type="search"
+						bind:value={bitsSearch}
+						class="bits-search-input h-11 w-full rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] pr-4 pl-11 text-[15px] font-medium text-[var(--ui-text-highlighted)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-[var(--ui-color-primary-500)] focus:bg-[var(--ui-bg)] focus:ring-2 focus:ring-[color-mix(in_oklab,var(--ui-color-primary-500)_20%,transparent)]"
+						placeholder="Search bits — caption or creator…"
+						aria-label="Search bits"
+					/>
+				</div>
+				<button
+					type="button"
+					onclick={() => (bitsSearchOpen = false)}
+					class="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text-highlighted)]"
+					aria-label="Close search"
+				>
+					<Icon name="i-lucide-x" class="size-5" />
+				</button>
+			</header>
+
+			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+				{#if !bitsSearchQuery}
+					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
+						<div
+							class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
+						>
+							<Icon name="i-lucide-video" class="size-7" />
+						</div>
+						<div>
+							<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">Search bits</p>
+							<p class="mt-1 max-w-xs text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+								Find short videos and pictures by caption or creator — across your loaded feed and
+								relays.
+							</p>
+						</div>
+					</div>
+				{:else if bitSearchMatches.length}
+					<p
+						class="mb-3 px-1 text-[11px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
+					>
+						{bitSearchMatches.length} bit{bitSearchMatches.length === 1 ? '' : 's'}
+						{#if searchingBits}<span class="ml-1 normal-case">· searching relays…</span>{/if}
+					</p>
+					<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+						{#each bitSearchMatches as reel (reel.id)}
+							{@const profile = profiles.get(reel.pubkey)}
+							{@const name = bitAuthorName(reel)}
+							<button
+								type="button"
+								onclick={() => void openBitResult(reel)}
+								class="group relative aspect-[9/16] overflow-hidden rounded-xl bg-black text-left"
+								aria-label="Open bit by {name}"
+							>
+								{#if reel.mediaType === 'video'}
+									<video
+										use:lazyVideoMetadata
+										src={reel.mediaUrl}
+										class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
+										muted
+										playsinline
+										preload="none"
+										onloadedmetadata={(event) => {
+											const video = event.currentTarget as HTMLVideoElement;
+											if (Number.isFinite(video.duration))
+												gridVideoDurations = {
+													...gridVideoDurations,
+													[reel.id]: video.duration
+												};
+										}}
+									></video>
+									{#if gridVideoDurations[reel.id]}
+										<span
+											class="absolute top-1.5 right-1.5 rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white tabular-nums backdrop-blur"
+										>
+											{formatDuration(gridVideoDurations[reel.id])}
+										</span>
+									{/if}
+								{:else}
+									<img
+										src={reel.mediaUrl}
+										alt={captionFor(reel) || 'Bit picture'}
+										class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
+										loading="lazy"
+									/>
+								{/if}
+								<span
+									class="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-gradient-to-t from-black/85 via-black/30 to-transparent p-2 pt-8 text-white"
+								>
+									{#if captionFor(reel)}
+										<span class="line-clamp-2 text-[11px] leading-tight font-semibold">
+											{captionFor(reel)}
+										</span>
+									{/if}
+									<span class="flex min-w-0 items-center gap-1">
+										<Avatar
+											pubkey={reel.pubkey}
+											{name}
+											picture={profile?.picture}
+											size={16}
+											shape="hex"
+										/>
+										<span class="truncate text-[10px] font-bold">{name}</span>
+									</span>
+									<span class="flex items-center gap-2 text-[10px] font-bold">
+										<span class="inline-flex items-center gap-0.5">
+											<Icon name="i-lucide-heart" class="size-3 fill-current" />
+											{reelLikes(reel)}
+										</span>
+										{#if reel.zapCount}
+											<span class="inline-flex items-center gap-0.5">
+												<Icon name="i-lucide-zap" class="size-3 fill-current" />
+												{reel.zapCount}
+											</span>
+										{/if}
+									</span>
+								</span>
+							</button>
+						{/each}
+					</div>
+					{#if searchingBits}
+						<div
+							class="mt-4 flex items-center justify-center gap-2 text-[12px] font-semibold text-[var(--ui-text-muted)]"
+						>
+							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+							Searching relays for older bits…
+						</div>
+					{/if}
+				{:else if searchingBits}
+					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3">
+						<div
+							class="size-8 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-[var(--ui-color-primary-500)]"
+						></div>
+						<p class="text-[13px] font-semibold text-[var(--ui-text-muted)]">Searching relays…</p>
+					</div>
+				{:else}
+					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
+						<div
+							class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
+						>
+							<Icon name="i-lucide-search-x" class="size-7" />
+						</div>
+						<div>
+							<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">No bits found</p>
+							<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
+								Nothing matches “{bitsSearch.trim()}” in your feed or relays.
+							</p>
+						</div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 
 	{#if commentReel}
 		<button
@@ -1691,12 +1987,10 @@
 			onclick={() => (commentReel = null)}
 		></button>
 		<aside
-			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0"
+			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border)] bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:border-[var(--ui-border-muted)]"
 			aria-label="Bit comments"
 		>
-			<header
-				class="flex h-14 shrink-0 items-center justify-between border-b border-[var(--ui-border-muted)] px-4"
-			>
+			<header class="flex h-14 shrink-0 items-center justify-between px-4">
 				<h2 class="text-[16px] font-extrabold text-[var(--ui-text-highlighted)]">
 					Comments <span class="ml-1 text-[var(--ui-text-dimmed)]">{activeComments.length}</span>
 				</h2>
@@ -1723,7 +2017,6 @@
 					</button>
 				</div>
 			</header>
-
 			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
 				{#if loadingComments && !activeComments.length}
 					<div class="flex h-36 items-center justify-center">
@@ -1870,9 +2163,7 @@
 				{/if}
 			</div>
 
-			<div
-				class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
-			>
+			<div class="shrink-0 bg-transparent p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
 				{#key `${commentReel.id}:${commentReplyTarget?.id ?? ''}`}
 					{@const replyTargetProfile = commentReplyTarget
 						? profiles.get(commentReplyTarget.pubkey)
