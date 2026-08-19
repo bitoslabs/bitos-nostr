@@ -3,6 +3,16 @@
 	import Toggle from '$lib/components/ui/Toggle.svelte';
 	import SectionCard from '$lib/components/settings/SectionCard.svelte';
 	import { accentOptions, neutralOptions, preferences } from '$lib/theme/preferences.svelte';
+
+	/** White check reads well on dark/mid swatches but vanishes on light ones
+	 * (mint, ice, lime…) — flip to near-black when the swatch is light. */
+	function checkColor(hex: string): string {
+		const r = parseInt(hex.slice(1, 3), 16) / 255;
+		const g = parseInt(hex.slice(3, 5), 16) / 255;
+		const b = parseInt(hex.slice(5, 7), 16) / 255;
+		const lum = 0.2126 * r * r + 0.7152 * g * g + 0.0722 * b * b; // cheap sRGB-ish luma
+		return lum > 0.35 ? '#0f172a' : '#fff';
+	}
 	import type { DensityMode, RoundedMode } from '$lib/theme/preferences.svelte';
 
 	const modes = [
@@ -81,22 +91,41 @@
 					<p class="text-[13px] font-bold">Accent color</p>
 					<p class="text-[11px] text-[var(--ui-text-muted)]">Primary accent used across BitOS</p>
 				</div>
-				<div class="flex flex-wrap gap-3">
+				<div class="flex flex-wrap gap-3.5">
 					{#each accentOptions as a (a.key)}
+						{@const selected = preferences.state.accent === a.key}
 						<button
 							type="button"
 							onclick={() => preferences.setAccent(a.key)}
-							class="size-10 cursor-pointer rounded-full transition-transform hover:scale-110 {preferences
-								.state.accent === a.key
-								? 'ring-2 ring-offset-2 ring-offset-[var(--surface-bg)]'
-								: ''}"
-							style="background:{a.hex}; --tw-ring-color:{a.hex}"
+							class="relative grid size-10 cursor-pointer place-items-center transition-transform {selected
+								? 'scale-110'
+								: 'hover:scale-110'}"
 							aria-label={a.label}
+							aria-pressed={selected}
 						>
-							{#if preferences.state.accent === a.key}<Icon
-									name="i-lucide-check"
-									class="mx-auto size-4 text-white"
-								/>{/if}
+							<!-- Selected: hex frame in the swatch color (layered — a ring would
+							     be sliced by the clip-path), same language as avatar frames. -->
+							{#if selected}
+								<span
+									class="hex-clip absolute -inset-[3px]"
+									style="background:{a.hex}"
+									aria-hidden="true"
+								></span>
+								<span
+									class="hex-clip absolute -inset-[1px] bg-[var(--surface-bg)]"
+									aria-hidden="true"
+								></span>
+							{/if}
+							<span
+								class="hex-clip relative grid size-full place-items-center"
+								style="background:{a.hex}"
+							>
+								{#if selected}
+									<span class="grid place-items-center" style="color:{checkColor(a.hex)}">
+										<Icon name="i-lucide-check" class="size-4" />
+									</span>
+								{/if}
+							</span>
 						</button>
 					{/each}
 				</div>
@@ -108,22 +137,39 @@
 						Base gray palette for text and surfaces
 					</p>
 				</div>
-				<div class="flex flex-wrap gap-3">
+				<div class="flex flex-wrap gap-3.5">
 					{#each neutralOptions as n (n.key)}
+						{@const selected = preferences.state.neutral === n.key}
 						<button
 							type="button"
 							onclick={() => preferences.setNeutral(n.key)}
-							class="size-10 cursor-pointer rounded-full transition-transform hover:scale-110 {preferences
-								.state.neutral === n.key
-								? 'ring-2 ring-offset-2 ring-offset-[var(--surface-bg)]'
-								: ''}"
-							style="background:{n.hex}; --tw-ring-color:{n.hex}"
+							class="relative grid size-10 cursor-pointer place-items-center transition-transform {selected
+								? 'scale-110'
+								: 'hover:scale-110'}"
 							aria-label={n.label}
+							aria-pressed={selected}
 						>
-							{#if preferences.state.neutral === n.key}<Icon
-									name="i-lucide-check"
-									class="mx-auto size-4 text-white"
-								/>{/if}
+							{#if selected}
+								<span
+									class="hex-clip absolute -inset-[3px]"
+									style="background:{n.hex}"
+									aria-hidden="true"
+								></span>
+								<span
+									class="hex-clip absolute -inset-[1px] bg-[var(--surface-bg)]"
+									aria-hidden="true"
+								></span>
+							{/if}
+							<span
+								class="hex-clip relative grid size-full place-items-center"
+								style="background:{n.hex}"
+							>
+								{#if selected}
+									<span class="grid place-items-center" style="color:{checkColor(n.hex)}">
+										<Icon name="i-lucide-check" class="size-4" />
+									</span>
+								{/if}
+							</span>
 						</button>
 					{/each}
 				</div>
