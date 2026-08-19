@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { noteEncode } from 'nostr-tools/nip19';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
+	import CommentBody from '$lib/components/feed/CommentBody.svelte';
 	import ReplyComposer from '$lib/components/feed/ReplyComposer.svelte';
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
@@ -127,7 +129,10 @@
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
 	let commentPages = $state<Record<string, CommentPage>>({});
-	let commentReplyTarget = $state<{ id: string; pubkey: string; name: string } | null>(null);
+	/** The comment being replied to (full note, not just id/name): replies must
+	 * chain NIP-10 tags to this comment so they land nested under it — exactly
+	 * how feed-card comment replies are saved. Null = replying to the reel. */
+	let commentReplyTarget = $state<FeedNote | null>(null);
 	let reelVideos = new Map<string, HTMLVideoElement>();
 	let reelCards = new Map<string, HTMLDivElement>();
 	let reelVisibility = new Map<string, number>();
@@ -164,6 +169,12 @@
 	]);
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
 	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
+	const activeCommentTree = $derived(
+		commentReel
+			? commentTree(commentReel.id)
+			: { top: [] as FeedNote[], children: new SvelteMap<string, FeedNote[]>() }
+	);
+	const activeTopLevelComments = $derived(activeCommentTree.top);
 	const activeCommentPage = $derived(commentReel ? commentPages[commentReel.id] : undefined);
 
 	function splitTrailingPunctuation(raw: string) {
@@ -757,10 +768,50 @@
 		}
 	}
 
+	/** Every reply in the reel's thread: top-level comments carry the reel as
+	 * their reply tag, nested replies carry it as their NIP-10 root tag. Powers
+	 * the comment counters. */
 	function commentsFor(reelId: string) {
 		return feed.notes
-			.filter((note) => note.replyTo === reelId && note.id !== reelId)
+			.filter(
+				(note) => note.id !== reelId && note.tags.some((tag) => tag[0] === 'e' && tag[1] === reelId)
+			)
 			.sort((a, b) => a.createdAt - b.createdAt);
+	}
+
+	/** Two-level thread layout, same as feed cards: top-level comments reply
+	 * directly to the reel; everything else nests under its top-level ancestor
+	 * (a reply to a level-2 comment renders flat beside it — never a third
+	 * indent). Orphans whose parent sits behind the pagination cut, and cyclic
+	 * replyTo chains, fall back to top-level so nothing ever vanishes. */
+	function commentTree(reelId: string): {
+		top: FeedNote[];
+		children: SvelteMap<string, FeedNote[]>;
+	} {
+		const thread = commentsFor(reelId);
+		const byId = new Map(thread.map((note) => [note.id, note]));
+		const isTopLevel = (note: FeedNote) => !note.replyTo || note.replyTo === reelId;
+		/** The top-level comment this note nests under, or null = render top-level. */
+		const parentGroupId = (note: FeedNote): string | null => {
+			let current = note;
+			// Guard against cyclic replyTo chains: stop after thread.length hops.
+			for (let hops = 0; hops < thread.length; hops += 1) {
+				if (isTopLevel(current)) return null;
+				const parent = byId.get(current.replyTo!);
+				if (!parent) return null; // orphan — keep it visible at top level
+				if (isTopLevel(parent)) return parent.id;
+				current = parent;
+			}
+			return null; // cycle — bail out as top-level
+		};
+		const top: FeedNote[] = [];
+		const children = new SvelteMap<string, FeedNote[]>();
+		for (const note of thread) {
+			const pid = parentGroupId(note);
+			if (pid === null) top.push(note);
+			else children.set(pid, [...(children.get(pid) ?? []), note]);
+		}
+		return { top, children };
 	}
 
 	async function toggleLike(reel: ReelNote) {
@@ -853,7 +904,11 @@
 			};
 			if (options.more) filter.until = page!.oldestCreatedAt - 1;
 			const replyEvents = await queryPrimaryFirst([filter]);
-			const replies = replyEvents.map(toFeedNote).filter((note) => note.replyTo === reel.id);
+			// Keep the whole thread, not just direct replies: nested replies-to-
+			// comments reference the reel through their NIP-10 root tag.
+			const replies = replyEvents
+				.map(toFeedNote)
+				.filter((note) => note.tags.some((tag) => tag[0] === 'e' && tag[1] === reel.id));
 			const replyIds = replies.map((reply) => reply.id);
 			const reactions = replyIds.length
 				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
@@ -1045,6 +1100,15 @@
 		bitsSession.renderedReelCount = renderedReelCount;
 	});
 
+	// The Explore grid reveals tiles through its own counter (exploreVisible),
+	// so it never passes through renderMoreReels' profile prefetch. Keep author
+	// metadata (names/avatars) flowing for exactly the tiles on screen;
+	// profiles.ensure dedupes in-flight requests and skips fresh (12h) entries.
+	$effect(() => {
+		if (bitsMode !== 'explore') return;
+		void profiles.ensure(visibleExploreReels.map((reel) => reel.pubkey));
+	});
+
 	onMount(() => {
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
@@ -1218,8 +1282,20 @@
 								<span
 									class="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-2 pt-7 text-white opacity-90 transition group-hover:opacity-100"
 								>
-									<span class="line-clamp-1 text-[11px] leading-tight font-semibold">
-										{captionFor(reel) || name}
+									{#if captionFor(reel)}
+										<span class="line-clamp-1 text-[11px] leading-tight font-semibold">
+											{captionFor(reel)}
+										</span>
+									{/if}
+									<span class="flex min-w-0 items-center gap-1">
+										<Avatar
+											pubkey={reel.pubkey}
+											{name}
+											picture={profile?.picture}
+											size={16}
+											shape="hex"
+										/>
+										<span class="truncate text-[10px] font-bold">{name}</span>
 									</span>
 									<span class="flex items-center gap-2 text-[10px] font-bold">
 										<span class="inline-flex items-center gap-0.5">
@@ -1672,84 +1748,88 @@
 							</button>
 						{/if}
 						{#if activeComments.length}
-							{#each activeComments as comment (comment.id)}
+							{#snippet commentRow(comment: FeedNote, nested: boolean)}
 								{@const commentProfile = profiles.get(comment.pubkey)}
 								{@const commentName =
 									commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
-								<div class="flex gap-3">
+								{@const commentLiked = comment.reactions.some((reaction) => reaction.byMe)}
+								{@const commentLikes = comment.reactions.reduce(
+									(sum, reaction) => sum + reaction.count,
+									0
+								)}
+								<div class="flex {nested ? 'gap-2 pl-8' : 'gap-3'}">
 									<a href={`/profile/${comment.pubkey}`} class="shrink-0">
 										<Avatar
 											pubkey={comment.pubkey}
 											name={commentName}
 											picture={commentProfile?.picture}
 											verified={hasNip05(commentProfile)}
-											size={34}
-											frame
+											size={nested ? 22 : 34}
+											frame={!nested}
 										/>
 									</a>
 									<div class="min-w-0 flex-1">
-										<div class="flex items-start gap-2">
-											<div class="min-w-0 flex-1">
-												<a
-													href={`/profile/${comment.pubkey}`}
-													class="block truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
+										<div class="flex min-w-0 items-center gap-1.5">
+											<a
+												href={`/profile/${comment.pubkey}`}
+												class="truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
+											>
+												{commentName}
+											</a>
+											{#if commentProfile?.nip05}
+												<Icon
+													name="i-lucide-badge-check"
+													class="size-3 shrink-0 text-primary-500"
+												/>
+											{/if}
+											{#if comment.pubkey === identity.current?.pk}
+												<span
+													class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
+													>you</span
 												>
-													{commentName}
-												</a>
-												<a
-													href={`/note/${comment.id}?from=reels`}
-													class="block hover:text-primary-500"
-												>
-													<p
-														class="mt-1 text-[14px] leading-relaxed whitespace-pre-wrap text-[var(--ui-text)]"
-													>
-														{comment.content}
-													</p>
-												</a>
-											</div>
+											{/if}
+											{#if comment.pow}
+												<PowBadge bits={comment.pow} micro id={comment.id} />
+											{/if}
+											<a
+												href={`/note/${comment.id}?from=reels`}
+												class="ml-auto shrink-0 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)] hover:text-primary-500"
+											>
+												{timeAgo(comment.createdAt)}
+											</a>
+										</div>
+										<CommentBody content={comment.content} tags={comment.tags} compact />
+										<div
+											class="mt-1 flex items-center gap-3 text-[11px] font-bold text-[var(--ui-text-dimmed)]"
+										>
 											<button
 												type="button"
 												onclick={() => likeComment(comment)}
-												class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
+												class="inline-flex items-center gap-1 transition hover:text-[var(--tone-error-text)]"
 												aria-label="Like comment"
 											>
 												<Icon
-													name={comment.reactions.some((reaction) => reaction.byMe)
-														? 'i-solar-heart-bold'
-														: 'i-solar-heart-linear'}
-													class="size-4 {comment.reactions.some((reaction) => reaction.byMe)
-														? 'text-primary-500'
-														: ''}"
+													name={commentLiked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
+													class="size-3 {commentLiked ? 'text-primary-500' : ''}"
 												/>
-												<span class="text-[11px]">
-													{comment.reactions.reduce((sum, reaction) => sum + reaction.count, 0)}
-												</span>
+												{#if commentLikes}<span class="font-semibold">{commentLikes}</span>{/if}
 											</button>
 											<button
 												type="button"
 												onclick={() => zapComment(comment)}
-												class="flex w-9 shrink-0 flex-col items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-warm-500"
+												class="inline-flex items-center gap-1 transition hover:text-warm-500"
 												aria-label="Zap sats to this comment"
 											>
-												<Icon name="i-lucide-zap" class="size-4 fill-current" />
-												<span class="text-[11px]">
-													{commentZapSats(comment) ? compactSats(commentZapSats(comment)) : 'Zap'}
-												</span>
+												<Icon name="i-lucide-zap" class="size-3 fill-current" />
+												{#if commentZapSats(comment)}
+													<span class="font-semibold">{compactSats(commentZapSats(comment))}</span>
+												{:else}Zap{/if}
 											</button>
-										</div>
-										<div
-											class="mt-2 flex items-center gap-3 text-[12px] font-semibold text-[var(--ui-text-dimmed)]"
-										>
-											<span>{timeAgo(comment.createdAt)}</span>
 											<button
 												type="button"
-												onclick={() =>
-													(commentReplyTarget = {
-														id: comment.id,
-														pubkey: comment.pubkey,
-														name: commentName
-													})}
-												class="hover:text-[var(--ui-text-highlighted)]"
+												onclick={() => (commentReplyTarget = comment)}
+												disabled={!privacyNotificationSettings.canCommentOn(comment.pubkey)}
+												class="transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
 											>
 												Reply
 											</button>
@@ -1758,7 +1838,7 @@
 													type="button"
 													onclick={() => askDeleteComment(comment)}
 													disabled={deletingCommentId === comment.id}
-													class="hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
+													class="transition hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
 												>
 													{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
 												</button>
@@ -1766,6 +1846,12 @@
 										</div>
 									</div>
 								</div>
+							{/snippet}
+							{#each activeTopLevelComments as comment (comment.id)}
+								{@render commentRow(comment, false)}
+								{#each activeCommentTree.children.get(comment.id) ?? [] as child (child.id)}
+									{@render commentRow(child, true)}
+								{/each}
 							{/each}
 						{:else}
 							<div class="flex h-44 flex-col items-center justify-center text-center">
@@ -1788,14 +1874,20 @@
 				class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
 			>
 				{#key `${commentReel.id}:${commentReplyTarget?.id ?? ''}`}
+					{@const replyTargetProfile = commentReplyTarget
+						? profiles.get(commentReplyTarget.pubkey)
+						: undefined}
+					{@const replyTargetName = commentReplyTarget
+						? replyTargetProfile?.display_name ||
+							replyTargetProfile?.name ||
+							shortKey(commentReplyTarget.pubkey)
+						: ''}
 					<ReplyComposer
-						parent={commentReel}
-						placeholder={commentReplyTarget
-							? `Reply to ${commentReplyTarget.name}…`
-							: 'Add a comment…'}
+						parent={commentReplyTarget ?? commentReel}
+						placeholder={commentReplyTarget ? `Reply to ${replyTargetName}…` : 'Add a comment…'}
 						autofocus={!!commentReplyTarget}
 						initialMention={commentReplyTarget
-							? { pubkey: commentReplyTarget.pubkey, name: commentReplyTarget.name }
+							? { pubkey: commentReplyTarget.pubkey, name: replyTargetName }
 							: undefined}
 						onSubmitted={() => {
 							commentReplyTarget = null;

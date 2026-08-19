@@ -13,6 +13,7 @@
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { mutes } from '$lib/stores/mutes.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
+	import { titleBadge } from '$lib/stores/title-badge.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
@@ -375,6 +376,18 @@
 		if (sig === lastStoryAuthors) return;
 		lastStoryAuthors = sig;
 		stories.start();
+	});
+
+	// Tab-title unread badge ("(3) Messages · BitOS") mirrors the nav badges:
+	// notifications + DMs (privacy-gated) + NIP-29 community unreads.
+	$effect(() => {
+		if (!identity.current) {
+			titleBadge.setCount(0);
+			return;
+		}
+		const dmUnread = privacyNotificationSettings.state.dms ? dms.unreadCount : 0;
+		const communitiesUnread = nip29.groups.reduce((sum, g) => sum + g.unread, 0);
+		titleBadge.setCount(notifications.unreadCount + dmUnread + communitiesUnread);
 	});
 
 	$effect(() => {
