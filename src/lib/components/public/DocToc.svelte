@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import HexMark from '$lib/components/ui/HexMark.svelte';
+	import { BOLT_PATH } from '$lib/brand';
 
 	/**
 	 * Auto-generated "On this page" table of contents for long public docs
@@ -84,6 +86,23 @@
 </script>
 
 {#if headings.length}
+	<!-- Hex cell marker — the boot-splash "charged cell" language: an inert
+	     outline hex per section; the active one fills with the brand gradient
+	     and carries the white bolt (the BitOS hex system design). -->
+	{#snippet cell(active: boolean)}
+		<span
+			class="hex-clip mt-px grid size-3.5 shrink-0 scale-100 place-items-center border transition duration-200 {active
+				? 'scale-110 border-transparent bg-[linear-gradient(135deg,#FFB51B,#F7931A)] shadow-[0_1px_6px_rgb(247_147_26_/_0.4)]'
+				: 'border-[var(--ui-border-muted)] bg-[var(--surface-bg)]'}"
+			aria-hidden="true"
+		>
+			{#if active}
+				<svg viewBox="0 0 664 297" width="8" class="relative">
+					<path d={BOLT_PATH} fill="#fff" fill-rule="evenodd" />
+				</svg>
+			{/if}
+		</span>
+	{/snippet}
 	{#if collapsible}
 		<details
 			class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] lg:hidden"
@@ -92,7 +111,7 @@
 				class="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-[13px] font-bold text-[var(--ui-text)] select-none"
 			>
 				<span class="inline-flex items-center gap-2">
-					<Icon name="i-lucide-list-tree" class="size-4 text-primary-500" />
+					<HexMark size={16} />
 					{label}
 				</span>
 				<Icon name="i-lucide-chevron-down" class="size-4 text-[var(--ui-text-dimmed)]" />
@@ -103,11 +122,13 @@
 						<a
 							href="#{heading.id}"
 							onclick={(event) => jump(event, heading.id)}
-							class="block border-l-2 py-1.5 pl-3 text-[12.5px] transition {activeId === heading.id
-								? 'border-primary-500 font-semibold text-primary-500'
-								: 'border-transparent font-medium text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+							class="flex items-start gap-2.5 py-1.5 pr-2 text-[12.5px] transition {activeId ===
+							heading.id
+								? 'font-semibold text-primary-500'
+								: 'font-medium text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
 						>
-							{heading.text}
+							{@render cell(activeId === heading.id)}
+							<span>{heading.text}</span>
 						</a>
 					</li>
 				{/each}
@@ -124,12 +145,13 @@
 						<a
 							href="#{heading.id}"
 							onclick={(event) => jump(event, heading.id)}
-							class="-ml-px block border-l-2 py-1.5 pl-3 text-[12.5px] leading-snug transition {activeId ===
+							class="flex items-start gap-2.5 py-1.5 pr-2 text-[12.5px] leading-snug transition {activeId ===
 							heading.id
-								? 'border-primary-500 font-semibold text-primary-500'
-								: 'border-transparent font-medium text-[var(--ui-text-muted)] hover:border-[var(--ui-border)] hover:text-[var(--ui-text)]'}"
+								? 'font-semibold text-primary-500'
+								: 'font-medium text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
 						>
-							{heading.text}
+							{@render cell(activeId === heading.id)}
+							<span>{heading.text}</span>
 						</a>
 					</li>
 				{/each}

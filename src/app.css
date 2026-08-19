@@ -648,7 +648,6 @@
 		color: var(--ui-color-primary-500);
 	}
 	.settings-nav-item.active {
-		background: color-mix(in oklab, var(--ui-color-primary-500) 10%, transparent);
 		color: var(--ui-color-primary-500);
 		font-weight: 600;
 	}

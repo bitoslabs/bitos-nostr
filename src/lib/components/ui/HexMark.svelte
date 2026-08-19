@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { cn } from '$lib/utils/cn';
+	import { BOLT_PATH, BOLT_GRADIENT_STOPS } from '$lib/brand';
 
 	/**
 	 * BitOS brand mark — the official lightning bolt from
@@ -17,10 +18,6 @@
 		badge = true,
 		class: cls
 	}: { size?: number | string; badge?: boolean; class?: string } = $props();
-
-	// Lightning bolt extracted from the BitOS logo (static/bitos-lightning-bolt.svg).
-	const BOLT_PATH =
-		'M 0,296 C 37,254 69,222 99,195 C 135,163 168,139 199,121 L 313,51 C 317,49 320,52 318,57 L 306,119 C 370,81 429,55 484,36 C 547,14 606,3 664,0 C 619,14 580,29 548,45 C 508,65 472,83 441,99 C 397,122 354,149 312,180 L 231,243 C 227,246 228,241 229,236 L 241,160 C 195,184 148,211 101,241 C 65,264 31,282 0,296 Z';
 
 	// Unique gradient id per instance so multiple marks can coexist.
 	const gradId = `hexbolt-${Math.random().toString(36).slice(2, 8)}`;
@@ -45,9 +42,9 @@
 	<svg viewBox="0 0 664 297" class={cls} style="width:{px}px;height:{px}px" aria-hidden="true">
 		<defs>
 			<linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-				<stop offset="0" stop-color="#FFD83D" />
-				<stop offset="0.5" stop-color="#FFB51B" />
-				<stop offset="1" stop-color="#F7931A" />
+				{#each BOLT_GRADIENT_STOPS as color, i (color)}
+					<stop offset={i / (BOLT_GRADIENT_STOPS.length - 1)} stop-color={color} />
+				{/each}
 			</linearGradient>
 		</defs>
 		<path d={BOLT_PATH} fill={`url(#${gradId})`} fill-rule="evenodd" />

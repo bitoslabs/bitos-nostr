@@ -163,23 +163,21 @@
 					aria-label={item.label}
 					aria-current={active ? 'page' : undefined}
 				>
-					<span
-						class="ui4-nav-surface absolute inset-0 rounded-xl transition-all {active
-							? 'is-active'
-							: ''}"
-						aria-hidden="true"
-					></span>
-					{#if active}
-						<span
-							class="absolute top-1/2 left-0 z-10 h-7 w-1 -translate-y-1/2 rounded-r-full bg-primary-500 shadow-[var(--glow-primary)]"
-							aria-hidden="true"
-						></span>
-					{/if}
-					<span class="relative z-10 shrink-0">
+					<span class="relative z-10 grid shrink-0 place-items-center">
+						<!-- Active marker — the hex system design: borderless gradient hex
+					     glow behind the icon (a separate clipped layer, so the unread
+					     badge can never be clipped) + primary label. No background pill
+					     — the hex is the active state. -->
+						{#if active}
+							<span
+								class="hex-clip absolute -inset-[7px] bg-gradient-to-br from-primary-500/25 to-warm-500/20"
+								aria-hidden="true"
+							></span>
+						{/if}
 						<Icon
 							name={item.icon}
-							class="size-5 transition-transform {active
-								? 'scale-105 text-primary-500 dark:text-primary-300'
+							class="relative size-5 transition-transform {active
+								? 'scale-105 text-primary-500 dark:text-primary-500'
 								: 'text-[var(--ui-text-muted)] group-hover:text-primary-500'}"
 						/>
 						{#if (item.badge && unread > 0) || (item.notifications && notificationUnread > 0) || (item.communities && communitiesUnread > 0)}
@@ -199,7 +197,11 @@
 							>
 						{/if}
 					</span>
-					<span class="relative z-10 flex-1">{item.label}</span>
+					<span
+						class="relative z-10 flex-1 {active
+							? 'font-semibold text-primary-500 dark:text-primary-500'
+							: ''}">{item.label}</span
+					>
 				</a>
 			{/if}
 		{/each}
@@ -358,12 +360,6 @@
 	}
 	.ui4-nav-item:hover {
 		color: var(--ui-text);
-	}
-	.ui4-nav-surface {
-		z-index: 0;
-	}
-	.ui4-nav-surface.is-active {
-		background: color-mix(in oklab, var(--ui-color-primary-500) 12%, transparent);
 	}
 	.ui4-account :global(.mask-squircle) {
 		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);

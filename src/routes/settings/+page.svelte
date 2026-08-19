@@ -262,7 +262,17 @@
 					href={`/settings/${s.key}`}
 					class="settings-nav-item w-full {section === s.key ? 'active' : ''}"
 				>
-					<Icon name={s.icon} class="size-[18px] shrink-0" />
+					<span class="relative grid shrink-0 place-items-center">
+						<!-- Active marker — borderless gradient hex glow behind the icon
+						     (same system design as the NavRail). No background pill. -->
+						{#if section === s.key}
+							<span
+								class="hex-clip absolute -inset-[6px] bg-gradient-to-br from-primary-500/25 to-warm-500/20"
+								aria-hidden="true"
+							></span>
+						{/if}
+						<Icon name={s.icon} class="relative size-[18px]" />
+					</span>
 					<span>{s.label}</span>
 				</a>
 			{/each}
