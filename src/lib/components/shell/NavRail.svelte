@@ -123,6 +123,38 @@
 		if (window.location.hash !== '#composer') window.history.pushState(null, '', '#composer');
 		window.dispatchEvent(new CustomEvent('bitos:focus-composer'));
 	}
+
+	// --- Short-viewport handling ------------------------------------------------
+	// The section list scrolls on its own when the rail is taller than the
+	// viewport (small screen heights), and the active section is auto-scrolled
+	// into view so the user never loses track of where they are.
+	let navList = $state<HTMLDivElement | null>(null);
+
+	function revealActiveItem() {
+		const list = navList;
+		if (!browser || !list || list.scrollHeight <= list.clientHeight) return;
+		const active = list.querySelector<HTMLElement>('[aria-current="page"]');
+		if (!active) return;
+		const listRect = list.getBoundingClientRect();
+		const itemRect = active.getBoundingClientRect();
+		const pad = 12;
+		if (itemRect.top < listRect.top + pad) {
+			list.scrollTop += itemRect.top - listRect.top - pad;
+		} else if (itemRect.bottom > listRect.bottom - pad) {
+			list.scrollTop += itemRect.bottom - listRect.bottom + pad;
+		}
+	}
+
+	$effect(() => {
+		// Re-run on route changes and when auth toggles footer widgets; resize
+		// covers viewport-height changes while dragging the window.
+		void page.url.pathname;
+		void me;
+		if (!browser) return;
+		revealActiveItem();
+		window.addEventListener('resize', revealActiveItem);
+		return () => window.removeEventListener('resize', revealActiveItem);
+	});
 </script>
 
 <nav class="ui4-nav flex h-full flex-col p-3.5">
@@ -130,19 +162,23 @@
 	<a
 		href="/"
 		aria-label="BitOS home"
-		class="mb-4 flex items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
+		class="ui4-nav-brand mb-4 flex shrink-0 items-center gap-2.5 px-3 transition-opacity hover:opacity-85"
 	>
 		<Logo height={28} />
 	</a>
 
-	<div class="flex flex-1 flex-col gap-1 pl-3">
+	<!-- Sections: independently scrollable on short viewports (see .ui4-nav-list). -->
+	<div
+		bind:this={navList}
+		class="ui4-nav-list flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain pl-3"
+	>
 		{#each nav as item (item.to)}
 			{@const active = isActive(item.to)}
 			{@const locked = !me && item.requiresAuth}
 			{#if locked}
 				<!-- Guest: section stays visible but cannot be accessed without a key. -->
 				<div
-					class="relative flex cursor-not-allowed items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium opacity-55 select-none"
+					class="ui4-nav-row relative flex cursor-not-allowed items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium opacity-55 select-none"
 					aria-disabled="true"
 					title="Sign in to unlock {item.label}"
 				>
@@ -159,7 +195,7 @@
 			{:else}
 				<a
 					href={item.to}
-					class="ui4-nav-item group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
+					class="ui4-nav-item ui4-nav-row group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
 					aria-label={item.label}
 					aria-current={active ? 'page' : undefined}
 				>
@@ -208,7 +244,7 @@
 	</div>
 
 	{#if me}
-		<div class="px-2 pb-1">
+		<div class="ui4-nav-cta shrink-0 px-2 pb-1">
 			<a
 				href="/#composer"
 				onclick={focusComposer}
@@ -220,7 +256,7 @@
 		</div>
 	{/if}
 
-	<div class="flex flex-col gap-2">
+	<div class="flex shrink-0 flex-col gap-2">
 		{#if me}
 			<div class="relative">
 				<button
@@ -242,6 +278,7 @@
 							picture={myProfile?.picture}
 							verified={hasNip05(myProfile)}
 							size={44}
+							frame
 						/>
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-sm font-semibold">{displayName}</span>
@@ -270,6 +307,7 @@
 								picture={myProfile?.picture}
 								verified={hasNip05(myProfile)}
 								size={34}
+								frame
 							/>
 							<span class="min-w-0">
 								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
@@ -296,6 +334,7 @@
 										picture={accountPicture(account)}
 										verified={hasNip05(profiles.get(account.pk) ?? account.profile)}
 										size={30}
+										frame
 									/>
 									<span class="min-w-0 flex-1">
 										<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
@@ -360,6 +399,34 @@
 	}
 	.ui4-nav-item:hover {
 		color: var(--ui-text);
+	}
+	/* Section list: thin, unobtrusive scrollbar — only visible while it can scroll. */
+	.ui4-nav-list {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in oklab, var(--ui-text-muted) 32%, transparent) transparent;
+	}
+	.ui4-nav-list::-webkit-scrollbar {
+		width: 5px;
+	}
+	.ui4-nav-list::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	.ui4-nav-list::-webkit-scrollbar-thumb {
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--ui-text-muted) 32%, transparent);
+	}
+	/* Compact rhythm on short viewports: tighten paddings so the full section
+	   list usually fits without scrolling at all. */
+	@media (max-height: 780px) {
+		.ui4-nav-brand {
+			margin-bottom: 0.625rem;
+		}
+		.ui4-nav-row {
+			padding-block: 0.5rem;
+		}
+		.ui4-nav-cta {
+			padding-block: 0.125rem;
+		}
 	}
 	.ui4-account :global(.mask-squircle) {
 		clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0% 50%);
