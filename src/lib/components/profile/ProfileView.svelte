@@ -56,6 +56,7 @@
 	);
 
 	let loading = $state(true);
+	let bannerFailed = $state(false);
 	let loadingMore = $state(false);
 	let hasMoreNotes = $state(false);
 	let followPending = $state(false);
@@ -304,6 +305,7 @@
 		if (!nextPubkey || loadedFor === nextPubkey) return;
 		const request = ++loadRequest;
 		loading = true;
+		bannerFailed = false;
 		hasMoreNotes = false;
 		notes = [];
 		loadedFor = nextPubkey;
@@ -454,11 +456,25 @@
 	<!-- ============================ HERO ============================ -->
 	<div class="relative">
 		<div class="relative h-[160px] overflow-hidden bg-primary-500 sm:h-[200px]">
-			{#if profile?.banner}
-				<img src={profile.banner} class="absolute inset-0 size-full object-cover" alt="" />
+			{#if profile?.banner && !bannerFailed}
+				<img
+					src={profile.banner}
+					class="absolute inset-0 size-full object-cover"
+					alt=""
+					loading="eager"
+					onerror={() => (bannerFailed = true)}
+				/>
 			{:else}
+				<!-- Default cover (no banner published or failed to load): two-tone
+				     brand gradient + subtle hex overlay, mirroring the profile cover
+				     in docs/ui-page-example.html (gradient base, 20%-opacity pattern). -->
 				<div
-					class="absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--color-primary-400),transparent_38%),linear-gradient(115deg,var(--ui-color-primary-500)_0%,var(--color-accent-500)_52%,var(--color-warm-400)_100%)]"
+					class="absolute inset-0 bg-primary-500"
+					style="background-image:linear-gradient(115deg, var(--ui-color-primary-400) 0%, var(--ui-color-primary-700) 100%);"
+				></div>
+				<div
+					class="absolute inset-0 opacity-20"
+					style="background-image:url('data:image/svg+xml,%3Csvg width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg fill=%22%23fff%22 fill-opacity=%220.4%22%3E%3Cpolygon points=%2230,0 90,0 120,52 90,104 30,104 0,52%22/%3E%3C/g%3E%3C/svg%3E');"
 				></div>
 			{/if}
 			<div
