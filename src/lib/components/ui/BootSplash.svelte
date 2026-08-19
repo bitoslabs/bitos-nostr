@@ -56,8 +56,8 @@
 		<img
 			src="/icons/logo-white.png"
 			alt="BitOS"
-			width="1904"
-			height="651"
+			width="640"
+			height="219"
 			class="hidden h-[26px] w-auto dark:block"
 		/>
 		<div class="mt-1 flex flex-col items-center gap-2.5">

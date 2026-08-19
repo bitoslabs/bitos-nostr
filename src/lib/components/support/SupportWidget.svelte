@@ -3,6 +3,7 @@
 	import { decode, encodeBytes } from 'nostr-tools/nip19';
 	import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import HexIcon from '$lib/components/ui/HexIcon.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -209,10 +210,8 @@
 		? 'p-4'
 		: 'p-5 sm:p-6'}"
 >
-	<div class="flex items-start gap-3">
-		<div class="grid size-11 shrink-0 place-items-center rounded-2xl bg-warm-500/12 text-warm-600">
-			<Icon name="i-lucide-coffee" class="size-5" />
-		</div>
+	<div class="flex items-start gap-3.5">
+		<HexIcon icon="i-lucide-coffee" size={44} tone="warm" />
 		<div class="min-w-0 flex-1">
 			<div class="flex flex-wrap items-center gap-2">
 				<h2 class="font-display text-[18px] font-extrabold tracking-tight">Support BitOS</h2>

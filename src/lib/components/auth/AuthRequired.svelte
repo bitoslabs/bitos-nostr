@@ -14,7 +14,7 @@
 	<div class="mx-auto flex w-full max-w-[640px] items-center px-5 py-10">
 		<div class="post-card w-full p-6 text-center sm:p-8">
 			<div
-				class="mx-auto grid size-14 place-items-center rounded-2xl bg-primary-500/10 text-primary-500"
+				class="mx-auto hex-clip grid size-14 place-items-center rounded-2xl bg-primary-500/10 text-primary-500"
 			>
 				<Icon name="i-lucide-key-round" class="size-7" />
 			</div>

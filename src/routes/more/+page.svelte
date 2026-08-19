@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import HexIcon from '$lib/components/ui/HexIcon.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatTile from '$lib/components/ui/StatTile.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
@@ -296,15 +297,7 @@
 						href={tile.to}
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
-						<span
-							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
-						>
-							<span
-								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-							>
-								<Icon name={tile.icon} class="size-5" />
-							</span>
-						</span>
+						<HexIcon icon={tile.icon} size="40" iconClass="size-5" interactive />
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
 							<span class="mt-0.5 block truncate text-[11.5px] text-[var(--ui-text-muted)]">
@@ -328,15 +321,7 @@
 						href={tile.to}
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
-						<span
-							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
-						>
-							<span
-								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-							>
-								<Icon name={tile.icon} class="size-5" />
-							</span>
-						</span>
+						<HexIcon icon={tile.icon} size="40" iconClass="size-5" interactive />
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
 							<span class="mt-0.5 block truncate text-[11.5px] text-[var(--ui-text-muted)]">
@@ -360,15 +345,7 @@
 						href={tile.to}
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
-						<span
-							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
-						>
-							<span
-								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-							>
-								<Icon name={tile.icon} class="size-5" />
-							</span>
-						</span>
+						<HexIcon icon={tile.icon} size={40} iconClass="size-5" interactive />
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
 							<span class="mt-0.5 block truncate text-[11.5px] text-[var(--ui-text-muted)]">
@@ -478,15 +455,7 @@
 						href={tile.to}
 						class="group flex items-center gap-3.5 rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5 transition hover:border-primary-500/40 hover:bg-[var(--interactive-hover-bg)]"
 					>
-						<span
-							class="hex-clip box-border grid size-10 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500 transition group-hover:from-primary-500/30 group-hover:to-warm-500/20"
-						>
-							<span
-								class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-							>
-								<Icon name={tile.icon} class="size-5" />
-							</span>
-						</span>
+						<HexIcon icon={tile.icon} size="40" iconClass="size-5" interactive />
 						<span class="min-w-0">
 							<span class="block text-[13.5px] font-bold">{tile.label}</span>
 							<span class="mt-0.5 block truncate text-[11.5px] text-[var(--ui-text-muted)]">
@@ -513,15 +482,7 @@
 						: ''}"
 				>
 					<!-- Same hex border treatment as the tiles above -->
-					<span
-						class="hex-clip box-border grid size-8 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500"
-					>
-						<span
-							class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-						>
-							<Icon name={item.icon} class="size-[15px]" />
-						</span>
-					</span>
+					<HexIcon icon={item.icon} size="32" iconClass="size-[15px]" />
 					{item.label}
 					<Icon
 						name="i-lucide-chevron-right"
@@ -533,15 +494,7 @@
 				href="/about"
 				class="flex items-center gap-3 border-t border-[var(--ui-border-muted)] px-4 py-3 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 			>
-				<span
-					class="hex-clip box-border grid size-8 shrink-0 place-items-center overflow-hidden border border-primary-500/25 bg-gradient-to-br from-primary-500/20 to-warm-500/15 p-[2px] text-primary-500"
-				>
-					<span
-						class="hex-clip grid size-full place-items-center overflow-hidden bg-[var(--surface-bg)]"
-					>
-						<Icon name="i-lucide-git-branch" class="size-[15px]" />
-					</span>
-				</span>
+				<HexIcon icon="i-lucide-git-branch" size="32" iconClass="size-[15px]" />
 				Version
 				<span class="ml-auto font-mono text-[11.5px] text-[var(--ui-text-dimmed)]">
 					v{APP_VERSION}

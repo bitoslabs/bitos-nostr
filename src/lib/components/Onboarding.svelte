@@ -8,6 +8,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
+	import HexMark from '$lib/components/ui/HexMark.svelte';
 	import { bytesToHex, hexToBytes } from '$lib/nostr/hex';
 
 	let mode = $state<'intro' | 'create' | 'import'>('intro');
@@ -16,7 +17,6 @@
 	let createdNsec = $state<string | null>(null);
 	let createdSkHex = $state<string | null>(null);
 	let copied = $state(false);
-	const logo = '/icons/icon-192-192.png';
 
 	function create() {
 		busy = true;
@@ -71,7 +71,7 @@
 	<div class="w-full max-w-md">
 		<!-- Brand -->
 		<div class="mb-7 flex flex-col items-center text-center">
-			<img src={logo} alt="BitOS logo" class="mb-4 size-16 rounded-2xl shadow-[var(--glow-primary)]" />
+		    <HexMark size={64} class="rounded-[22%]" />
 			<h1 class="font-display text-[26px] font-bold tracking-tight">Welcome to BitOS</h1>
 			<p class="mt-1.5 text-[13.5px] text-[var(--ui-text-muted)]">
 				A local-first Nostr client. Your keys never leave this device.

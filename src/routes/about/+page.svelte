@@ -1,5 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import HexIcon from '$lib/components/ui/HexIcon.svelte';
+	import HexMark from '$lib/components/ui/HexMark.svelte';
 	import SupportWidget from '$lib/components/support/SupportWidget.svelte';
 	import ContributorsWidget from '$lib/components/support/ContributorsWidget.svelte';
 
@@ -37,7 +39,6 @@
 	];
 
 	const version = `v${__APP_VERSION__}`;
-	const logo = '/icons/icon-192-192.png';
 	const launchDate = 'August 8, 2026';
 </script>
 
@@ -45,14 +46,15 @@
 
 <!-- Hero -->
 <section class="text-center">
-	<img
-		src={logo}
-		alt="BitOS logo"
-		class="mx-auto mb-5 size-16 rounded-2xl shadow-[var(--glow-primary)]"
-	/>
-	<h1 class="font-display text-[34px] leading-none font-extrabold tracking-tight sm:text-[40px]">
-		BitOS
-	</h1>
+	<h1 class="sr-only">BitOS</h1>
+	<!-- Brand mark in the shell's hex language: gradient border ring +
+	     inner surface carrying the B + bolt symbol (same treatment as the
+	     /more page tiles). -->
+	<div class="mx-auto mb-5 grid size-16 place-items-center">
+		<HexIcon size={64} class="p-[3px] shadow-[var(--glow-primary)]">
+			<HexMark badge={false} size={40} />
+		</HexIcon>
+	</div>
 	<p
 		class="mt-2 inline-flex items-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-3 py-1 text-[11px] font-semibold tracking-[0.16em] text-[var(--ui-text-muted)] uppercase"
 	>
@@ -122,12 +124,10 @@
 	<h2 class="font-display text-[20px] font-bold tracking-tight">What makes BitOS different</h2>
 	<div class="mt-5 grid gap-3 sm:grid-cols-2">
 		{#each features as f (f.title)}
-			<div class="surface-card rounded-2xl p-4 transition hover:shadow-[var(--shadow-card-hover)]">
-				<div
-					class="mb-2.5 grid size-9 place-items-center rounded-xl bg-primary-500/10 text-primary-500"
-				>
-					<Icon name={f.icon} class="size-5" />
-				</div>
+			<div
+				class="surface-card group rounded-2xl p-4 transition hover:shadow-[var(--shadow-card-hover)]"
+			>
+				<HexIcon icon={f.icon} size={36} iconClass="size-[18px]" interactive class="mb-2.5" />
 				<h3 class="text-[14px] font-bold">{f.title}</h3>
 				<p class="mt-1 text-[12.5px] leading-relaxed text-[var(--ui-text-muted)]">{f.body}</p>
 			</div>
