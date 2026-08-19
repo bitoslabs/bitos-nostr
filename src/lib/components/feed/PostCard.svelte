@@ -157,6 +157,15 @@
 	const previewableMedia = $derived(
 		mediaAttachments.filter((media) => media.type === 'image' || media.type === 'video')
 	);
+	// A note whose single attachment is a video plays inline in the card
+	// (X-style) instead of opening the focused viewer. Multi-media notes keep
+	// the viewer so dense grids stay quick to scan.
+	const singleVideoMedia = $derived(
+		mediaAttachments.length === 1 && mediaAttachments[0].type === 'video'
+			? mediaAttachments[0]
+			: null
+	);
+	let inlineVideoActive = $state(false);
 	const firstAttachment = $derived(mediaAttachments[0]);
 	const visibleMediaAttachments = $derived(mediaAttachments.slice(0, MAX_VISIBLE_MEDIA));
 	const hiddenMediaCount = $derived(
@@ -1154,39 +1163,71 @@
 						{/if}
 					{:else if media.type === 'video'}
 						<div class="{tileClass} relative overflow-hidden bg-black">
-							<!-- A silent poster-like preview keeps dense mobile grids calm.
-								Tapping opens the complete player below. -->
-							<!-- svelte-ignore a11y_media_has_caption -->
-							<video
-								src={media.url}
-								muted
-								playsinline
-								preload="metadata"
-								class="size-full object-cover transition {!shouldHideVideo(media.url)
-									? ''
-									: 'scale-105 blur-2xl saturate-50'}"
-							></video>
-							{#if !shouldHideVideo(media.url)}
-								{#if showVideoCover}
-									<!-- The primary token is rewritten by the active theme, so this
-										cover follows both the colour and requested opacity. -->
-									<span
-										class="video-cover pointer-events-none absolute inset-0 z-5"
-										style={videoCoverStyle()}
-									></span>
-								{/if}
+							{#if singleVideoMedia && inlineVideoActive && !shouldHideVideo(media.url)}
+								<!-- Single-video note: the full player lives inline in the card
+									(X-style). Mounted on first tap so the feed stays light to scan. -->
+								<MediaPlayer
+									src={media.url}
+									label={`Video from ${media.host}`}
+									variant="reel"
+									autoplay
+									class="absolute inset-0"
+									mediaClass="size-full object-cover"
+									onMediaElement={(node) => {
+										const registration = trackFeedVideo(node as HTMLVideoElement);
+										return () => registration.destroy();
+									}}
+								/>
 								<button
 									type="button"
 									onclick={() => openMediaViewer(media)}
-									class="absolute inset-0 z-10 grid place-items-center bg-black/5 text-white transition hover:bg-black/20"
-									aria-label={`Play video from ${media.host}`}
+									class="absolute top-2 right-2 z-20 grid size-9 place-items-center rounded-full bg-black/55 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/75"
+									aria-label="Open video in full viewer"
+									title="Open in viewer"
 								>
-									<span
-										class="grid size-11 place-items-center rounded-full bg-black/55 shadow-lg backdrop-blur-sm"
-									>
-										<Icon name="i-lucide-play" class="ml-0.5 size-5 fill-current" />
-									</span>
+									<Icon name="i-lucide-maximize-2" class="size-4" />
 								</button>
+							{:else}
+								<!-- A silent poster-like preview keeps dense mobile grids calm.
+									Tapping plays a single video inline; gallery tiles open the
+									focused viewer. -->
+								<!-- svelte-ignore a11y_media_has_caption -->
+								<video
+									src={media.url}
+									muted
+									playsinline
+									preload="metadata"
+									class="size-full object-cover transition {!shouldHideVideo(media.url)
+										? ''
+										: 'scale-105 blur-2xl saturate-50'}"
+								></video>
+								{#if !shouldHideVideo(media.url)}
+									{#if showVideoCover}
+										<!-- The primary token is rewritten by the active theme, so this
+											cover follows both the colour and requested opacity. -->
+										<span
+											class="video-cover pointer-events-none absolute inset-0 z-5"
+											style={videoCoverStyle()}
+										></span>
+									{/if}
+									<button
+										type="button"
+										onclick={() => {
+											// One video in the note: play it right here in the card.
+											// Galleries keep the focused viewer for prev/next browsing.
+											if (singleVideoMedia) inlineVideoActive = true;
+											else openMediaViewer(media);
+										}}
+										class="absolute inset-0 z-10 grid place-items-center bg-black/5 text-white transition hover:bg-black/20"
+										aria-label={`Play video from ${media.host}`}
+									>
+										<span
+											class="grid size-11 place-items-center rounded-full bg-black/55 shadow-lg backdrop-blur-sm"
+										>
+											<Icon name="i-lucide-play" class="ml-0.5 size-5 fill-current" />
+										</span>
+									</button>
+								{/if}
 							{/if}
 							{#if showMoreOverlay}
 								<div
