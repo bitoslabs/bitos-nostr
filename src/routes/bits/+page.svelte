@@ -1008,15 +1008,40 @@
 	// --- Explore grid (Bits · Explore tab) ----------------------------------
 
 	function switchBitsMode(mode: BitsMode) {
-		if (bitsMode === mode) return;
+		// Re-tapping the active tab is the standard "back to top" shortcut. It
+		// replaces the old forced reset: position survives tab switches, and
+		// returning to the top is an explicit user action instead of a penalty.
+		if (bitsMode === mode) {
+			const scroller = mode === 'explore' ? exploreScroller : reelScroller;
+			scroller?.scrollTo({ top: 0, behavior: 'smooth' });
+			return;
+		}
 		bitsMode = mode;
 		if (mode === 'explore') {
-			exploreVisible = EXPLORE_INITIAL_VISIBLE;
-			requestAnimationFrame(() => exploreScroller?.scrollTo({ top: 0 }));
+			// Coming back to the grid must land on the tiles the user left behind
+			// (tap tile → For you → Explore = same spot, not a scroll-from-scratch).
+			// The scroller remounts in this branch, so restore after the DOM is
+			// ready; exploreVisible already holds the revealed window and the scroll
+			// offset lives in the session (kept fresh by handleExploreScroll).
+			void tick().then(() => {
+				requestAnimationFrame(() => {
+					exploreScroller?.scrollTo({ top: bitsSession.exploreScrollTop });
+				});
+			});
 		} else {
 			// Fresh player mount: keep the first window visible and let the
 			// visibility observer re-elect the active reel.
 			renderedReelCount = Math.max(INITIAL_RENDERED_REELS, renderedReelCount);
+			// Mirror of the grid fix: resume the snap player at the reel the user
+			// last watched instead of dropping them back on reel 0.
+			void tick().then(() => {
+				requestAnimationFrame(() => {
+					if (reelScroller && bitsSession.activeReelIndex > 0)
+						reelScroller.scrollTo({
+							top: bitsSession.activeReelIndex * reelScroller.clientHeight
+						});
+				});
+			});
 		}
 	}
 
@@ -1079,6 +1104,9 @@
 			revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true };
 			return;
 		}
+		// Snapshot the grid offset before leaving: onscroll keeps the session
+		// fresh, but persisting here guarantees the return-to-Explore restore.
+		if (exploreScroller) bitsSession.exploreScrollTop = exploreScroller.scrollTop;
 		const index = rankedReels.findIndex((item) => item.id === reel.id);
 		bitsMode = 'foryou';
 		if (index < 0) return;
