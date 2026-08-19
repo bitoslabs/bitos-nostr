@@ -192,7 +192,7 @@
 						: ''}"
 				>
 					<div class="flex items-center gap-3">
-						<div class="grid size-9 place-items-center rounded-xl bg-current/10">
+						<div class="hex-clip grid size-9 shrink-0 place-items-center bg-current/10">
 							<Icon name={ic} class="size-4 {col}" />
 						</div>
 						<div>

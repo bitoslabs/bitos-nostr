@@ -29,11 +29,22 @@
 	} = $props();
 </script>
 
-<section class={cn('border border-[var(--ui-border-muted)] rounded-[var(--ui-radius)] overflow-hidden', cls)}>
+<section
+	class={cn(
+		'overflow-hidden rounded-[var(--ui-radius)] border border-[var(--ui-border-muted)]',
+		cls
+	)}
+>
 	{#if title}
 		<header class="flex items-center gap-2.5 px-5 pt-6">
 			{#if icon}
-				<Icon name={icon} class="size-[18px] shrink-0 text-primary-500" />
+				<!-- Title icon in the system hex tile (same language as the mobile
+		     index / more tiles). -->
+				<span
+					class="hex-clip grid size-[26px] shrink-0 place-items-center bg-primary-500/10 text-primary-500"
+				>
+					<Icon name={icon} class="size-[14px]" />
+				</span>
 			{/if}
 			<div class="min-w-0 flex-1">
 				<h3 class="text-[15px] leading-tight font-bold text-[var(--ui-text)]">{title}</h3>

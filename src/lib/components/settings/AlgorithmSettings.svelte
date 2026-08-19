@@ -84,12 +84,13 @@
 
 <!-- Hero / explainer -->
 <SectionCard class="mb-5">
-	<div class="flex items-start gap-3">
-		<div
-			class="grid size-11 shrink-0 place-items-center rounded-2xl bg-primary-500/10 text-primary-500"
+	<div class="flex items-start gap-3.5">
+		<!-- Title widget icon in the system hex tile. -->
+		<span
+			class="hex-clip grid size-11 shrink-0 place-items-center bg-primary-500/10 text-primary-500"
 		>
-			<Icon name="i-lucide-wand-sparkles" class="size-6" />
-		</div>
+			<Icon name="i-lucide-wand-sparkles" class="size-[22px]" />
+		</span>
 		<div class="min-w-0 flex-1">
 			<h2 class="font-display text-[24px] leading-tight font-extrabold">Algorithm</h2>
 			<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
@@ -153,13 +154,13 @@
 	{@const preset = surfacePreset(surface)}
 	<SectionCard class="mb-5" bodyClass="">
 		<!-- Surface header + master switch -->
-		<div class="flex items-center gap-3 p-5 pb-3">
+		<div class="flex items-center gap-3.5 p-5 pb-3">
 			<div
-				class="grid size-11 shrink-0 place-items-center rounded-2xl {cfg.enabled
+				class="hex-clip grid size-11 shrink-0 place-items-center {cfg.enabled
 					? 'bg-primary-500/12 text-primary-500'
 					: 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]'}"
 			>
-				<Icon name={meta.icon} class="size-[22px]" />
+				<Icon name={meta.icon} class="size-[20px]" />
 			</div>
 			<div class="min-w-0 flex-1">
 				<div class="flex items-center gap-2">
@@ -230,7 +231,7 @@
 						<div class="flex items-center gap-3">
 							<button
 								type="button"
-								class="grid size-8 shrink-0 place-items-center rounded-lg transition {active
+								class="hex-clip grid size-8 shrink-0 place-items-center transition {active
 									? 'bg-primary-500/12 text-primary-500'
 									: 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text-muted)]'}"
 								aria-label={`Toggle ${def.label}`}

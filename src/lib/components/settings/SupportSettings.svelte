@@ -175,7 +175,7 @@
 					onclick={() => toasts.info(h.t)}
 					class="group flex items-center gap-3.5 rounded-xl border border-[var(--ui-border-muted)] p-3.5 text-left transition hover:border-primary-500/25 hover:bg-[var(--interactive-hover-bg)]"
 				>
-					<span class="grid size-10 shrink-0 place-items-center rounded-xl bg-current/10">
+					<span class="hex-clip grid size-10 shrink-0 place-items-center bg-current/10">
 						<Icon name={h.i} class="size-5 {h.c}" />
 					</span>
 					<span class="min-w-0 flex-1">

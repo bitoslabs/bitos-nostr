@@ -351,11 +351,13 @@
 										href={`/settings/${s.key}`}
 										class="ios-row relative flex min-h-[44px] items-center gap-3.5 py-2 pr-3 pl-[11px] transition active:bg-[var(--interactive-hover-bg)]"
 									>
+										<!-- Hex icon tile (system design — same silhouette as the hex
+										     avatars); keeps the iOS per-section tint. -->
 										<span
-											class="grid size-[30px] shrink-0 place-items-center rounded-[10px]"
+											class="hex-clip grid size-[32px] shrink-0 place-items-center"
 											style="background-color:color-mix(in oklab,{s.tint} 14%, transparent);color:{s.tint}"
 										>
-											<Icon name={s.icon} class="size-[18px]" />
+											<Icon name={s.icon} class="size-[17px]" />
 										</span>
 										<span
 											class="min-w-0 flex-1 text-[16px] tracking-[-0.01em] text-[var(--ui-text)]"
@@ -435,14 +437,16 @@
 						</div>
 					{/if}
 					<div class="mb-5 flex flex-wrap items-center gap-4">
+						<!-- Profile avatar in the system hex silhouette (matches the app's
+						     hex avatars everywhere else). -->
 						<div
-							class="size-16 shrink-0 overflow-hidden mask-squircle bg-primary-500/8 shadow-[var(--glow-primary)] ring-1 ring-primary-500/20"
+							class="hex-clip size-16 shrink-0 overflow-hidden bg-primary-500/8 shadow-[var(--glow-primary)]"
 						>
 							{#if editingPicture}
 								<img src={editingPicture} alt="avatar preview" class="size-16 object-cover" />
 							{:else}
 								<div
-									class="grid size-16 place-items-center mask-squircle bg-warm-500 font-bold text-white"
+									class="hex-clip grid size-16 place-items-center bg-warm-500 font-bold text-white"
 								>
 									{(editingDisplayName || editingUsername || 'Y').slice(0, 2).toUpperCase()}
 								</div>
