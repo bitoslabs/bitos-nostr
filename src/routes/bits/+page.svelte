@@ -6,6 +6,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import BitsSearch from '$lib/components/bits/BitsSearch.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
 	import CommentBody from '$lib/components/feed/CommentBody.svelte';
@@ -23,11 +24,13 @@
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { shortKey, timeAgo } from '$lib/utils/format';
+	import { shortKey, timeAgo, formatDuration } from '$lib/utils/format';
+	import { lazyVideoMetadata } from '$lib/utils/media';
 	import { hasNip05 } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { compactSats } from '$lib/utils/profile-stats';
+	import { BitsSearchStore } from '$lib/stores/bits-search.svelte';
 	import {
 		bitsSession,
 		BITS_SESSION_REFRESH_MS,
@@ -127,12 +130,6 @@
 	let activeReelMuted = $state(true);
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let commentReel = $state<ReelNote | null>(null);
-	// --- Bits video search (caption + author, local instant + NIP-50 relays) ---
-	let bitsSearchOpen = $state(false);
-	let bitsSearch = $state('');
-	let searchingBits = $state(false);
-	let bitsSearchResults = $state<ReelNote[]>([]);
-	let relaySearchToken = 0;
 	let commentPendingDelete = $state<FeedNote | null>(null);
 	let deleteCommentOpen = $state(false);
 	let commentPages = $state<Record<string, CommentPage>>({});
@@ -175,78 +172,38 @@
 		...rankedReels.filter((reel) => reel.mediaType !== 'video')
 	]);
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
-	const bitsSearchQuery = $derived(bitsSearch.trim().toLowerCase());
 
 	function bitAuthorName(reel: ReelNote) {
 		const profile = profiles.get(reel.pubkey);
 		return profile?.display_name || profile?.name || shortKey(reel.pubkey);
 	}
 
-	function bitMatchesQuery(reel: ReelNote) {
-		if (!bitsSearchQuery) return false;
-		return (
-			captionFor(reel).toLowerCase().includes(bitsSearchQuery) ||
-			reel.content.toLowerCase().includes(bitsSearchQuery) ||
-			bitAuthorName(reel).toLowerCase().includes(bitsSearchQuery)
-		);
-	}
-
-	/** Instant local matches (already loaded bits) + relay results, deduped. */
-	const bitSearchMatches = $derived.by(() => {
-		if (!bitsSearchQuery) return [];
-		const local = exploreReels.filter((reel) => bitMatchesQuery(reel));
-		const localIds = new Set(local.map((reel) => reel.id));
-		const remote = bitsSearchResults.filter(
-			(reel) => !localIds.has(reel.id) && bitMatchesQuery(reel)
-		);
-		return [...local, ...remote];
-	});
-
-	/** Relay search runs debounced while the overlay is open; NIP-50 `search`
-	 *  is optional on relays, so hits are also matched locally afterwards. */
-	async function searchBitsRelays(term: string) {
-		const token = ++relaySearchToken;
-		searchingBits = true;
-		try {
-			const filters = [
-				{ kinds: REEL_MEDIA_KINDS, limit: 80, search: term },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: 120, search: term }
-			] as Filter[];
-			const events = await queryUrls(relays.orderedReadUrls, filters, {
-				maxWait: REELS_PAGE_MAX_WAIT_MS
-			});
-			if (token !== relaySearchToken) return;
+	/** Search runs in a dedicated store (debounce + relay round + dedupe);
+	 *  the page only injects its relay access, reel pipeline, and name helpers.
+	 *  The local pool mirrors `exploreReels` so matching updates as the feed grows. */
+	const search = new BitsSearchStore({
+		relaySearch: (requests) =>
+			queryUrls(relays.orderedReadUrls, requests as Filter[], { maxWait: REELS_PAGE_MAX_WAIT_MS }),
+		eventsToReels: async (events) => {
 			const mediaEvents = events.filter((event) => !!extractReelMedia(event));
-			if (!mediaEvents.length) {
-				bitsSearchResults = [];
-				return;
-			}
-			const found = await buildReelsFromEvents(mediaEvents, new Set());
-			if (token !== relaySearchToken) return;
-			bitsSearchResults = found;
-			profiles.ensure(found.map((reel) => reel.pubkey));
-		} catch {
-			/* Search is best-effort; local matches still render. */
-		} finally {
-			if (token === relaySearchToken) searchingBits = false;
-		}
-	}
-
+			return mediaEvents.length ? await buildReelsFromEvents(mediaEvents, new Set()) : [];
+		},
+		captionOf: captionFor,
+		authorOf: bitAuthorName,
+		profileEnsure: (pubkeys) => profiles.ensure(pubkeys),
+		mediaKinds: REEL_MEDIA_KINDS,
+		textKind: NOSTR_KINDS.TEXT_NOTE
+	});
+	// Mirror the explore pool into the store — instant local matching that
+	// stays fresh as the feed grows/paginates.
 	$effect(() => {
-		if (!bitsSearchOpen) return;
-		const term = bitsSearch.trim();
-		if (!term) {
-			bitsSearchResults = [];
-			return;
-		}
-		const timer = setTimeout(() => void searchBitsRelays(term), 400);
-		return () => clearTimeout(timer);
+		search.setLocalPool(exploreReels);
 	});
 
 	/** Tap a result: splice into the feed if needed, then jump the snap player
 	 *  straight to it (same path the Explore grid uses). */
 	async function openBitResult(reel: ReelNote) {
-		bitsSearchOpen = false;
+		search.close();
 		if (!reels.some((item) => item.id === reel.id)) {
 			applyReels([reel], { append: true });
 			await tick();
@@ -797,10 +754,10 @@
 	 * F fullscreen, ←/→ seek 5s. Ignored while typing in the comments box. */
 	function handleKeydown(event: KeyboardEvent) {
 		// The search overlay owns the keyboard while open; Esc dismisses it.
-		if (bitsSearchOpen) {
+		if (search.open) {
 			if (event.key === 'Escape') {
 				event.preventDefault();
-				bitsSearchOpen = false;
+				search.close();
 			}
 			return;
 		}
@@ -1142,35 +1099,6 @@
 		return reel.reactions.reduce((sum, reaction) => sum + reaction.count, 0);
 	}
 
-	/** Explore tiles start at preload="none" and only pull metadata (the moov
-	 *  atom powering the duration badge) once the tile nears the viewport. On a
-	 *  long grid scroll this skips hundreds of off-screen header requests. */
-	function lazyVideoMetadata(node: HTMLVideoElement) {
-		if (typeof IntersectionObserver === 'undefined') {
-			node.preload = 'metadata';
-			return {};
-		}
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (!entries.some((entry) => entry.isIntersecting)) return;
-				node.preload = 'metadata';
-				observer.disconnect();
-			},
-			{ rootMargin: '300px' }
-		);
-		observer.observe(node);
-		return { destroy: () => observer.disconnect() };
-	}
-
-	function formatDuration(seconds: number) {
-		if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-		const minutes = Math.floor(seconds / 60);
-		const remaining = Math.floor(seconds % 60)
-			.toString()
-			.padStart(2, '0');
-		return `${minutes}:${remaining}`;
-	}
-
 	function handleExploreScroll() {
 		if (!exploreScroller) return;
 		bitsSession.exploreScrollTop = exploreScroller.scrollTop;
@@ -1339,12 +1267,18 @@
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {reelCovered
 										? 'scale-105 blur-2xl saturate-50'
 										: ''}"
-									muted
 									playsinline
 									preload="none"
 									onmouseenter={(event) => {
 										if (reelCovered) return;
-										void (event.currentTarget as HTMLVideoElement).play().catch(() => {});
+										const video = event.currentTarget as HTMLVideoElement;
+										video.muted = false;
+										void video.play().catch(() => {
+											// Browsers may block hover-triggered audio until the user
+											// interacts with the page; keep hover preview working muted.
+											video.muted = true;
+											void video.play().catch(() => {});
+										});
 									}}
 									onmouseleave={(event) => {
 										const video = event.currentTarget as HTMLVideoElement;
@@ -1800,7 +1734,7 @@
 		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
 			<button
 				type="button"
-				onclick={() => (bitsSearchOpen = true)}
+				onclick={() => search.openOverlay()}
 				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
 				aria-label="Search bits"
 			>
@@ -1817,166 +1751,16 @@
 		</div>
 	</div>
 
-	<!-- Bits video search: instant local matches + NIP-50 relay search -->
-	{#if bitsSearchOpen}
-		<div class="fixed inset-0 z-[60] flex flex-col bg-[var(--ui-bg)] text-[var(--ui-text)]">
-			<header
-				class="flex h-16 shrink-0 items-center gap-2 border-b border-[var(--ui-border-muted)] px-4 pt-[max(1rem,env(safe-area-inset-top))] sm:h-14 sm:pt-4"
-			>
-				<div class="relative flex min-w-0 flex-1 items-center">
-					<Icon
-						name="i-lucide-search"
-						class="pointer-events-none absolute left-4 size-4 text-[var(--ui-text-dimmed)]"
-					/>
-					<input
-						type="search"
-						bind:value={bitsSearch}
-						class="bits-search-input h-11 w-full rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] pr-4 pl-11 text-[15px] font-medium text-[var(--ui-text-highlighted)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-[var(--ui-color-primary-500)] focus:bg-[var(--ui-bg)] focus:ring-2 focus:ring-[color-mix(in_oklab,var(--ui-color-primary-500)_20%,transparent)]"
-						placeholder="Search bits — caption or creator…"
-						aria-label="Search bits"
-					/>
-				</div>
-				<button
-					type="button"
-					onclick={() => (bitsSearchOpen = false)}
-					class="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text-highlighted)]"
-					aria-label="Close search"
-				>
-					<Icon name="i-lucide-x" class="size-5" />
-				</button>
-			</header>
-
-			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-				{#if !bitsSearchQuery}
-					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
-						<div
-							class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
-						>
-							<Icon name="i-lucide-video" class="size-7" />
-						</div>
-						<div>
-							<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">Search bits</p>
-							<p class="mt-1 max-w-xs text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-								Find short videos and pictures by caption or creator — across your loaded feed and
-								relays.
-							</p>
-						</div>
-					</div>
-				{:else if bitSearchMatches.length}
-					<p
-						class="mb-3 px-1 text-[11px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
-					>
-						{bitSearchMatches.length} bit{bitSearchMatches.length === 1 ? '' : 's'}
-						{#if searchingBits}<span class="ml-1 normal-case">· searching relays…</span>{/if}
-					</p>
-					<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-						{#each bitSearchMatches as reel (reel.id)}
-							{@const profile = profiles.get(reel.pubkey)}
-							{@const name = bitAuthorName(reel)}
-							<button
-								type="button"
-								onclick={() => void openBitResult(reel)}
-								class="group relative aspect-[9/16] overflow-hidden rounded-xl bg-black text-left"
-								aria-label="Open bit by {name}"
-							>
-								{#if reel.mediaType === 'video'}
-									<video
-										use:lazyVideoMetadata
-										src={reel.mediaUrl}
-										class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
-										muted
-										playsinline
-										preload="none"
-										onloadedmetadata={(event) => {
-											const video = event.currentTarget as HTMLVideoElement;
-											if (Number.isFinite(video.duration))
-												gridVideoDurations = {
-													...gridVideoDurations,
-													[reel.id]: video.duration
-												};
-										}}
-									></video>
-									{#if gridVideoDurations[reel.id]}
-										<span
-											class="absolute top-1.5 right-1.5 rounded-md bg-black/60 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white tabular-nums backdrop-blur"
-										>
-											{formatDuration(gridVideoDurations[reel.id])}
-										</span>
-									{/if}
-								{:else}
-									<img
-										src={reel.mediaUrl}
-										alt={captionFor(reel) || 'Bit picture'}
-										class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
-										loading="lazy"
-									/>
-								{/if}
-								<span
-									class="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-gradient-to-t from-black/85 via-black/30 to-transparent p-2 pt-8 text-white"
-								>
-									{#if captionFor(reel)}
-										<span class="line-clamp-2 text-[11px] leading-tight font-semibold">
-											{captionFor(reel)}
-										</span>
-									{/if}
-									<span class="flex min-w-0 items-center gap-1">
-										<Avatar
-											pubkey={reel.pubkey}
-											{name}
-											picture={profile?.picture}
-											size={16}
-											shape="hex"
-										/>
-										<span class="truncate text-[10px] font-bold">{name}</span>
-									</span>
-									<span class="flex items-center gap-2 text-[10px] font-bold">
-										<span class="inline-flex items-center gap-0.5">
-											<Icon name="i-lucide-heart" class="size-3 fill-current" />
-											{reelLikes(reel)}
-										</span>
-										{#if reel.zapCount}
-											<span class="inline-flex items-center gap-0.5">
-												<Icon name="i-lucide-zap" class="size-3 fill-current" />
-												{reel.zapCount}
-											</span>
-										{/if}
-									</span>
-								</span>
-							</button>
-						{/each}
-					</div>
-					{#if searchingBits}
-						<div
-							class="mt-4 flex items-center justify-center gap-2 text-[12px] font-semibold text-[var(--ui-text-muted)]"
-						>
-							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-							Searching relays for older bits…
-						</div>
-					{/if}
-				{:else if searchingBits}
-					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3">
-						<div
-							class="size-8 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-[var(--ui-color-primary-500)]"
-						></div>
-						<p class="text-[13px] font-semibold text-[var(--ui-text-muted)]">Searching relays…</p>
-					</div>
-				{:else}
-					<div class="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
-						<div
-							class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
-						>
-							<Icon name="i-lucide-search-x" class="size-7" />
-						</div>
-						<div>
-							<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">No bits found</p>
-							<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-								Nothing matches “{bitsSearch.trim()}” in your feed or relays.
-							</p>
-						</div>
-					</div>
-				{/if}
-			</div>
-		</div>
+	<!-- Bits video search: instant local matches + NIP-50 relay search (store-driven) -->
+	{#if search.open}
+		<BitsSearch
+			{search}
+			profileFor={(pubkey) => profiles.get(pubkey)}
+			{gridVideoDurations}
+			onDuration={(reelId, seconds) =>
+				(gridVideoDurations = { ...gridVideoDurations, [reelId]: seconds })}
+			onSelect={(reel) => void openBitResult(reel)}
+		/>
 	{/if}
 
 	{#if commentReel}

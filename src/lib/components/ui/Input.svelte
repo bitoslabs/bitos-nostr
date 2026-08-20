@@ -6,17 +6,23 @@
 
 	let {
 		class: cls,
+		inputClass,
 		icon,
 		value = $bindable(),
 		trailing,
 		size = 'md',
+		ref = $bindable<HTMLInputElement | null>(null),
 		...rest
 	}: {
 		class?: string;
+		/** Extra classes for the inner <input> (text size, font-mono, …). */
+		inputClass?: string;
 		icon?: string;
 		value?: string | number;
 		trailing?: Snippet;
 		size?: 'sm' | 'md';
+		/** Bindable reference to the inner <input> element (focus, select…). */
+		ref?: HTMLInputElement | null;
 	} & Omit<HTMLInputAttributes, 'size'> = $props();
 </script>
 
@@ -29,8 +35,12 @@
 >
 	{#if icon}<Icon name={icon} class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />{/if}
 	<input
+		bind:this={ref}
 		bind:value
-		class="min-w-0 flex-1 bg-transparent text-[13.5px] text-[var(--ui-text)] placeholder:text-[var(--ui-text-dimmed)] focus:outline-none"
+		class={cn(
+			'min-w-0 flex-1 bg-transparent text-[13.5px] text-[var(--ui-text)] placeholder:text-[var(--ui-text-dimmed)] focus:outline-none',
+			inputClass
+		)}
 		{...rest}
 	/>
 	{#if trailing}
