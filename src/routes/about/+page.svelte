@@ -75,7 +75,7 @@
 			Open BitOS
 		</a>
 		<a
-			href="https://github.com/bitoslabs/bitos-svelte"
+			href="https://github.com/bitoslabs/bitos-nostr"
 			target="_blank"
 			rel="noreferrer"
 			class="inline-flex items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-5 py-2.5 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500/40 hover:text-primary-500"
@@ -148,7 +148,7 @@
 			<p class="mt-2 text-[12px] text-[var(--ui-text-dimmed)]">Public launch: {launchDate}</p>
 		</div>
 		<a
-			href="https://github.com/bitoslabs/bitos-svelte"
+			href="https://github.com/bitoslabs/bitos-nostr"
 			target="_blank"
 			rel="noreferrer"
 			class="inline-flex shrink-0 items-center gap-2 rounded-full bg-primary-500 px-4 py-2 text-[12.5px] font-bold text-white transition hover:bg-primary-600"

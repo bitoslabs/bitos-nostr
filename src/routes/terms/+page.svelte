@@ -156,7 +156,7 @@
 <p class="mt-2.5 text-[14px] leading-relaxed text-[var(--ui-text-muted)]">
 	BitOS is an open-source project. For questions, bug reports, or policy feedback, visit the
 	<a
-		href="https://github.com/bitoslabs/bitos-svelte"
+		href="https://github.com/bitoslabs/bitos-nostr"
 		target="_blank"
 		rel="noreferrer"
 		class="font-semibold text-primary-500 hover:underline">GitHub repository</a

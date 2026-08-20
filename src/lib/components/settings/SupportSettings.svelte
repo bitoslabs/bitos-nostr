@@ -83,7 +83,7 @@
 		},
 		{
 			label: 'Source code',
-			href: 'https://github.com/bitoslabs/bitos-svelte',
+			href: 'https://github.com/bitoslabs/bitos-nostr',
 			icon: 'i-lucide-github',
 			color: 'text-[var(--ui-text-muted)]',
 			external: true,
@@ -238,7 +238,7 @@
 		</p>
 		<div class="relative mt-5 flex flex-wrap gap-2">
 			<a
-				href="https://github.com/bitoslabs/bitos-svelte"
+				href="https://github.com/bitoslabs/bitos-nostr"
 				target="_blank"
 				rel="noreferrer"
 				class="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-[12px] font-bold backdrop-blur transition hover:bg-white/25"
