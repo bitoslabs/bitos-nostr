@@ -82,6 +82,16 @@ export function formatCompact(n: number): string {
 	return Math.round(n).toString();
 }
 
+/** Media badge duration: 75 → "1:15", 3600 → "60:00" (no hours unit). */
+export function formatDuration(seconds: number): string {
+	if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+	const minutes = Math.floor(seconds / 60);
+	const remaining = Math.floor(seconds % 60)
+		.toString()
+		.padStart(2, '0');
+	return `${minutes}:${remaining}`;
+}
+
 function trim(value: number): string {
 	return value.toFixed(1).replace(/\.0$/, '');
 }

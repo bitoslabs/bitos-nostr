@@ -21,7 +21,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
-	import { shortKey, timeAgo } from '$lib/utils/format';
+	import { shortKey, timeAgo, formatDuration } from '$lib/utils/format';
 
 	type TrendTag = { tag: string; count: number };
 	type Creator = { pubkey: string; count: number; latest: number };
@@ -127,15 +127,6 @@
 	let mediaDialogOpen = $state(false);
 	/** Video durations (item.id → seconds) for the media-grid badges. */
 	let videoDurations = $state<Record<string, number>>({});
-
-	function formatDuration(seconds: number) {
-		if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-		const minutes = Math.floor(seconds / 60);
-		const remaining = Math.floor(seconds % 60)
-			.toString()
-			.padStart(2, '0');
-		return `${minutes}:${remaining}`;
-	}
 	let mediaIndex = $state(0);
 	let zoomOpen = $state(false);
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
