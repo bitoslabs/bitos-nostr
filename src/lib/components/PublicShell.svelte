@@ -185,7 +185,7 @@
 						<ul class="mt-3 space-y-2.5">
 							<li>
 								<a
-									href="https://github.com/bitoslabs/bitos-svelte"
+									href="https://github.com/bitoslabs/bitos-nostr"
 									target="_blank"
 									rel="noreferrer"
 									class="inline-flex items-center gap-1 text-[var(--ui-text-muted)] transition hover:text-primary-500"
