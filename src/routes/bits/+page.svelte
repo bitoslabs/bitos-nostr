@@ -1,12 +1,19 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { noteEncode } from 'nostr-tools/nip19';
+	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
 	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import BitsSearch from '$lib/components/bits/BitsSearch.svelte';
+	import Popover from '$lib/components/ui/Popover.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
+	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
+	import ReportDialog from '$lib/components/ui/ReportDialog.svelte';
+	import MentionLink from '$lib/components/feed/MentionLink.svelte';
+	import NostrEventPreview from '$lib/components/feed/NostrEventPreview.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
 	import CommentBody from '$lib/components/feed/CommentBody.svelte';
@@ -23,9 +30,12 @@
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
+	import { interactionProfile, extractTags } from '$lib/algorithm';
+	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo, formatDuration } from '$lib/utils/format';
 	import { lazyVideoMetadata } from '$lib/utils/media';
+	import { isEventReference, parseContent } from '$lib/utils/note-content';
 	import { hasNip05 } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
@@ -146,6 +156,14 @@
 	let zapOpen = $state(false);
 	let optimisticZapSats = $state<Record<string, number>>({});
 	let bursts = $state<Burst[]>([]);
+	// --- Reel overflow menu (mirrors PostCard's "…" menu) ---
+	let rawReelOpen = $state(false);
+	let rawReelJson = $state('');
+	let reportReelOpen = $state(false);
+	let reportReelTarget = $state<ReelNote | null>(null);
+	let deleteReelOpen = $state(false);
+	let pendingDeleteReel = $state<ReelNote | null>(null);
+	let deletingReel = $state(false);
 	const rankedReels = $derived.by(() => {
 		if (!reels.length) return reels;
 		if (!algorithmPreferences.isEnabled('reels')) return reels;
@@ -297,6 +315,107 @@
 				caption = caption.split(core).join(' ');
 		}
 		return caption.replace(/\s+/g, ' ').trim();
+	}
+
+	/** Caption tokens (mentions / hashtags / links) rendered like a feed card
+	 *  body — the caption on the reel reads exactly like note content there. */
+	function captionTokens(reel: ReelNote) {
+		return parseContent(captionFor(reel));
+	}
+
+	function reelMenuId(reel: ReelNote) {
+		return `bit-menu:${reel.id}`;
+	}
+
+	async function copyText(value: string, label: string) {
+		try {
+			await navigator.clipboard.writeText(value);
+			toasts.success(`${label} copied`);
+		} catch {
+			toasts.error(`Could not copy ${label.toLowerCase()}`);
+		} finally {
+			popovers.close();
+		}
+	}
+
+	function showRawReel(reel: ReelNote) {
+		popovers.close();
+		rawReelJson = JSON.stringify(
+			{
+				id: reel.id,
+				pubkey: reel.pubkey,
+				created_at: reel.createdAt,
+				kind: 'media',
+				tags: reel.tags,
+				content: reel.content,
+				zapTotalSats: reel.zapTotalSats
+			},
+			null,
+			2
+		);
+		rawReelOpen = true;
+	}
+
+	function notInterestedIn(reel: ReelNote) {
+		interactionProfile.dismissNote(reel.id);
+		feed.hideNote(reel.id);
+		removeReel(reel);
+		toasts.success("Got it — we'll show less like this");
+		popovers.close();
+	}
+
+	function toggleMuteAuthorOf(reel: ReelNote, name: string) {
+		const muted = interactionProfile.toggleMutedAuthor(reel.pubkey);
+		toasts.info(muted ? `Showing less from ${name}` : `Showing more from ${name}`);
+		popovers.close();
+	}
+
+	function toggleMuteTag(tag: string) {
+		const muted = interactionProfile.toggleMutedTag(tag);
+		toasts.info(muted ? `Showing less about #${tag}` : `Showing more about #${tag}`);
+		popovers.close();
+	}
+
+	function muteAuthorOf(reel: ReelNote, name: string) {
+		feed.muteAuthor(reel.pubkey);
+		removeReel(reel);
+		toasts.info(`Muted ${name}`);
+		popovers.close();
+	}
+
+	function blockAuthorOf(reel: ReelNote, name: string) {
+		if (feed.blockAuthor(reel.pubkey)) toasts.success(`Blocked ${name}`);
+		else toasts.info(`${name} is already blocked`);
+		removeReel(reel);
+		popovers.close();
+	}
+
+	/** Drops the bit everywhere on the page: player lists, cache, session. */
+	function removeReel(reel: ReelNote) {
+		reels = reels.filter((item) => item.id !== reel.id);
+		renderedReelCount = Math.min(renderedReelCount, Math.max(INITIAL_RENDERED_REELS, reels.length));
+		revealedSensitiveReels = Object.fromEntries(
+			Object.entries(revealedSensitiveReels).filter(([id]) => id !== reel.id)
+		);
+		delete gridVideoDurations[reel.id];
+		exploreVisible = Math.min(exploreVisible, exploreReels.length);
+	}
+
+	async function deleteReel() {
+		const reel = pendingDeleteReel;
+		if (!reel || deletingReel || reel.pubkey !== identity.current?.pk) return;
+		deletingReel = true;
+		try {
+			await feed.deleteNote(reel);
+			pendingDeleteReel = null;
+			deleteReelOpen = false;
+			removeReel(reel);
+			toasts.success('Deletion request published');
+		} catch (e) {
+			toasts.error((e as Error).message || 'Could not publish deletion request');
+		} finally {
+			deletingReel = false;
+		}
 	}
 
 	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
@@ -1613,18 +1732,173 @@
 											<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-white/85" />
 										{/if}
 									</a>
-									<p class="flex items-center gap-1.5 text-[11px] opacity-80">
-										<span>{timeAgo(reel.createdAt)}</span>
-										{#if reel.source === 'discovery'}
-											<span>· discovery</span>{/if}
-										{#if reel.pow}
-											<PowBadge bits={reel.pow} micro id={reel.id} />
-										{/if}
-									</p>
+									<div class="flex min-w-0 items-center gap-1.5">
+										<p class="flex shrink-0 items-center gap-1.5 text-[11px] opacity-80">
+											<span>{timeAgo(reel.createdAt)}</span>
+											{#if reel.source === 'discovery'}
+												<span>· discovery</span>{/if}
+											{#if reel.pow}
+												<PowBadge bits={reel.pow} micro id={reel.id} />
+											{/if}
+										</p>
+										<!-- Same overflow menu as a feed post card, scoped to this bit. -->
+										<Popover
+											id={reelMenuId(reel)}
+											placement="top-start"
+											width="auto"
+											class="w-60"
+											label="Bit actions"
+											triggerClass="grid size-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/15 hover:text-white"
+											triggerActiveClass="bg-white/15 text-white"
+										>
+											{#snippet trigger()}
+												<Icon name="i-lucide-ellipsis" class="size-4" />
+											{/snippet}
+
+											<MenuItem href={`/messages?to=${reel.pubkey}`} icon="i-lucide-message-circle">
+												Message author
+											</MenuItem>
+											<MenuItem
+												icon={bookmarks.has(reel.id) ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
+												onclick={() => {
+													const saved = bookmarks.toggle(reel);
+													toasts.success(saved ? 'Saved' : 'Removed from saved');
+													popovers.close();
+												}}
+											>
+												{bookmarks.has(reel.id) ? 'Unsave bit' : 'Save bit'}
+											</MenuItem>
+											<MenuItem
+												icon="i-lucide-link"
+												onclick={() => copyText(`nostr:${noteEncode(reel.id)}`, 'Note link')}
+											>
+												Copy note link
+											</MenuItem>
+											<MenuItem
+												icon="i-lucide-fingerprint"
+												onclick={() => copyText(reel.id, 'Note ID')}
+											>
+												Copy note ID
+											</MenuItem>
+											<MenuItem
+												icon="i-lucide-text"
+												onclick={() => copyText(reel.content, 'Note text')}
+											>
+												Copy note text
+											</MenuItem>
+											<MenuItem
+												icon="i-lucide-user-round"
+												onclick={() => copyText(npubEncode(reel.pubkey), 'Author npub')}
+											>
+												Copy author npub
+											</MenuItem>
+											<MenuItem icon="i-lucide-braces" onclick={() => showRawReel(reel)}>
+												View raw note
+											</MenuItem>
+
+											<MenuDivider />
+
+											<MenuItem icon="i-lucide-thumbs-down" onclick={() => notInterestedIn(reel)}>
+												Not interested
+											</MenuItem>
+											{#if reel.pubkey !== identity.current?.pk}
+												<MenuItem
+													icon={interactionProfile.isAuthorMuted(reel.pubkey)
+														? 'i-lucide-eye'
+														: 'i-lucide-eye-off'}
+													onclick={() => toggleMuteAuthorOf(reel, name)}
+												>
+													{interactionProfile.isAuthorMuted(reel.pubkey)
+														? `Show more from ${name}`
+														: `Show less from ${name}`}
+												</MenuItem>
+											{/if}
+											{#each extractTags(reel).slice(0, 3) as tag (tag)}
+												{#if interactionProfile.isTagMuted(tag)}
+													<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
+														Show more about #{tag}
+													</MenuItem>
+												{:else}
+													<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
+														Show less about #{tag}
+													</MenuItem>
+												{/if}
+											{/each}
+
+											<MenuDivider />
+
+											{#if reel.pubkey === identity.current?.pk}
+												<MenuItem
+													tone="danger"
+													icon="i-lucide-trash-2"
+													onclick={() => {
+														popovers.close();
+														pendingDeleteReel = reel;
+														deleteReelOpen = true;
+													}}
+												>
+													Delete bit
+												</MenuItem>
+											{:else}
+												<MenuItem icon="i-lucide-volume-x" onclick={() => muteAuthorOf(reel, name)}>
+													Mute author
+												</MenuItem>
+												<MenuItem
+													tone="danger"
+													icon="i-lucide-ban"
+													onclick={() => blockAuthorOf(reel, name)}
+												>
+													Block author
+												</MenuItem>
+												<MenuItem
+													tone="danger"
+													icon="i-lucide-flag"
+													onclick={() => {
+														popovers.close();
+														reportReelTarget = reel;
+														reportReelOpen = true;
+													}}
+												>
+													Report bit
+												</MenuItem>
+											{/if}
+										</Popover>
+									</div>
 								</div>
 							</div>
 							{#if captionFor(reel)}
-								<p class="line-clamp-4 text-[13.5px] leading-relaxed">{captionFor(reel)}</p>
+								<p class="line-clamp-4 text-[13.5px] leading-relaxed">
+									{#each captionTokens(reel) as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
+										{#if token.type === 'text'}
+											{token.value}
+										{:else if token.type === 'hashtag'}
+											<a
+												href={`/?tag=${encodeURIComponent(token.tag)}`}
+												class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
+											>
+												{token.value}
+											</a>
+										{:else if token.type === 'nostr'}
+											{#if isEventReference(token.value)}
+												<NostrEventPreview value={token.value} compact />
+											{:else}
+												<MentionLink
+													value={token.value}
+													class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
+												/>
+											{/if}
+										{:else}
+											<a
+												href={token.value}
+												target="_blank"
+												rel="noreferrer"
+												class="font-semibold text-accent-400 transition hover:text-accent-300 hover:underline"
+											>
+												{token.host}
+											</a>
+										{/if}
+									{/each}
+								</p>
 							{/if}
 							{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
 								<div
@@ -2031,4 +2305,61 @@
 			onClose={() => (zapCommentTarget = null)}
 		/>
 	{/if}
+
+	<!-- Raw note viewer (overflow menu → “View raw note”) -->
+	<Dialog bind:open={rawReelOpen} title="Raw note">
+		<pre
+			class="max-h-[50vh] overflow-auto rounded-xl bg-[var(--ui-bg-muted)] p-4 font-mono text-[12px] leading-relaxed text-[var(--ui-text)]"><code
+				>{rawReelJson}</code
+			></pre>
+		{#snippet footer()}
+			<Button
+				color="neutral"
+				onclick={() => void copyText(rawReelJson, 'Raw note')}
+				icon="i-lucide-copy"
+			>
+				Copy JSON
+			</Button>
+			<Button color="primary" onclick={() => (rawReelOpen = false)}>Close</Button>
+		{/snippet}
+	</Dialog>
+
+	<!-- NIP-56 report (overflow menu → “Report bit”) -->
+	{#if reportReelTarget}
+		<ReportDialog
+			bind:open={reportReelOpen}
+			pubkey={reportReelTarget.pubkey}
+			noteId={reportReelTarget.id}
+			targetLabel={captionFor(reportReelTarget).slice(0, 60) || 'bit'}
+		/>
+	{/if}
+
+	<!-- Delete own bit (overflow menu → “Delete bit”) -->
+	<Dialog bind:open={deleteReelOpen} title="Delete bit">
+		<div class="space-y-2">
+			<p class="text-[14px] font-semibold text-[var(--ui-text)]">Delete this bit?</p>
+			<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
+				BitOS will publish a delete event to your relays and remove the bit locally.
+			</p>
+		</div>
+		{#snippet footer()}
+			<Button
+				color="neutral"
+				onclick={() => {
+					pendingDeleteReel = null;
+					deleteReelOpen = false;
+				}}
+				disabled={deletingReel}
+			>
+				Cancel
+			</Button>
+			<Button color="error" onclick={deleteReel} disabled={deletingReel}>
+				<Icon
+					name={deletingReel ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
+					class="size-4 {deletingReel ? 'animate-spin' : ''}"
+				/>
+				{deletingReel ? 'Deleting' : 'Delete'}
+			</Button>
+		{/snippet}
+	</Dialog>
 </div>

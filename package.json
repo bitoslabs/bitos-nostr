@@ -1,7 +1,7 @@
 {
 	"name": "bitos-nostr",
 	"private": true,
-	"version": "0.4.17",
+	"version": "0.4.18",
 	"type": "module",
 	"description": "BitOS Nostr client - Decentralized social media platform",
 	"scripts": {

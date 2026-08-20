@@ -97,6 +97,7 @@
 	role="dialog"
 	aria-modal="true"
 	aria-label="Search bits"
+	tabindex="-1"
 	onkeydown={handleKeydown}
 	onclick={(event) => {
 		if (event.target === event.currentTarget) search.close();
