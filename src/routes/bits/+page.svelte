@@ -562,7 +562,13 @@
 		const activity = reelIds.length
 			? await queryPrimaryFirst([
 					{
-						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.ZAP,
+							NOSTR_KINDS.TEXT_NOTE
+						],
 						'#e': reelIds,
 						limit: 500
 					}
@@ -1258,6 +1264,43 @@
 		});
 	}
 
+	// --- Deep link: /bits#reel=<event id> opens that bit in the player -------
+	// “View in Bits” in the post-success toast lands here. The just-published
+	// event may take a moment to come back from the relays, so the pending id
+	// waits (bounded) for any reels refresh to deliver it.
+	let pendingDeepLinkId = $state('');
+	let deepLinkTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	function deepLinkReelIdFromHash() {
+		const match = /^#reel=([0-9a-f]{64})$/i.exec(window.location.hash);
+		return match ? match[1].toLowerCase() : '';
+	}
+
+	function handleDeepLinkHash() {
+		const id = deepLinkReelIdFromHash();
+		if (!id || pendingDeepLinkId === id) return;
+		pendingDeepLinkId = id;
+		clearTimeout(deepLinkTimeout);
+		deepLinkTimeout = setTimeout(() => {
+			if (pendingDeepLinkId) {
+				pendingDeepLinkId = '';
+				toasts.info('Your bit is still syncing across relays — check back in a moment.');
+			}
+		}, 10_000);
+	}
+
+	$effect(() => {
+		const id = pendingDeepLinkId;
+		if (!id || loading) return;
+		const reel = reels.find((item) => item.id === id);
+		if (!reel) return;
+		pendingDeepLinkId = '';
+		clearTimeout(deepLinkTimeout);
+		void openFromExplore(reel).then(() => {
+			history.replaceState(null, '', window.location.pathname + window.location.search);
+		});
+	});
+
 	// Mirror UI state into the session so a route switch and return restores
 	// exactly this view. (reels/cursor mirror imperatively in applyReels —
 	// async relay loads can land after this component unmounts.)
@@ -1278,6 +1321,7 @@
 	});
 
 	onMount(() => {
+		handleDeepLinkHash();
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
 		// The former cache could retain 120 items. Drop it once after moving to
@@ -1336,6 +1380,7 @@
 
 		return () => {
 			document.removeEventListener('fullscreenchange', handleFullscreenChange);
+			clearTimeout(deepLinkTimeout);
 			visibilityObserver?.disconnect();
 			visibilityObserver = null;
 			reelVideos.clear();
@@ -1347,7 +1392,7 @@
 
 <svelte:head><title>Bits · BitOS</title></svelte:head>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onhashchange={handleDeepLinkHash} />
 
 <div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	{#if loading}

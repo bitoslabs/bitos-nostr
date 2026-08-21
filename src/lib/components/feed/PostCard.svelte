@@ -28,6 +28,7 @@
 	import { hasNip05 } from '$lib/utils/verification';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
+	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import { interactionProfile, extractTags } from '$lib/algorithm';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
@@ -111,6 +112,24 @@
 				: 'Zap'
 	);
 	const menuId = $derived(`post-menu:${note.id}`);
+	/** Which of the user's followed hashtags matched this note (max 2 for the label). */
+	const followedTagMatches = $derived.by(() => {
+		if (note.source !== 'followed-tag') return [];
+		const followed = hashtagFollows.tags;
+		const matches: string[] = [];
+		for (const tag of note.tags) {
+			const name = tag[0] === 't' ? (tag[1] ?? '').toLowerCase() : '';
+			if (name && followed.includes(name) && !matches.includes(name)) matches.push(name);
+		}
+		return matches.slice(0, 2);
+	});
+	const followedTagLabel = $derived(
+		followedTagMatches.length
+			? followedTagMatches.length === 1
+				? `following #${followedTagMatches[0]}`
+				: `following #${followedTagMatches[0]} +${followedTagMatches.length - 1}`
+			: 'following a hashtag'
+	);
 	let reportOpen = $state(false);
 	const noteLink = $derived(`nostr:${noteEncode(note.id)}`);
 	const authorNpub = $derived(npubEncode(note.pubkey));
@@ -888,6 +907,14 @@
 						<span
 							class="shrink-0 text-primary-500"
 							title="Found through an optional discovery relay">discovery</span
+						>
+					{/if}
+					{#if followedTagMatches.length || note.source === 'followed-tag'}
+						<span>·</span>
+						<span
+							class="shrink-0 text-primary-500"
+							title="In your feed because you follow this hashtag"
+							>{followedTagLabel}</span
 						>
 					{/if}
 				</p>

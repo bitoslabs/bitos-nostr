@@ -16,12 +16,23 @@
 	const MAX_QUESTION = 280;
 	const MAX_OPTION = 80;
 
+	type Duration = { label: string; hours: number };
+	const DURATIONS: Duration[] = [
+		{ label: '1 hour', hours: 1 },
+		{ label: '1 day', hours: 24 },
+		{ label: '3 days', hours: 72 },
+		{ label: '1 week', hours: 168 }
+	];
+	const openEnded: Duration = { label: 'No deadline', hours: 0 };
+	const DURATION_CHOICES: Duration[] = [...DURATIONS, openEnded];
+
 	let question = $state('');
 	let options = $state<string[]>(['', '']);
 	let posting = $state(false);
 	let mining = $state(false);
 	let showPow = $state(false);
 	let pow = $state(0);
+	let duration = $state<Duration>(DURATIONS[1]);
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? profiles.get(me.pk) : undefined);
@@ -54,6 +65,7 @@
 		mining = false;
 		showPow = false;
 		pow = 0;
+		duration = DURATIONS[1];
 	}
 
 	function close() {
@@ -68,7 +80,11 @@
 		try {
 			// Yield once so the mining state is visible before the worker starts.
 			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
-			await feed.postPoll(question, cleanOptions, { pow: showPow ? pow : 0 });
+			const endsAt =
+				duration.hours > 0
+					? Math.floor(Date.now() / 1000) + duration.hours * 3600
+				: undefined;
+			await feed.postPoll(question, cleanOptions, { pow: showPow ? pow : 0, endsAt });
 			toasts.success('Poll posted to Nostr');
 			onposted();
 			close();
@@ -136,7 +152,7 @@
 			<p class="text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase">
 				Choices
 			</p>
-			{#each options as _, i (i)}
+			{#each options as option, i (i)}
 				<div class="flex items-center gap-2">
 					<div
 						class="grid size-6 shrink-0 place-items-center rounded-full bg-primary-500/15 text-[11px] font-bold text-primary-500"
@@ -147,7 +163,7 @@
 						bind:value={options[i]}
 						type="text"
 						maxlength={MAX_OPTION}
-						placeholder={`Option ${i + 1}`}
+						placeholder={option ? `Option ${i + 1}` : `Option ${i + 1}`}
 						class="h-10 flex-1 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 text-[13.5px] text-[var(--ui-text)] transition outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-primary-500 focus:bg-[var(--surface-bg)] focus:ring-2 focus:ring-primary-500/20"
 					/>
 					{#if options.length > MIN_OPTIONS}
@@ -181,6 +197,34 @@
 		<p class="text-[11px] text-[var(--ui-text-dimmed)]">
 			Votes are published as Nostr reactions and are public. One vote per account (latest wins).
 		</p>
+
+		<!-- Poll duration -->
+		<div class="space-y-2">
+			<p class="text-[12px] font-bold tracking-wide text-[var(--ui-text-muted)] uppercase">
+				Duration
+			</p>
+			<div class="flex flex-wrap gap-1.5" role="group" aria-label="Poll duration">
+				{#each DURATION_CHOICES as choice (choice.label)}
+					<button
+						type="button"
+						onclick={() => (duration = choice)}
+						aria-pressed={duration.label === choice.label}
+						class="rounded-lg px-3 py-1.5 text-[12px] font-bold transition {duration.label === choice.label
+							? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
+							: 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-muted)] hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]'}"
+					>
+						{choice.label}
+					</button>
+				{/each}
+			</div>
+			{#if duration.hours > 0}
+				<p class="text-[11px] text-[var(--ui-text-dimmed)]">
+					Closes {new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
+						new Date(Date.now() + duration.hours * 3_600_000)
+					)}
+				</p>
+			{/if}
+		</div>
 
 		<div class="rounded-xl border border-primary-500/15 bg-primary-500/5 p-3">
 			<div class="flex items-center justify-between gap-3">

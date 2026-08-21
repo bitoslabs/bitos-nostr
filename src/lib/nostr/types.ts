@@ -24,6 +24,14 @@ export interface PollOption {
 	label: string;
 }
 
+/** A voter entry for a poll (latest vote per pubkey wins). */
+export interface PollVoter {
+	pubkey: string;
+	optionId: string;
+	/** Unix seconds when this vote was cast. */
+	at: number;
+}
+
 /** Aggregated poll data attached to a kind-1 note. */
 export interface PollData {
 	options: PollOption[];
@@ -34,7 +42,12 @@ export interface PollData {
 	myVote?: string;
 	/** Unix seconds at which the poll closed (optional). */
 	closedAt?: number;
+	/** Most recent voters, newest first. Capped for feed payloads. */
+	voters?: PollVoter[];
 }
+
+/** Max voter entries kept per poll for the "voters" detail list. */
+export const MAX_POLL_VOTERS = 100;
 
 /** A kind 1 text note ready for the feed UI. */
 export interface FeedNote {
@@ -52,8 +65,9 @@ export interface FeedNote {
 	zapCount: number;
 	zapTotalSats: number;
 	/** Where this note entered the current view. Discovery notes are read-only
-	 * candidates from curated relays outside the user's configured relay list. */
-	source?: 'configured' | 'discovery';
+	 * candidates from curated relays outside the user's configured relay list;
+	 * followed-tag notes were fetched because they match a followed hashtag. */
+	source?: 'configured' | 'discovery' | 'followed-tag';
 	/** Original signed event, when available for protocol actions such as repost. */
 	raw?: Event;
 	/** Present when this note is a poll (kind 1 with `poll_option` tags). */
@@ -209,6 +223,8 @@ export const NOSTR_KINDS = {
 	ZAP: 9735,
 	/** NIP-53 live streaming activity (used by zap.stream and other clients). */
 	LIVE_ACTIVITY: 30311,
+	/** NIP-51 interest set (d=interest) — followed hashtags. */
+	INTEREST_SET: 30015,
 	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
 	STORY_STATUS: 30315,

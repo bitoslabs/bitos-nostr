@@ -19,6 +19,7 @@
 	import type { FeedNote } from '$lib/nostr/types';
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { shortKey, timeAgo, formatDuration } from '$lib/utils/format';
@@ -1319,11 +1320,38 @@
 				{#if activeTrendTags.length}
 					<div class="flex flex-wrap gap-2">
 						{#each visibleTrendTags as item (item.tag)}
-							<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
-								<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
-								#{item.tag}
-								<span class="font-normal text-[var(--ui-text-dimmed)]">{item.count}</span>
-							</a>
+							<div class="flex items-center gap-1">
+								<a href={`/?tag=${encodeURIComponent(item.tag)}`} class="trend-tag">
+									<Icon name="i-lucide-hash" class="size-3.5 text-primary-500" />
+									#{item.tag}
+									<span class="font-normal text-[var(--ui-text-dimmed)]">{item.count}</span>
+								</a>
+								<button
+									type="button"
+									onclick={() => {
+										const followed = hashtagFollows.toggle(item.tag);
+										if (followed)
+											toasts.success(`Following #${item.tag} — its notes now appear in your feeds`);
+										else toasts.info(`Unfollowed #${item.tag}`);
+									}}
+									class="grid size-6 shrink-0 place-items-center rounded-full transition {hashtagFollows.has(
+											item.tag
+										)
+											? 'bg-primary-500/15 text-primary-600'
+											: 'text-[var(--ui-text-dimmed)] hover:bg-primary-500/10 hover:text-primary-600'}"
+									aria-label={hashtagFollows.has(item.tag)
+										? `Unfollow #${item.tag}`
+										: `Follow #${item.tag}`}
+									title={hashtagFollows.has(item.tag)
+										? `Unfollow #${item.tag} (synced via NIP-51)`
+										: `Follow #${item.tag} (synced via NIP-51)`}
+								>
+									<Icon
+											name={hashtagFollows.has(item.tag) ? 'i-lucide-check' : 'i-lucide-plus'}
+											class="size-3.5"
+										/>
+								</button>
+							</div>
 						{/each}
 					</div>
 					{#if visibleTrendTags.length < activeTrendTags.length || (!hasActiveRelaySearch && hasMoreNotes)}

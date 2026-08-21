@@ -136,9 +136,10 @@
 		}>
 	) {
 		const seen = new SvelteSet<string>();
+		const feedKinds: number[] = [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL];
 		return events
 			.filter((event) => {
-				if (![NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL].includes(event.kind) || seen.has(event.id)) return false;
+				if (!feedKinds.includes(event.kind) || seen.has(event.id)) return false;
 				seen.add(event.id);
 				return true;
 			})
@@ -151,7 +152,7 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
 				])
 			: [];
 		return {
@@ -221,7 +222,7 @@
 		const ordered = ids.map((id) => notesById.get(id)).filter((note): note is FeedNote => !!note);
 		const activity = await queryPrimaryFirst([
 			{
-				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
+				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
 				'#e': ordered.map((note) => note.id),
 				limit: 500
 			}
@@ -264,7 +265,7 @@
 				.filter((note): note is FeedNote => !!note);
 			const activity = await queryPrimaryFirst([
 				{
-					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
+					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
 					'#e': ordered.map((note) => note.id),
 					limit: 500
 				}

@@ -6,11 +6,11 @@ type FeedNoteEvent = Pick<
 		id: string;
 		pubkey: string;
 		content: string;
-	created_at: number;
-	tags: string[][];
-	sig?: string;
+		created_at: number;
+		tags: string[][];
+		sig?: string;
 	},
-	'id' | 'pubkey' | 'content' | 'created_at' | 'tags'
+	'id' | 'pubkey' | 'content' | 'created_at' | 'tags' | 'sig'
 >;
 
 /** Convert a kind-1 event into the complete shape expected by feed cards. */

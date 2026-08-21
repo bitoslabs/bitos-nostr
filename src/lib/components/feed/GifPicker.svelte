@@ -82,6 +82,8 @@
 	function remember(item: GifItem) {
 		recent = [item, ...recent.filter((gif) => gif.id !== item.id)].slice(0, RECENT_LIMIT);
 		storage = { ...storage, recent };
+		// Keep the Recent view in sync when the user picks another GIF from it.
+		if (tab === 'recent' && !query.trim()) items = recent;
 		writeStorage();
 	}
 
@@ -182,12 +184,18 @@
 		if (!browser || loaded || loading) return;
 		readStorage();
 		const cached = storage.trending;
+		// Recent history is the fastest and most useful first view. Trending is
+		// still revalidated below so it is ready when the user switches tabs.
+		if (recent.length) {
+			tab = 'recent';
+			items = recent;
+			hasMore = false;
+		}
 		if (cached && fresh(cached)) {
-			items = cached.items;
+			if (!recent.length) items = cached.items;
 			nextOffset = cached.items.length;
 			hasMore = true;
 			loaded = true;
-			if (recent.length) tab = 'recent';
 		}
 		fetchGifs('');
 	});
@@ -210,7 +218,7 @@
 	</div>
 
 	{#if !query.trim() && recent.length}
-		<div class="flex gap-1 border-b border-[var(--ui-border-muted)] px-2 pt-2">
+		<div class="flex gap-1 border-b border-[var(--ui-border-muted)] px-2 py-2">
 			<button
 				type="button"
 				onclick={(event) => {

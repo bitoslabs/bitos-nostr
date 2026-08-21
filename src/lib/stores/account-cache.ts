@@ -22,7 +22,8 @@ const EXACT_KEYS = [
 	'bitos:blocked-pubkeys',
 	'bitos:relays',
 	'bitos:feed-preferences',
-	'bitos:call-settings'
+	'bitos:call-settings',
+	'bitos:followed-hashtags'
 ];
 
 const PREFIXES = [
