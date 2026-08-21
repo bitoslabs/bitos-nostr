@@ -16,6 +16,8 @@ import { hexToBytes } from './hex';
 import {
 	NOSTR_KINDS,
 	MAX_POLL_VOTERS,
+	repostTarget,
+	repostTags,
 	type FeedNote,
 	type PollVoter,
 	parsePoll,
@@ -132,6 +134,7 @@ class FeedStore {
 						NOSTR_KINDS.REACTION,
 						NOSTR_KINDS.POLL_RESPONSE,
 						NOSTR_KINDS.REPOST,
+						NOSTR_KINDS.GENERIC_REPOST,
 						NOSTR_KINDS.ZAP
 					],
 					limit: INITIAL_LIMIT
@@ -147,8 +150,8 @@ class FeedStore {
 					if (FEED_POST_KINDS.includes(ev.kind as (typeof FEED_POST_KINDS)[number]))
 						this.ingestNote(ev, { queueIfLive: this.connected });
 					else if (ev.kind === NOSTR_KINDS.POLL_RESPONSE) this.ingestPollResponse(ev);
-					else if (ev.kind === NOSTR_KINDS.REPOST) {
-						const target = ev.tags.find((tag) => tag[0] === 'e')?.[1];
+					else if (ev.kind === NOSTR_KINDS.REPOST || ev.kind === NOSTR_KINDS.GENERIC_REPOST) {
+						const target = repostTarget(ev).eventId;
 						if (target) void this.hydrateActivity([target]);
 					} else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
 					else if (ev.kind === NOSTR_KINDS.ZAP) this.ingestZap(ev);
@@ -566,6 +569,7 @@ class FeedStore {
 							NOSTR_KINDS.REACTION,
 							NOSTR_KINDS.POLL_RESPONSE,
 							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.GENERIC_REPOST,
 							NOSTR_KINDS.ZAP
 						],
 						'#e': uniqueIds,
@@ -755,14 +759,14 @@ class FeedStore {
 	}
 
 	/**
-	 * Publish a short-form media bit for the Bits feed.
+	 * Publish a short-form media bitz for the Bitz feed.
 	 *
 	 * Pictures go out as NIP-68 kind 20; videos as NIP-71 kind 22 when portrait
-	 * (the Bits/reels shape) or kind 21 when landscape. The media rides in a
+	 * (the Bitz/reels shape) or kind 21 when landscape. The media rides in a
 	 * NIP-92 `imeta` tag (url / mime / size / dimensions) so every Nostr
 	 * short-video client renders it — the content stays a clean caption.
 	 */
-	async postBit(
+	async postBitz(
 		media: PostMediaAttachment,
 		options: {
 			caption?: string;
@@ -828,8 +832,8 @@ class FeedStore {
 		const event = finalizeEvent(mined, hexToBytes(id.sk));
 		options.onPhase?.('publishing');
 		await publish(event);
-		// Media kinds are feed post kinds too, so the bit shows immediately in
-		// the home timeline; the Bits route picks it up from relays on next load.
+		// Media kinds are feed post kinds too, so the bitz shows immediately in
+		// the home timeline; the Bitz route picks it up from relays on next load.
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
 	}
@@ -840,12 +844,13 @@ class FeedStore {
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
 		if (!note.raw) throw new Error('This note cannot be reposted from the current view');
+		const repostKind = note.raw.kind === NOSTR_KINDS.TEXT_NOTE ? NOSTR_KINDS.REPOST : NOSTR_KINDS.GENERIC_REPOST;
 		const event = finalizeEvent(
 			{
-				kind: NOSTR_KINDS.REPOST,
+				kind: repostKind,
 				content: JSON.stringify(note.raw),
 				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ['e', note.id], ['p', note.pubkey]]
+				tags: [...clientTag(), ...repostTags(note.raw)]
 			},
 			hexToBytes(id.sk)
 		);
@@ -960,7 +965,7 @@ class FeedStore {
 		options: {
 			attachments?: PostMediaAttachment[];
 			extraPubkeys?: string[];
-			/** NIP-13 difficulty (leading zero bits) to mine before publishing. */
+			/** NIP-13 difficulty (leading zero bitz) to mine before publishing. */
 			pow?: number;
 			/** Live stats while the NIP-13 worker mines. */
 			onPowProgress?: (progress: PowProgress) => void;

@@ -1,6 +1,6 @@
 /**
- * Shared media helpers used by the reels-style surfaces (Bits explore grid,
- * Bits search results, Discover media tab).
+ * Shared media helpers used by the reels-style surfaces (Bitz explore grid,
+ * Bitz search results, Discover media tab).
  */
 
 /**

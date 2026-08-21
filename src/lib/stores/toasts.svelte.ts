@@ -8,7 +8,7 @@ export interface Toast {
 	id: number;
 	message: string;
 	tone: 'info' | 'success' | 'warning' | 'error';
-	/** Optional inline action (e.g. "View in Bits" after posting). */
+	/** Optional inline action (e.g. "View in Bitz" after posting). */
 	action?: ToastAction;
 }
 

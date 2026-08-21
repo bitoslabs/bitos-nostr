@@ -249,7 +249,7 @@
 	}
 
 	/** Hold (long-press) the reel surface: temporary 2× boost — release to
-	 * restore the previous speed. YouTube-style skimming for slow bits. */
+	 * restore the previous speed. YouTube-style skimming for slow bitz. */
 	function handleSurfacePointerDown(event: PointerEvent) {
 		if (!onDoubleTap) return; // boost gesture only where double-tap lives (reels)
 		if (event.pointerType === 'mouse' && event.button !== 0) return;

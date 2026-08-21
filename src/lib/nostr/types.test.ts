@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyActivityToNotes } from './zaps';
-import { MAX_POLL_VOTERS, NOSTR_KINDS, parsePoll, pollClosedAt } from './types';
+import { MAX_POLL_VOTERS, NOSTR_KINDS, parsePoll, pollClosedAt, repostTags, repostTarget } from './types';
 import { toFeedNote } from './feed-note';
 
 describe('NIP-88 polls', () => {
@@ -22,6 +22,27 @@ describe('NIP-88 polls', () => {
 			['poll_option', '0', 'A'],
 			['poll_option', '1', 'B']
 		])).toHaveLength(2);
+	});
+});
+
+describe('NIP-18 repost interoperability', () => {
+	const original = {
+		id: 'ab'.repeat(32), pubkey: 'cd'.repeat(32), kind: 30023,
+		content: 'image', created_at: 1, tags: [['d', 'photo-1']]
+	};
+
+	it('builds generic repost tags with relay, kind, and address', () => {
+		expect(repostTags(original, 'wss://relay.example')).toEqual([
+			['e', original.id, 'wss://relay.example'],
+			['p', original.pubkey],
+			['k', '30023'],
+			['a', `30023:${original.pubkey}:photo-1`]
+		]);
+	});
+
+	it('falls back to embedded JSON when another client omits e/p tags', () => {
+		const event = { kind: 6, content: JSON.stringify({ ...original, kind: 1 }), tags: [] };
+		expect(repostTarget(event)).toMatchObject({ eventId: original.id, pubkey: original.pubkey, kind: 1 });
 	});
 });
 

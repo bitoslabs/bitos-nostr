@@ -1,4 +1,4 @@
-import { NOSTR_KINDS, MAX_POLL_VOTERS, type Event, type FeedNote, type PollVoter } from './types';
+import { NOSTR_KINDS, MAX_POLL_VOTERS, repostTarget, type Event, type FeedNote, type PollVoter } from './types';
 
 const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
@@ -131,8 +131,8 @@ export function applyActivityToNotes(
 	const pollsById = new Map(notes.map((note) => [note.id, note.poll]));
 
 	for (const ev of events) {
-		if (ev.kind === NOSTR_KINDS.REPOST) {
-			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+		if (ev.kind === NOSTR_KINDS.REPOST || ev.kind === NOSTR_KINDS.GENERIC_REPOST) {
+			const target = repostTarget(ev).eventId;
 			if (target && noteIds.has(target) && !repostIds.has(ev.id)) {
 				repostIds.add(ev.id);
 				repostsByNote.set(target, (repostsByNote.get(target) ?? 0) + 1);

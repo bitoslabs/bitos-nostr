@@ -25,7 +25,7 @@
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
 	import GifPicker from './GifPicker.svelte';
-	import BitsComposer from '$lib/components/bits/BitsComposer.svelte';
+	import BitzComposer from '$lib/components/bitz/BitzComposer.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
@@ -58,7 +58,7 @@
 	let imageInput = $state<HTMLInputElement | null>(null);
 	let videoInput = $state<HTMLInputElement | null>(null);
 	let pollOpen = $state(false);
-	let bitsOpen = $state(false);
+	let bitzOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
 	// Draft persistence — debounced writes while typing. Empty text never
@@ -491,7 +491,7 @@
 			pow = 0;
 			expanded = false;
 			toasts.success(
-				mining ? `Mined ${minedBits} bits · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
+				mining ? `Mined ${minedBits} bitz · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
 			);
 		} catch (e) {
 			const message = (e as Error).message;
@@ -860,13 +860,13 @@
 						/>
 					</button>
 				{/each}
-				<!-- Bit Studio: create a short-form bit (NIP-68/71 media event) -->
+				<!-- Bitz Studio: create a short-form bitz (NIP-68/71 media event) -->
 				<button
 					type="button"
-					onclick={() => (bitsOpen = true)}
+					onclick={() => (bitzOpen = true)}
 					disabled={uploading || posting}
-					title="Create a bit — short video or picture for the Bits feed"
-					aria-label="Create a bit"
+					title="Create a bitz — short video or picture for the Bitz feed"
+					aria-label="Create a bitz"
 					class="grid size-9 place-items-center rounded-full text-warm-500 transition hover:bg-warm-500/10 hover:text-warm-500 disabled:pointer-events-none disabled:opacity-40"
 				>
 					<Icon name="i-lucide-circle-play" class="size-[18px]" />
@@ -1066,4 +1066,4 @@
 {/if}
 
 <PollComposer bind:open={pollOpen} />
-<BitsComposer bind:open={bitsOpen} />
+<BitzComposer bind:open={bitzOpen} />

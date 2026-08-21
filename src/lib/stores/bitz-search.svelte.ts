@@ -1,5 +1,5 @@
 /**
- * Bits search store — owns everything search-related for the Bits page so the
+ * Bitz search store — owns everything search-related for the Bitz page so the
  * route component stays a view: query text, result filters, the debounced
  * NIP-50 relay round trip, dedupe of local + remote hits, match metadata for
  * UI highlighting, and result ordering.
@@ -8,39 +8,39 @@
  * injected as constructor dependencies, which keeps this module unit-testable
  * without a live relay connection.
  */
-import type { ReelNote } from '$lib/stores/bits-session.svelte';
+import type { ReelNote } from '$lib/stores/bitz-session.svelte';
 import type { Event } from '$lib/nostr/types';
 
 /** One filter option in the results toolbar. */
-export type BitsSearchFilter = 'all' | 'video' | 'image' | 'creator';
+export type BitzSearchFilter = 'all' | 'video' | 'image' | 'creator';
 
 /** Result ordering switch shown next to the count line. */
-export type BitsSearchSort = 'recent' | 'engagement';
+export type BitzSearchSort = 'recent' | 'engagement';
 
-/** For each matched bit: the first index (per field) where a token hit, or -1. */
-export interface BitsMatchMeta {
+/** For each matched bitz: the first index (per field) where a token hit, or -1. */
+export interface BitzMatchMeta {
 	caption: number;
 	content: number;
 	author: number;
 }
 
 /** One NIP-50 `search` filter the page adapter turns into a relay request. */
-export interface BitsSearchRequest {
+export interface BitzSearchRequest {
 	kinds: number[];
 	limit: number;
 	search: string;
 }
 
 /** Injected relay runner: executes the search filters (maxWait lives there). */
-export type BitsRelaySearchFn = (requests: BitsSearchRequest[]) => Promise<Event[]>;
+export type BitzRelaySearchFn = (requests: BitzSearchRequest[]) => Promise<Event[]>;
 
 /** Debounce for the relay round trip while the user is still typing. */
-export const BITS_SEARCH_DEBOUNCE_MS = 400;
+export const BITZ_SEARCH_DEBOUNCE_MS = 400;
 
 /** Limits for one relay search round — same split rationale as the feed load
  *  (media kinds deep, kind-1 shallow). */
-export const BITS_SEARCH_MEDIA_LIMIT = 80;
-export const BITS_SEARCH_TEXT_LIMIT = 120;
+export const BITZ_SEARCH_MEDIA_LIMIT = 80;
+export const BITZ_SEARCH_TEXT_LIMIT = 120;
 
 /** A text run inside a highlighted string: plain or matched. */
 export interface HighlightSegment {
@@ -50,7 +50,7 @@ export interface HighlightSegment {
 
 /**
  * Split a raw query into word tokens (lowercased). Matching is multi-word:
- * every token must appear in at least one searchable field of the bit.
+ * every token must appear in at least one searchable field of the bitz.
  */
 export function tokenizeQuery(raw: string): string[] {
 	return raw
@@ -89,22 +89,22 @@ export function highlightSegments(text: string, tokens: string[]): HighlightSegm
 	return segments.length ? segments : [{ text, match: false }];
 }
 
-/** Blend a bit's aggregate engagement into one comparable number. */
+/** Blend a bitz's aggregate engagement into one comparable number. */
 function engagementScore(reel: ReelNote): number {
 	const likes = reel.reactions?.reduce((sum, reaction) => sum + reaction.count, 0) ?? 0;
 	return likes * 2 + (reel.zapCount ?? 0) * 3 + reel.zapTotalSats / 100;
 }
 
 /**
- * Match one bit against the tokens. A bit matches when every token is found
+ * Match one bitz against the tokens. A bitz matches when every token is found
  * in at least one field (caption, content, or author). Returns first-hit
- * indexes per field for highlighting, or null when the bit does not match.
+ * indexes per field for highlighting, or null when the bitz does not match.
  */
-export function matchBit(
+export function matchBitz(
 	reel: ReelNote,
 	tokens: string[],
 	opts: { captionOf: (reel: ReelNote) => string; authorOf: (reel: ReelNote) => string }
-): BitsMatchMeta | null {
+): BitzMatchMeta | null {
 	if (!tokens.length) return null;
 	const caption = opts.captionOf(reel).toLowerCase();
 	const content = reel.content.toLowerCase();
@@ -127,7 +127,7 @@ export function matchBit(
 
 export interface BitsSearchDeps {
 	/** Executes the built NIP-50 filters against the relay pool. */
-	relaySearch: BitsRelaySearchFn;
+	relaySearch: BitzRelaySearchFn;
 	/** Maps raw relay events to renderable reels (page owns this pipeline). */
 	eventsToReels: (events: Event[]) => Promise<ReelNote[]>;
 	/** Caption for a reel with media URLs stripped (page helper). */
@@ -142,11 +142,11 @@ export interface BitsSearchDeps {
 	textKind: number;
 }
 
-export class BitsSearchStore {
+export class BitzSearchStore {
 	open = $state(false);
 	query = $state('');
-	filter = $state<BitsSearchFilter>('all');
-	sort = $state<BitsSearchSort>('recent');
+	filter = $state<BitzSearchFilter>('all');
+	sort = $state<BitzSearchSort>('recent');
 
 	/** Remote hits from the latest relay round. */
 	remote = $state<ReelNote[]>([]);
@@ -177,15 +177,15 @@ export class BitsSearchStore {
 	private matched = $derived.by(() => {
 		const tokens = this.tokens;
 		if (!tokens.length) {
-			return { reels: [] as ReelNote[], meta: {} as Record<string, BitsMatchMeta> };
+			return { reels: [] as ReelNote[], meta: {} as Record<string, BitzMatchMeta> };
 		}
 		const seen = new Set<string>();
 		const reels: ReelNote[] = [];
-		const meta: Record<string, BitsMatchMeta> = {};
+		const meta: Record<string, BitzMatchMeta> = {};
 		for (const pool of [this.localPool, this.remote]) {
 			for (const reel of pool) {
 				if (seen.has(reel.id)) continue;
-				const hit = matchBit(reel, tokens, {
+				const hit = matchBitz(reel, tokens, {
 					captionOf: this.deps.captionOf,
 					authorOf: this.deps.authorOf
 				});
@@ -198,7 +198,7 @@ export class BitsSearchStore {
 		return { reels, meta };
 	});
 
-	/** matchBit output per result id — drives chip badges + highlighting. */
+	/** matchBitz output per result id — drives chip badges + highlighting. */
 	meta = $derived(this.matched.meta);
 
 	/** Result counts per filter, powering the toolbar chips. */
@@ -234,7 +234,7 @@ export class BitsSearchStore {
 		return this.deps.captionOf(reel);
 	}
 
-	/** The page publishes its loaded bits so local matching works instantly. */
+	/** The page publishes its loaded bitz so local matching works instantly. */
 	setLocalPool(pool: ReelNote[]) {
 		this.localPool = pool;
 	}
@@ -255,7 +255,7 @@ export class BitsSearchStore {
 			return;
 		}
 		if (this.debounceTimer) clearTimeout(this.debounceTimer);
-		this.debounceTimer = setTimeout(() => void this.searchRelays(), BITS_SEARCH_DEBOUNCE_MS);
+		this.debounceTimer = setTimeout(() => void this.searchRelays(), BITZ_SEARCH_DEBOUNCE_MS);
 	}
 
 	/** Immediate search for form submit / tests. */
@@ -290,9 +290,9 @@ export class BitsSearchStore {
 		const token = ++this.relayToken;
 		this.searching = true;
 		this.error = null;
-		const requests: BitsSearchRequest[] = [
-			{ kinds: this.deps.mediaKinds, limit: BITS_SEARCH_MEDIA_LIMIT, search: term },
-			{ kinds: [this.deps.textKind], limit: BITS_SEARCH_TEXT_LIMIT, search: term }
+		const requests: BitzSearchRequest[] = [
+			{ kinds: this.deps.mediaKinds, limit: BITZ_SEARCH_MEDIA_LIMIT, search: term },
+			{ kinds: [this.deps.textKind], limit: BITZ_SEARCH_TEXT_LIMIT, search: term }
 		];
 		try {
 			const events = await this.deps.relaySearch(requests);

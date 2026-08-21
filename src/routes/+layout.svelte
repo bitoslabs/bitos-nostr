@@ -420,7 +420,7 @@
 	// routes. Multi-pane routes (messages, settings, reels) own their own layout
 	// and opt out so their internal columns get the full center width. Home uses
 	// the same consolidated AppRightRail as the rest of the content routes.
-	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
+	const railHiddenPrefixes = ['/messages', '/settings', '/bitz'];
 	const publicRailRoutes = new Set(['/', '/discover']);
 	const showRail = $derived(
 		(hasIdentity || publicRailRoutes.has(page.url.pathname)) &&

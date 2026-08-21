@@ -21,11 +21,11 @@
 	import { formatDuration } from '$lib/utils/format';
 
 	/**
-	 * Bit Studio — create a short-form bit straight from the post form.
+	 * Bitz Studio — create a short-form bitz straight from the post form.
 	 *
-	 * A WYSIWYG 9:16 stage mirrors exactly how the media will play in the Bits
+	 * A WYSIWYG 9:16 stage mirrors exactly how the media will play in the Bitz
 	 * feed, while Nostr-native transparency (event kind, relay targets,
-	 * opt-in proof-of-work “rare bit” mining) makes the flow unmistakably
+	 * opt-in proof-of-work “rare bitz” mining) makes the flow unmistakably
 	 * Nostr: the published event is a standard NIP-68 / NIP-71 media note that
 	 * renders in every short-video client, not just BitOS.
 	 */
@@ -58,18 +58,18 @@
 	let dragOver = $state(false);
 	let confirmDiscard = $state(false);
 
-	// ---- cover frame (video bits) -------------------------------------------
+	// ---- cover frame (video bitz) -------------------------------------------
 	let stageVideoEl = $state<HTMLVideoElement | null>(null);
 	let scrubSeconds = $state(0);
 	let cover = $state<string | null>(null);
 	let coverUploading = $state(false);
 
 	// ---- reach ----------------------------------------------------------------
-	// Opt-in: also publish a kind-1 quote note linking the fresh bit so it
-	// reaches clients that do not render the Bits media feed.
+	// Opt-in: also publish a kind-1 quote note linking the fresh bitz so it
+	// reaches clients that do not render the Bitz media feed.
 	let quoteTimeline = $state(false);
 
-	// Per-bit provider selection, defaulting to the configured default.
+	// Per-bitz provider selection, defaulting to the configured default.
 	let selectedProvider = $state<MediaProviderId | 'none'>(media.state.defaultProvider);
 	let providerInitialized = $state(false);
 
@@ -79,7 +79,7 @@
 	let postPhase = $state<'idle' | 'mining' | 'publishing'>('idle');
 	let powProgress = $state<PowProgress | null>(null);
 	let mineController: AbortController | undefined;
-	// Bits are quick content: the PoW panel starts collapsed, but remembers
+	// Bitz are quick content: the PoW panel starts collapsed, but remembers
 	// the last difficulty the user actually published with.
 	let showPow = $state(false);
 	let pow = $state(untrack(() => powPrefs.state.lastDifficulty));
@@ -88,7 +88,7 @@
 	// rejected outright instead of dying mid-upload on the provider.
 	const MAX_BIT_BYTES = 200 * 1024 * 1024;
 	const SIZE_WARN_BYTES = 60 * 1024 * 1024;
-	// Reels-style soft/hard caption limits (the Bits player clamps display).
+	// Reels-style soft/hard caption limits (the Bitz player clamps display).
 	const SOFT_CAP = 300;
 	const HARD_CAP = 1000;
 
@@ -233,11 +233,11 @@
 				? 'image'
 				: null;
 		if (!kind) {
-			toasts.error('Bits support videos and pictures');
+			toasts.error('Bitz support videos and pictures');
 			return;
 		}
 		if (next.size > MAX_BIT_BYTES) {
-			toasts.error(`That file is ${humanBytes(next.size)} — bits top out at 200 MB`);
+			toasts.error(`That file is ${humanBytes(next.size)} — bitz top out at 200 MB`);
 			return;
 		}
 		if (busy) return;
@@ -328,7 +328,7 @@
 
 	// ---- cover frame ---------------------------------------------------------
 	/** Scrub-to-frame poster: freeze the stage video at any moment, upload that
-	 *  frame, and ship it as the bit's NIP-92 imeta `thumb` so clients without a
+	 *  frame, and ship it as the bitz's NIP-92 imeta `thumb` so clients without a
 	 *  video pipeline can still render a preview card. */
 	async function captureCover() {
 		const video = stageVideoEl;
@@ -349,7 +349,7 @@
 		try {
 			const provider = selectedProvider;
 			const shot = await media.upload(
-				new File([blob], `bit-cover-${Date.now()}.jpg`, { type: 'image/jpeg' }),
+				new File([blob], `bitz-cover-${Date.now()}.jpg`, { type: 'image/jpeg' }),
 				provider === 'none' ? undefined : provider,
 				{ pubkey: me?.pk, purpose: 'note' }
 			);
@@ -387,7 +387,7 @@
 		try {
 			// Let the browser paint the mining state before starting the worker.
 			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
-			const eventId = await feed.postBit(uploaded, {
+			const eventId = await feed.postBitz(uploaded, {
 				caption,
 				sensitive,
 				portrait,
@@ -400,26 +400,26 @@
 			});
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
-			// Opt-in reach: quote-post the fresh bit as a kind-1 note (NIP-27
-			// nevent link). The bit itself is already live on the relays.
+			// Opt-in reach: quote-post the fresh bitz as a kind-1 note (NIP-27
+			// nevent link). The bitz itself is already live on the relays.
 			let quoteError: string | null = null;
 			if (quoteTimeline && me) {
 				try {
 					const nevent = neventEncode({ id: eventId, author: me.pk });
-					await feed.post(`New bit ⚡ nostr:${nevent}`);
+					await feed.post(`New bitz ⚡ nostr:${nevent}`);
 				} catch (e) {
 					quoteError = (e as Error).message;
 				}
 			}
 			toasts.push(
 				mining
-					? `Mined ${minedBits} bits · ${kindInfo?.label ?? 'Bit'} ${eventId.slice(0, 7)}…`
-					: `${kindInfo?.label ?? 'Bit'} published to Nostr`,
+					? `Mined ${minedBits} bits · ${kindInfo?.label ?? 'Bitz'} ${eventId.slice(0, 7)}…`
+					: `${kindInfo?.label ?? 'Bitz'} published to Nostr`,
 				'success',
 				6000,
-				{ label: 'View in Bits', run: () => goto(`/bits#reel=${eventId}`) }
+				{ label: 'View in Bitz', run: () => goto(`/bitz#reel=${eventId}`) }
 			);
-			if (quoteError) toasts.warning(`Bit posted, but the timeline quote failed — ${quoteError}`);
+			if (quoteError) toasts.warning(`Bitz posted, but the timeline quote failed — ${quoteError}`);
 			onposted(eventId);
 			reset();
 			open = false;
@@ -485,7 +485,7 @@
 		acceptFiles(event.dataTransfer?.files ?? null);
 	}
 
-	const providerMenuId = 'bits-composer-provider-menu';
+	const providerMenuId = 'bitz-composer-provider-menu';
 </script>
 
 <svelte:window
@@ -503,7 +503,7 @@
 		class="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6"
 		role="dialog"
 		aria-modal="true"
-		aria-label="Create a bit"
+		aria-label="Create a bitz"
 		tabindex="-1"
 		onkeydown={handleKeydown}
 		onclick={(event) => {
@@ -511,7 +511,7 @@
 		}}
 	>
 		<div
-			class="bits-studio-panel flex h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 sm:h-[min(780px,92vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]"
+			class="bitz-studio-panel flex h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 sm:h-[min(780px,92vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]"
 			aria-busy={busy}
 		>
 			<!-- Header -->
@@ -525,18 +525,18 @@
 				</span>
 				<div class="min-w-0 flex-1">
 					<h2 class="text-[15px] leading-tight font-bold text-[var(--ui-text-highlighted)]">
-						Create a bit
+						Create a bitz
 					</h2>
 					<p class="truncate text-[11px] text-[var(--ui-text-dimmed)]">
 						{kindInfo
 							? `${kindInfo.label} · kind ${kindInfo.kind} · ${kindInfo.nip}`
-							: 'Short-form video or picture for the Bits feed'}
+							: 'Short-form video or picture for the Bitz feed'}
 					</p>
 				</div>
 				<button
 					type="button"
 					onclick={requestClose}
-					aria-label="Close bit studio"
+					aria-label="Close bitz studio"
 					class="grid size-9 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] active:scale-95"
 				>
 					<Icon name="i-lucide-x" class="size-5" />
@@ -551,7 +551,7 @@
 						<div
 							role="button"
 							tabindex="0"
-							aria-label="Choose a video or picture for your bit"
+							aria-label="Choose a video or picture for your bitz"
 							class="group flex w-full max-w-sm cursor-pointer flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-6 py-10 text-center transition {dragOver
 								? 'border-warm-500 bg-warm-500/10'
 								: 'border-[var(--ui-border-accented)] hover:border-warm-500/60 hover:bg-[var(--ui-bg-muted)]'}"
@@ -579,7 +579,7 @@
 									Drop a video or picture
 								</p>
 								<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-									Portrait videos become short-form bits — up to 200 MB.
+									Portrait videos become short-form bitz — up to 200 MB.
 								</p>
 							</div>
 							<span
@@ -601,7 +601,7 @@
 							<p
 								class="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
 							>
-								Preview — plays like this in Bits
+								Preview — plays like this in Bitz
 							</p>
 							<div
 								class="relative aspect-[9/16] overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-black"
@@ -621,13 +621,13 @@
 								{:else}
 									<img
 										src={previewUrl}
-										alt="Bit preview"
+										alt="Bitz preview"
 										class="absolute inset-0 size-full object-contain"
 										onload={onImageLoad}
 									/>
 								{/if}
 
-								<!-- Caption overlay — mirrors the Bits player placement -->
+								<!-- Caption overlay — mirrors the Bitz player placement -->
 								{#if caption.trim()}
 									<div
 										class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 pt-10"
@@ -862,7 +862,7 @@
 									rows="3"
 									maxlength={HARD_CAP}
 									placeholder="Write a caption… #hashtags and @mentions work"
-									aria-label="Bit caption"
+									aria-label="Bitz caption"
 									readonly={posting}
 									class="w-full resize-none bg-transparent text-[15px] leading-relaxed text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 								></textarea>
@@ -915,7 +915,7 @@
 									onclick={() => (showPow = !showPow)}
 									disabled={mining}
 									aria-pressed={showPow}
-									title="Mine a rare bit — NIP-13 proof of work"
+									title="Mine a rare bitz — NIP-13 proof of work"
 									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {showPow
 										? 'bg-primary-500/10 text-primary-600'
 										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
@@ -924,13 +924,13 @@
 										name={mining ? 'i-lucide-pickaxe' : 'i-lucide-gem'}
 										class="size-4 {mining ? 'animate-pulse' : ''}"
 									/>
-									Rare bit
+									Rare bitz
 								</button>
 								<button
 									type="button"
 									onclick={() => (quoteTimeline = !quoteTimeline)}
 									aria-pressed={quoteTimeline}
-									title="Also share a kind-1 quote note linking your bit — reaches clients without a Bits feed"
+									title="Also share a kind-1 quote note linking your bitz — reaches clients without a Bitz feed"
 									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition {quoteTimeline
 										? 'bg-primary-500/10 text-primary-600'
 										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
@@ -996,7 +996,7 @@
 							<p class="flex items-center gap-1.5 text-[11px] text-[var(--ui-text-dimmed)]">
 								<Icon name="i-lucide-globe" class="size-3.5 shrink-0 text-primary-500" />
 								Publishes to {writeRelayCount}
-								{writeRelayCount === 1 ? 'relay' : 'relays'} — your bit is a standard
+								{writeRelayCount === 1 ? 'relay' : 'relays'} — your bitz is a standard
 								{kindInfo?.nip ?? 'Nostr'} event any client can play.
 							</p>
 						</div>
@@ -1017,7 +1017,7 @@
 						{:else if uploadError}
 							<span class="text-[var(--tone-error-text)]">Upload failed — retry to publish</span>
 						{:else if uploaded}
-							{kindInfo?.label ?? 'Bit'} ready — {humanBytes(uploaded.bytes)} on {providerLabel(
+							{kindInfo?.label ?? 'Bitz'} ready — {humanBytes(uploaded.bytes)} on {providerLabel(
 								uploaded.provider
 							)}
 						{:else}
@@ -1028,7 +1028,7 @@
 						type="button"
 						onclick={submit}
 						disabled={!canPost}
-						title="Post bit (Ctrl+Enter)"
+						title="Post bitz (Ctrl+Enter)"
 						class="flex shrink-0 items-center gap-1.5 rounded-full bg-warm-500 px-5 py-2 text-[13px] font-bold text-white shadow-[0_2px_12px_rgba(255,117,95,0.35)] transition-all hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
 					>
 						<Icon
@@ -1044,7 +1044,7 @@
 						{:else if uploading}
 							Uploading {uploadPercent}%
 						{:else}
-							Post bit
+							Post bitz
 						{/if}
 					</button>
 				</footer>
@@ -1057,7 +1057,7 @@
 				class="absolute inset-0 z-10 grid place-items-center bg-black/55 p-4 backdrop-blur-[2px]"
 				role="alertdialog"
 				aria-modal="true"
-				aria-label="Discard this bit?"
+				aria-label="Discard this bitz?"
 				tabindex="-1"
 				onclick={(event) => {
 					if (event.target === event.currentTarget) confirmDiscard = false;
@@ -1078,7 +1078,7 @@
 						<Icon name="i-lucide-trash-2" class="size-6" />
 					</span>
 					<p class="mt-3 text-[15px] font-bold text-[var(--ui-text-highlighted)]">
-						Discard this bit?
+						Discard this bitz?
 					</p>
 					<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 						Your media and caption will be lost.
@@ -1114,11 +1114,11 @@
 />
 
 <style>
-	.bits-studio-panel {
-		animation: bits-studio-in 150ms ease-out;
+	.bitz-studio-panel {
+		animation: bitz-studio-in 150ms ease-out;
 	}
 
-	@keyframes bits-studio-in {
+	@keyframes bitz-studio-in {
 		from {
 			opacity: 0;
 			transform: translateY(10px) scale(0.985);
@@ -1130,7 +1130,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.bits-studio-panel {
+		.bitz-studio-panel {
 			animation: none;
 		}
 	}

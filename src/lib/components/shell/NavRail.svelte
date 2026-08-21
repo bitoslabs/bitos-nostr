@@ -34,7 +34,7 @@
 			notifications: true,
 			requiresAuth: true
 		},
-		{ to: '/bits', label: 'Bits', icon: 'i-lucide-circle-play' },
+		{ to: '/bitz', label: 'Bitz', icon: 'i-lucide-circle-play' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{
 			to: '/communities',

@@ -44,7 +44,7 @@
 			icon: 'i-lucide-users-round',
 			requiresAuth: true
 		},
-		{ to: '/bits', label: 'Bits', caption: 'Short video reels', icon: 'i-lucide-circle-play' }
+		{ to: '/bitz', label: 'Bitz', caption: 'Short video reels', icon: 'i-lucide-circle-play' }
 	];
 	const libraryTiles: Tile[] = [
 		{

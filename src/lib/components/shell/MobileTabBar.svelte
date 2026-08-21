@@ -38,7 +38,7 @@
 	const youPrefixes = [
 		'/more',
 		'/communities',
-		'/bits',
+		'/bitz',
 		'/zaps',
 		'/bookmarks',
 		'/profile',

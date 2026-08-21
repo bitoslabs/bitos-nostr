@@ -29,7 +29,7 @@
 	const backHref = $derived(
 		safeReturnTo ||
 			(noteSource === 'reels'
-				? '/bits'
+				? '/bitz'
 				: noteSource === 'discover'
 					? '/discover'
 					: '/notifications')
@@ -42,7 +42,7 @@
 					? 'Notifications'
 					: 'Back'
 			: noteSource === 'reels'
-				? 'Bits'
+				? 'Bitz'
 				: noteSource === 'discover'
 					? 'Discover'
 					: 'Notifications'
@@ -80,7 +80,18 @@
 				const [hydrated] = applyActivityToNotes(
 					[toFeedNote(event)],
 					await queryPrimaryFirst(
-						[{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': [id], limit: 500 }],
+						[
+							{
+								kinds: [
+									NOSTR_KINDS.REACTION,
+									NOSTR_KINDS.POLL_RESPONSE,
+									NOSTR_KINDS.REPOST,
+									NOSTR_KINDS.ZAP
+								],
+								'#e': [id],
+								limit: 500
+							}
+						],
 						{
 							onSecondary: (mergedActivity) => {
 								if (loadedFor !== currentLoad) return;
@@ -127,7 +138,16 @@
 			const hydratedReplies = applyActivityToNotes(
 				replyEvents,
 				await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }
+					{
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.ZAP
+						],
+						'#e': replyIds,
+						limit: 500
+					}
 				]),
 				identity.current?.pk
 			);
@@ -164,7 +184,6 @@
 		{/snippet}
 	</PageHeader>
 	<div class="page-container page-container--feed py-6">
-
 		{#if !noteId}
 			<div class="post-card py-16 text-center">
 				<p class="text-[15px] font-semibold">Invalid note</p>

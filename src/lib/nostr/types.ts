@@ -3,6 +3,54 @@ import type { Event } from 'nostr-tools/pure';
 
 export type { Event };
 
+/** NIP-18 repost target, normalized across kind 6 and kind 16 events. */
+export interface RepostTarget {
+	eventId?: string;
+	pubkey?: string;
+	kind?: number;
+	relayUrl?: string;
+	event?: Event;
+}
+
+/** Build the interoperable NIP-18 tags for an original event. */
+export function repostTags(original: Pick<Event, 'id' | 'pubkey' | 'kind' | 'tags'>, relayUrl?: string): string[][] {
+	const tags: string[][] = [['e', original.id]];
+	if (relayUrl) tags[0].push(relayUrl);
+	tags.push(['p', original.pubkey]);
+	if (original.kind !== 1) tags.push(['k', String(original.kind)]);
+	// Addressable/replaceable events should carry their stable coordinate. For a
+	// plain replaceable event without a d tag, the e tag still identifies the
+	// specific version contained in content.
+	const d = original.tags.find((tag) => tag[0] === 'd' && tag[1])?.[1];
+	if (d && (original.kind >= 30000 || (original.kind >= 10000 && original.kind < 20000))) {
+		tags.push(['a', `${original.kind}:${original.pubkey}:${d}`]);
+	}
+	return tags;
+}
+
+/** Extract the referenced event from a NIP-18 repost received from any client. */
+export function repostTarget(event: Pick<Event, 'kind' | 'content' | 'tags'>): RepostTarget {
+	const e = event.tags.find((tag) => tag[0] === 'e' && /^[0-9a-f]{64}$/i.test(tag[1] ?? ''));
+	const p = event.tags.find((tag) => tag[0] === 'p' && tag[1]);
+	const k = event.tags.find((tag) => tag[0] === 'k' && tag[1]);
+	let embedded: Event | undefined;
+	try {
+		const parsed = JSON.parse(event.content) as Partial<Event>;
+		if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string' && typeof parsed.kind === 'number') {
+			embedded = parsed as Event;
+		}
+	} catch {
+		// NIP-18 permits empty content; tags remain the authoritative reference.
+	}
+	return {
+		eventId: e?.[1] ?? embedded?.id,
+		pubkey: p?.[1] ?? embedded?.pubkey,
+		kind: k?.[1] ? Number(k[1]) : embedded?.kind,
+		relayUrl: e?.[2],
+		event: embedded
+	};
+}
+
 /** NIP-01 kind 0 metadata (profile). */
 export interface Profile {
 	pubkey: string;
@@ -128,6 +176,7 @@ export interface DirectMessage {
 	createdAt: number;
 	mine: boolean;
 	protocol?: 'nip04' | 'nip17';
+	delivery?: 'pending' | 'sent' | 'failed';
 }
 
 /** A conversation row. */
@@ -187,6 +236,8 @@ export const NOSTR_KINDS = {
 	DM_SEAL: 13,
 	PRIVATE_DIRECT_MESSAGE: 14,
 	REPOST: 6,
+	/** NIP-18 generic repost for events other than kind 1. */
+	GENERIC_REPOST: 16,
 	CONTACT_LIST: 3,
 	/** NIP-51 pinned notes list. */
 	PINNED_NOTES: 10001,

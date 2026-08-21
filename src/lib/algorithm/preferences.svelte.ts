@@ -269,9 +269,9 @@ export const SURFACE_META: Record<
 		candidatePool: 'Notes from people you follow'
 	},
 	reels: {
-		label: 'Bits',
+		label: 'Bitz',
 		icon: 'i-lucide-circle-play',
-		tagline: 'Bits — short videos on Nostr',
+		tagline: 'Bitz — short videos on Nostr',
 		candidatePool: 'Video notes across your relays'
 	},
 	discover: {
