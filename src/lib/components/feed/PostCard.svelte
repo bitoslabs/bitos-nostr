@@ -622,6 +622,15 @@
 		}
 	}
 
+	async function repost() {
+		try {
+			await feed.repost(note);
+			toasts.success('Reposted');
+		} catch (err) {
+			toasts.error((err as Error).message || 'Could not repost');
+		}
+	}
+
 	function triggerLikeBurst(x: number, y: number) {
 		const id = ++likeBurstSeq;
 		likeBursts = [...likeBursts, { id, x, y, particles: makeParticles(12) }];
@@ -1332,6 +1341,7 @@
 					? 'text-[var(--tone-error-text)]'
 					: 'text-[var(--ui-text-muted)] hover:bg-[var(--tone-error-bg)] hover:text-[var(--tone-error-text)]'}"
 				aria-label={liked ? 'Unlike' : 'Like'}
+				title={liked ? 'Unlike' : 'Like'}
 			>
 				<span class="relative grid place-items-center">
 					<Icon
@@ -1360,6 +1370,7 @@
 				aria-label={directReplies.length
 					? `${directReplies.length} ${directReplies.length === 1 ? 'comment' : 'comments'}`
 					: 'Comment'}
+				title="Comment"
 			>
 				<Icon name="i-lucide-message-circle" class="size-[18px]" />
 				{#if directReplies.length > 0}
@@ -1370,12 +1381,15 @@
 			</button>
 			<button
 				type="button"
-				onclick={() => copyText(noteLink, 'Note link')}
-				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 md:flex-none md:px-3"
-				aria-label="Share"
+				onclick={repost}
+				disabled={!note.raw}
+				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-accent-500/10 hover:text-accent-600 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
+				aria-label="Repost"
+				title={note.raw ? 'Repost' : 'Repost unavailable'}
 			>
-				<Icon name="i-lucide-share" class="size-[18px]" />
-				<span class="hidden md:inline">Share</span>
+				<Icon name="i-lucide-repeat-2" class="size-[18px]" />
+				<span class="hidden md:inline">Repost</span>
+				{#if note.repostCount > 0}<span class="tabular-nums">{note.repostCount}</span>{/if}
 			</button>
 			<button
 				type="button"
@@ -1383,6 +1397,7 @@
 				disabled={!lightningAddress}
 				class="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-1.5 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-500 active:scale-90 disabled:pointer-events-none disabled:opacity-40 md:flex-none md:px-3"
 				aria-label={zapLabel}
+				title={lightningAddress ? zapLabel : 'Lightning address unavailable'}
 			>
 				<Icon name="i-lucide-zap" class="size-[18px]" />
 				<span class="hidden md:inline">{zapLabel}</span>
@@ -1394,6 +1409,7 @@
 					? 'text-primary-500'
 					: 'text-[var(--ui-text-muted)]'}"
 				aria-label={saved ? 'Unsave note' : 'Save note'}
+				title={saved ? 'Unsave note' : 'Save note'}
 			>
 				<Icon name={saved ? 'i-lucide-bookmark-check' : 'i-lucide-bookmark'} class="size-[18px]" />
 			</button>

@@ -299,7 +299,7 @@
 		const seen: Record<string, boolean> = {};
 		return events
 			.filter((event) => {
-				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen[event.id]) return false;
+				if (![NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL].includes(event.kind) || seen[event.id]) return false;
 				seen[event.id] = true;
 				return true;
 			})
@@ -321,7 +321,7 @@
 		const filters: Filter[] = [];
 		if (activeTag) {
 			filters.push({
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
 				'#t': [activeTag],
 				limit: RELAY_RESULT_LIMIT
 			});
@@ -335,7 +335,7 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 1000 }
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 1000 }
 				])
 			: [];
 		return applyActivityToNotes(nextNotes, activity, identity.current?.pk);
@@ -410,7 +410,7 @@
 		const revision = discoveryRevision;
 		try {
 			const events = await queryUrls(urls, [
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: RELAY_RESULT_LIMIT }
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], limit: RELAY_RESULT_LIMIT }
 			]);
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;
 			const notes = uniqueTimelineEvents(events).map((event) => ({
@@ -420,7 +420,7 @@
 			const ids = notes.map((note) => note.id);
 			const activity = ids.length
 				? await queryPrimaryFirst([
-						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
+						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
 					])
 				: [];
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;

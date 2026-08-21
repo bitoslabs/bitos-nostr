@@ -80,7 +80,7 @@
 				const [hydrated] = applyActivityToNotes(
 					[toFeedNote(event)],
 					await queryPrimaryFirst(
-						[{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': [id], limit: 500 }],
+						[{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': [id], limit: 500 }],
 						{
 							onSecondary: (mergedActivity) => {
 								if (loadedFor !== currentLoad) return;
@@ -127,7 +127,7 @@
 			const hydratedReplies = applyActivityToNotes(
 				replyEvents,
 				await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': replyIds, limit: 500 }
 				]),
 				identity.current?.pk
 			);

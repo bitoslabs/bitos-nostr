@@ -562,7 +562,7 @@
 		const activity = reelIds.length
 			? await queryPrimaryFirst([
 					{
-						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
+						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
 						'#e': reelIds,
 						limit: 500
 					}

@@ -54,6 +54,8 @@ export interface FeedNote {
 	/** Where this note entered the current view. Discovery notes are read-only
 	 * candidates from curated relays outside the user's configured relay list. */
 	source?: 'configured' | 'discovery';
+	/** Original signed event, when available for protocol actions such as repost. */
+	raw?: Event;
 	/** Present when this note is a poll (kind 1 with `poll_option` tags). */
 	poll?: PollData;
 }
@@ -65,7 +67,7 @@ export interface FeedNote {
 export function parsePoll(tags: string[][]): PollOption[] | null {
 	const options: PollOption[] = [];
 	for (const tag of tags) {
-		if (tag[0] !== 'poll_option') continue;
+		if (tag[0] !== 'option' && tag[0] !== 'poll_option') continue;
 		const id = tag[1];
 		const label = tag.slice(2).join(' ').trim();
 		if (!id) continue;
@@ -76,7 +78,7 @@ export function parsePoll(tags: string[][]): PollOption[] | null {
 
 /** Extract a poll's optional close timestamp from a `closed` tag, if any. */
 export function pollClosedAt(tags: string[][]): number | undefined {
-	const closed = tags.find((t) => t[0] === 'closed');
+	const closed = tags.find((t) => t[0] === 'endsAt' || t[0] === 'closed' || t[0] === 'closed_at');
 	if (!closed?.[1]) return undefined;
 	const ts = Number(closed[1]);
 	return Number.isFinite(ts) && ts > 0 ? ts : undefined;
@@ -165,6 +167,8 @@ export const NOSTR_KINDS = {
 	SHORT_VIDEO: 22,
 	DELETE: 5,
 	REACTION: 7,
+	POLL_RESPONSE: 1018,
+	POLL: 1068,
 	DIRECT_MESSAGE: 4,
 	DM_SEAL: 13,
 	PRIVATE_DIRECT_MESSAGE: 14,

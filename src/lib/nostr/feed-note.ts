@@ -1,4 +1,4 @@
-import { parsePoll, pollClosedAt, type FeedNote } from './types';
+import { parsePoll, pollClosedAt, type Event, type FeedNote } from './types';
 import { getPow } from 'nostr-tools/nip13';
 
 type FeedNoteEvent = Pick<
@@ -6,8 +6,9 @@ type FeedNoteEvent = Pick<
 		id: string;
 		pubkey: string;
 		content: string;
-		created_at: number;
-		tags: string[][];
+	created_at: number;
+	tags: string[][];
+	sig?: string;
 	},
 	'id' | 'pubkey' | 'content' | 'created_at' | 'tags'
 >;
@@ -26,6 +27,7 @@ export function toFeedNote(ev: FeedNoteEvent): FeedNote {
 		createdAt: ev.created_at,
 		pow: nonceTag && Number.isFinite(powTarget) && powTarget > 0 ? getPow(ev.id) : undefined,
 		tags: ev.tags,
+		raw: ev.sig ? (ev as Event) : undefined,
 		replyTo: replyTag?.[1],
 		reactions: [],
 		repostCount: 0,

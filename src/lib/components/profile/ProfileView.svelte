@@ -138,7 +138,7 @@
 		const seen = new SvelteSet<string>();
 		return events
 			.filter((event) => {
-				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen.has(event.id)) return false;
+				if (![NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL].includes(event.kind) || seen.has(event.id)) return false;
 				seen.add(event.id);
 				return true;
 			})
@@ -151,20 +151,20 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
 				])
 			: [];
 		return {
 			notes: applyActivityToNotes(nextNotes, activity, identity.current?.pk),
 			mayHaveMore:
-				events.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE).length >= NOTE_PAGE_LIMIT
+				events.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE || event.kind === NOSTR_KINDS.POLL).length >= NOTE_PAGE_LIMIT
 		};
 	}
 
 	async function fetchNotePage(nextPubkey: string, until?: number) {
 		const events = await queryPrimaryFirst([
 			{
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
+			kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
 				authors: [nextPubkey],
 				limit: NOTE_PAGE_LIMIT,
 				...(until ? { until } : {})
@@ -214,14 +214,14 @@
 				.filter((id, index, all): id is string => !!id && all.indexOf(id) === index) ?? [];
 		if (!ids.length) return;
 		const noteEvents = await queryPrimaryFirst([
-			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids, limit: ids.length }
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], '#e': ids, limit: ids.length }
 		]);
 		if (loadedFor !== nextPubkey) return;
 		const notesById = new SvelteMap(noteEvents.map((event) => [event.id, toFeedNote(event)]));
 		const ordered = ids.map((id) => notesById.get(id)).filter((note): note is FeedNote => !!note);
 		const activity = await queryPrimaryFirst([
 			{
-				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
 				'#e': ordered.map((note) => note.id),
 				limit: 500
 			}
@@ -255,7 +255,7 @@
 		const ids = [...new SvelteSet([...likedIds, ...repostedIds])];
 		if (!ids.length) return;
 		const noteEvents = await queryPrimaryFirst([
-			{ kinds: [NOSTR_KINDS.TEXT_NOTE], '#e': ids, limit: ids.length }
+			{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], '#e': ids, limit: ids.length }
 		]);
 		const notesById = new SvelteMap(noteEvents.map((event) => [event.id, toFeedNote(event)]));
 		const hydrate = async (targetIds: string[]) => {
@@ -264,7 +264,7 @@
 				.filter((note): note is FeedNote => !!note);
 			const activity = await queryPrimaryFirst([
 				{
-					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
 					'#e': ordered.map((note) => note.id),
 					limit: 500
 				}
@@ -326,7 +326,7 @@
 			});
 			const currentLoad = nextPubkey;
 			const primaryEvents = await queryPrimaryFirst(
-				[{ kinds: [NOSTR_KINDS.TEXT_NOTE], authors: [nextPubkey], limit: NOTE_PAGE_LIMIT }],
+				[{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], authors: [nextPubkey], limit: NOTE_PAGE_LIMIT }],
 				{
 					onSecondary: (mergedEvents) => {
 						if (loadedFor !== currentLoad) return;

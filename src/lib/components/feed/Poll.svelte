@@ -15,6 +15,18 @@
 	const totalVotes = $derived(poll.totalVotes);
 	const hasVoted = $derived(poll.myVote !== undefined);
 	const closed = $derived(!!poll.closedAt && poll.closedAt * 1000 <= Date.now());
+	const pollType = $derived(
+		note.tags.find((tag) => tag[0] === 'polltype')?.[1] === 'multiplechoice'
+			? 'Multiple choice'
+			: 'Single choice'
+	);
+	const closingLabel = $derived(
+		poll.closedAt
+			? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(
+					new Date(poll.closedAt * 1000)
+				)
+			: undefined
+	);
 
 	function pct(optionId: string) {
 		if (!totalVotes) return 0;
@@ -54,7 +66,19 @@
 	}
 </script>
 
+
 <div class="mt-3 select-none space-y-2">
+	<div class="flex items-center justify-between gap-2 px-0.5 text-[11px] text-[var(--ui-text-dimmed)]">
+		<span class="inline-flex items-center gap-1.5">
+			<Icon name="i-lucide-list-checks" class="size-3.5" />
+			{pollType}
+		</span>
+		{#if closingLabel}
+			<span class={closed ? 'font-semibold text-[var(--ui-text-muted)]' : ''}>
+				{closed ? 'Closed' : `Ends ${closingLabel}`}
+			</span>
+		{/if}
+	</div>
 	{#each poll.options as option (option.id)}
 		{@const isMine = poll.myVote === option.id}
 		{@const isLeading = leadingId() === option.id}
@@ -90,6 +114,7 @@
 			<!-- Label -->
 			<span class="relative min-w-0 flex-1 truncate text-[13.5px] font-semibold text-[var(--ui-text)]">
 				{option.label || 'Option'}
+				{#if isMine}<span class="ml-1.5 text-[11px] font-bold text-primary-500">Your vote</span>{/if}
 			</span>
 
 			<!-- Percentage -->
@@ -115,7 +140,7 @@
 		{:else if closed}
 			<span>Final results · {plural(totalVotes, 'vote')}</span>
 		{:else if hasVoted}
-			<span>Thanks for voting! · {plural(totalVotes, 'vote')}</span>
+			<span>Your vote is highlighted · {plural(totalVotes, 'vote')}</span>
 		{:else}
 			<span>{totalVotes > 0 ? plural(totalVotes, 'vote') : 'Be the first to vote'}</span>
 		{/if}

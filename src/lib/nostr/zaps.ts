@@ -123,11 +123,21 @@ export function applyActivityToNotes(
 	const noteIds = new Set(notes.map((note) => note.id));
 	const reactionIds = new Set<string>();
 	const zapIds = new Set<string>();
+	const repostIds = new Set<string>();
 	const reactionsByNote = new Map<string, FeedNote['reactions']>();
 	const zapsByNote = new Map<string, { count: number; sats: number }>();
+	const repostsByNote = new Map<string, number>();
 	const pollVotesByNote = new Map<string, Map<string, { optionId: string; at: number }>>();
 
 	for (const ev of events) {
+		if (ev.kind === NOSTR_KINDS.REPOST) {
+			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+			if (target && noteIds.has(target) && !repostIds.has(ev.id)) {
+				repostIds.add(ev.id);
+				repostsByNote.set(target, (repostsByNote.get(target) ?? 0) + 1);
+			}
+			continue;
+		}
 		if (ev.kind === NOSTR_KINDS.REACTION) {
 			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
 			if (!target || !noteIds.has(target) || ev.content === '-' || reactionIds.has(ev.id)) continue;
@@ -184,6 +194,7 @@ export function applyActivityToNotes(
 			reactions: reactionsByNote.get(note.id) ?? note.reactions,
 			zapCount: zapsByNote.get(note.id)?.count ?? note.zapCount,
 			zapTotalSats: zapsByNote.get(note.id)?.sats ?? note.zapTotalSats,
+			repostCount: repostsByNote.get(note.id) ?? note.repostCount,
 			poll:
 				note.poll && pollVotesByNote.has(note.id)
 					? {
