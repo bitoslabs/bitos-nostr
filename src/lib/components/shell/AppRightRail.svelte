@@ -10,6 +10,7 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryPrimaryFirst, subscribe } from '$lib/nostr/pool';
+	import { humanTags } from '$lib/nostr/content-classification';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
@@ -309,8 +310,12 @@
 		if (trendEvents.has(event.id)) return;
 		const tags = [
 			...new Set([
-				...event.tags.filter((tag) => tag[0] === 't' && tag[1]).map((tag) => tag[1].toLowerCase()),
-				...tagsFromContent(event.content)
+				...humanTags(
+					event.tags
+						.filter((tag) => tag[0] === 't' && tag[1])
+						.map((tag) => tag[1].toLowerCase())
+				),
+				...humanTags(tagsFromContent(event.content))
 			])
 		];
 		if (tags.length) {

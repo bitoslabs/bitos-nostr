@@ -14,7 +14,7 @@
 		requestOriginNotes
 	} from '$lib/nostr/origin-notes.svelte';
 	import { shortKey, timeAgo } from '$lib/utils/format';
-	import { parseContent } from '$lib/utils/note-content';
+	import { parseContent, stripNostrPrefix } from '$lib/utils/note-content';
 	import { extractMentionEntities } from '$lib/utils/nip27';
 	import NotificationMedia from './NotificationMedia.svelte';
 	import { cleanNotificationPreview, extractNotificationMedia } from '$lib/utils/imeta';
@@ -46,7 +46,7 @@
 		inline = false
 	}: { value?: string; eventId?: string; compact?: boolean; inline?: boolean } = $props();
 	const reference = $derived(eventId ?? value ?? '');
-	const raw = $derived(reference.startsWith('nostr:') ? reference.slice(6) : reference);
+	const raw = $derived(stripNostrPrefix(reference));
 	/** NIP-29 group address (kind 39000) → render a Community invite card. */
 	const communityId = $derived.by(() => {
 		try {
@@ -122,7 +122,7 @@
 			? parseContent(cleanNotificationPreview(event))
 					.map((token) => {
 						if (token.type !== 'nostr') return token.value;
-						const mention = token.value.startsWith('nostr:') ? token.value.slice(6) : token.value;
+						const mention = stripNostrPrefix(token.value);
 						try {
 							const decoded = decode(mention);
 							const pubkey =

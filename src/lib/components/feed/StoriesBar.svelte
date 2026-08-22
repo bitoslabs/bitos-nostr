@@ -20,6 +20,8 @@
 	);
 	let viewing = $state<StoryAuthor | null>(null);
 	let composing = $state(false);
+	/** Image hosts can prune files before a story expires; keep the tile useful. */
+	let failedPreviewIds = $state<Set<string>>(new Set());
 
 	function openAuthor(author: StoryAuthor) {
 		viewing = author;
@@ -41,13 +43,24 @@
 		return author?.slides[0];
 	}
 
+	function hasPreviewImage(author: StoryAuthor) {
+		const slide = latestSlide(author);
+		return !!slide?.imageUrl && !failedPreviewIds.has(slide.id);
+	}
+
+	function markPreviewImageFailed(author: StoryAuthor) {
+		const id = latestSlide(author)?.id;
+		if (!id || failedPreviewIds.has(id)) return;
+		failedPreviewIds = new Set([...failedPreviewIds, id]);
+	}
+
 	function noteFor(author: StoryAuthor) {
 		return author.slides.find((slide) => slide.content.trim())?.content.trim() ?? '';
 	}
 
 	function previewStyle(author?: StoryAuthor) {
 		const slide = latestSlide(author);
-		if (slide?.imageUrl) return '';
+		if (slide?.imageUrl && !failedPreviewIds.has(slide.id)) return '';
 		return (
 			slide?.bg ?? 'linear-gradient(135deg, var(--ui-color-primary-500), var(--color-accent-500))'
 		);
@@ -72,10 +85,11 @@
 		onclick={() => openAuthor(author)}
 		class="group relative h-[200px] w-[112px] shrink-0 overflow-hidden rounded-[18px] bg-[var(--ui-bg-muted)] text-left shadow-sm ring-1 ring-[var(--ui-border-muted)] transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10"
 	>
-		{#if latestSlide(author)?.imageUrl}
+		{#if hasPreviewImage(author)}
 			<img
 				src={latestSlide(author)?.imageUrl}
 				alt=""
+				onerror={() => markPreviewImageFailed(author)}
 				class="absolute inset-0 size-full object-cover object-center transition duration-300 group-hover:scale-105"
 				loading="lazy"
 			/>

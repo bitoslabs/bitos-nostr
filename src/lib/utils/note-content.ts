@@ -15,7 +15,7 @@ export type ContentToken =
 
 /** Matches bare URLs, `nostr:` entities, and #hashtags inside note content. */
 const contentPattern =
-	/(https?:\/\/[^\s<>()]+|nostr:(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
+	/(https?:\/\/[^\s<>()]+|nostr:\s*(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+|#[\p{L}\p{N}_-]{2,60})/giu;
 
 const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
@@ -51,6 +51,11 @@ export function hostFromUrl(url: string): string {
 	}
 }
 
+/** Remove the case-insensitive `nostr:` URI scheme (and optional following whitespace). */
+export function stripNostrPrefix(value: string): string {
+	return value.replace(/^nostr:\s*/i, '');
+}
+
 export function parseContent(content: string): ContentToken[] {
 	const tokens: ContentToken[] = [];
 	let lastIndex = 0;
@@ -80,5 +85,5 @@ export function parseContent(content: string): ContentToken[] {
 }
 
 export function isEventReference(value: string): boolean {
-	return /^nostr:(?:note1|nevent1|naddr1)/iu.test(value);
+	return /^nostr:\s*(?:note1|nevent1|naddr1)/iu.test(value);
 }

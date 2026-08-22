@@ -13,10 +13,11 @@
 	import { decode } from 'nostr-tools/nip19';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { shortKey } from '$lib/utils/format';
+	import { stripNostrPrefix } from '$lib/utils/note-content';
 
 	let { value, class: cls = '' }: { value: string; class?: string } = $props();
 
-	const raw = $derived(value.startsWith('nostr:') ? value.slice(6) : value);
+	const raw = $derived(stripNostrPrefix(value));
 	const decoded = $derived.by(() => {
 		try {
 			return decode(raw);

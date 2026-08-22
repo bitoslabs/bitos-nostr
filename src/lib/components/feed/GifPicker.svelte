@@ -11,6 +11,7 @@
 	 * and can be overridden with VITE_GIPHY_API_KEY.
 	 */
 	import { browser } from '$app/environment';
+	import { SvelteMap } from 'svelte/reactivity';
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	const GIPHY_KEY =
@@ -26,19 +27,41 @@
 		preview: string;
 		width: number;
 		height: number;
+		/** Giphy's title for the GIF — used to prefill alt text where relevant. */
+		title?: string;
 	}
 
-	let { onpick }: { onpick: (gif: GifChoice) => void } = $props();
+	/**
+	 * `popover` keeps the compact dropdown width used by the note composer;
+	 * `inline` fills its container (the story composer embeds the picker as a
+	 * full-width sheet inside its dialog).
+	 */
+	let {
+		onpick,
+		onpickmany,
+		variant = 'popover',
+		/** Multi-select mode: taps toggle selection, confirmed via `onpickmany`. */
+		multiple = false,
+		/** Selection cap in multi-select mode (slots remaining in the story). */
+		max = 6
+	}: {
+		onpick?: (gif: GifChoice) => void;
+		onpickmany?: (gifs: GifChoice[]) => void;
+		variant?: 'popover' | 'inline';
+		multiple?: boolean;
+		max?: number;
+	} = $props();
 
 	type GiphyImageSet = { url: string; width?: string; height?: string };
 	type GiphyItem = { id: string; images: Record<string, GiphyImageSet>; title?: string };
-	type GifItem = { id: string; preview: string; url: string; w: number; h: number };
+	type GifItem = { id: string; preview: string; url: string; w: number; h: number; title?: string };
 	type GifStorage = {
 		recent?: GifItem[];
 		trending?: { savedAt: number; items: GifItem[] };
 	};
 
 	let query = $state('');
+	let searchInput = $state<HTMLInputElement | null>(null);
 	let items = $state<GifItem[]>([]);
 	let recent = $state<GifItem[]>([]);
 	let tab = $state<'recent' | 'trending'>('trending');
@@ -51,6 +74,9 @@
 	let debounce: ReturnType<typeof setTimeout> | undefined;
 	let controller: AbortController | undefined;
 	let storage = $state<GifStorage>({});
+	/** Multi-select: id → item, insertion order = pick order. */
+	const selected = new SvelteMap<string, GifItem>();
+	const atCapacity = $derived(multiple && selected.size >= max);
 
 	function readStorage() {
 		try {
@@ -88,6 +114,8 @@
 	}
 
 	function mergeItems(current: GifItem[], incoming: GifItem[]) {
+		// Plain Map on purpose: a local dedupe inside an async fetch, never reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const byId = new Map(current.map((item) => [item.id, item]));
 		for (const item of incoming) byId.set(item.id, item);
 		return [...byId.values()];
@@ -122,7 +150,8 @@
 					preview: preview.url,
 					url: full.url,
 					w: Number(preview.width ?? 120),
-					h: Number(preview.height ?? 120)
+					h: Number(preview.height ?? 120),
+					title: gif.title?.trim() || undefined
 				};
 			});
 			const allItems = options.append ? mergeItems(items, nextItems) : nextItems;
@@ -156,7 +185,50 @@
 
 	function pick(item: GifItem) {
 		remember(item);
-		onpick({ url: item.url, preview: item.preview, width: item.w, height: item.h });
+		onpick?.({
+			url: item.url,
+			preview: item.preview,
+			width: item.w,
+			height: item.h,
+			title: item.title
+		});
+	}
+
+	/** Multi-select: toggle a tile. Taps beyond the cap are ignored. */
+	function toggle(item: GifItem) {
+		if (selected.has(item.id)) {
+			selected.delete(item.id);
+			return;
+		}
+		if (selected.size >= max) return;
+		selected.set(item.id, item);
+	}
+
+	/** 1-based pick order for a selected tile (0 when not selected). */
+	function selectionOrder(id: string): number {
+		let n = 0;
+		for (const key of selected.keys()) {
+			n += 1;
+			if (key === id) return n;
+		}
+		return 0;
+	}
+
+	/** Confirm the selection — hands the ordered set back, then resets. */
+	function confirmSelection() {
+		if (!selected.size || !onpickmany) return;
+		const chosen = [...selected.values()];
+		for (const item of chosen) remember(item);
+		onpickmany(
+			chosen.map((item) => ({
+				url: item.url,
+				preview: item.preview,
+				width: item.w,
+				height: item.h,
+				title: item.title
+			}))
+		);
+		selected.clear();
 	}
 
 	function showRecent() {
@@ -178,6 +250,12 @@
 	function loadMore() {
 		void fetchGifs(query, { append: true });
 	}
+
+	// Inside the picker dialog the search box is the primary control — focus it
+	// on open so typing works immediately (no a11y-hostile `autofocus` attr).
+	$effect(() => {
+		if (variant === 'inline') searchInput?.focus();
+	});
 
 	// Restore useful context immediately, then revalidate it in the background.
 	$effect(() => {
@@ -201,10 +279,11 @@
 	});
 </script>
 
-<div class="w-72 max-w-[80vw] sm:w-80">
+<div class={variant === 'popover' ? 'w-72 max-w-[80vw] sm:w-80' : 'w-full'}>
 	<div class="flex items-center gap-2 border-b border-[var(--ui-border-muted)] p-2">
 		<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 		<input
+			bind:this={searchInput}
 			type="search"
 			bind:value={query}
 			oninput={onInput}
@@ -246,7 +325,11 @@
 		</div>
 	{/if}
 
-	<div class="max-h-[280px] overflow-y-auto p-2">
+	<div
+		class="{variant === 'popover'
+			? 'max-h-[280px]'
+			: 'max-h-[42vh] sm:max-h-[52vh]'} overflow-y-auto p-2"
+	>
 		{#if error}
 			<p
 				class="grid place-items-center gap-2 py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]"
@@ -260,13 +343,30 @@
 			</p>
 		{:else}
 			<!-- Masonry via CSS columns keeps varied GIF heights tidy without JS. -->
-			<div class="gap-2 [column-count:2] sm:[column-count:3]">
+			<div
+				class="gap-2 {variant === 'popover'
+					? '[column-count:2] sm:[column-count:3]'
+					: '[column-count:3] sm:[column-count:4]'}"
+			>
 				{#each items as item (item.id)}
+					{@const isSelected = selected.has(item.id)}
+					{@const isDisabled = multiple && !isSelected && atCapacity}
 					<button
 						type="button"
-						onclick={() => pick(item)}
-						class="group relative mb-2 block w-full overflow-hidden rounded-lg bg-[var(--ui-bg-muted)]"
-						title="Insert GIF"
+						onclick={() => (multiple ? toggle(item) : pick(item))}
+						disabled={isDisabled}
+						aria-pressed={multiple ? isSelected : undefined}
+						aria-label={multiple
+							? isSelected
+								? `Deselect ${item.title ?? 'GIF'}`
+								: `Select ${item.title ?? 'GIF'}`
+							: undefined}
+						title={multiple ? (isSelected ? 'Deselect GIF' : 'Select GIF') : 'Insert GIF'}
+						class="group relative mb-2 block w-full overflow-hidden rounded-lg bg-[var(--ui-bg-muted)] transition {isSelected
+							? 'ring-2 ring-primary-500'
+							: isDisabled
+								? 'cursor-not-allowed opacity-40'
+								: ''}"
 					>
 						<img
 							src={item.preview}
@@ -275,14 +375,32 @@
 							class="w-full object-cover transition group-hover:opacity-90"
 							style="aspect-ratio:{item.w}/{item.h};"
 						/>
-						<span
-							class="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/30"
-						>
-							<Icon
-								name="i-lucide-plus"
-								class="size-5 text-white opacity-0 transition group-hover:opacity-100"
-							/>
-						</span>
+						{#if multiple}
+							<!-- Numbered checkmark — shows both state and pick order. -->
+							<span
+								class="absolute top-1.5 left-1.5 grid size-5 place-items-center rounded-full text-[10px] font-extrabold transition {isSelected
+									? 'bg-primary-500 text-white'
+									: 'bg-black/45 text-transparent ring-1 ring-white/70 backdrop-blur-sm'}"
+							>
+								<Icon name="i-lucide-check" class="size-3" />
+								{#if isSelected}<span class="sr-only">{selectionOrder(item.id)}</span>{/if}
+							</span>
+							{#if isSelected}
+								<span
+									class="absolute top-1 right-1.5 rounded-full bg-black/55 px-1.5 text-[10px] font-bold text-white backdrop-blur-sm"
+									>{selectionOrder(item.id)}</span
+								>
+							{/if}
+						{:else}
+							<span
+								class="absolute inset-0 grid place-items-center bg-black/0 transition group-hover:bg-black/30"
+							>
+								<Icon
+									name="i-lucide-plus"
+									class="size-5 text-white opacity-0 transition group-hover:opacity-100"
+								/>
+							</span>
+						{/if}
 					</button>
 				{/each}
 			</div>
@@ -305,6 +423,40 @@
 			{/if}
 		{/if}
 	</div>
+	{#if multiple}
+		<!-- Selection tray — the confirm step of the multi-select dialog. -->
+		<div
+			class="flex items-center gap-2 border-t border-[var(--ui-border-muted)] p-2 {selected.size
+				? ''
+				: 'opacity-80'}"
+		>
+			<div class="min-w-0 flex-1">
+				<p class="text-[12px] font-semibold text-[var(--ui-text)]">
+					{selected.size
+						? `${selected.size} selected${atCapacity ? ` · max ${max}` : ''}`
+						: `Tap GIFs to select up to ${max}`}
+				</p>
+			</div>
+			{#if selected.size}
+				<button
+					type="button"
+					onclick={() => selected.clear()}
+					class="h-8 shrink-0 rounded-full px-3 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+				>
+					Clear
+				</button>
+			{/if}
+			<button
+				type="button"
+				onclick={confirmSelection}
+				disabled={!selected.size}
+				class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary-500 px-3.5 text-[12px] font-bold text-white transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
+			>
+				<Icon name="i-lucide-plus" class="size-3.5" />
+				Add{selected.size ? ` ${selected.size}` : ''}
+			</button>
+		</div>
+	{/if}
 	<p
 		class="flex items-center justify-center gap-1 border-t border-[var(--ui-border-muted)] p-1.5 text-[10px] text-[var(--ui-text-dimmed)]"
 	>

@@ -18,6 +18,7 @@
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import type { FeedNote } from '$lib/nostr/types';
 	import { toFeedNote } from '$lib/nostr/feed-note';
+	import { humanTags } from '$lib/nostr/content-classification';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
@@ -427,11 +428,11 @@
 			if (seen[event.id]) continue;
 			seen[event.id] = true;
 
-			const noteTags = event.tags
-				.filter((tag) => tag[0] === 't' && tag[1])
-				.map((tag) => tag[1].toLowerCase());
-			const inlineTags = [...event.content.matchAll(hashtagPattern)].map((match) =>
-				match[1].toLowerCase()
+			const noteTags = humanTags(
+				event.tags.filter((tag) => tag[0] === 't' && tag[1]).map((tag) => tag[1].toLowerCase())
+			);
+			const inlineTags = humanTags(
+				[...event.content.matchAll(hashtagPattern)].map((match) => match[1].toLowerCase())
 			);
 			for (const tag of [...noteTags, ...inlineTags].filter(
 				(tag, index, all) => all.indexOf(tag) === index
