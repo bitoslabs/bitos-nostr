@@ -4,7 +4,14 @@
  * debounce-owner guard logic exercised here indirectly.)
  */
 import { describe, expect, it } from 'vitest';
-import { pubkeysFromListEvent, buildListTags, BLOCK_LIST, MUTE_LIST } from './list-sync';
+import {
+	pubkeysFromListEvent,
+	valuesFromListEvent,
+	buildListTags,
+	BLOCK_LIST,
+	MUTE_LIST,
+	INTEREST_SET_LIST
+} from './list-sync';
 import { buildReportTags, REPORT_REASONS } from './reports';
 import type { Event } from 'nostr-tools/pure';
 
@@ -57,6 +64,50 @@ describe('list-sync', () => {
 		const tags = buildListTags([PK_B], [], BLOCK_LIST);
 		expect(tags[0]).toEqual(['d', 'block']);
 		expect(tags).toContainEqual(['p', PK_B]);
+	});
+
+	it('preserves NIP-01 t-tag (hashtag) mutes on a p-tag mute list', () => {
+		const tags = buildListTags([PK_B], [['t', 'spam']], MUTE_LIST);
+		expect(tags).toContainEqual(['p', PK_B]);
+		expect(tags).toContainEqual(['t', 'spam']); // kept verbatim — not ours to own
+	});
+});
+
+describe('list-sync interest set (followed hashtags)', () => {
+	it('extracts normalized, valid, deduped t-tag hashtags', () => {
+		const ev = fakeEvent({
+			kind: 30_015,
+			tags: [
+				['t', 'Bitcoin'],
+				['t', '#bitcoin'], // hash-stripped + lowered → dup
+				['t', 'nostr'],
+				['t', 'x'], // too short
+				['t', ''],
+				['p', PK_B], // wrong tag type
+				['d', 'interest']
+			]
+		});
+		expect(valuesFromListEvent(ev, 't')).toEqual(['bitcoin', 'nostr']);
+	});
+
+	it('builds interest set tags with d=interest and t entries', () => {
+		const tags = buildListTags(
+			['bitcoin', 'nostr'],
+			[
+				['t', 'stale'], // regenerated — must not duplicate
+				['p', PK_B], // unknown tag — preserved verbatim
+				['title', 'My interests']
+			],
+			INTEREST_SET_LIST
+		);
+		expect(tags[0]).toEqual(['d', 'interest']);
+		expect(tags.filter((t) => t[0] === 't')).toEqual([
+			['t', 'bitcoin'],
+			['t', 'nostr']
+		]);
+		expect(tags).toContainEqual(['p', PK_B]);
+		expect(tags).toContainEqual(['title', 'My interests']);
+		expect(tags.some((t) => t[0] === 'client')).toBe(true);
 	});
 });
 

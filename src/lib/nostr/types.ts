@@ -3,6 +3,54 @@ import type { Event } from 'nostr-tools/pure';
 
 export type { Event };
 
+/** NIP-18 repost target, normalized across kind 6 and kind 16 events. */
+export interface RepostTarget {
+	eventId?: string;
+	pubkey?: string;
+	kind?: number;
+	relayUrl?: string;
+	event?: Event;
+}
+
+/** Build the interoperable NIP-18 tags for an original event. */
+export function repostTags(original: Pick<Event, 'id' | 'pubkey' | 'kind' | 'tags'>, relayUrl?: string): string[][] {
+	const tags: string[][] = [['e', original.id]];
+	if (relayUrl) tags[0].push(relayUrl);
+	tags.push(['p', original.pubkey]);
+	if (original.kind !== 1) tags.push(['k', String(original.kind)]);
+	// Addressable/replaceable events should carry their stable coordinate. For a
+	// plain replaceable event without a d tag, the e tag still identifies the
+	// specific version contained in content.
+	const d = original.tags.find((tag) => tag[0] === 'd' && tag[1])?.[1];
+	if (d && (original.kind >= 30000 || (original.kind >= 10000 && original.kind < 20000))) {
+		tags.push(['a', `${original.kind}:${original.pubkey}:${d}`]);
+	}
+	return tags;
+}
+
+/** Extract the referenced event from a NIP-18 repost received from any client. */
+export function repostTarget(event: Pick<Event, 'kind' | 'content' | 'tags'>): RepostTarget {
+	const e = event.tags.find((tag) => tag[0] === 'e' && /^[0-9a-f]{64}$/i.test(tag[1] ?? ''));
+	const p = event.tags.find((tag) => tag[0] === 'p' && tag[1]);
+	const k = event.tags.find((tag) => tag[0] === 'k' && tag[1]);
+	let embedded: Event | undefined;
+	try {
+		const parsed = JSON.parse(event.content) as Partial<Event>;
+		if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string' && typeof parsed.kind === 'number') {
+			embedded = parsed as Event;
+		}
+	} catch {
+		// NIP-18 permits empty content; tags remain the authoritative reference.
+	}
+	return {
+		eventId: e?.[1] ?? embedded?.id,
+		pubkey: p?.[1] ?? embedded?.pubkey,
+		kind: k?.[1] ? Number(k[1]) : embedded?.kind,
+		relayUrl: e?.[2],
+		event: embedded
+	};
+}
+
 /** NIP-01 kind 0 metadata (profile). */
 export interface Profile {
 	pubkey: string;
@@ -24,6 +72,14 @@ export interface PollOption {
 	label: string;
 }
 
+/** A voter entry for a poll (latest vote per pubkey wins). */
+export interface PollVoter {
+	pubkey: string;
+	optionId: string;
+	/** Unix seconds when this vote was cast. */
+	at: number;
+}
+
 /** Aggregated poll data attached to a kind-1 note. */
 export interface PollData {
 	options: PollOption[];
@@ -34,7 +90,12 @@ export interface PollData {
 	myVote?: string;
 	/** Unix seconds at which the poll closed (optional). */
 	closedAt?: number;
+	/** Most recent voters, newest first. Capped for feed payloads. */
+	voters?: PollVoter[];
 }
+
+/** Max voter entries kept per poll for the "voters" detail list. */
+export const MAX_POLL_VOTERS = 100;
 
 /** A kind 1 text note ready for the feed UI. */
 export interface FeedNote {
@@ -52,8 +113,11 @@ export interface FeedNote {
 	zapCount: number;
 	zapTotalSats: number;
 	/** Where this note entered the current view. Discovery notes are read-only
-	 * candidates from curated relays outside the user's configured relay list. */
-	source?: 'configured' | 'discovery';
+	 * candidates from curated relays outside the user's configured relay list;
+	 * followed-tag notes were fetched because they match a followed hashtag. */
+	source?: 'configured' | 'discovery' | 'followed-tag';
+	/** Original signed event, when available for protocol actions such as repost. */
+	raw?: Event;
 	/** Present when this note is a poll (kind 1 with `poll_option` tags). */
 	poll?: PollData;
 }
@@ -65,7 +129,7 @@ export interface FeedNote {
 export function parsePoll(tags: string[][]): PollOption[] | null {
 	const options: PollOption[] = [];
 	for (const tag of tags) {
-		if (tag[0] !== 'poll_option') continue;
+		if (tag[0] !== 'option' && tag[0] !== 'poll_option') continue;
 		const id = tag[1];
 		const label = tag.slice(2).join(' ').trim();
 		if (!id) continue;
@@ -76,7 +140,7 @@ export function parsePoll(tags: string[][]): PollOption[] | null {
 
 /** Extract a poll's optional close timestamp from a `closed` tag, if any. */
 export function pollClosedAt(tags: string[][]): number | undefined {
-	const closed = tags.find((t) => t[0] === 'closed');
+	const closed = tags.find((t) => t[0] === 'endsAt' || t[0] === 'closed' || t[0] === 'closed_at');
 	if (!closed?.[1]) return undefined;
 	const ts = Number(closed[1]);
 	return Number.isFinite(ts) && ts > 0 ? ts : undefined;
@@ -112,6 +176,7 @@ export interface DirectMessage {
 	createdAt: number;
 	mine: boolean;
 	protocol?: 'nip04' | 'nip17';
+	delivery?: 'pending' | 'sent' | 'failed';
 }
 
 /** A conversation row. */
@@ -165,10 +230,14 @@ export const NOSTR_KINDS = {
 	SHORT_VIDEO: 22,
 	DELETE: 5,
 	REACTION: 7,
+	POLL_RESPONSE: 1018,
+	POLL: 1068,
 	DIRECT_MESSAGE: 4,
 	DM_SEAL: 13,
 	PRIVATE_DIRECT_MESSAGE: 14,
 	REPOST: 6,
+	/** NIP-18 generic repost for events other than kind 1. */
+	GENERIC_REPOST: 16,
 	CONTACT_LIST: 3,
 	/** NIP-51 pinned notes list. */
 	PINNED_NOTES: 10001,
@@ -205,6 +274,8 @@ export const NOSTR_KINDS = {
 	ZAP: 9735,
 	/** NIP-53 live streaming activity (used by zap.stream and other clients). */
 	LIVE_ACTIVITY: 30311,
+	/** NIP-51 interest set (d=interest) — followed hashtags. */
+	INTEREST_SET: 30015,
 	GIFT_WRAP: 1059,
 	/** NIP-38 user statuses — used for 24h stories + messenger-style notes. */
 	STORY_STATUS: 30315,

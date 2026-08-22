@@ -13,7 +13,16 @@ import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
 import { mutes } from '$lib/stores/mutes.svelte';
 import { hexToBytes } from './hex';
-import { NOSTR_KINDS, type FeedNote, parsePoll, pollClosedAt } from './types';
+import {
+	NOSTR_KINDS,
+	MAX_POLL_VOTERS,
+	repostTarget,
+	repostTags,
+	type FeedNote,
+	type PollVoter,
+	parsePoll,
+	pollClosedAt
+} from './types';
 import { toFeedNote } from './feed-note';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
@@ -31,6 +40,7 @@ const MAX_PENDING_NOTES = 100;
 const MAX_TEXT_NOTE_CHARS = 16_000;
 const FEED_POST_KINDS = [
 	NOSTR_KINDS.TEXT_NOTE,
+	NOSTR_KINDS.POLL,
 	NOSTR_KINDS.PICTURE,
 	NOSTR_KINDS.VIDEO,
 	NOSTR_KINDS.SHORT_VIDEO,
@@ -119,7 +129,14 @@ class FeedStore {
 		this.unsub = subscribe(
 			[
 				{
-					kinds: [...FEED_POST_KINDS, NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+					kinds: [
+						...FEED_POST_KINDS,
+						NOSTR_KINDS.REACTION,
+						NOSTR_KINDS.POLL_RESPONSE,
+						NOSTR_KINDS.REPOST,
+						NOSTR_KINDS.GENERIC_REPOST,
+						NOSTR_KINDS.ZAP
+					],
 					limit: INITIAL_LIMIT
 				}
 			],
@@ -132,7 +149,11 @@ class FeedStore {
 				onevent: (ev) => {
 					if (FEED_POST_KINDS.includes(ev.kind as (typeof FEED_POST_KINDS)[number]))
 						this.ingestNote(ev, { queueIfLive: this.connected });
-					else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
+					else if (ev.kind === NOSTR_KINDS.POLL_RESPONSE) this.ingestPollResponse(ev);
+					else if (ev.kind === NOSTR_KINDS.REPOST || ev.kind === NOSTR_KINDS.GENERIC_REPOST) {
+						const target = repostTarget(ev).eventId;
+						if (target) void this.hydrateActivity([target]);
+					} else if (ev.kind === NOSTR_KINDS.REACTION) this.ingestReaction(ev);
 					else if (ev.kind === NOSTR_KINDS.ZAP) this.ingestZap(ev);
 					// opportunistically load the author's profile
 					profiles.ensure([ev.pubkey]);
@@ -224,6 +245,7 @@ class FeedStore {
 			createdAt: ev.created_at,
 			pow: eventPow(ev),
 			tags: ev.tags,
+			raw: 'sig' in ev ? (ev as FeedNote['raw']) : undefined,
 			replyTo: replyTag?.[1],
 			reactions: [],
 			repostCount: 0,
@@ -312,6 +334,15 @@ class FeedStore {
 		const next = this.nextReactions(note, ev);
 		if (!next) return;
 		this.notes = this.notes.map((n, i) => (i === idx ? { ...n, reactions: next } : n));
+	}
+
+	private ingestPollResponse(ev: ReactionEvent) {
+		const target = ev.tags.find((t) => t[0] === 'e')?.[1];
+		const optionId = ev.tags.find((t) => t[0] === 'response')?.[1];
+		if (!target || !optionId) return;
+		const note = this.noteById(target);
+		if (note?.poll?.options.some((o) => o.id === optionId))
+			this.applyPollVote(target, { ...ev, content: optionId });
 	}
 
 	private bufferReaction(target: string, ev: ReactionEvent) {
@@ -403,18 +434,33 @@ class FeedStore {
 	private rebuildPoll(pollId: string) {
 		const note = this.noteById(pollId);
 		if (!note?.poll) return;
-		const byPubkey = this.pollVotes.get(pollId) ?? new Map<string, { optionId: string }>();
+		const byPubkey =
+			this.pollVotes.get(pollId) ?? new Map<string, { optionId: string; at?: number }>();
 		const votes: Record<string, number> = {};
 		let total = 0;
 		const me = identity.current?.pk?.toLowerCase();
 		let myVote: string | undefined;
+		const voters: PollVoter[] = [];
 		for (const [pubkey, v] of byPubkey) {
 			votes[v.optionId] = (votes[v.optionId] ?? 0) + 1;
 			total += 1;
 			if (pubkey === me) myVote = v.optionId;
+			voters.push({ pubkey, optionId: v.optionId, at: v.at ?? note.createdAt });
 		}
+		voters.sort((a, b) => b.at - a.at);
 		this.updateNote(pollId, (n) =>
-			n.poll ? { ...n, poll: { ...n.poll, votes, totalVotes: total, myVote } } : n
+			n.poll
+				? {
+						...n,
+						poll: {
+							...n.poll,
+							votes,
+							totalVotes: total,
+							myVote,
+							voters: voters.slice(0, MAX_POLL_VOTERS)
+						}
+					}
+				: n
 		);
 	}
 
@@ -486,6 +532,16 @@ class FeedStore {
 					[...this.notes, ...this.pendingNotes].map((note) => [note.id, note])
 				);
 				const nonPollActivity = activity.filter((event) => {
+					if (event.kind === NOSTR_KINDS.POLL_RESPONSE) {
+						const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+						const optionId = event.tags.find((tag) => tag[0] === 'response' && tag[1])?.[1];
+						const poll = target ? notesById.get(target)?.poll : undefined;
+						if (target && optionId && poll?.options.some((option) => option.id === optionId)) {
+							this.applyPollVote(target, { ...event, content: optionId });
+							return false;
+						}
+						return false;
+					}
 					if (event.kind !== NOSTR_KINDS.REACTION) return true;
 					const target = event.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
 					const poll = target ? notesById.get(target)?.poll : undefined;
@@ -509,7 +565,13 @@ class FeedStore {
 			const activity = await queryPrimaryFirst(
 				[
 					{
-						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP],
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.GENERIC_REPOST,
+							NOSTR_KINDS.ZAP
+						],
 						'#e': uniqueIds,
 						limit: 1000
 					}
@@ -581,7 +643,9 @@ class FeedStore {
 			);
 		const replyIds = replies.map((reply) => reply.id);
 		const reactions = replyIds.length
-			? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 1000 }])
+			? await queryPrimaryFirst([
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE], '#e': replyIds, limit: 1000 }
+				])
 			: [];
 		const hydrated = applyActivityToNotes(replies, reactions, identity.current?.pk);
 		for (const reply of hydrated) this.upsertNote(reply);
@@ -695,6 +759,106 @@ class FeedStore {
 	}
 
 	/**
+	 * Publish a short-form media bitz for the Bitz feed.
+	 *
+	 * Pictures go out as NIP-68 kind 20; videos as NIP-71 kind 22 when portrait
+	 * (the Bitz/reels shape) or kind 21 when landscape. The media rides in a
+	 * NIP-92 `imeta` tag (url / mime / size / dimensions) so every Nostr
+	 * short-video client renders it — the content stays a clean caption.
+	 */
+	async postBitz(
+		media: PostMediaAttachment,
+		options: {
+			caption?: string;
+			sensitive?: boolean;
+			/** Portrait videos publish as kind 22 (short-form), landscape as 21. */
+			portrait?: boolean;
+			/** Natural media dimensions `WxH` for the imeta tag. */
+			dim?: string;
+			/** Optional poster/cover frame URL added to the imeta (`thumb`). */
+			thumb?: string;
+			pow?: number;
+			/** Live stats while the NIP-13 worker mines. */
+			onPowProgress?: (progress: PowProgress) => void;
+			/** Coarse phase updates for button / status labels. */
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			/** Aborts mining (worker is terminated, nothing is published). */
+			signal?: AbortSignal;
+		} = {}
+	): Promise<string> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		const url = media.url?.trim();
+		if (!url) throw new Error('Upload the media first');
+		const caption = (options.caption ?? '').trim();
+		if (caption.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(`Captions are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+		}
+		const kind =
+			media.kind === 'image'
+				? NOSTR_KINDS.PICTURE
+				: options.portrait === false
+					? NOSTR_KINDS.VIDEO
+					: NOSTR_KINDS.SHORT_VIDEO;
+		const tags: string[][] = [...clientTag(), ...extractHashtagTags(caption)];
+		const imeta = [`url ${url}`];
+		if (media.mimeType) imeta.push(`m ${media.mimeType}`);
+		if (media.bytes > 0) imeta.push(`size ${media.bytes}`);
+		if (options.dim) imeta.push(`dim ${options.dim}`);
+		if (options.thumb) imeta.push(`thumb ${options.thumb}`);
+		tags.push(['imeta', ...imeta]);
+		if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
+		// NIP-27: back every inline `nostr:` mention with matching p / e tags so
+		// the referenced profiles / notes are notified.
+		const { pubkeys, noteIds } = extractMentionEntities(caption);
+		for (const pubkey of pubkeys) tags.push(['p', pubkey]);
+		for (const eventId of noteIds) tags.push(['e', eventId]);
+		const unsigned = {
+			pubkey: getPublicKey(hexToBytes(id.sk)),
+			kind,
+			content: caption,
+			created_at: Math.floor(Date.now() / 1000),
+			tags
+		};
+		if (options.pow && options.pow > 0) options.onPhase?.('mining');
+		const mined =
+			options.pow && options.pow > 0
+				? await minePowAsync(unsigned, options.pow, {
+						onProgress: options.onPowProgress,
+						signal: options.signal
+					})
+				: unsigned;
+		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		options.onPhase?.('publishing');
+		await publish(event);
+		// Media kinds are feed post kinds too, so the bitz shows immediately in
+		// the home timeline; the Bitz route picks it up from relays on next load.
+		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
+		return event.id;
+	}
+
+	/** Publish a NIP-18 repost (kind 6) of the original signed event. */
+	async repost(note: FeedNote): Promise<string> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		if (!note.raw) throw new Error('This note cannot be reposted from the current view');
+		const repostKind = note.raw.kind === NOSTR_KINDS.TEXT_NOTE ? NOSTR_KINDS.REPOST : NOSTR_KINDS.GENERIC_REPOST;
+		const event = finalizeEvent(
+			{
+				kind: repostKind,
+				content: JSON.stringify(note.raw),
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [...clientTag(), ...repostTags(note.raw)]
+			},
+			hexToBytes(id.sk)
+		);
+		await publish(event);
+		return event.id;
+	}
+
+	/**
 	 * Publish a kind-1 poll note. The question is the note content; each option
 	 * becomes a `["poll_option", "<id>", "<label>"]` tag. Votes arrive later as
 	 * kind-7 reactions whose content is the option id.
@@ -702,7 +866,7 @@ class FeedStore {
 	async postPoll(
 		question: string,
 		options: string[],
-		publishOptions: { pow?: number } = {}
+		publishOptions: { pow?: number; endsAt?: number } = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
 		const id = identity.current;
@@ -725,9 +889,14 @@ class FeedStore {
 			tags: [
 				...clientTag(),
 				...extractHashtagTags(prompt),
-				...cleanOptions.map((label, i) => ['poll_option', String(i), label])
+				...cleanOptions.map((label, i) => ['option', String(i), label]),
+				['polltype', 'singlechoice'],
+				...(publishOptions.endsAt && publishOptions.endsAt > 0
+					? [['endsAt', String(publishOptions.endsAt)] as string[]]
+					: [])
 			]
 		};
+		(unsigned as { kind: number }).kind = NOSTR_KINDS.POLL;
 		const mined =
 			publishOptions.pow && publishOptions.pow > 0
 				? await minePowAsync(unsigned, publishOptions.pow)
@@ -751,10 +920,10 @@ class FeedStore {
 		if (note.poll.myVote === optionId) return note; // already voted this option
 		const event = finalizeEvent(
 			{
-				kind: NOSTR_KINDS.REACTION,
-				content: optionId,
+				kind: NOSTR_KINDS.POLL_RESPONSE,
+				content: '',
 				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ['e', note.id], ['p', note.pubkey]]
+				tags: [...clientTag(), ['e', note.id], ['response', optionId]]
 			},
 			hexToBytes(id.sk)
 		);
@@ -773,13 +942,18 @@ class FeedStore {
 		const votes = { ...note.poll.votes };
 		if (previousVote) votes[previousVote] = Math.max(0, (votes[previousVote] ?? 0) - 1);
 		votes[optionId] = (votes[optionId] ?? 0) + 1;
+		const voters = [
+			{ pubkey: id.pk.toLowerCase(), optionId, at: event.created_at },
+			...(note.poll.voters ?? []).filter((voter) => voter.pubkey !== id.pk.toLowerCase())
+		].slice(0, MAX_POLL_VOTERS);
 		return {
 			...note,
 			poll: {
 				...note.poll,
 				votes,
 				totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
-				myVote: optionId
+				myVote: optionId,
+				voters
 			}
 		};
 	}
@@ -791,7 +965,7 @@ class FeedStore {
 		options: {
 			attachments?: PostMediaAttachment[];
 			extraPubkeys?: string[];
-			/** NIP-13 difficulty (leading zero bits) to mine before publishing. */
+			/** NIP-13 difficulty (leading zero bitz) to mine before publishing. */
 			pow?: number;
 			/** Live stats while the NIP-13 worker mines. */
 			onPowProgress?: (progress: PowProgress) => void;

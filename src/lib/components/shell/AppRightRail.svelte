@@ -10,10 +10,12 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryPrimaryFirst, subscribe } from '$lib/nostr/pool';
+	import { humanTags } from '$lib/nostr/content-classification';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
+	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { formatCompact, shortKey } from '$lib/utils/format';
 
@@ -308,8 +310,12 @@
 		if (trendEvents.has(event.id)) return;
 		const tags = [
 			...new Set([
-				...event.tags.filter((tag) => tag[0] === 't' && tag[1]).map((tag) => tag[1].toLowerCase()),
-				...tagsFromContent(event.content)
+				...humanTags(
+					event.tags
+						.filter((tag) => tag[0] === 't' && tag[1])
+						.map((tag) => tag[1].toLowerCase())
+				),
+				...humanTags(tagsFromContent(event.content))
 			])
 		];
 		if (tags.length) {
@@ -510,7 +516,9 @@
 			relaysOnline: relayRows.filter((relay) => relay.status === 'connected').length,
 			sats24h: network.sats24h, // maintained by refreshZapVolume — do not reset here
 			throughput: network.throughput,
-			throughputBucketSeconds: network.throughputBucketSeconds
+			throughputBucketSeconds: network.throughputBucketSeconds,
+			history: network.history,
+			events24h: network.events24h
 		};
 		hasLoaded = true;
 	}
@@ -719,14 +727,24 @@
 						>
 							<button
 								type="button"
-								onclick={() => feedPreferences.togglePinnedTag(trend.tag)}
+								onclick={() => {
+									const followed = hashtagFollows.toggle(trend.tag);
+									if (followed)
+										toasts.success(`Following #${trend.tag} — its notes now appear in your feeds`);
+									else toasts.info(`Unfollowed #${trend.tag}`);
+								}}
 								class="grid size-6 place-items-center rounded-md text-[var(--ui-text-dimmed)] transition hover:bg-primary-500/10 hover:text-primary-600"
-								aria-label={feedPreferences.isPinned(trend.tag)
-									? `Unpin #${trend.tag}`
-									: `Pin #${trend.tag}`}
+								aria-label={hashtagFollows.has(trend.tag)
+									? `Unfollow #${trend.tag}`
+									: `Follow #${trend.tag}`}
+								title={hashtagFollows.has(trend.tag)
+									? `Unfollow #${trend.tag} (synced via NIP-51)`
+									: `Follow #${trend.tag} (synced via NIP-51)`}
 							>
 								<Icon
-									name={feedPreferences.isPinned(trend.tag) ? 'i-lucide-pin-off' : 'i-lucide-pin'}
+									name={hashtagFollows.has(trend.tag)
+										? 'i-lucide-bell-ring'
+										: 'i-lucide-bell-plus'}
 									class="size-4"
 								/>
 							</button>

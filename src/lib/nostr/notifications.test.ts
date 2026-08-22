@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNotificationContent, zapSenderPubkey } from './notifications.svelte';
+import { parseNotificationContent, parseZapAmount, zapSenderPubkey } from './notifications.svelte';
 import type { Event } from './types';
 
 describe('parseNotificationContent', () => {
@@ -62,5 +62,16 @@ describe('zapSenderPubkey', () => {
 		} satisfies Event;
 
 		expect(zapSenderPubkey(receipt)).toBe('wallet');
+	});
+});
+
+describe('parseZapAmount', () => {
+	it('falls back to the embedded zap request amount', () => {
+		const description = JSON.stringify({ tags: [['amount', '21000']] });
+		expect(parseZapAmount([['description', description]])).toBe(21);
+	});
+
+	it('prefers the receipt amount tag when present', () => {
+		expect(parseZapAmount([['amount', '50000'], ['description', JSON.stringify({ tags: [['amount', '21000']] })]])).toBe(50);
 	});
 });

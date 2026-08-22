@@ -7,7 +7,7 @@
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import BitsSearch from '$lib/components/bits/BitsSearch.svelte';
+	import BitsSearch from '$lib/components/bitz/BitzSearch.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
@@ -40,13 +40,13 @@
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { compactSats } from '$lib/utils/profile-stats';
-	import { BitsSearchStore } from '$lib/stores/bits-search.svelte';
+	import { BitzSearchStore } from '$lib/stores/bitz-search.svelte';
 	import {
-		bitsSession,
-		BITS_SESSION_REFRESH_MS,
-		type BitsMode,
+		bitzSession,
+		BITZ_SESSION_REFRESH_MS,
+		type BitzMode,
 		type ReelNote
-	} from '$lib/stores/bits-session.svelte';
+	} from '$lib/stores/bitz-session.svelte';
 
 	type Burst = {
 		id: number;
@@ -81,12 +81,12 @@
 	const REELS_CACHE_KEY = 'bitos:reels-cache:v3';
 	const LEGACY_REELS_CACHE_KEY = 'bitos:reels-cache:v2';
 	const REELS_CACHE_TTL_MS = 15 * 60 * 1000;
-	// Keep startup fast without retaining the full Bits feed locally. Older
+	// Keep startup fast without retaining the full Bitz feed locally. Older
 	// pages always come from relays through the normal pagination request.
 	const MAX_CACHED_REELS = 10;
 	// Nostr `limit` applies PER RELAY PER FILTER, so a single combined filter
 	// transfers limit × relay-count events. Splitting by kind fixes the yield:
-	// dedicated media kinds are ~100% renderable bits (query them deep), while
+	// dedicated media kinds are ~100% renderable bitz (query them deep), while
 	// kind-1 text notes are mostly text (query a shallow window for the few
 	// that carry video links). Both filters run in one parallel round trip.
 	const REEL_MEDIA_KINDS = [
@@ -118,7 +118,7 @@
 	const EXPLORE_INITIAL_VISIBLE = 24;
 	const EXPLORE_PAGE_SIZE = 18;
 
-	const bitsTabs: { key: BitsMode; label: string }[] = [
+	const bitzTabs: { key: BitzMode; label: string }[] = [
 		{ key: 'explore', label: 'Explore' },
 		{ key: 'following', label: 'Following' },
 		{ key: 'foryou', label: 'For you' }
@@ -131,7 +131,7 @@
 	let hasMoreReels = $state(true);
 	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
-	let bitsMode = $state<BitsMode>('foryou');
+	let bitzMode = $state<BitzMode>('foryou');
 	let exploreScroller: HTMLDivElement | undefined = $state();
 	let exploreVisible = $state(EXPLORE_INITIAL_VISIBLE);
 	let gridVideoDurations = $state<Record<string, number>>({});
@@ -181,7 +181,7 @@
 		)
 	);
 	// The snap player consumes whichever list the active tab implies.
-	const playbackReels = $derived(bitsMode === 'following' ? followingReels : rankedReels);
+	const playbackReels = $derived(bitzMode === 'following' ? followingReels : rankedReels);
 	const renderedReels = $derived(playbackReels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < playbackReels.length);
 	// Explore grid: videos lead (it is the "vdo" tab), pictures keep ranked order.
@@ -191,7 +191,7 @@
 	]);
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
 
-	function bitAuthorName(reel: ReelNote) {
+	function bitzAuthorName(reel: ReelNote) {
 		const profile = profiles.get(reel.pubkey);
 		return profile?.display_name || profile?.name || shortKey(reel.pubkey);
 	}
@@ -199,7 +199,7 @@
 	/** Search runs in a dedicated store (debounce + relay round + dedupe);
 	 *  the page only injects its relay access, reel pipeline, and name helpers.
 	 *  The local pool mirrors `exploreReels` so matching updates as the feed grows. */
-	const search = new BitsSearchStore({
+	const search = new BitzSearchStore({
 		relaySearch: (requests) =>
 			queryUrls(relays.orderedReadUrls, requests as Filter[], { maxWait: REELS_PAGE_MAX_WAIT_MS }),
 		eventsToReels: async (events) => {
@@ -207,7 +207,7 @@
 			return mediaEvents.length ? await buildReelsFromEvents(mediaEvents, new Set()) : [];
 		},
 		captionOf: captionFor,
-		authorOf: bitAuthorName,
+		authorOf: bitzAuthorName,
 		profileEnsure: (pubkeys) => profiles.ensure(pubkeys),
 		mediaKinds: REEL_MEDIA_KINDS,
 		textKind: NOSTR_KINDS.TEXT_NOTE
@@ -220,7 +220,7 @@
 
 	/** Tap a result: splice into the feed if needed, then jump the snap player
 	 *  straight to it (same path the Explore grid uses). */
-	async function openBitResult(reel: ReelNote) {
+	async function openBitzResult(reel: ReelNote) {
 		search.close();
 		if (!reels.some((item) => item.id === reel.id)) {
 			applyReels([reel], { append: true });
@@ -324,7 +324,7 @@
 	}
 
 	function reelMenuId(reel: ReelNote) {
-		return `bit-menu:${reel.id}`;
+		return `bitz-menu:${reel.id}`;
 	}
 
 	async function copyText(value: string, label: string) {
@@ -390,7 +390,7 @@
 		popovers.close();
 	}
 
-	/** Drops the bit everywhere on the page: player lists, cache, session. */
+	/** Drops the bitz everywhere on the page: player lists, cache, session. */
 	function removeReel(reel: ReelNote) {
 		reels = reels.filter((item) => item.id !== reel.id);
 		renderedReelCount = Math.min(renderedReelCount, Math.max(INITIAL_RENDERED_REELS, reels.length));
@@ -474,8 +474,8 @@
 			reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey)
 		);
 		for (const reel of next) feed.upsertNote(reel);
-		bitsSession.reels = reels;
-		bitsSession.renderedReelCount = renderedReelCount;
+		bitzSession.reels = reels;
+		bitzSession.renderedReelCount = renderedReelCount;
 	}
 
 	function loadCachedReels() {
@@ -524,8 +524,8 @@
 		oldestReelEventCreatedAt = oldestReelEventCreatedAt
 			? Math.min(oldestReelEventCreatedAt, oldestSeen || oldestReelEventCreatedAt)
 			: oldestSeen;
-		bitsSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
-		bitsSession.hasMoreReels = hasMoreReels;
+		bitzSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
+		bitzSession.hasMoreReels = hasMoreReels;
 		// Relays may return short pages even when older events remain. Keep the
 		// cursor alive until a subsequent all-relays request returns nothing.
 		hasMoreReels = !!oldestReelEventCreatedAt;
@@ -562,7 +562,13 @@
 		const activity = reelIds.length
 			? await queryPrimaryFirst([
 					{
-						kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP, NOSTR_KINDS.TEXT_NOTE],
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.ZAP,
+							NOSTR_KINDS.TEXT_NOTE
+						],
 						'#e': reelIds,
 						limit: 500
 					}
@@ -607,7 +613,7 @@
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
 			loading = false;
-			bitsSession.lastRefreshedAt = Date.now();
+			bitzSession.lastRefreshedAt = Date.now();
 		}
 	}
 
@@ -622,7 +628,7 @@
 				batch < MAX_REEL_QUERY_BATCHES && foundMedia < REELS_MEDIA_PAGE_SIZE;
 				batch += 1
 			) {
-				// Media kinds come back as ready-made bits (no walking needed); the
+				// Media kinds come back as ready-made bitz (no walking needed); the
 				// kind-1 window is what the cursor walks past. Same round trip.
 				const filters = [
 					{
@@ -648,12 +654,12 @@
 				}
 				// Only *new* media fills the page budget. Relays happily resend events
 				// we already hold inside an `until` window; counting those made the
-				// walk finish with zero new bits (the "load more does nothing" bug).
+				// walk finish with zero new bitz (the "load more does nothing" bug).
 				const known: Record<string, true> = {};
 				for (const reel of reels) known[reel.id] = true;
 				const fresh = events.filter((event) => !known[event.id]);
 				foundMedia += fresh.filter((event) => !!extractReelMedia(event)).length;
-				// Apply each batch as it lands so bits stream in immediately instead
+				// Apply each batch as it lands so bitz stream in immediately instead
 				// of appearing only after the whole backwards walk finishes.
 				if (fresh.length) await updateReelWindow(mergeEvents(fresh, []), { append: true });
 				// Advance with the oldest raw event, even if the batch has no media.
@@ -701,7 +707,7 @@
 		// user nudges the scrollbar.
 		exploreVisible = Math.min(exploreReels.length, exploreVisible + EXPLORE_PAGE_SIZE);
 		// One load targets one reveal page; if the relay walk came up short but
-		// older bits remain, keep the flow going until a full page is buffered.
+		// older bitz remain, keep the flow going until a full page is buffered.
 		if (exploreVisible >= exploreReels.length && hasMoreReels) {
 			void loadMoreExploreReels();
 		}
@@ -709,7 +715,7 @@
 
 	function handleReelScroll() {
 		if (!reelScroller) return;
-		bitsSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
+		bitzSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
 		const remaining =
 			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
 		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
@@ -884,7 +890,7 @@
 		// Never steal keys while typing…
 		if (target?.closest('input, textarea, select, [contenteditable]')) return;
 		// The Explore grid owns the page — no reel shortcuts there.
-		if (bitsMode === 'explore') return;
+		if (bitzMode === 'explore') return;
 		// …and let Space activate a focused control (buttons, links, dialogs).
 		if (
 			(event.key === ' ' || event.key === 'Enter') &&
@@ -1174,18 +1180,18 @@
 		}
 	}
 
-	// --- Explore grid (Bits · Explore tab) ----------------------------------
+	// --- Explore grid (Bitz · Explore tab) ----------------------------------
 
-	function switchBitsMode(mode: BitsMode) {
+	function switchBitzMode(mode: BitzMode) {
 		// Re-tapping the active tab is the standard "back to top" shortcut. It
 		// replaces the old forced reset: position survives tab switches, and
 		// returning to the top is an explicit user action instead of a penalty.
-		if (bitsMode === mode) {
+		if (bitzMode === mode) {
 			const scroller = mode === 'explore' ? exploreScroller : reelScroller;
 			scroller?.scrollTo({ top: 0, behavior: 'smooth' });
 			return;
 		}
-		bitsMode = mode;
+		bitzMode = mode;
 		if (mode === 'explore') {
 			// Coming back to the grid must land on the tiles the user left behind
 			// (tap tile → For you → Explore = same spot, not a scroll-from-scratch).
@@ -1194,7 +1200,7 @@
 			// offset lives in the session (kept fresh by handleExploreScroll).
 			void tick().then(() => {
 				requestAnimationFrame(() => {
-					exploreScroller?.scrollTo({ top: bitsSession.exploreScrollTop });
+					exploreScroller?.scrollTo({ top: bitzSession.exploreScrollTop });
 				});
 			});
 		} else {
@@ -1205,9 +1211,9 @@
 			// last watched instead of dropping them back on reel 0.
 			void tick().then(() => {
 				requestAnimationFrame(() => {
-					if (reelScroller && bitsSession.activeReelIndex > 0)
+					if (reelScroller && bitzSession.activeReelIndex > 0)
 						reelScroller.scrollTo({
-							top: bitsSession.activeReelIndex * reelScroller.clientHeight
+							top: bitzSession.activeReelIndex * reelScroller.clientHeight
 						});
 				});
 			});
@@ -1220,7 +1226,7 @@
 
 	function handleExploreScroll() {
 		if (!exploreScroller) return;
-		bitsSession.exploreScrollTop = exploreScroller.scrollTop;
+		bitzSession.exploreScrollTop = exploreScroller.scrollTop;
 		const remaining =
 			exploreScroller.scrollHeight - exploreScroller.scrollTop - exploreScroller.clientHeight;
 		if (remaining < exploreScroller.clientHeight * 2) {
@@ -1246,9 +1252,9 @@
 		}
 		// Snapshot the grid offset before leaving: onscroll keeps the session
 		// fresh, but persisting here guarantees the return-to-Explore restore.
-		if (exploreScroller) bitsSession.exploreScrollTop = exploreScroller.scrollTop;
+		if (exploreScroller) bitzSession.exploreScrollTop = exploreScroller.scrollTop;
 		const index = rankedReels.findIndex((item) => item.id === reel.id);
-		bitsMode = 'foryou';
+		bitzMode = 'foryou';
 		if (index < 0) return;
 		renderedReelCount = Math.max(renderedReelCount, index + REEL_RENDER_BATCH);
 		profiles.ensure(rankedReels.slice(0, renderedReelCount).map((item) => item.pubkey));
@@ -1258,14 +1264,51 @@
 		});
 	}
 
+	// --- Deep link: /bitz#reel=<event id> opens that bitz in the player -------
+	// “View in Bitz” in the post-success toast lands here. The just-published
+	// event may take a moment to come back from the relays, so the pending id
+	// waits (bounded) for any reels refresh to deliver it.
+	let pendingDeepLinkId = $state('');
+	let deepLinkTimeout: ReturnType<typeof setTimeout> | undefined;
+
+	function deepLinkReelIdFromHash() {
+		const match = /^#reel=([0-9a-f]{64})$/i.exec(window.location.hash);
+		return match ? match[1].toLowerCase() : '';
+	}
+
+	function handleDeepLinkHash() {
+		const id = deepLinkReelIdFromHash();
+		if (!id || pendingDeepLinkId === id) return;
+		pendingDeepLinkId = id;
+		clearTimeout(deepLinkTimeout);
+		deepLinkTimeout = setTimeout(() => {
+			if (pendingDeepLinkId) {
+				pendingDeepLinkId = '';
+				toasts.info('Your bitz is still syncing across relays — check back in a moment.');
+			}
+		}, 10_000);
+	}
+
+	$effect(() => {
+		const id = pendingDeepLinkId;
+		if (!id || loading) return;
+		const reel = reels.find((item) => item.id === id);
+		if (!reel) return;
+		pendingDeepLinkId = '';
+		clearTimeout(deepLinkTimeout);
+		void openFromExplore(reel).then(() => {
+			history.replaceState(null, '', window.location.pathname + window.location.search);
+		});
+	});
+
 	// Mirror UI state into the session so a route switch and return restores
 	// exactly this view. (reels/cursor mirror imperatively in applyReels —
 	// async relay loads can land after this component unmounts.)
 	$effect(() => {
-		bitsSession.bitsMode = bitsMode;
-		bitsSession.exploreVisible = exploreVisible;
-		bitsSession.revealedSensitiveReels = revealedSensitiveReels;
-		bitsSession.renderedReelCount = renderedReelCount;
+		bitzSession.bitzMode = bitzMode;
+		bitzSession.exploreVisible = exploreVisible;
+		bitzSession.revealedSensitiveReels = revealedSensitiveReels;
+		bitzSession.renderedReelCount = renderedReelCount;
 	});
 
 	// The Explore grid reveals tiles through its own counter (exploreVisible),
@@ -1273,11 +1316,12 @@
 	// metadata (names/avatars) flowing for exactly the tiles on screen;
 	// profiles.ensure dedupes in-flight requests and skips fresh (12h) entries.
 	$effect(() => {
-		if (bitsMode !== 'explore') return;
+		if (bitzMode !== 'explore') return;
 		void profiles.ensure(visibleExploreReels.map((reel) => reel.pubkey));
 	});
 
 	onMount(() => {
+		handleDeepLinkHash();
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
 		// The former cache could retain 120 items. Drop it once after moving to
@@ -1297,31 +1341,31 @@
 		// Returning from another page: hydrate the in-memory session for an
 		// instant paint with the previous tab, position, and cursor intact.
 		let hydrated = false;
-		if (bitsSession.reels.length) {
+		if (bitzSession.reels.length) {
 			loading = false;
-			reels = bitsSession.reels;
+			reels = bitzSession.reels;
 			renderedReelCount = Math.max(
 				INITIAL_RENDERED_REELS,
-				Math.min(bitsSession.renderedReelCount || INITIAL_RENDERED_REELS, reels.length)
+				Math.min(bitzSession.renderedReelCount || INITIAL_RENDERED_REELS, reels.length)
 			);
-			bitsMode = bitsSession.bitsMode;
-			exploreVisible = Math.max(EXPLORE_INITIAL_VISIBLE, bitsSession.exploreVisible);
-			revealedSensitiveReels = bitsSession.revealedSensitiveReels;
-			oldestReelEventCreatedAt = bitsSession.oldestReelEventCreatedAt;
-			hasMoreReels = bitsSession.hasMoreReels && !!oldestReelEventCreatedAt;
+			bitzMode = bitzSession.bitzMode;
+			exploreVisible = Math.max(EXPLORE_INITIAL_VISIBLE, bitzSession.exploreVisible);
+			revealedSensitiveReels = bitzSession.revealedSensitiveReels;
+			oldestReelEventCreatedAt = bitzSession.oldestReelEventCreatedAt;
+			hasMoreReels = bitzSession.hasMoreReels && !!oldestReelEventCreatedAt;
 			profiles.ensure(reels.slice(0, renderedReelCount).map((reel) => reel.pubkey));
 			hydrated = true;
 			void tick().then(() => {
 				requestAnimationFrame(() => {
-					if (bitsMode === 'explore')
-						exploreScroller?.scrollTo({ top: bitsSession.exploreScrollTop });
+					if (bitzMode === 'explore')
+						exploreScroller?.scrollTo({ top: bitzSession.exploreScrollTop });
 					else if (reelScroller)
 						reelScroller.scrollTo({
-							top: bitsSession.activeReelIndex * reelScroller.clientHeight
+							top: bitzSession.activeReelIndex * reelScroller.clientHeight
 						});
 				});
 			});
-			if (Date.now() - bitsSession.lastRefreshedAt > BITS_SESSION_REFRESH_MS) {
+			if (Date.now() - bitzSession.lastRefreshedAt > BITZ_SESSION_REFRESH_MS) {
 				void loadReels({ background: true });
 			}
 		}
@@ -1336,6 +1380,7 @@
 
 		return () => {
 			document.removeEventListener('fullscreenchange', handleFullscreenChange);
+			clearTimeout(deepLinkTimeout);
 			visibilityObserver?.disconnect();
 			visibilityObserver = null;
 			reelVideos.clear();
@@ -1345,9 +1390,9 @@
 	});
 </script>
 
-<svelte:head><title>Bits · BitOS</title></svelte:head>
+<svelte:head><title>Bitz · BitOS</title></svelte:head>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onhashchange={handleDeepLinkHash} />
 
 <div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	{#if loading}
@@ -1356,7 +1401,7 @@
 				class="size-8 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
 			></div>
 		</div>
-	{:else if bitsMode === 'explore'}
+	{:else if bitzMode === 'explore'}
 		<!-- Explore: video-first grid, TikTok-discover style -->
 		<div
 			bind:this={exploreScroller}
@@ -1377,7 +1422,7 @@
 							type="button"
 							onclick={() => openFromExplore(reel)}
 							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-black text-left"
-							aria-label="Open bit by {name}"
+							aria-label="Open bitz by {name}"
 						>
 							{#if reel.mediaType === 'video'}
 								<video
@@ -1430,7 +1475,7 @@
 							{:else}
 								<img
 									src={reel.mediaUrl}
-									alt={captionFor(reel) || 'Bit picture'}
+									alt={captionFor(reel) || 'Bitz picture'}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {reelCovered
 										? 'scale-105 blur-2xl saturate-50'
 										: ''}"
@@ -1500,7 +1545,7 @@
 							class="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 text-[13px] font-bold text-white transition hover:bg-white/20"
 						>
 							<Icon name="i-lucide-plus" class="size-4" />
-							Load more bits
+							Load more bitz
 						</button>
 					{:else if loadingMoreReels || hasMoreReels}
 						<button
@@ -1513,10 +1558,10 @@
 								name="i-lucide-loader-circle"
 								class="size-4 {loadingMoreReels ? 'animate-spin' : 'hidden'}"
 							/>
-							{loadingMoreReels ? 'Loading older bits' : 'Load older bits'}
+							{loadingMoreReels ? 'Loading older bitz' : 'Load older bitz'}
 						</button>
 					{:else}
-						<p class="text-[11px] font-semibold text-white/50">That's all the bits for now</p>
+						<p class="text-[11px] font-semibold text-white/50">That's all the bitz for now</p>
 					{/if}
 				</div>
 			{:else}
@@ -1527,7 +1572,7 @@
 						<Icon name="i-lucide-clapperboard" class="size-7" />
 					</div>
 					<div>
-						<p class="text-[15px] font-bold">No bits to explore yet</p>
+						<p class="text-[15px] font-bold">No bitz to explore yet</p>
 						<p class="mt-1 text-[13px] text-white/60">
 							Short videos and pictures from your relays will appear here.
 						</p>
@@ -1741,13 +1786,13 @@
 												<PowBadge bits={reel.pow} micro id={reel.id} />
 											{/if}
 										</p>
-										<!-- Same overflow menu as a feed post card, scoped to this bit. -->
+										<!-- Same overflow menu as a feed post card, scoped to this bitz. -->
 										<Popover
 											id={reelMenuId(reel)}
 											placement="top-start"
 											width="auto"
 											class="w-60"
-											label="Bit actions"
+											label="Bitz actions"
 											triggerClass="grid size-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/15 hover:text-white"
 											triggerActiveClass="bg-white/15 text-white"
 										>
@@ -1766,7 +1811,7 @@
 													popovers.close();
 												}}
 											>
-												{bookmarks.has(reel.id) ? 'Unsave bit' : 'Save bit'}
+												{bookmarks.has(reel.id) ? 'Unsave bitz' : 'Save bitz'}
 											</MenuItem>
 											<MenuItem
 												icon="i-lucide-link"
@@ -1837,7 +1882,7 @@
 														deleteReelOpen = true;
 													}}
 												>
-													Delete bit
+													Delete bitz
 												</MenuItem>
 											{:else}
 												<MenuItem icon="i-lucide-volume-x" onclick={() => muteAuthorOf(reel, name)}>
@@ -1859,7 +1904,7 @@
 														reportReelOpen = true;
 													}}
 												>
-													Report bit
+													Report bitz
 												</MenuItem>
 											{/if}
 										</Popover>
@@ -1905,7 +1950,7 @@
 									class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur"
 								>
 									<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-									Loading older bits
+									Loading older bitz
 								</div>
 							{/if}
 						</div>
@@ -1920,14 +1965,14 @@
 							<Icon name="i-lucide-clapperboard" class="size-8" />
 						</div>
 						<h1 class="font-display text-[28px] font-extrabold">
-							{bitsMode === 'following' ? 'Nothing from your follows yet' : 'No bits found'}
+							{bitzMode === 'following' ? 'Nothing from your follows yet' : 'No bitz found'}
 						</h1>
 						<p class="mt-2 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-							{bitsMode === 'following'
+							{bitzMode === 'following'
 								? 'Follow more creators from Discover and their short videos will land here.'
 								: 'Your configured relays did not return kind-1 notes with video links.'}
 						</p>
-						{#if bitsMode === 'following'}
+						{#if bitzMode === 'following'}
 							<a
 								href="/discover"
 								class="mt-5 inline-flex rounded-full border border-primary-500/40 bg-primary-500/10 px-5 py-2.5 text-[13px] font-bold text-primary-600 transition hover:bg-primary-500/20"
@@ -1956,7 +2001,7 @@
 						type="button"
 						onclick={() => scrollToReel(-1)}
 						class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Previous bit"
+						aria-label="Previous bitz"
 					>
 						<Icon name="i-lucide-chevron-up" class="size-[18px]" />
 					</button>
@@ -1964,7 +2009,7 @@
 						type="button"
 						onclick={() => scrollToReel(1)}
 						class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Next bit"
+						aria-label="Next bitz"
 					>
 						<Icon name="i-lucide-chevron-down" class="size-[18px]" />
 					</button>
@@ -1973,7 +2018,7 @@
 		</div>
 	{/if}
 
-	<!-- Sticky top bar: Bits wordmark · view tabs · refresh. Shrinks with the
+	<!-- Sticky top bar: Bitz wordmark · view tabs · refresh. Shrinks with the
 	     comments panel so the tabs stay centered over the video area (lg). -->
 	<div
 		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-gradient-to-b from-black/55 via-black/25 to-transparent px-4 pt-4 pb-12 text-white transition-[padding] duration-200 {commentReel
@@ -1983,20 +2028,20 @@
 		<h2
 			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold text-white drop-shadow sm:block"
 		>
-			Bits
+			Bitz
 		</h2>
 		<div
 			class="pointer-events-auto flex items-center gap-0.5 rounded-full bg-black/40 p-1 backdrop-blur-md"
 			role="tablist"
-			aria-label="Bits views"
+			aria-label="Bitz views"
 		>
-			{#each bitsTabs as tab (tab.key)}
+			{#each bitzTabs as tab (tab.key)}
 				<button
 					type="button"
 					role="tab"
-					aria-selected={bitsMode === tab.key}
-					onclick={() => switchBitsMode(tab.key)}
-					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitsMode ===
+					aria-selected={bitzMode === tab.key}
+					onclick={() => switchBitzMode(tab.key)}
+					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
 					tab.key
 						? 'bg-white text-black'
 						: 'text-white/75 hover:text-white'}"
@@ -2010,7 +2055,7 @@
 				type="button"
 				onclick={() => search.openOverlay()}
 				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-				aria-label="Search bits"
+				aria-label="Search bitz"
 			>
 				<Icon name="i-lucide-search" class="size-5" />
 			</button>
@@ -2018,14 +2063,14 @@
 				type="button"
 				onclick={() => loadReels()}
 				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-				aria-label="Refresh bits"
+				aria-label="Refresh bitz"
 			>
 				<Icon name="i-lucide-rotate-cw" class="size-5" />
 			</button>
 		</div>
 	</div>
 
-	<!-- Bits video search: instant local matches + NIP-50 relay search (store-driven) -->
+	<!-- Bitz video search: instant local matches + NIP-50 relay search (store-driven) -->
 	{#if search.open}
 		<BitsSearch
 			{search}
@@ -2033,7 +2078,7 @@
 			{gridVideoDurations}
 			onDuration={(reelId, seconds) =>
 				(gridVideoDurations = { ...gridVideoDurations, [reelId]: seconds })}
-			onSelect={(reel) => void openBitResult(reel)}
+			onSelect={(reel) => void openBitzResult(reel)}
 		/>
 	{/if}
 
@@ -2046,7 +2091,7 @@
 		></button>
 		<aside
 			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border)] bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:border-[var(--ui-border-muted)]"
-			aria-label="Bit comments"
+			aria-label="Bitz comments"
 		>
 			<header class="flex h-14 shrink-0 items-center justify-between px-4">
 				<h2 class="text-[16px] font-extrabold text-[var(--ui-text-highlighted)]">
@@ -2324,22 +2369,22 @@
 		{/snippet}
 	</Dialog>
 
-	<!-- NIP-56 report (overflow menu → “Report bit”) -->
+	<!-- NIP-56 report (overflow menu → “Report bitz”) -->
 	{#if reportReelTarget}
 		<ReportDialog
 			bind:open={reportReelOpen}
 			pubkey={reportReelTarget.pubkey}
 			noteId={reportReelTarget.id}
-			targetLabel={captionFor(reportReelTarget).slice(0, 60) || 'bit'}
+			targetLabel={captionFor(reportReelTarget).slice(0, 60) || 'bitz'}
 		/>
 	{/if}
 
-	<!-- Delete own bit (overflow menu → “Delete bit”) -->
-	<Dialog bind:open={deleteReelOpen} title="Delete bit">
+	<!-- Delete own bitz (overflow menu → “Delete bitz”) -->
+	<Dialog bind:open={deleteReelOpen} title="Delete bitz">
 		<div class="space-y-2">
-			<p class="text-[14px] font-semibold text-[var(--ui-text)]">Delete this bit?</p>
+			<p class="text-[14px] font-semibold text-[var(--ui-text)]">Delete this bitz?</p>
 			<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-				BitOS will publish a delete event to your relays and remove the bit locally.
+				BitOS will publish a delete event to your relays and remove the bitz locally.
 			</p>
 		</div>
 		{#snippet footer()}

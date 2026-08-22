@@ -26,6 +26,18 @@
 			<p class="min-w-0 flex-1 pt-0.5 text-[13px] leading-snug font-medium text-[var(--ui-text)]">
 				{t.message}
 			</p>
+			{#if t.action}
+				<button
+					type="button"
+					onclick={() => {
+						t.action?.run();
+						toasts.dismiss(t.id);
+					}}
+					class="shrink-0 self-center rounded-full bg-primary-500 px-3 py-1 text-[12px] font-bold text-white transition hover:bg-primary-600 active:scale-95"
+				>
+					{t.action.label}
+				</button>
+			{/if}
 			<button
 				type="button"
 				onclick={() => toasts.dismiss(t.id)}

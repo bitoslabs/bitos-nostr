@@ -4,20 +4,20 @@
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
-	import type { ReelNote } from '$lib/stores/bits-session.svelte';
+	import type { ReelNote } from '$lib/stores/bitz-session.svelte';
 	import { shortKey, formatDuration } from '$lib/utils/format';
 	import { lazyVideoMetadata } from '$lib/utils/media';
 	import {
 		highlightSegments,
-		type BitsMatchMeta,
-		type BitsSearchFilter,
-		type BitsSearchSort,
-		type BitsSearchStore
-	} from '$lib/stores/bits-search.svelte';
+		type BitzMatchMeta,
+		type BitzSearchFilter,
+		type BitzSearchSort,
+		type BitzSearchStore
+	} from '$lib/stores/bitz-search.svelte';
 
 	interface Props {
 		/** Search store — single source of truth for query, filters, results. */
-		search: BitsSearchStore;
+		search: BitzSearchStore;
 		/** Resolves author profile data (picture/nip05/names) for tiles. */
 		profileFor: (
 			pubkey: string
@@ -40,13 +40,13 @@
 		void tick().then(() => searchInputEl?.focus());
 	});
 
-	const FILTERS: { key: BitsSearchFilter; label: string; icon: string }[] = [
+	const FILTERS: { key: BitzSearchFilter; label: string; icon: string }[] = [
 		{ key: 'all', label: 'All', icon: 'i-lucide-layout-grid' },
 		{ key: 'video', label: 'Videos', icon: 'i-lucide-video' },
 		{ key: 'image', label: 'Pictures', icon: 'i-lucide-image' },
 		{ key: 'creator', label: 'Creators', icon: 'i-lucide-user-round' }
 	];
-	const SORTS: { key: BitsSearchSort; label: string }[] = [
+	const SORTS: { key: BitzSearchSort; label: string }[] = [
 		{ key: 'recent', label: 'Recent' },
 		{ key: 'engagement', label: 'Top' }
 	];
@@ -69,7 +69,7 @@
 		return highlightSegments(authorName(reel), search.tokens);
 	}
 
-	function metaFor(reel: ReelNote): BitsMatchMeta | undefined {
+	function metaFor(reel: ReelNote): BitzMatchMeta | undefined {
 		return search.meta[reel.id];
 	}
 
@@ -80,7 +80,7 @@
 		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
-			(document.querySelector('.bits-search-results button') as HTMLElement | null)?.focus();
+			(document.querySelector('.bitz-search-results button') as HTMLElement | null)?.focus();
 		}
 	}
 
@@ -96,7 +96,7 @@
 	class="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 backdrop-blur-sm sm:items-center sm:p-6"
 	role="dialog"
 	aria-modal="true"
-	aria-label="Search bits"
+	aria-label="Search bitz"
 	tabindex="-1"
 	onkeydown={handleKeydown}
 	onclick={(event) => {
@@ -104,7 +104,7 @@
 	}}
 >
 	<div
-		class="bits-search-panel flex h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 sm:h-[min(760px,88vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]"
+		class="bitz-search-panel flex h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 sm:h-[min(760px,88vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]"
 	>
 		<header class="flex shrink-0 items-center gap-2 border-b border-[var(--ui-border-muted)] px-4">
 			<form class="flex min-w-0 flex-1 items-center py-4" onsubmit={submitSearch}>
@@ -114,10 +114,10 @@
 					icon="i-lucide-search"
 					value={search.query}
 					oninput={(event) => search.setQuery(event.currentTarget.value)}
-					class="bits-search-input h-11 w-full rounded-full border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] px-4 focus-within:bg-[var(--ui-bg)] focus-within:ring-2 focus-within:ring-[color-mix(in_oklab,var(--ui-color-primary-500)_20%,transparent)]"
+					class="bitz-search-input h-11 w-full rounded-full border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] px-4 focus-within:bg-[var(--ui-bg)] focus-within:ring-2 focus-within:ring-[color-mix(in_oklab,var(--ui-color-primary-500)_20%,transparent)]"
 					inputClass="pl-8 text-[15px] font-medium text-[var(--ui-text-highlighted)]"
-					placeholder="Search bits — caption or creator…"
-					aria-label="Search bits"
+					placeholder="Search bitz — caption or creator…"
+					aria-label="Search bitz"
 				/>
 			</form>
 			<Button
@@ -139,7 +139,7 @@
 						<Icon name="i-lucide-video" class="size-7" />
 					</div>
 					<div>
-						<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">Search bits</p>
+						<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">Search bitz</p>
 						<p class="mt-1 max-w-xs text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 							Find short videos and pictures by caption or creator. Matches highlight as you type —
 							locally first, then across your relays.
@@ -151,7 +151,7 @@
 				<div class="mb-3 flex flex-wrap items-center gap-2">
 					<p class="text-[11px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase">
 						{search.matches.length}
-						{search.matches.length === 1 ? 'bit' : 'bits'}
+						{search.matches.length === 1 ? 'bitz' : 'bitz'}
 						{#if search.searching}
 							<span class="ml-1 normal-case">· searching relays…</span>
 						{:else if search.error}
@@ -205,7 +205,7 @@
 					</div>
 				</div>
 
-				<div class="bits-search-results grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+				<div class="bitz-search-results grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
 					{#each search.matches as reel (reel.id)}
 						{@const profile = profileFor(reel.pubkey)}
 						{@const name = authorName(reel)}
@@ -215,7 +215,7 @@
 							type="button"
 							onclick={() => onSelect(reel)}
 							class="group relative aspect-[9/16] overflow-hidden rounded-xl bg-black text-left transition focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:outline-none"
-							aria-label="Open bit by {name}"
+							aria-label="Open bitz by {name}"
 						>
 							{#if reel.mediaType === 'video'}
 								<video
@@ -240,7 +240,7 @@
 							{:else}
 								<img
 									src={reel.mediaUrl}
-									alt={search.captionFor(reel) || 'Bit picture'}
+									alt={search.captionFor(reel) || 'Bitz picture'}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
 									loading="lazy"
 								/>
@@ -301,7 +301,7 @@
 						class="mt-4 flex items-center justify-center gap-2 text-[12px] font-semibold text-[var(--ui-text-muted)]"
 					>
 						<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-						Searching relays for older bits…
+						Searching relays for older bitz…
 					</div>
 				{/if}
 			{:else if search.searching}
@@ -319,7 +319,7 @@
 						<Icon name="i-lucide-search-x" class="size-7" />
 					</div>
 					<div>
-						<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">No bits found</p>
+						<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">No bitz found</p>
 						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
 							Nothing matches “{search.trimmed}”{#if search.error}
 								on your relays either.{:else}
@@ -333,11 +333,11 @@
 </div>
 
 <style>
-	.bits-search-panel {
-		animation: bits-search-in 150ms ease-out;
+	.bitz-search-panel {
+		animation: bitz-search-in 150ms ease-out;
 	}
 
-	@keyframes bits-search-in {
+	@keyframes bitz-search-in {
 		from {
 			opacity: 0;
 			transform: translateY(10px) scale(0.985);
@@ -349,7 +349,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.bits-search-panel {
+		.bitz-search-panel {
 			animation: none;
 		}
 	}

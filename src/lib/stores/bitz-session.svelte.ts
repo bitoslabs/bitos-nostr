@@ -1,13 +1,13 @@
 import type { FeedNote } from '$lib/nostr/types';
 
-export type BitsMode = 'explore' | 'following' | 'foryou';
+export type BitzMode = 'explore' | 'following' | 'foryou';
 
 export type ReelNote = FeedNote & { mediaUrl: string; mediaType: 'video' | 'image' };
 
 /**
- * In-memory Bits session — survives route switches (Feed ↔ Bits ↔ …) for as
+ * In-memory Bitz session — survives route switches (Feed ↔ Bitz ↔ …) for as
  * long as the app tab is open. The route component hydrates from it on mount
- * so returning to Bits is instant: loaded reels, active tab, grid/player
+ * so returning to Bitz is instant: loaded reels, active tab, grid/player
  * position, revealed tiles, and the pagination cursor all persist without a
  * refetch. A background refresh only fires when the session is stale.
  *
@@ -15,9 +15,9 @@ export type ReelNote = FeedNote & { mediaUrl: string; mediaType: 'video' | 'imag
  * locally and mirrors values in here, so async relay loads can keep writing
  * to the session even after the route has unmounted.
  */
-export const bitsSession = {
+export const bitzSession = {
 	reels: [] as ReelNote[],
-	bitsMode: 'foryou' as BitsMode,
+	bitzMode: 'foryou' as BitzMode,
 	exploreVisible: 0,
 	renderedReelCount: 0,
 	revealedSensitiveReels: {} as Record<string, boolean>,
@@ -29,4 +29,4 @@ export const bitsSession = {
 };
 
 /** Hydrated sessions older than this refresh from relays in the background. */
-export const BITS_SESSION_REFRESH_MS = 60_000;
+export const BITZ_SESSION_REFRESH_MS = 60_000;

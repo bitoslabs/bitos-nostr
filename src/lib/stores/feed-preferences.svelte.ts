@@ -6,11 +6,14 @@ const MAX_PINNED_TAGS = 8;
 type FeedPreferencesState = {
 	pinnedTags: string[];
 	hiddenTrendTags: string[];
+	/** Protocol records are hidden from the reader-facing timeline by default. */
+	showProtocolNotes: boolean;
 };
 
 const DEFAULTS: FeedPreferencesState = {
 	pinnedTags: [],
-	hiddenTrendTags: []
+	hiddenTrendTags: [],
+	showProtocolNotes: false
 };
 
 function normalizeTag(tag: string) {
@@ -85,6 +88,12 @@ class FeedPreferencesStore {
 	isTrendHidden(tag: string) {
 		this.load();
 		return this.state.hiddenTrendTags.includes(normalizeTag(tag));
+	}
+
+	setShowProtocolNotes(show: boolean) {
+		this.load();
+		this.state.showProtocolNotes = show;
+		this.persist();
 	}
 }
 

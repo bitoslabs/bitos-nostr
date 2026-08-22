@@ -11,7 +11,7 @@ import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
 import { extractMentionEntities } from '$lib/utils/nip27';
-import { NOSTR_KINDS, type Event, type NotificationItem } from './types';
+import { NOSTR_KINDS, repostTarget, type Event, type NotificationItem } from './types';
 
 const PAGE_LIMIT = 60;
 const MAX_ITEMS = 600;
@@ -90,11 +90,25 @@ function mentionsMe(tags: string[][], me?: string): boolean {
 	return tags.some((tag) => tag[0] === 'p' && tag[1]?.toLowerCase() === target);
 }
 
-/** NIP-57 zap receipt amount in sats, from the `amount` (msat) tag. */
-function parseZapAmount(tags: string[][]): number {
-	const amount = tags.find((tag) => tag[0] === 'amount')?.[1];
+/** NIP-57 zap receipt amount in sats, from receipt or embedded request tags. */
+export function parseZapAmount(tags: string[][]): number {
+	let amount = tags.find((tag) => tag[0] === 'amount')?.[1];
+	if (!amount) {
+		const description = tags.find((tag) => tag[0] === 'description' && tag[1])?.[1];
+		try {
+			const request = JSON.parse(description ?? '') as { tags?: unknown };
+			if (Array.isArray(request.tags)) {
+				const requestAmount = request.tags.find(
+					(tag): tag is string[] => Array.isArray(tag) && tag[0] === 'amount'
+				)?.[1];
+				if (requestAmount) amount = requestAmount;
+			}
+		} catch {
+			// Ignore malformed descriptions; some receipts still have a top-level amount.
+		}
+	}
 	const msat = amount ? Number(amount) : 0;
-	return Number.isFinite(msat) ? Math.round(msat / 1000) : 0;
+	return Number.isFinite(msat) && msat > 0 ? Math.round(msat / 1000) : 0;
 }
 
 /**
@@ -216,7 +230,8 @@ class NotificationsStore {
 					NOSTR_KINDS.TEXT_NOTE,
 					NOSTR_KINDS.CONTACT_LIST,
 					NOSTR_KINDS.REACTION,
-					NOSTR_KINDS.REPOST
+					NOSTR_KINDS.REPOST,
+					NOSTR_KINDS.GENERIC_REPOST
 				],
 				'#p': [me],
 				limit: PAGE_LIMIT,
@@ -323,8 +338,8 @@ class NotificationsStore {
 		if (ev.kind === NOSTR_KINDS.CONTACT_LIST) {
 			return this.makeItem(ev, 'follow', undefined, ev.content);
 		}
-		if (ev.kind === NOSTR_KINDS.REPOST) {
-			const targetId = eventTarget(ev.tags);
+		if (ev.kind === NOSTR_KINDS.REPOST || ev.kind === NOSTR_KINDS.GENERIC_REPOST) {
+			const targetId = repostTarget(ev).eventId;
 			return this.makeItem(ev, 'repost', targetId, parseNotificationContent(ev.content));
 		}
 		return null;

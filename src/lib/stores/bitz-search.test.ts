@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ReelNote } from '$lib/stores/bits-session.svelte';
+import type { ReelNote } from '$lib/stores/bitz-session.svelte';
 import {
-	BitsSearchStore,
-	BITS_SEARCH_DEBOUNCE_MS,
+	BitzSearchStore,
+	BITZ_SEARCH_DEBOUNCE_MS,
 	highlightSegments,
-	matchBit,
+	matchBitz,
 	tokenizeQuery
-} from './bits-search.svelte';
+} from './bitz-search.svelte';
 
 function reel(partial: Partial<ReelNote> & { id: string }): ReelNote {
 	return {
@@ -53,9 +53,9 @@ describe('highlightSegments', () => {
 	});
 });
 
-describe('matchBit', () => {
+describe('matchBitz', () => {
 	it('matches caption, content, and author fields', () => {
-		const hit = matchBit(
+		const hit = matchBitz(
 			reel({ id: 'm1', content: 'CAPTION: lightning zaps' }),
 			['zap'],
 			matchOpts
@@ -64,25 +64,29 @@ describe('matchBit', () => {
 	});
 
 	it('requires every token to be present', () => {
-		const bit = reel({ id: 'm2', content: 'CAPTION: lightning only' });
-		expect(matchBit(bit, ['lightning', 'missing'], matchOpts)).toBeNull();
+		const bitz = reel({ id: 'm2', content: 'CAPTION: lightning only' });
+		expect(matchBitz(bitz, ['lightning', 'missing'], matchOpts)).toBeNull();
 	});
 
 	it('returns -1 indexes for fields that did not match', () => {
-		const hit = matchBit(reel({ id: 'm3', content: 'CAPTION: zap roundup' }), ['zap'], matchOpts);
+		const hit = matchBitz(reel({ id: 'm3', content: 'CAPTION: zap roundup' }), ['zap'], matchOpts);
 		expect(hit?.caption).toBeGreaterThanOrEqual(0);
 		expect(hit?.author).toBe(-1);
 	});
 
 	it('treats the author name as a matchable field', () => {
-		const hit = matchBit(reel({ id: 'm4', content: 'CAPTION: unrelated' }), ['satoshi'], matchOpts);
+		const hit = matchBitz(
+			reel({ id: 'm4', content: 'CAPTION: unrelated' }),
+			['satoshi'],
+			matchOpts
+		);
 		expect(hit?.author).toBeGreaterThanOrEqual(0);
 	});
 });
 
-describe('BitsSearchStore', () => {
-	function makeStore(overrides: Partial<ConstructorParameters<typeof BitsSearchStore>[0]> = {}) {
-		return new BitsSearchStore({
+describe('BitzSearchStore', () => {
+	function makeStore(overrides: Partial<ConstructorParameters<typeof BitzSearchStore>[0]> = {}) {
+		return new BitzSearchStore({
 			relaySearch: async () => [],
 			eventsToReels: async () => [],
 			captionOf: (r: ReelNote) => r.content.replace('CAPTION:', ''),
@@ -177,7 +181,7 @@ describe('BitsSearchStore', () => {
 		await new Promise((resolve) => setTimeout(resolve, 50));
 		expect(calls).toBe(0);
 		store.setQuery('lightning!');
-		await new Promise((resolve) => setTimeout(resolve, BITS_SEARCH_DEBOUNCE_MS + 80));
+		await new Promise((resolve) => setTimeout(resolve, BITZ_SEARCH_DEBOUNCE_MS + 80));
 		expect(calls).toBe(1);
 	});
 

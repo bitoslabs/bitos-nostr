@@ -1,14 +1,15 @@
 /**
- * NIP-51 list sync — keeps the local mute (kind 10000) and block
- * (kind 30000, d=block) lists synchronized across devices.
+ * NIP-51 list sync — keeps local lists synchronized across devices.
+ * Currently powers the mute (kind 10000), block (kind 30000, d=block), and
+ * followed-hashtag interest (kind 30015, d=interest) lists.
  *
  * Merge policy is additive (union): entries found on relays are merged into
  * the local set, and local changes are republished as replaceable events.
- * Unknown non-`p` tags on the remote event (e.g. NIP-01 `e`/`t`/`word` mutes
- * from other clients) are preserved verbatim so BitOS never destroys data it
- * does not understand.
+ * Unknown tags the store does not own (e.g. NIP-01 `e`/`word` mutes, or `p`
+ * tags inside a hashtag interest set) are preserved verbatim so BitOS never
+ * destroys data it does not understand.
  *
- * Publishes are debounced: rapid mute/unmute churn collapses into one event.
+ * Publishes are debounced: rapid changes collapse into one event.
  */
 import { browser } from '$app/environment';
 import { finalizeEvent } from 'nostr-tools/pure';
@@ -17,44 +18,68 @@ import { queryPrimaryFirst, publish } from './pool';
 import { identity } from './identity.svelte';
 import { hexToBytes } from './hex';
 import { clientTag } from './client-tag';
+import { NOSTR_KINDS } from './types';
 
 const PUBLISH_DEBOUNCE_MS = 3_000;
 const SYNCED_AT_KEY = 'bitos:moderation-synced-at';
+const PUBKEY_PATTERN = /^[0-9a-f]{64}$/;
+/** NIP-01 hashtag charset (see $lib/utils/note-content hashtagPattern). */
+const HASHTAG_PATTERN = /^[\p{L}\p{N}_-]{2,60}$/u;
 
 export interface ListDefinition {
-	/** NIP-51 kind: 10000 = mute list, 30000 = block list. */
+	/** NIP-51 kind: 10000 = mute list, 30000 = block list, 30015 = interest set. */
 	kind: number;
-	/** `d` tag for parameterized-replaceable kinds (e.g. 'block'). */
+	/** `d` tag for parameterized-replaceable kinds (e.g. 'block', 'interest'). */
 	d?: string;
+	/** Which tag carries the entries: 'p' pubkeys (default) or 't' hashtags. */
+	tagType?: 'p' | 't';
 }
 
 export const MUTE_LIST: ListDefinition = { kind: 10_000 };
 export const BLOCK_LIST: ListDefinition = { kind: 30_000, d: 'block' };
+/** NIP-51 interest set — hashtags the user follows (kind 30015, d=interest). */
+export const INTEREST_SET_LIST: ListDefinition = {
+	kind: NOSTR_KINDS.INTEREST_SET,
+	d: 'interest',
+	tagType: 't'
+};
 
-/** Extract the `p`-tag pubkeys from a list event (lowercased, deduped). */
-export function pubkeysFromListEvent(ev: Event): string[] {
+/** Extract + normalize the entry values from a list event (deduped). */
+export function valuesFromListEvent(
+	ev: Event,
+	tagType: ListDefinition['tagType'] = 'p'
+): string[] {
 	const seen = new Set<string>();
 	for (const tag of ev.tags) {
-		if (tag[0] === 'p' && tag[1]) {
-			const pk = tag[1].toLowerCase();
-			if (/^[0-9a-f]{64}$/.test(pk)) seen.add(pk);
-		}
+		if (tag[0] !== (tagType ?? 'p') || !tag[1]) continue;
+		const value =
+			tagType === 't' ? tag[1].trim().replace(/^#/, '').toLowerCase() : tag[1].toLowerCase();
+		const valid = tagType === 't' ? HASHTAG_PATTERN.test(value) : PUBKEY_PATTERN.test(value);
+		if (valid) seen.add(value);
 	}
 	return [...seen];
 }
 
+/** Extract the `p`-tag pubkeys from a list event (lowercased, deduped). */
+export function pubkeysFromListEvent(ev: Event): string[] {
+	return valuesFromListEvent(ev, 'p');
+}
+
 /** Build the full tag set for a list event, preserving unknown tags. */
 export function buildListTags(
-	pTags: string[],
-	/** Tags from the remote event that are not `p` / `d` / `client` (kept verbatim). */
+	values: string[],
+	/** Tags from the remote event that this store does not own (kept verbatim). */
 	preserveTags: string[][] = [],
 	definition: ListDefinition
 ): string[][] {
+	const entryTag = definition.tagType ?? 'p';
 	const tags: string[][] = [];
 	if (definition.d) tags.push(['d', definition.d]);
-	for (const pk of pTags) tags.push(['p', pk]);
+	for (const value of values) tags.push([entryTag, value]);
 	for (const tag of preserveTags) {
-		if (['p', 'd', 'client', 'alt', 'expiration'].includes(tag[0])) continue;
+		// Own-entry tags are regenerated from the store; `t` mutes on a `p` list
+		// (NIP-01) and other unknown tags are preserved verbatim.
+		if ([entryTag, 'd', 'client', 'alt', 'expiration'].includes(tag[0])) continue;
 		tags.push(tag);
 	}
 	tags.push(...clientTag());
@@ -75,7 +100,7 @@ export async function fetchList(definition: ListDefinition, me: string): Promise
 /** Publish the current list contents as a replaceable/parameterized event. */
 export async function publishList(
 	definition: ListDefinition,
-	pTags: string[],
+	values: string[],
 	preserveTags: string[][] = []
 ): Promise<void> {
 	const id = identity.current;
@@ -85,7 +110,7 @@ export async function publishList(
 			kind: definition.kind,
 			content: '',
 			created_at: Math.floor(Date.now() / 1000),
-			tags: buildListTags(pTags, preserveTags, definition)
+			tags: buildListTags(values, preserveTags, definition)
 		},
 		hexToBytes(id.sk)
 	);
@@ -95,27 +120,27 @@ export async function publishList(
 /**
  * Sync one definition: fetch remote → merge into `apply` (store), then
  * schedule a republish if the union differs from the remote set (local-only
- * entries exist). Returns the merged pubkey list.
+ * entries exist). Returns the merged entry list.
  */
 export async function syncList(
 	definition: ListDefinition,
-	/** Current local pubkeys (source of truth for the union). */
-	localPubkeys: string[],
+	/** Current local entries (source of truth for the union). */
+	localValues: string[],
 	/** Merge callback — receives the union to store locally. */
 	apply: (merged: string[]) => void
 ): Promise<string[]> {
-	if (!browser) return localPubkeys;
+	if (!browser) return localValues;
 	const me = identity.current?.pk?.toLowerCase();
-	if (!me) return localPubkeys;
+	if (!me) return localValues;
 
 	const remote = await fetchList(definition, me).catch(() => null);
-	const remotePubkeys = remote ? pubkeysFromListEvent(remote) : [];
-	const union = [...new Set([...remotePubkeys, ...localPubkeys])];
+	const remoteValues = remote ? valuesFromListEvent(remote, definition.tagType) : [];
+	const union = [...new Set([...remoteValues, ...localValues])];
 
-	if (union.length !== localPubkeys.length) apply(union);
+	if (union.length !== localValues.length) apply(union);
 
 	// Local has entries relays have never seen → push the union up.
-	if (union.length !== remotePubkeys.length) {
+	if (union.length !== remoteValues.length) {
 		await publishList(definition, union, remote?.tags ?? []).catch(() => undefined);
 	}
 	return union;
@@ -131,7 +156,7 @@ export async function syncList(
  */
 export function createDebouncedPublisher(
 	definition: ListDefinition,
-	getPubkeys: () => string[]
+	getValues: () => string[]
 ): { schedule: () => void; flush: () => Promise<void>; cancel: () => void } {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let inflight: Promise<void> | undefined;
@@ -143,7 +168,7 @@ export function createDebouncedPublisher(
 		if (!currentPk || currentPk !== ownerPk) return; // account switched → drop
 		const run = async () => {
 			try {
-				await publishList(definition, getPubkeys());
+				await publishList(definition, getValues());
 			} finally {
 				inflight = undefined;
 			}

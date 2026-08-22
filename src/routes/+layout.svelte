@@ -12,6 +12,7 @@
 	import { clearAccountCaches } from '$lib/stores/account-cache';
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { mutes } from '$lib/stores/mutes.svelte';
+	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { titleBadge } from '$lib/stores/title-badge.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
@@ -245,6 +246,7 @@
 		profiles.load();
 		blocks.load();
 		mutes.load();
+		hashtagFollows.load();
 		privacyNotificationSettings.load();
 		relays.load();
 		identity.load();
@@ -303,10 +305,12 @@
 			privacyNotificationSettings.reload();
 			void mutes.flush(); // publish any pending NIP-51 changes (guard-checked)
 			void blocks.flush();
+			void hashtagFollows.flush();
 			nip29.stop();
 			nip29.clear();
 			blocks.load();
 			mutes.load();
+			hashtagFollows.load();
 			feedPreferences.reload();
 			callSettings.reload();
 			relays.load();
@@ -331,6 +335,8 @@
 			// NIP-51: merge mute/block lists from relays, push local-only entries.
 			void mutes.sync();
 			void blocks.sync();
+			// NIP-51: same for followed hashtags (kind 30015 interest set).
+			void hashtagFollows.sync();
 			if (shouldAutoRestoreSettings(pk, previousPk)) {
 				void restoreSyncedSettingsFor(pk);
 			}
@@ -358,6 +364,7 @@
 			// Relay set changed — re-merge moderation lists from the new sources.
 			void mutes.sync();
 			void blocks.sync();
+			void hashtagFollows.sync();
 			// NIP-65: republish the user's relay list (debounced, only on change).
 			void publishRelayListIfChanged();
 		}
@@ -413,7 +420,7 @@
 	// routes. Multi-pane routes (messages, settings, reels) own their own layout
 	// and opt out so their internal columns get the full center width. Home uses
 	// the same consolidated AppRightRail as the rest of the content routes.
-	const railHiddenPrefixes = ['/messages', '/settings', '/bits'];
+	const railHiddenPrefixes = ['/messages', '/settings', '/bitz'];
 	const publicRailRoutes = new Set(['/', '/discover']);
 	const showRail = $derived(
 		(hasIdentity || publicRailRoutes.has(page.url.pathname)) &&

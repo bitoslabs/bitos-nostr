@@ -24,6 +24,8 @@
 	}: { author: StoryAuthor; onclose: () => void; onnext?: () => void } = $props();
 
 	let slideIndex = $state(0);
+	/** Which image of the current slide's carousel is showing. */
+	let imageIndex = $state(0);
 	let paused = $state(false);
 	let deleting = $state(false);
 	let confirmDeleteOpen = $state(false);
@@ -36,6 +38,7 @@
 		{ id: number; x: number; y: number; particles: Particle[]; combo: number }[]
 	>([]);
 	let heartPop = $state(false);
+	let imageFailed = $state(false);
 	/** Sensitive slides stay blurred until the viewer taps to reveal. */
 	let revealed = $state(false);
 	let combo = $state(0);
@@ -52,7 +55,12 @@
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
 	const slides = $derived(author.slides);
 	const slide = $derived(slides[slideIndex]);
-	const durationMs = $derived(slide?.imageUrl ? 5000 : 7000);
+	/** All images on the current slide — carousels get one timer per image. */
+	const images = $derived(
+		slide?.images?.length ? slide.images : slide.imageUrl ? [slide.imageUrl] : []
+	);
+	const currentImage = $derived(images[imageIndex]);
+	const durationMs = $derived(images.length ? 5000 : 7000);
 	const isMine = $derived(author.pubkey === identity.current?.pk);
 	const interaction = $derived(slide ? stories.getInteraction(slide.id) : undefined);
 	const liked = $derived(!!interaction?.likedByMe);
@@ -60,11 +68,18 @@
 	const zapSatsTotal = $derived(
 		slide ? (interaction?.zapSats ?? 0) + (optimisticZapSats[slide.id] ?? 0) : 0
 	);
-	const isSensitive = $derived(!!slide?.sensitive && !!slide.imageUrl);
+	const isSensitive = $derived(!!slide?.sensitive && images.length > 0);
 	const hidden = $derived(isSensitive && !revealed);
+	const avatarRingClass = $derived(
+		author.pubkey === identity.current?.pk || author.hasUnseen
+			? 'bg-gradient-to-tr from-primary-500 via-accent-500 to-warm-500'
+			: 'bg-[var(--ui-border-accented)]'
+	);
 
-	// Auto-advance: restart the timer whenever the slide / pause state changes.
+	// Auto-advance: restart the timer whenever the slide, image, or pause state
+	// changes — every carousel image gets its own full segment.
 	$effect(() => {
+		void imageIndex;
 		if (paused || confirmDeleteOpen || zapOpen || !slide) return;
 		const ms = durationMs;
 		const t = setTimeout(() => advance(), ms);
@@ -81,6 +96,19 @@
 		if (!slides.length) onclose();
 	});
 
+	// A story can reference media that later disappears from its host. Reset this
+	// per slide/image so one broken image never leaves the viewer as an empty
+	// black pane.
+	$effect(() => {
+		void slide?.id;
+		imageIndex = 0;
+		imageFailed = false;
+	});
+	$effect(() => {
+		void imageIndex;
+		imageFailed = false;
+	});
+
 	// Load + subscribe to likes/views/replies for this author's stories.
 	$effect(() => {
 		if (!slides.length) return;
@@ -95,6 +123,10 @@
 	});
 
 	function advance() {
+		if (imageIndex < images.length - 1) {
+			imageIndex += 1;
+			return;
+		}
 		if (slideIndex < slides.length - 1) {
 			revealed = false;
 			slideIndex += 1;
@@ -106,6 +138,10 @@
 	}
 
 	function back() {
+		if (imageIndex > 0) {
+			imageIndex -= 1;
+			return;
+		}
 		if (slideIndex > 0) slideIndex -= 1;
 	}
 
@@ -259,7 +295,7 @@
 		if (!slide) return '';
 		const parts = ['Replying to your story:'];
 		if (slide.content.trim()) parts.push(slide.content);
-		if (slide.imageUrl) parts.push(slide.imageUrl);
+		for (const url of images) parts.push(url);
 		if (typedMessage) parts.push('', typedMessage);
 		return parts.join('\n');
 	}
@@ -306,21 +342,43 @@
 	>
 		<!-- Progress bars -->
 		<div class="absolute inset-x-0 top-0 z-20 flex gap-1 p-2">
-			{#each slides as _, i (i)}
+			{#each [...slides.keys()] as i (i)}
 				<div class="h-[3px] flex-1 overflow-hidden rounded-full bg-white/30">
 					{#if i < slideIndex}
 						<div class="h-full w-full bg-white"></div>
 					{:else if i === slideIndex}
-						<div
-							class="h-full bg-white"
-							style="animation: story-progress {durationMs}ms linear forwards; animation-play-state: {paused
-								? 'paused'
-								: 'running'}"
-						></div>
+						{#key imageIndex}
+							<div
+								class="h-full bg-white"
+								style="animation: story-progress {durationMs}ms linear forwards; animation-play-state: {paused
+									? 'paused'
+									: 'running'}"
+							></div>
+						{/key}
 					{/if}
 				</div>
 			{/each}
 		</div>
+
+		<!-- Carousel dots (multi-image slides) -->
+		{#if images.length > 1}
+			<nav
+				class="absolute inset-x-0 top-[18px] z-20 flex justify-center gap-1.5"
+				aria-label="Story images"
+			>
+				{#each [...images.keys()] as i (i)}
+					<button
+						type="button"
+						onclick={() => (imageIndex = i)}
+						aria-label={`Image ${i + 1} of ${images.length}`}
+						aria-current={i === imageIndex}
+						class="h-1.5 rounded-full transition-all {i === imageIndex
+							? 'w-4 bg-white'
+							: 'w-1.5 bg-white/40 hover:bg-white/70'}"
+					></button>
+				{/each}
+			</nav>
+		{/if}
 
 		<!-- Header -->
 		<div class="absolute inset-x-0 top-0 z-40 flex items-center gap-2 p-3 pt-6">
@@ -330,13 +388,17 @@
 				class="flex min-w-0 flex-1 items-center gap-2 rounded-full pr-2 transition hover:bg-white/10"
 				aria-label={`View ${displayName}'s profile`}
 			>
-				<Avatar
-					pubkey={author.pubkey}
-					name={displayName}
-					picture={profile?.picture}
-					size={32}
-					class="ring-2 ring-black/30"
-				/>
+				<!-- Match the layered hexagonal ring used in the story bar. -->
+				<div class="story-ring-frame hex-clip shrink-0 p-[3px] {avatarRingClass}">
+					<div class="story-ring-inner hex-clip bg-black/45 p-[2px] shadow-sm">
+						<Avatar
+							pubkey={author.pubkey}
+							name={displayName}
+							picture={profile?.picture}
+							size={32}
+						/>
+					</div>
+				</div>
 				<div class="min-w-0 flex-1">
 					<p class="truncate text-[13px] font-bold text-white">{displayName}</p>
 					<p class="flex items-center gap-1.5 text-[11px] text-white/70">
@@ -381,14 +443,23 @@
 
 		<!-- Slide -->
 		{#if slide}
-			{#if slide.imageUrl}
+			{#if currentImage && !imageFailed}
 				<img
-					src={slide.imageUrl}
+					src={currentImage}
 					alt={slide.alt ?? ''}
+					onerror={() => (imageFailed = true)}
 					class="size-full object-cover transition-all duration-200 {hidden
 						? 'scale-110 blur-2xl brightness-50'
 						: ''}"
 				/>
+				{#if images.length > 1}
+					<div
+						class="pointer-events-none absolute top-11 right-3 z-20 flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-sm"
+					>
+						<Icon name="i-lucide-copy" class="size-3" />
+						{imageIndex + 1}/{images.length}
+					</div>
+				{/if}
 				{#if hidden}
 					<button
 						type="button"
@@ -451,7 +522,7 @@
 					<p
 						class="max-h-full overflow-auto text-center text-[24px] leading-snug font-extrabold break-words whitespace-pre-wrap text-white"
 					>
-						{slide.content || ' '}
+						{slide.content || (imageFailed ? 'Image unavailable' : ' ')}
 					</p>
 				</div>
 			{/if}
@@ -654,7 +725,9 @@
 			<div
 				class="absolute bottom-2 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-semibold text-white/80"
 			>
-				{slideIndex + 1} / {slides.length}
+				{slideIndex + 1} / {slides.length}{images.length > 1
+					? ` · ${imageIndex + 1}/${images.length}`
+					: ''}
 			</div>
 		{/if}
 	</div>

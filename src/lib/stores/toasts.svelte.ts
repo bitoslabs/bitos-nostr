@@ -1,17 +1,24 @@
 /** Toast store — transient notifications. */
+export interface ToastAction {
+	label: string;
+	run: () => void;
+}
+
 export interface Toast {
 	id: number;
 	message: string;
 	tone: 'info' | 'success' | 'warning' | 'error';
+	/** Optional inline action (e.g. "View in Bitz" after posting). */
+	action?: ToastAction;
 }
 
 class ToastStore {
 	items = $state<Toast[]>([]);
 	private seq = 0;
 
-	push(message: string, tone: Toast['tone'] = 'info', ttl = 3500) {
+	push(message: string, tone: Toast['tone'] = 'info', ttl = 3500, action?: ToastAction) {
 		const id = ++this.seq;
-		this.items = [...this.items, { id, message, tone }];
+		this.items = [...this.items, { id, message, tone, action }];
 		if (ttl > 0) setTimeout(() => this.dismiss(id), ttl);
 		return id;
 	}

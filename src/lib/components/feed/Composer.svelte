@@ -25,6 +25,7 @@
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
 	import GifPicker from './GifPicker.svelte';
+	import BitzComposer from '$lib/components/bitz/BitzComposer.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
@@ -57,6 +58,7 @@
 	let imageInput = $state<HTMLInputElement | null>(null);
 	let videoInput = $state<HTMLInputElement | null>(null);
 	let pollOpen = $state(false);
+	let bitzOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
 	// Draft persistence — debounced writes while typing. Empty text never
@@ -354,7 +356,6 @@
 	];
 
 	const stubActions = [
-		{ icon: 'i-lucide-circle-play', label: 'Bits', color: 'text-warm-500', toast: 'Bits creator' },
 		{
 			icon: 'i-lucide-bar-chart-3',
 			label: 'Poll',
@@ -490,7 +491,7 @@
 			pow = 0;
 			expanded = false;
 			toasts.success(
-				mining ? `Mined ${minedBits} bits · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
+				mining ? `Mined ${minedBits} bitz · ID ${eventId.slice(0, 7)}…` : 'Posted to Nostr'
 			);
 		} catch (e) {
 			const message = (e as Error).message;
@@ -859,6 +860,17 @@
 						/>
 					</button>
 				{/each}
+				<!-- Bitz Studio: create a short-form bitz (NIP-68/71 media event) -->
+				<button
+					type="button"
+					onclick={() => (bitzOpen = true)}
+					disabled={uploading || posting}
+					title="Create a bitz — short video or picture for the Bitz feed"
+					aria-label="Create a bitz"
+					class="grid size-9 place-items-center rounded-full text-warm-500 transition hover:bg-warm-500/10 hover:text-warm-500 disabled:pointer-events-none disabled:opacity-40"
+				>
+					<Icon name="i-lucide-circle-play" class="size-[18px]" />
+				</button>
 				<Popover
 					id={gifMenuId}
 					placement="top-start"
@@ -913,11 +925,7 @@
 						<span class="sr-only">More</span>
 					{/snippet}
 					{#each stubActions as a (a.label)}
-						<MenuItem
-							icon={a.icon}
-							onclick={a.onClick ?? (() => toasts.info(a.toast))}
-							iconClass={`size-4 shrink-0 ${a.color}`}
-						>
+						<MenuItem icon={a.icon} onclick={a.onClick} iconClass={`size-4 shrink-0 ${a.color}`}>
 							{a.label}
 						</MenuItem>
 					{/each}
@@ -1058,3 +1066,4 @@
 {/if}
 
 <PollComposer bind:open={pollOpen} />
+<BitzComposer bind:open={bitzOpen} />

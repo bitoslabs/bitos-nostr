@@ -18,6 +18,8 @@
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
+	import { isProtocolPayload } from '$lib/nostr/content-classification';
+	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import {
 		algorithmPreferences,
 		buildScoringContext,
@@ -65,24 +67,34 @@
 	let discoveryNotes = $state<FeedNote[]>([]);
 	let discoverySignature = $state('');
 	let discoveryRevision = 0;
+	let followedTagNotes = $state<FeedNote[]>([]);
+	let followedTagSignature = $state('');
+	let followedTagRevision = 0;
 	const activeTag = $derived((page.url.searchParams.get('tag') ?? '').trim().toLowerCase());
 	const useRelayFeed = $derived(!!activeTag);
+	/** Followed hashtags (NIP-51) queried into the For you / Following feeds. */
+	const followedTagQueryTags = $derived(hashtagFollows.tags.slice(0, 16));
+	const followedFeedActive = $derived(!useRelayFeed && followedTagQueryTags.length > 0);
 	// Keep local matches visible while the remote search is in flight.
 	const discoveryActive = $derived(
 		algorithmPreferences.relayDiscovery.feed && feedMode === 'foryou' && !useRelayFeed
 	);
 	const baseNotes = $derived.by(() => {
-		const candidates =
-			useRelayFeed && relayFeedHasResult
-				? relayFeedNotes
-				: discoveryActive
-					? mergeDiscoveryNotes(feed.notes, discoveryNotes)
-					: feed.notes;
+		let candidates: FeedNote[];
+		if (useRelayFeed && relayFeedHasResult) {
+			candidates = relayFeedNotes;
+		} else {
+			candidates = feed.notes;
+			// Notes matching followed hashtags are fetched separately and merged in
+			// on both For you and Following.
+			if (followedFeedActive) candidates = mergeDiscoveryNotes(candidates, followedTagNotes);
+			if (discoveryActive) candidates = mergeDiscoveryNotes(candidates, discoveryNotes);
+		}
 		const seen = new Set<string>();
 		return candidates.filter((note) => {
 			if (seen.has(note.id)) return false;
 			seen.add(note.id);
-			return true;
+			return feedPreferences.state.showProtocolNotes || !isProtocolPayload(note.content);
 		});
 	});
 	const selectedFilterOptions = $derived(
@@ -93,12 +105,15 @@
 			? selectedFilterOptions.map((option) => option.label).join(', ')
 			: 'All'
 	);
-	const pinnedTags = $derived(feedPreferences.state.pinnedTags);
+	const pinnedTags = $derived(hashtagFollows.tags);
 	const followingOnly = $derived(feedMode === 'following' && !useRelayFeed);
 	const filteredNotes = $derived(
 		baseNotes.filter((note) => {
+			// Following = people you follow + topics you follow. Notes fetched via
+			// the followed-hashtag query stay visible even from unfollowed authors.
 			if (
 				followingOnly &&
+				note.source !== 'followed-tag' &&
 				!contacts.followingSet.has(note.pubkey) &&
 				note.pubkey !== identity.current?.pk
 			)
@@ -125,37 +140,31 @@
 	let explainerBreakdown = $state<ScoreBreakdown | null>(null);
 	let explainerOpen = $state(false);
 
+	/** Keep cards already on screen in their current order when the candidate
+	 *  pool changes (interaction, followed-tag merge, activity arrival) — the
+	 *  rest of the list follows the new order below the stable visible window. */
+	function applyStableWindow(nextNotes: FeedNote[]): FeedNote[] {
+		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
+		if (!visibleIds.size) return nextNotes;
+		// Keep the current order for cards already on screen, but take the note
+		// objects from the new list. The feed store updates reactions optimistically;
+		// reusing the old objects here would restore the pre-like state after every pass.
+		const nextById = new Map(nextNotes.map((note) => [note.id, note]));
+		const stableVisible = rankedFeed.notes
+			.filter((note) => visibleIds.has(note.id) && nextById.has(note.id))
+			.map((note) => nextById.get(note.id)!);
+		const stableIds = new Set(stableVisible.map((note) => note.id));
+		return [...stableVisible, ...nextNotes.filter((note) => !stableIds.has(note.id))];
+	}
+
 	function computeRanking(candidates: FeedNote[]) {
 		if (!algorithmActive || !candidates.length) {
-			rankedFeed = { notes: candidates, breakdown: new Map() };
+			rankedFeed = { notes: applyStableWindow(candidates), breakdown: new Map() };
 			return;
 		}
 		const ctx = buildScoringContext('feed', candidates);
 		const nextRanking = rankNotesWithBreakdown('feed', candidates, ctx);
-
-		// Keep cards that are already on screen in the current window when an
-		// interaction changes the ranking inputs. A like updates the note and a
-		// reply adds another candidate; allowing either update to immediately
-		// reorder the first page makes the card the user just acted on appear to
-		// disappear. New candidates still participate in ranking after the stable
-		// visible window.
-		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
-		if (visibleIds.size) {
-			// Keep the current order for cards already on screen, but take the
-			// note objects from the new ranking. The feed store updates reactions
-			// optimistically; reusing rankedFeed's old objects here would restore
-			// the pre-like state after every ranking pass.
-			const nextById = new Map(nextRanking.notes.map((note) => [note.id, note]));
-			const stableVisible = rankedFeed.notes
-				.filter((note) => visibleIds.has(note.id) && nextById.has(note.id))
-				.map((note) => nextById.get(note.id)!);
-			const stableIds = new Set(stableVisible.map((note) => note.id));
-			nextRanking.notes = [
-				...stableVisible,
-				...nextRanking.notes.filter((note) => !stableIds.has(note.id))
-			];
-		}
-
+		nextRanking.notes = applyStableWindow(nextRanking.notes);
 		rankedFeed = nextRanking;
 	}
 
@@ -178,7 +187,7 @@
 		void algorithmPreferences.recencyHalfLifeSeconds;
 		void interactionProfile.version;
 		if (!algorithmActive) {
-			rankedFeed = { notes: filteredNotes, breakdown: new Map() };
+			rankedFeed = { notes: applyStableWindow(filteredNotes), breakdown: new Map() };
 			return;
 		}
 		const cancel = scheduleRank('soft');
@@ -297,9 +306,10 @@
 
 	function uniqueTimelineEvents(events: Event[]) {
 		const seen: Record<string, boolean> = {};
+		const feedKinds: number[] = [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL];
 		return events
 			.filter((event) => {
-				if (event.kind !== NOSTR_KINDS.TEXT_NOTE || seen[event.id]) return false;
+				if (!feedKinds.includes(event.kind) || seen[event.id]) return false;
 				seen[event.id] = true;
 				return true;
 			})
@@ -321,7 +331,7 @@
 		const filters: Filter[] = [];
 		if (activeTag) {
 			filters.push({
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
 				'#t': [activeTag],
 				limit: RELAY_RESULT_LIMIT
 			});
@@ -335,7 +345,7 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 1000 }
+					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 1000 }
 				])
 			: [];
 		return applyActivityToNotes(nextNotes, activity, identity.current?.pk);
@@ -410,7 +420,7 @@
 		const revision = discoveryRevision;
 		try {
 			const events = await queryUrls(urls, [
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: RELAY_RESULT_LIMIT }
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], limit: RELAY_RESULT_LIMIT }
 			]);
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;
 			const notes = uniqueTimelineEvents(events).map((event) => ({
@@ -420,7 +430,7 @@
 			const ids = notes.map((note) => note.id);
 			const activity = ids.length
 				? await queryPrimaryFirst([
-						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
+						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
 					])
 				: [];
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;
@@ -430,6 +440,45 @@
 			// Discovery is optional. The configured relay feed remains unaffected.
 		} finally {
 			// Discovery is intentionally best-effort and has no blocking loading UI.
+		}
+	}
+
+	/** Fetch notes for followed hashtags (NIP-51) from the configured relays.
+	 *  Merged into both the For you and Following timelines. Best-effort like
+	 *  discovery — failures never block the live global feed. */
+	async function loadFollowedTagFeed(tags: string[]) {
+		const signature = tags.join(',');
+		followedTagSignature = signature;
+		const revision = ++followedTagRevision;
+		try {
+			const events = await queryPrimaryFirst([
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], '#t': tags, limit: RELAY_RESULT_LIMIT }
+			]);
+			if (followedTagSignature !== signature || revision !== followedTagRevision) return;
+			const notes = uniqueTimelineEvents(events).map((event) => ({
+				...toFeedNote(event),
+				source: 'followed-tag' as const
+			}));
+			const ids = notes.map((note) => note.id);
+			const activity = ids.length
+				? await queryPrimaryFirst([
+							{
+								kinds: [
+									NOSTR_KINDS.REACTION,
+									NOSTR_KINDS.POLL_RESPONSE,
+									NOSTR_KINDS.REPOST,
+									NOSTR_KINDS.ZAP
+								],
+								'#e': ids,
+								limit: 1000
+							}
+						])
+				: [];
+			if (followedTagSignature !== signature || revision !== followedTagRevision) return;
+			followedTagNotes = applyActivityToNotes(notes, activity, identity.current?.pk);
+			profiles.ensure(notes.map((note) => note.pubkey));
+		} catch {
+			// Followed-tag enrichment is optional; the live timeline is unaffected.
 		}
 	}
 
@@ -481,6 +530,10 @@
 		}
 		if (next.source === 'discovery') {
 			discoveryNotes = discoveryNotes.map((note) => (note.id === next.id ? next : note));
+			return;
+		}
+		if (next.source === 'followed-tag') {
+			followedTagNotes = followedTagNotes.map((note) => (note.id === next.id ? next : note));
 			return;
 		}
 		if (relayFeedNotes.some((note) => note.id === next.id)) {
@@ -549,6 +602,7 @@
 
 	function handleNoteHide(id: string) {
 		discoveryNotes = discoveryNotes.filter((note) => note.id !== id);
+		followedTagNotes = followedTagNotes.filter((note) => note.id !== id);
 	}
 
 	$effect(() => {
@@ -570,6 +624,21 @@
 			return;
 		}
 		void loadDiscoveryFeed();
+	});
+
+	// Followed hashtags (NIP-51) — query their notes into For you / Following.
+	// Re-runs when the follow set or the relay list changes.
+	$effect(() => {
+		const tags = followedTagQueryTags;
+		void relays.urls;
+		void followedFeedActive;
+		if (!followedFeedActive) {
+			followedTagNotes = [];
+			followedTagSignature = '';
+			followedTagRevision += 1;
+			return;
+		}
+		void loadFollowedTagFeed(tags);
 	});
 
 	$effect(() => {
@@ -744,7 +813,7 @@
 					<a
 						href="/discover"
 						class="ml-auto flex shrink-0 items-center gap-1 self-center rounded-full px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-500"
-						title="Find & pin more tags"
+						title="Find & follow more tags"
 					>
 						<Icon name="i-lucide-hash" class="size-3.5" />
 						Tags
@@ -782,14 +851,22 @@
 						{#if activeTag}
 							<button
 								type="button"
-								onclick={() => feedPreferences.togglePinnedTag(activeTag)}
+								onclick={() => {
+									const followed = hashtagFollows.toggle(activeTag);
+									if (followed)
+										toasts.success(`Following #${activeTag} — its notes now appear in your feeds`);
+									else toasts.info(`Unfollowed #${activeTag}`);
+								}}
 								class="inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold text-primary-600 transition hover:bg-primary-500/10"
+								aria-label={hashtagFollows.has(activeTag)
+									? `Unfollow hashtag #${activeTag}`
+									: `Follow hashtag #${activeTag}`}
 							>
 								<Icon
-									name={feedPreferences.isPinned(activeTag) ? 'i-lucide-pin-off' : 'i-lucide-pin'}
+									name={hashtagFollows.has(activeTag) ? 'i-lucide-check' : 'i-lucide-plus'}
 									class="size-3.5"
 								/>
-								{feedPreferences.isPinned(activeTag) ? 'Unpin tag' : 'Pin tag'}
+								{hashtagFollows.has(activeTag) ? 'Unfollow tag' : 'Follow tag'}
 							</button>
 						{/if}
 						<a
@@ -965,7 +1042,7 @@
 							{useRelayFeed
 								? 'Your relays did not return matching notes yet. Try another tag or search term.'
 								: followingOnly
-									? 'Follow people from Discover or their profiles to fill this tab.'
+									? 'Follow people from Discover or hashtags from trending to fill this tab.'
 									: 'Try a different filter, hashtag, or search term.'}
 						</p>
 					</div>

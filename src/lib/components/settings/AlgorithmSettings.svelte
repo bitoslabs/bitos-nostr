@@ -23,6 +23,7 @@
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
 
 	const SURFACES: SurfaceId[] = ['feed', 'reels', 'discover'];
 
@@ -94,7 +95,7 @@
 		<div class="min-w-0 flex-1">
 			<h2 class="font-display text-[24px] leading-tight font-extrabold">Algorithm</h2>
 			<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-				Tune how BitOS ranks your Feed, Bits, and Discover — fully on your device. Turn a surface
+				Tune how BitOS ranks your Feed, Bitz, and Discover — fully on your device. Turn a surface
 				off for pure reverse-chronological order. Nothing leaves your browser.
 			</p>
 		</div>
@@ -112,6 +113,25 @@
 			<p class="text-[18px] font-extrabold text-primary-500">{followingCount}</p>
 			<p class="text-[10.5px] font-semibold text-[var(--ui-text-muted)]">Following</p>
 		</div>
+	</div>
+</SectionCard>
+
+<SectionCard title="Feed readability" icon="i-lucide-eye-off" class="mb-5">
+	<div class="flex items-center justify-between gap-4">
+		<div>
+			<p class="text-[13px] font-semibold">Show protocol messages</p>
+			<p class="mt-0.5 text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
+				Serialized channel records, such as <code>channel:__roster</code>, are hidden by default.
+			</p>
+		</div>
+		<button
+			type="button"
+			class="toggle {feedPreferences.state.showProtocolNotes ? 'on' : ''}"
+			role="switch"
+			aria-checked={feedPreferences.state.showProtocolNotes}
+			aria-label="Show protocol messages"
+			onclick={() => feedPreferences.setShowProtocolNotes(!feedPreferences.state.showProtocolNotes)}
+		></button>
 	</div>
 </SectionCard>
 
@@ -399,7 +419,7 @@
 				/>
 				<div class="min-w-0 flex-1">
 					<p class="text-[13px] font-bold text-[var(--ui-text)]">
-						{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Bits relay discovery'}
+						{discoverySurface === 'discover' ? 'Discover relay discovery' : 'Bitz relay discovery'}
 					</p>
 					<p class="text-[11px] text-[var(--ui-text-muted)]">
 						Add public candidates from curated relays without changing your relay settings.

@@ -6,7 +6,7 @@ faithfully reproduced as a **static showcase** at the `/pulse` route
 — all hardcoded seed data, no real Nostr calls).
 
 The **real app** lives at `/`, `/messages`, `/notifications`, `/discover`,
-`/bookmarks`, `/profile`, `/settings`, `/bits`, `/note/[id]` and uses live
+`/bookmarks`, `/profile`, `/settings`, `/bitz`, `/note/[id]` and uses live
 Nostr data. This audit compares the doc against the **real app** only.
 
 Legend: ✅ done · ⚠️ partial · ❌ missing
@@ -20,7 +20,7 @@ Bookmarks · Profile · Settings, plus a **Lightning Wallet card** and a **Zaps
 badge (21k)**.
 
 Real `NavRail.svelte` (`src/lib/components/shell/NavRail.svelte`):
-Home · Chats · Notifications · Bits · Discover · Bookmarks · Profile · Settings.
+Home · Chats · Notifications · Bitz · Discover · Bookmarks · Profile · Settings.
 
 | Doc entry | Real app | Notes |
 |---|---|---|

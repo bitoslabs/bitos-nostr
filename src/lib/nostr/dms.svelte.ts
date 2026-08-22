@@ -194,6 +194,17 @@ class DMStore {
 		this.schedulePersist();
 	}
 
+	private updateDelivery(peer: string, id: string, delivery: DirectMessage['delivery'], protocol?: DirectMessage['protocol']) {
+		this.conversations = this.conversations.map((conversation) => {
+			if (conversation.peer !== peer) return conversation;
+			const messages = conversation.messages.map((message) =>
+				message.id === id ? { ...message, delivery, ...(protocol ? { protocol } : {}) } : message
+			);
+			return { ...conversation, messages, lastMessage: messages.at(-1) };
+		});
+		this.schedulePersist();
+	}
+
 	/** Mark all messages in a conversation as read. */
 	markRead(peer: string) {
 		this.conversations = this.conversations.map((c) => {
@@ -485,17 +496,11 @@ class DMStore {
 		if (!body) return;
 		const createdAt = Math.floor(Date.now() / 1000);
 		const secureEvents = wrapManyEvents(hexToBytes(me.sk), [{ publicKey: peer }], body);
+		const optimisticId = secureEvents[0]?.id ?? `${me.pk}:${peer}:${createdAt}`;
+		this.attach({ id: optimisticId, pubkey: me.pk, peer, content: body, createdAt, mine: true, protocol: 'nip17', delivery: 'pending' });
 		try {
 			await Promise.all(secureEvents.map((event) => publish(event)));
-			this.attach({
-				id: secureEvents[0]?.id ?? `${me.pk}:${peer}:${createdAt}`,
-				pubkey: me.pk,
-				peer,
-				content: body,
-				createdAt,
-				mine: true,
-				protocol: 'nip17'
-			});
+			this.updateDelivery(peer, optimisticId, 'sent');
 			return;
 		} catch {
 			/* secure delivery failed on current relays; fall back to legacy */
@@ -511,16 +516,13 @@ class DMStore {
 			},
 			hexToBytes(me.sk)
 		);
-		await publish(legacyEvent);
-		this.attach({
-			id: legacyEvent.id,
-			pubkey: me.pk,
-			peer,
-			content: body,
-			createdAt,
-			mine: true,
-			protocol: 'nip04'
-		});
+		try {
+			await publish(legacyEvent);
+			this.updateDelivery(peer, optimisticId, 'sent', 'nip04');
+		} catch (error) {
+			this.updateDelivery(peer, optimisticId, 'failed');
+			throw error;
+		}
 	}
 }
 

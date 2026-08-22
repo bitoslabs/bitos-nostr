@@ -180,6 +180,8 @@
 	let remoteAudioEl: HTMLAudioElement | undefined = $state();
 	let callMediaPanel: HTMLDivElement | undefined = $state();
 	let callFullscreen = $state(false);
+	// `contain` keeps the complete portrait phone frame visible; `cover` fills the stage.
+	let callVideoFit = $state<'contain' | 'cover'>('contain');
 	// Self-view (local video) drag-to-reposition state.
 	let selfViewPos = $state<{ x: number; y: number } | null>(null);
 	let selfViewDrag = $state<{ ox: number; oy: number } | null>(null);
@@ -205,8 +207,8 @@
 	const closedCallIds = new Set<string>();
 	const removedGroupIds = new Set<string>();
 	let localStream = $state<MediaStream | null>(null);
-	let screenStream: MediaStream | null = null;
-	let remoteStream: MediaStream | null = null;
+	let screenStream = $state<MediaStream | null>(null);
+	let remoteStream = $state<MediaStream | null>(null);
 	let remoteParticipants = $state<RemoteParticipant[]>([]);
 	let peerConnection: RTCPeerConnection | null = null;
 	const peerConnections = new Map<string, RTCPeerConnection>();
@@ -438,10 +440,16 @@
 	}
 
 	function streamSource(node: HTMLMediaElement, stream: MediaStream | null) {
-		node.srcObject = stream;
+		function attach(next: MediaStream | null) {
+			node.srcObject = next;
+			if (next) void node.play().catch(() => {
+				/* Autoplay may wait for the user's first interaction. */
+			});
+		}
+		attach(stream);
 		return {
 			update(next: MediaStream | null) {
-				node.srcObject = next;
+				attach(next);
 			},
 			destroy() {
 				node.srcObject = null;
@@ -987,6 +995,10 @@
 
 	function onFullscreenChange() {
 		callFullscreen = document.fullscreenElement === callMediaPanel;
+	}
+
+	function toggleCallVideoFit() {
+		callVideoFit = callVideoFit === 'contain' ? 'cover' : 'contain';
 	}
 
 	async function togglePictureInPicture() {
@@ -3813,14 +3825,19 @@
 													? 'text-white/60'
 													: 'text-[var(--ui-text-dimmed)]'}"
 											>
-												{#if isSecureDm(msg)}
+														{#if isSecureDm(msg)}
 													<span
 														class="inline-flex items-center text-emerald-200 dark:text-emerald-300"
 														title="Secure DM"
 													>
 														<Icon name="i-lucide-shield-check" class="size-3" />
 													</span>
-												{/if}
+														{/if}
+														{#if msg.delivery === 'pending'}
+															<span>Sending…</span>
+														{:else if msg.delivery === 'failed'}
+															<span class="text-red-300">Failed</span>
+														{/if}
 												{new Date(msg.createdAt * 1000).toLocaleTimeString(undefined, {
 													hour: '2-digit',
 													minute: '2-digit'
@@ -4823,7 +4840,7 @@
 					class="{callFullscreen
 						? 'h-full w-full rounded-none'
 						: activeCall === 'video'
-							? 'aspect-video'
+							? 'aspect-[3/4] sm:aspect-video'
 							: 'aspect-square max-w-72'} relative mx-auto grid w-full overflow-hidden {activeCall ===
 					'voice'
 						? 'call-stage-voice'
@@ -4845,7 +4862,7 @@
 											data-call-output
 											autoplay
 											playsinline
-											class="size-full object-cover"
+											class="size-full {callVideoFit === 'contain' ? 'object-contain' : 'object-cover'}"
 										></video>
 										<div
 											class="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] font-semibold text-white backdrop-blur"
@@ -4868,11 +4885,12 @@
 						{:else}
 							<video
 								bind:this={remoteVideoEl}
+								use:streamSource={remoteStream}
 								use:pictureInPictureEvents
 								data-call-output
 								autoplay
 								playsinline
-								class="size-full object-cover"
+								class="size-full {callVideoFit === 'contain' ? 'object-contain' : 'object-cover'}"
 							></video>
 						{/if}
 						<div
@@ -4890,10 +4908,11 @@
 						>
 							<video
 								bind:this={localVideoEl}
+								use:streamSource={screenStream ?? localStream}
 								autoplay
 								muted
 								playsinline
-								class="aspect-video w-28 object-cover"
+								class="aspect-video w-28 {callVideoFit === 'contain' ? 'object-contain' : 'object-cover'}"
 							></video>
 							<span
 								class="pointer-events-none absolute bottom-1 left-1.5 flex items-center gap-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[9px] font-semibold text-white"
@@ -5118,6 +5137,17 @@
 									name={backgroundBlurred ? 'i-lucide-aperture' : 'i-lucide-sparkles'}
 									class="size-5"
 								/>
+							</button>
+							<button
+								type="button"
+								title={callVideoFit === 'contain' ? 'Fill video stage' : 'Show full video'}
+								aria-label={callVideoFit === 'contain' ? 'Fill video stage' : 'Show full video'}
+								onclick={toggleCallVideoFit}
+								class="call-orb size-12 {callVideoFit === 'contain'
+									? 'bg-primary-500 text-white shadow-[var(--glow-primary)]'
+									: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text)] hover:bg-[var(--interactive-hover-bg)]'}"
+							>
+								<Icon name={callVideoFit === 'contain' ? 'i-lucide-scan' : 'i-lucide-crop'} class="size-5" />
 							</button>
 							<button
 								type="button"

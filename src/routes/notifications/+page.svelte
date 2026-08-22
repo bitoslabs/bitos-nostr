@@ -195,6 +195,12 @@
 			.join('');
 	}
 
+	/** Total sats across a notification row (single item or a folded zap group). */
+	function zapRowTotal(row: Row): number {
+		const items = row.kind === 'group' ? row.items : [row.item];
+		return items.reduce((sum, i) => sum + (i.amountSats ?? 0), 0);
+	}
+
 	/** "Alice, Bob and 3 others" — unique by pubkey, capped for readout. */
 	function actorSummary(items: NotificationItem[]): { actors: NotificationItem[]; extra: number } {
 		const actors: NotificationItem[] = [];
@@ -330,6 +336,17 @@
 <svelte:head>
 	<title>Notifications · BitOS</title>
 </svelte:head>
+
+<!-- Shared zap amount badge for single notification rows and folded zap groups. -->
+{#snippet zapBadge(total: number)}
+	<span
+		class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
+		title="{total.toLocaleString()} sats"
+	>
+		<Icon name="i-lucide-zap" class="size-3.5" />
+		{total.toLocaleString()} sats
+	</span>
+{/snippet}
 
 <div class="flex h-full">
 	<div bind:this={listEl} class="min-w-0 flex-1 overflow-y-auto">
@@ -573,10 +590,10 @@
 														<Icon name={meta.icon} class="size-3" />
 													</span>
 												{:else}
-												<a
-													href={profileLink(item.pubkey)}
-													onclick={() => openRow(item)}
-													class="hex-clip block size-12 shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:bg-primary-500/40"
+													<a
+														href={profileLink(item.pubkey)}
+														onclick={() => openRow(item)}
+														class="hex-clip block size-12 shrink-0 bg-[var(--surface-bg)] p-[2px] transition hover:bg-primary-500/40"
 														aria-label={`View ${actorName(item.pubkey)}'s profile`}
 													>
 														<Avatar
@@ -629,12 +646,16 @@
 																	{verbFor(row.first)}</span
 																>
 															{/if}
+															{#if row.first.type === 'zap' && zapRowTotal(row) > 0}
+																{@render zapBadge(zapRowTotal(row))}
+															{/if}
 														{:else}
 															<span class="inline-flex items-center gap-1 align-text-bottom">
 																<a
 																	href={profileLink(item.pubkey)}
 																	onclick={() => openRow(item)}
-																	class="font-bold hover:text-primary-500">{actorName(item.pubkey)}</a
+																	class="font-bold hover:text-primary-500"
+																	>{actorName(item.pubkey)}</a
 																>
 																{#if hasNip05(item.pubkey)}
 																	<Icon
@@ -662,13 +683,8 @@
 															{:else}
 																<span class="text-[var(--ui-text-muted)]"> {verbFor(item)}</span>
 															{/if}
-															{#if item.type === 'zap' && item.amountSats}
-																<span
-																	class="ml-1 inline-flex items-center gap-1 font-bold text-[var(--color-warm-500)]"
-																>
-																	<Icon name="i-lucide-zap" class="size-3.5" />
-																	{item.amountSats.toLocaleString()} sats
-																</span>
+															{#if item.type === 'zap' && zapRowTotal(row) > 0}
+																{@render zapBadge(zapRowTotal(row))}
 															{/if}
 														{/if}
 													</p>

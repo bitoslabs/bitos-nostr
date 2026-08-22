@@ -26,12 +26,15 @@ import { extractHashtagTags } from '$lib/utils/note-content';
 import { minePowAsync, eventPow, type PowProgress } from './pow';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
+/** Hard cap on images per story slide — keeps events + viewer carousels sane. */
+export const MAX_STORY_IMAGES = 6;
 const MAX_PER_AUTHOR = 12;
 const MIN_FOLLOWING_STORY_AUTHORS = 10;
 const PUBLIC_FALLBACK_LIMIT = 20;
 const SEEN_KEY = 'bitos:seen-stories';
 const VIEWED_KEY = 'bitos:story-views';
 const IMG_RE = /https?:\/\/[^\s<>"')]+?\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#][^\s<>"')]*)?/i;
+const IMG_RE_GLOBAL = new RegExp(IMG_RE.source, 'gi');
 
 export interface StorySlide {
 	id: string;
@@ -40,8 +43,10 @@ export interface StorySlide {
 	pubkey: string;
 	/** Caption / note text. */
 	content: string;
-	/** Attached image, if any (imeta url or an image link in content). */
+	/** Primary attached image (`images[0]`) — kept for single-image consumers. */
 	imageUrl?: string;
+	/** All attached images (NIP-92 imeta urls + image links in content), capped. */
+	images?: string[];
 	/** CSS background for text-only stories (gradient or color). */
 	bg?: string;
 	/** NIP-13 difficulty (leading zero bits) when the slide was mined. */
@@ -122,14 +127,30 @@ function isExpired(s: { expiresAt: number }): boolean {
 	return s.expiresAt <= nowSec();
 }
 
-/** Pull an image URL out of imeta (NIP-92) or the first image link in content. */
-function extractImage(ev: Pick<Event, 'content' | 'tags'>): string | undefined {
-	const imeta = ev.tags.find((t) => t[0] === 'imeta');
-	if (imeta) {
-		const urlLine = imeta.find((seg) => seg.startsWith('url '));
-		if (urlLine) return urlLine.slice(4);
+/**
+ * Collect every attached image: each NIP-92 `imeta` url line first (ordered,
+ * author-curated), then any bare image links in the content. Deduped, capped
+ * at MAX_STORY_IMAGES so a hostile event can't bloat the viewer.
+ */
+function extractImages(ev: Pick<Event, 'content' | 'tags'>): string[] {
+	const urls: string[] = [];
+	// Plain Set on purpose: a local dedupe inside the parser, never reactive state.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const seen = new Set<string>();
+	const push = (url: string | undefined) => {
+		const clean = url?.trim();
+		if (!clean || seen.has(clean)) return;
+		seen.add(clean);
+		urls.push(clean);
+	};
+	for (const tag of ev.tags) {
+		if (tag[0] !== 'imeta') continue;
+		for (const seg of tag.slice(1)) {
+			if (seg.startsWith('url ')) push(seg.slice(4));
+		}
 	}
-	return ev.content.match(IMG_RE)?.[0];
+	for (const match of ev.content.matchAll(IMG_RE_GLOBAL)) push(match[0]);
+	return urls.slice(0, MAX_STORY_IMAGES);
 }
 
 /** Alt text for the attached image (NIP-92 `alt` line inside `imeta`). */
@@ -146,11 +167,11 @@ function isSensitiveSlide(ev: Pick<Event, 'tags'>): boolean {
 	);
 }
 
-function cleanStoryContent(content: string, imageUrl?: string): string {
-	if (!imageUrl) return content.trim();
-	return content
-		.split(imageUrl)
-		.join(' ')
+/** Strip every attached image URL out of the caption text. */
+function cleanStoryContent(content: string, images: string[]): string {
+	let out = content;
+	for (const url of images) out = out.split(url).join(' ');
+	return out
 		.replace(/\*{2,}/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim();
@@ -159,13 +180,14 @@ function cleanStoryContent(content: string, imageUrl?: string): string {
 function parseSlide(ev: Event): StorySlide | null {
 	const expiration = ev.tags.find((t) => t[0] === 'expiration')?.[1];
 	const expiresAt = expiration ? Number(expiration) : ev.created_at + STORY_TTL;
-	const imageUrl = extractImage(ev);
+	const images = extractImages(ev);
 	const slide: StorySlide = {
 		id: ev.id,
 		d: ev.tags.find((t) => t[0] === 'd')?.[1] || undefined,
 		pubkey: ev.pubkey.toLowerCase(),
-		content: cleanStoryContent(ev.content, imageUrl),
-		imageUrl,
+		content: cleanStoryContent(ev.content, images),
+		imageUrl: images[0],
+		images: images.length ? images : undefined,
 		bg: ev.tags.find((t) => t[0] === 'background')?.[1] || undefined,
 		pow: eventPow(ev),
 		alt: extractAlt(ev),
@@ -182,6 +204,7 @@ class StoriesStore {
 	authors = $state<StoryAuthor[]>([]);
 	loading = $state(false);
 	/** Pubkey → idIndex map so updates dedupe by event id. */
+	// Plain Maps/Sets below are private store internals (manual rebuild()), never reactive state.
 	private slidesByAuthor = new Map<string, Map<string, StorySlide>>();
 	private seenAt = new Map<string, number>();
 	private unsub: (() => void) | null = null;
@@ -356,6 +379,8 @@ class StoriesStore {
 		if (!slide) return;
 		let map = this.slidesByAuthor.get(slide.pubkey);
 		if (!map) {
+			// Plain Map on purpose: private store internal, never reactive state.
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity
 			map = new Map();
 			this.slidesByAuthor.set(slide.pubkey, map);
 		}
@@ -406,8 +431,11 @@ class StoriesStore {
 	}
 
 	/**
-	 * Publish a new story slide (text + optional image + optional background).
-	 * `bg` is a CSS background value (gradient/color) stored for text-only stories.
+	 * Publish a new story slide (text + up to MAX_STORY_IMAGES images + optional
+	 * background). `bg` is a CSS background value (gradient/color) stored for
+	 * text-only stories. Each image gets its own NIP-92 `imeta` tag so relays and
+	 * other clients see the full carousel, and every URL is mirrored into the
+	 * content for clients that only parse links.
 	 *
 	 * Options mirror feed.post: `pow` mines NIP-13 difficulty before publishing
 	 * (live stats via `onPowProgress`, cancellable via `signal`), so stories can
@@ -417,15 +445,15 @@ class StoriesStore {
 	 */
 	async publish(
 		content: string,
-		imageUrl?: string,
+		images?: string | string[],
 		bg?: string,
 		options: {
 			pow?: number;
 			onPowProgress?: (progress: PowProgress) => void;
 			signal?: AbortSignal;
-			/** Alt text for the attached image (NIP-92 `alt` in imeta). */
+			/** Alt text for the attached images (NIP-92 `alt` in the first imeta). */
 			alt?: string;
-			/** Blur the image until tapped in the viewer (content-warning tag). */
+			/** Blur the images until tapped in the viewer (content-warning tag). */
 			sensitive?: boolean;
 		} = {}
 	): Promise<string> {
@@ -433,7 +461,13 @@ class StoriesStore {
 		const me = identity.current;
 		if (!me) throw new Error('No identity');
 		const text = content.trim();
-		if (!text && !imageUrl) throw new Error('Nothing to post');
+		// Tolerate both the old single-url string and the new array (deduped, capped).
+		// Plain Set on purpose: local dedupe before publishing, never reactive state.
+		const unique = new Set(
+			(typeof images === 'string' ? [images] : (images ?? [])).filter(Boolean)
+		);
+		const list = [...unique].slice(0, MAX_STORY_IMAGES);
+		if (!text && !list.length) throw new Error('Nothing to post');
 		const now = nowSec();
 		const tags: string[][] = [
 			['d', `bitos-story-${now}-${Math.random().toString(36).slice(2, 8)}`],
@@ -441,16 +475,16 @@ class StoriesStore {
 			...clientTag(),
 			...extractHashtagTags(text)
 		];
-		if (bg && !imageUrl) tags.push(['background', bg]);
-		if (options.sensitive && imageUrl) tags.push(['content-warning', 'Sensitive media']);
-		let body = text;
-		if (imageUrl) {
-			const imeta = [`url ${imageUrl}`];
-			const alt = options.alt?.trim().slice(0, 280);
-			if (alt) imeta.push(`alt ${alt}`);
+		if (bg && !list.length) tags.push(['background', bg]);
+		if (options.sensitive && list.length) tags.push(['content-warning', 'Sensitive media']);
+		const alt = options.alt?.trim().slice(0, 280);
+		list.forEach((url, i) => {
+			const imeta = [`url ${url}`];
+			// Alt text describes the whole set — attach it to the first image only.
+			if (i === 0 && alt) imeta.push(`alt ${alt}`);
 			tags.push(['imeta', ...imeta]);
-			body = text ? `${text}\n${imageUrl}` : imageUrl;
-		}
+		});
+		const body = list.length ? [text, ...list].filter(Boolean).join('\n') : text;
 		const unsigned = {
 			pubkey: getPublicKey(hexToBytes(me.sk)),
 			kind: NOSTR_KINDS.STORY_STATUS,
@@ -680,6 +714,7 @@ class StoriesStore {
 		if (ev.kind === NOSTR_KINDS.ZAP) {
 			const slideId = this.slideIdFromTags(ev.tags);
 			if (!slideId) return;
+			// eslint-disable-next-line svelte/prefer-svelte-reactivity
 			const map = this.zapsBySlide.get(slideId) ?? new Map<string, number>();
 			if (map.has(ev.id)) return; // relays replay receipts — count each once
 			map.set(ev.id, zapSats(ev));
@@ -725,7 +760,9 @@ class StoriesStore {
 			? [...repliesMap.values()].sort((a, b) => a.createdAt - b.createdAt)
 			: [];
 		const likes: StoryReaction[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const likePubkeys = new Set<string>();
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const viewPubkeys = new Set<string>();
 		let myLikeEventId: string | undefined;
 		if (reactions) {

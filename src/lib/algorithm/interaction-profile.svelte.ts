@@ -16,6 +16,7 @@
  */
 import { browser } from '$app/environment';
 import { bookmarks } from '$lib/stores/bookmarks.svelte';
+import { humanTags } from '$lib/nostr/content-classification';
 import type { FeedNote } from '$lib/nostr/types';
 
 export const PROFILE_STORAGE_KEY = 'bitos:algorithm-interaction-profile';
@@ -39,10 +40,18 @@ export function extractTags(note: Pick<FeedNote, 'content' | 'tags'>): string[] 
 	const declared = note.tags
 		.filter((tag) => tag[0] === 't' && tag[1])
 		.map((tag) => tag[1].toLowerCase());
-	const inline = [...note.content.matchAll(hashtagPattern)].map((match) => match[1].toLowerCase());
+	// Machine coordination tags (e.g. `udal-friend-<hex>`) are structurally
+	// valid hashtags but carry no human topic. Keeping them out here means the
+	// Topics signal, tag mutes, and card chips all agree they are not topics.
+	const inline = humanTags(
+		[...note.content.matchAll(hashtagPattern)].map((match) => match[1].toLowerCase())
+	);
 	const unique: string[] = [];
-	for (const tag of [...declared, ...inline]) {
+	for (const tag of humanTags(declared)) {
 		if (tag && !unique.includes(tag)) unique.push(tag);
+	}
+	for (const tag of inline) {
+		if (!unique.includes(tag)) unique.push(tag);
 	}
 	return unique;
 }

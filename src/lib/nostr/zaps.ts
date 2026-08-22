@@ -1,4 +1,4 @@
-import { NOSTR_KINDS, type Event, type FeedNote } from './types';
+import { NOSTR_KINDS, MAX_POLL_VOTERS, repostTarget, type Event, type FeedNote, type PollVoter } from './types';
 
 const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
@@ -123,11 +123,36 @@ export function applyActivityToNotes(
 	const noteIds = new Set(notes.map((note) => note.id));
 	const reactionIds = new Set<string>();
 	const zapIds = new Set<string>();
+	const repostIds = new Set<string>();
 	const reactionsByNote = new Map<string, FeedNote['reactions']>();
 	const zapsByNote = new Map<string, { count: number; sats: number }>();
+	const repostsByNote = new Map<string, number>();
 	const pollVotesByNote = new Map<string, Map<string, { optionId: string; at: number }>>();
+	const pollsById = new Map(notes.map((note) => [note.id, note.poll]));
 
 	for (const ev of events) {
+		if (ev.kind === NOSTR_KINDS.REPOST || ev.kind === NOSTR_KINDS.GENERIC_REPOST) {
+			const target = repostTarget(ev).eventId;
+			if (target && noteIds.has(target) && !repostIds.has(ev.id)) {
+				repostIds.add(ev.id);
+				repostsByNote.set(target, (repostsByNote.get(target) ?? 0) + 1);
+			}
+			continue;
+		}
+		if (ev.kind === NOSTR_KINDS.POLL_RESPONSE) {
+			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
+			const optionId = ev.tags.find((tag) => tag[0] === 'response' && tag[1])?.[1];
+			const poll = target ? pollsById.get(target) : undefined;
+			if (target && optionId && noteIds.has(target) && poll?.options.some((o) => o.id === optionId)) {
+				const votes = pollVotesByNote.get(target) ?? new Map();
+				const previous = votes.get(ev.pubkey);
+				if (!previous || ev.created_at >= previous.at) {
+					votes.set(ev.pubkey, { optionId, at: ev.created_at });
+					pollVotesByNote.set(target, votes);
+				}
+			}
+			continue;
+		}
 		if (ev.kind === NOSTR_KINDS.REACTION) {
 			const target = ev.tags.find((tag) => tag[0] === 'e' && tag[1])?.[1];
 			if (!target || !noteIds.has(target) || ev.content === '-' || reactionIds.has(ev.id)) continue;
@@ -173,24 +198,30 @@ export function applyActivityToNotes(
 		const pollVotes = pollVotesByNote.get(note.id);
 		const votes: Record<string, number> = {};
 		let myVote: string | undefined;
+		let voters: PollVoter[] | undefined;
 		if (pollVotes) {
+			const voterEntries: PollVoter[] = [];
 			for (const [pubkey, vote] of pollVotes) {
 				votes[vote.optionId] = (votes[vote.optionId] ?? 0) + 1;
 				if (pubkey === myPubkey) myVote = vote.optionId;
+				voterEntries.push({ pubkey, optionId: vote.optionId, at: vote.at });
 			}
+			voters = voterEntries.sort((a, b) => b.at - a.at).slice(0, MAX_POLL_VOTERS);
 		}
 		return {
 			...note,
 			reactions: reactionsByNote.get(note.id) ?? note.reactions,
 			zapCount: zapsByNote.get(note.id)?.count ?? note.zapCount,
 			zapTotalSats: zapsByNote.get(note.id)?.sats ?? note.zapTotalSats,
+			repostCount: repostsByNote.get(note.id) ?? note.repostCount,
 			poll:
 				note.poll && pollVotesByNote.has(note.id)
 					? {
 							...note.poll,
 							votes,
 							totalVotes: Object.values(votes).reduce((sum, count) => sum + count, 0),
-							myVote
+							myVote,
+							voters
 						}
 					: note.poll
 		};

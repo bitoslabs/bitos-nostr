@@ -5,7 +5,7 @@
  * extracted from either a NIP-92 `imeta` tag or an image URL in the content.
  */
 import { describe, expect, it } from 'vitest';
-import { parseSlide } from './stories.svelte';
+import { parseSlide, MAX_STORY_IMAGES } from './stories.svelte';
 import type { Event } from 'nostr-tools/pure';
 
 const PK = 'a'.repeat(64);
@@ -107,5 +107,64 @@ describe('stories.parseSlide', () => {
 		);
 		expect(slide?.sensitive).toBe(false);
 		expect(slide?.alt).toBeUndefined();
+	});
+
+	it('collects every imeta image into a carousel in author order', () => {
+		const slide = parseSlide(
+			fakeEvent({
+				content: 'trip!',
+				tags: [
+					['imeta', 'url https://cdn.example.com/1.png'],
+					['imeta', 'url https://cdn.example.com/2.gif', 'alt two gifs'],
+					['imeta', 'url https://cdn.example.com/3.jpg']
+				]
+			})
+		);
+		expect(slide?.images).toEqual([
+			'https://cdn.example.com/1.png',
+			'https://cdn.example.com/2.gif',
+			'https://cdn.example.com/3.jpg'
+		]);
+		// imageUrl stays the primary image for single-image consumers.
+		expect(slide?.imageUrl).toBe('https://cdn.example.com/1.png');
+		expect(slide?.content).toBe('trip!');
+	});
+
+	it('dedupes imeta urls against bare links in the content', () => {
+		const slide = parseSlide(
+			fakeEvent({
+				content: 'see https://cdn.example.com/a.png and https://cdn.example.com/b.png',
+				tags: [['imeta', 'url https://cdn.example.com/b.png']]
+			})
+		);
+		// imeta order wins; the duplicate bare link is dropped.
+		expect(slide?.images).toEqual([
+			'https://cdn.example.com/b.png',
+			'https://cdn.example.com/a.png'
+		]);
+		expect(slide?.content).toBe('see and');
+	});
+
+	it('strips every attached image URL out of multi-image captions', () => {
+		const slide = parseSlide(
+			fakeEvent({
+				content: 'one https://cdn.example.com/1.png two https://cdn.example.com/2.png three',
+				tags: [
+					['imeta', 'url https://cdn.example.com/1.png'],
+					['imeta', 'url https://cdn.example.com/2.png']
+				]
+			})
+		);
+		expect(slide?.content).toBe('one two three');
+	});
+
+	it('caps the carousel at MAX_STORY_IMAGES images', () => {
+		const tags = Array.from(
+			{ length: 10 },
+			(_, i) => ['imeta', `url https://cdn.example.com/${i}.png`] as string[]
+		);
+		const slide = parseSlide(fakeEvent({ content: 'many', tags }));
+		expect(slide?.images?.length).toBe(MAX_STORY_IMAGES);
+		expect(slide?.images?.[5]).toBe('https://cdn.example.com/5.png');
 	});
 });
