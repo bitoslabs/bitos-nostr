@@ -1028,6 +1028,21 @@
 		}
 	}
 
+	/* Avatar ⚡ badge (lud16/lud06): slow charge pulse — a soft orange glow
+	   that swells and fades, subtle enough to stay ambient in lists. */
+	.avatar-zap-badge {
+		animation: avatar-zap-charge 2.4s ease-in-out infinite;
+	}
+	@keyframes avatar-zap-charge {
+		0%,
+		100% {
+			box-shadow: 0 0 0 0 rgb(247 147 26 / 0);
+		}
+		50% {
+			box-shadow: 0 0 0 3px rgb(247 147 26 / 0.35);
+		}
+	}
+
 	/* Facebook/Instagram-style double-tap “like” burst. */
 	.like-burst-heart {
 		will-change: transform, opacity;

@@ -31,6 +31,8 @@
 	type MediaItem = {
 		id: string;
 		url: string;
+		/** Ordered mirror URLs — player failover (F-017). */
+		fallbacks?: string[];
 		kind: 'image' | 'video';
 		pubkey: string;
 		content: string;
@@ -298,7 +300,11 @@
 			const url = imetaValue(tag, 'url');
 			const mime = imetaValue(tag, 'm');
 			if (!url) continue;
-			if (mime?.startsWith('video/')) return { url, kind: 'video' as const };
+			const fallbacks = tag
+				.filter((segment) => segment.startsWith('fallback '))
+				.map((segment) => segment.slice('fallback '.length).trim())
+				.filter((mirror, index, all) => mirror && mirror !== url && all.indexOf(mirror) === index);
+			if (mime?.startsWith('video/')) return { url, kind: 'video' as const, fallbacks };
 			if (mime?.startsWith('image/')) return { url, kind: 'image' as const };
 			const kind = classifyMediaUrl(url);
 			if (kind) return { url, kind };
@@ -465,6 +471,7 @@
 					id: event.id,
 					url: media.url,
 					kind: media.kind,
+					...(media.kind === 'video' && media.fallbacks?.length ? { fallbacks: media.fallbacks } : {}),
 					pubkey: event.pubkey,
 					content: event.content,
 					createdAt: event.created_at,
@@ -802,6 +809,7 @@
 						id: event.id,
 						url: media.url,
 						kind: media.kind,
+						...(media.kind === 'video' && media.fallbacks?.length ? { fallbacks: media.fallbacks } : {}),
 						pubkey: event.pubkey,
 						content: event.content,
 						createdAt: event.created_at,
@@ -1753,6 +1761,7 @@
 					<MediaPlayer
 						src={selectedMediaItem.url}
 						label="Discover video"
+						fallbackSrcs={selectedMediaItem.fallbacks}
 						class="relative mx-auto w-full max-w-5xl"
 						mediaClass="mx-auto max-h-[80vh] w-full bg-black object-contain"
 						overlayControls

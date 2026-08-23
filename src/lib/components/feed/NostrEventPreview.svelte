@@ -2,12 +2,10 @@
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
 	import { decode } from 'nostr-tools/nip19';
-	import type { Event } from 'nostr-tools/pure';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
-	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import {
 		originNotes,
 		originNoteStates,
@@ -19,25 +17,6 @@
 	import NotificationMedia from './NotificationMedia.svelte';
 	import { cleanNotificationPreview, extractNotificationMedia } from '$lib/utils/imeta';
 	import CommunityInviteCard from '$lib/components/groups/CommunityInviteCard.svelte';
-
-	const eventCache = new Map<string, Event>();
-	const eventRequests = new Map<string, Promise<Event | null>>();
-
-	function loadEvent(id: string): Promise<Event | null> {
-		const cached = eventCache.get(id);
-		if (cached) return Promise.resolve(cached);
-		const pending = eventRequests.get(id);
-		if (pending) return pending;
-		const request = queryPrimaryFirst([{ ids: [id], limit: 1 }])
-			.then((events) => {
-				const found = events[0] ?? null;
-				if (found) eventCache.set(id, found);
-				return found;
-			})
-			.finally(() => eventRequests.delete(id));
-		eventRequests.set(id, request);
-		return request;
-	}
 
 	let {
 		value,
@@ -71,42 +50,14 @@
 			return undefined;
 		}
 	});
-	const batchedEvent = $derived(eventId ? originNotes[noteId ?? ''] : undefined);
-	const batchedState = $derived(eventId ? originNoteStates[noteId ?? ''] : undefined);
-
-	let event = $state<Event | null>(null);
-	let loading = $state(true);
+	// All embeds use the shared request queue. A feed containing many `nevent`
+	// references is therefore hydrated in batches, rather than one relay call per card.
+	const event = $derived(originNotes[noteId ?? '']);
+	const state = $derived(originNoteStates[noteId ?? '']);
+	const loading = $derived(!!noteId && !event && state !== 'missing');
 	$effect(() => {
-		if (!browser || communityId || !noteId) {
-			loading = false;
-			return;
-		}
-		if (eventId) {
-			requestOriginNotes([noteId]);
-			event = batchedEvent ?? null;
-			loading = !batchedEvent && batchedState !== 'missing';
-			if (batchedEvent) {
-				profiles.ensure([
-					batchedEvent.pubkey,
-					...extractMentionEntities(batchedEvent.content).pubkeys
-				]);
-			}
-			return;
-		}
-		let active = true;
-		void loadEvent(noteId)
-			.then((found) => {
-				if (!active) return;
-				event = found;
-				loading = false;
-				if (event) {
-					profiles.ensure([event.pubkey, ...extractMentionEntities(event.content).pubkeys]);
-				}
-			})
-			.catch(() => {
-				if (active) loading = false;
-			});
-		return () => (active = false);
+		if (browser && !communityId && noteId) requestOriginNotes([noteId]);
+		if (event) profiles.ensure([event.pubkey, ...extractMentionEntities(event.content).pubkeys]);
 	});
 
 	const profile = $derived(event ? profiles.get(event.pubkey) : undefined);
@@ -169,12 +120,11 @@
 		note…
 	</div>
 {:else if event}
-	<a
-		href={noteHref}
+	<section
 		class={inline
 			? 'mt-1 block rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-2 py-1.5 transition hover:border-primary-500/50 hover:bg-[var(--interactive-hover-bg)]'
 			: 'my-2 block rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-3 transition hover:border-primary-500/50 hover:bg-[var(--interactive-hover-bg)]'}
-		aria-label={`Open note by ${displayName}`}
+		aria-label={`Embedded note by ${displayName}`}
 	>
 		<div class="flex items-center gap-2">
 			<Avatar
@@ -189,7 +139,13 @@
 					{inline ? 'context' : timeAgo(event.created_at)}
 				</div>
 			</div>
-			<Icon name="i-lucide-external-link" class="size-3.5 text-[var(--ui-text-muted)]" />
+			<a
+				href={noteHref}
+				class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-bold text-primary-500 transition hover:bg-primary-500/10 hover:text-primary-600 focus-visible:ring-2 focus-visible:ring-primary-500/40 focus-visible:outline-none"
+				aria-label={`View original note by ${displayName}`}
+			>
+				View original <Icon name="i-lucide-arrow-up-right" class="size-3.5" />
+			</a>
 		</div>
 		{#if inline}
 			<div class="mt-1 flex items-center gap-2">
@@ -215,16 +171,11 @@
 			</p>
 		{/if}
 		{#if media.length && !inline}
-			<div
-				class="mt-2"
-				role="presentation"
-				onclick={(e) => e.stopPropagation()}
-				onkeydown={(e) => e.stopPropagation()}
-			>
-				<NotificationMedia {media} tags={event.tags} content={event.content} />
+			<div class="mt-2">
+				<NotificationMedia {media} tags={event.tags} content={event.content} playSingleVideo />
 			</div>
 		{/if}
-	</a>
+	</section>
 {:else}
 	<a
 		href={noteId ? `/note/${noteId}?returnTo=${encodeURIComponent(returnTo)}` : reference}

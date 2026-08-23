@@ -16,12 +16,11 @@
  * groups are surfaced separately and interop with other NIP-29 clients.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { signMined } from '$lib/auth/signer';
 import type { Event } from 'nostr-tools/pure';
 import { subscribeUrls, publishUrls, queryUrls } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
-import { hexToBytes } from './hex';
 import { clientTag } from './client-tag';
 import { NOSTR_KINDS } from './types';
 
@@ -497,15 +496,12 @@ class Nip29Store {
 
 		const group: Nip29Group = { id: groupId, relay, joinedAt: nowSec(), unread: 0 };
 		// Best-effort join event — open groups often don't require it.
-		const joinEvent = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.GROUP_JOIN,
-				content: '',
-				created_at: nowSec(),
-				tags: [['h', groupId], ...clientTag()]
-			},
-			hexToBytes(id.sk)
-		);
+		const joinEvent = await signMined({
+			kind: NOSTR_KINDS.GROUP_JOIN,
+			content: '',
+			created_at: nowSec(),
+			tags: [['h', groupId], ...clientTag()]
+		});
 		await publishUrls([relay], joinEvent).catch(() => undefined);
 		this.groups = [...this.groups, group];
 		this.persistGroups();
@@ -522,15 +518,12 @@ class Nip29Store {
 		const group = this.groups.find((g) => g.id === groupId);
 		if (!group) return;
 		if (id) {
-			const leaveEvent = finalizeEvent(
-				{
-					kind: NOSTR_KINDS.GROUP_LEAVE,
-					content: '',
-					created_at: nowSec(),
-					tags: [['h', group.id], ...clientTag()]
-				},
-				hexToBytes(id.sk)
-			);
+			const leaveEvent = await signMined({
+				kind: NOSTR_KINDS.GROUP_LEAVE,
+				content: '',
+				created_at: nowSec(),
+				tags: [['h', group.id], ...clientTag()]
+			});
 			await publishUrls([group.relay], leaveEvent).catch(() => undefined);
 		}
 		this.groups = this.groups.filter((g) => g.id !== groupId);
@@ -574,15 +567,12 @@ class Nip29Store {
 		for (const attachment of attachments) {
 			tags.push(['imeta', `url ${attachment.url}`]);
 		}
-		const event = finalizeEvent(
-			{
-				kind: options.replyTo ? NOSTR_KINDS.GROUP_CHAT_REPLY : NOSTR_KINDS.GROUP_CHAT_MESSAGE,
-				content: body,
-				created_at: nowSec(),
-				tags
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: options.replyTo ? NOSTR_KINDS.GROUP_CHAT_REPLY : NOSTR_KINDS.GROUP_CHAT_MESSAGE,
+			content: body,
+			created_at: nowSec(),
+			tags
+		});
 		await publishUrls([group.relay], event);
 		this.ingest(event);
 		return event.id;
@@ -598,15 +588,12 @@ class Nip29Store {
 		const cleanName = name.trim().slice(0, 80);
 		if (!cleanName) throw new Error('Group needs a name');
 		const groupId = crypto.randomUUID().replace(/-/g, ''); // hex32 id
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.GROUP_CREATE,
-				content: '',
-				created_at: nowSec(),
-				tags: [['h', groupId], ['name', cleanName], ...clientTag()]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.GROUP_CREATE,
+			content: '',
+			created_at: nowSec(),
+			tags: [['h', groupId], ['name', cleanName], ...clientTag()]
+		});
 		await publishUrls([cleanRelay], event);
 		// Join so the group lands in the local list + subscriptions…
 		await this.join(groupId, cleanRelay).catch(() => undefined);
@@ -668,15 +655,12 @@ class Nip29Store {
 		const group = this.groups.find((g) => g.id === groupId);
 		if (!id) throw new Error('No identity');
 		if (!group) throw new Error('Not a member of that group');
-		const event = finalizeEvent(
-			{
-				kind,
-				content: '',
-				created_at: nowSec(),
-				tags: [...tags, ...clientTag()]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind,
+			content: '',
+			created_at: nowSec(),
+			tags: [...tags, ...clientTag()]
+		});
 		await publishUrls([group.relay], event);
 	}
 
@@ -697,15 +681,12 @@ class Nip29Store {
 		const group = this.groups.find((g) => g.id === groupId);
 		if (!id) throw new Error('No identity');
 		if (!group) throw new Error('Not a member of that group');
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.GROUP_EDIT_METADATA,
-				content: JSON.stringify(clean),
-				created_at: nowSec(),
-				tags: [['h', group.id], ...clientTag()]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.GROUP_EDIT_METADATA,
+			content: JSON.stringify(clean),
+			created_at: nowSec(),
+			tags: [['h', group.id], ...clientTag()]
+		});
 		await publishUrls([group.relay], event);
 		// Optimistically update the local cache; the relay will republish 39000.
 		this.groups = this.groups.map((g) =>
@@ -768,15 +749,12 @@ class Nip29Store {
 		const group = this.groups.find((g) => g.id === groupId);
 		if (!id) throw new Error('No identity');
 		if (!group) throw new Error('Not a member of that group');
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.DELETE,
-				content: 'Deleted a group message from BitOS',
-				created_at: nowSec(),
-				tags: [...buildGroupDeleteTags(messageId, group.id), ...clientTag()]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.DELETE,
+			content: 'Deleted a group message from BitOS',
+			created_at: nowSec(),
+			tags: [...buildGroupDeleteTags(messageId, group.id), ...clientTag()]
+		});
 		await publishUrls([group.relay], event).catch(() => undefined); // best-effort
 		const key = this.key(group.id, group.relay);
 		this.messages = {

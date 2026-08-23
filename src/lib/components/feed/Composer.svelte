@@ -25,7 +25,7 @@
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
 	import GifPicker from './GifPicker.svelte';
-	import BitzComposer from '$lib/components/bitz/BitzComposer.svelte';
+	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
 
 	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
@@ -58,7 +58,6 @@
 	let imageInput = $state<HTMLInputElement | null>(null);
 	let videoInput = $state<HTMLInputElement | null>(null);
 	let pollOpen = $state(false);
-	let bitzOpen = $state(false);
 	let composerEl = $state<HTMLElement | undefined>(undefined);
 	let expanded = $state(false);
 	// Draft persistence — debounced writes while typing. Empty text never
@@ -262,6 +261,8 @@
 		tracked: TrackedMention[],
 		candidatesList: MentionCandidate[]
 	): TrackedMention[] {
+		// Transient local index (not reactive state) — built and discarded per call.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const map = new Map(tracked.map((m) => [m.name, m]));
 		for (const candidate of candidatesList) {
 			if (map.has(candidate.name)) continue;
@@ -863,13 +864,24 @@
 				<!-- Bitz Studio: create a short-form bitz (NIP-68/71 media event) -->
 				<button
 					type="button"
-					onclick={() => (bitzOpen = true)}
+					onclick={() => studioHandoff.openInStudio('bitz')}
 					disabled={uploading || posting}
 					title="Create a bitz — short video or picture for the Bitz feed"
 					aria-label="Create a bitz"
 					class="grid size-9 place-items-center rounded-full text-warm-500 transition hover:bg-warm-500/10 hover:text-warm-500 disabled:pointer-events-none disabled:opacity-40"
 				>
 					<Icon name="i-lucide-circle-play" class="size-[18px]" />
+				</button>
+				<!-- Meme Studio: captioned image/video memes, published as standard Nostr media events -->
+				<button
+					type="button"
+					onclick={() => studioHandoff.openInStudio('meme')}
+					disabled={uploading || posting}
+					title="Make a meme — captioned picture or video, post as bitz or story"
+					aria-label="Make a meme"
+					class="grid size-9 place-items-center rounded-full text-warm-500 transition hover:bg-warm-500/10 hover:text-warm-500 disabled:pointer-events-none disabled:opacity-40"
+				>
+					<Icon name="i-lucide-laugh" class="size-[18px]" />
 				</button>
 				<Popover
 					id={gifMenuId}
@@ -1066,4 +1078,3 @@
 {/if}
 
 <PollComposer bind:open={pollOpen} />
-<BitzComposer bind:open={bitzOpen} />

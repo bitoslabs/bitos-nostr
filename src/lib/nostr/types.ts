@@ -13,7 +13,10 @@ export interface RepostTarget {
 }
 
 /** Build the interoperable NIP-18 tags for an original event. */
-export function repostTags(original: Pick<Event, 'id' | 'pubkey' | 'kind' | 'tags'>, relayUrl?: string): string[][] {
+export function repostTags(
+	original: Pick<Event, 'id' | 'pubkey' | 'kind' | 'tags'>,
+	relayUrl?: string
+): string[][] {
 	const tags: string[][] = [['e', original.id]];
 	if (relayUrl) tags[0].push(relayUrl);
 	tags.push(['p', original.pubkey]);
@@ -36,7 +39,12 @@ export function repostTarget(event: Pick<Event, 'kind' | 'content' | 'tags'>): R
 	let embedded: Event | undefined;
 	try {
 		const parsed = JSON.parse(event.content) as Partial<Event>;
-		if (parsed && typeof parsed === 'object' && typeof parsed.id === 'string' && typeof parsed.kind === 'number') {
+		if (
+			parsed &&
+			typeof parsed === 'object' &&
+			typeof parsed.id === 'string' &&
+			typeof parsed.kind === 'number'
+		) {
 			embedded = parsed as Event;
 		}
 	} catch {
@@ -238,6 +246,8 @@ export const NOSTR_KINDS = {
 	REPOST: 6,
 	/** NIP-18 generic repost for events other than kind 1. */
 	GENERIC_REPOST: 16,
+	/** NIP-22 comments — the correct reply kind for non-kind-1 events. */
+	COMMENT: 1111,
 	CONTACT_LIST: 3,
 	/** NIP-51 pinned notes list. */
 	PINNED_NOTES: 10001,
@@ -284,3 +294,21 @@ export const NOSTR_KINDS = {
 	/** NIP-71 addressable normal video. */
 	ADDRESSABLE_VIDEO: 34235
 } as const;
+/** Kinds whose events are addressable (NIP-01 `d`-tag coordinates): publishing
+ * a new event with the same address REPLACES the previous version rather than
+ * creating a new item. Readers must dedupe/update by address, not event id. */
+export const ADDRESSABLE_REEL_KINDS: readonly number[] = [
+	NOSTR_KINDS.ADDRESSABLE_VIDEO,
+	NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+];
+
+/**
+ * Stable coordinate for an addressable (parameterized replaceable) event —
+ * plan §6.1 uses `addr:<kind>:<pubkey>:<d>` for addressable videos. Returns
+ * '' for non-addressable kinds so callers can fall back to the event id.
+ */
+export function addressKey(kind: number, pubkey: string, tags: string[][]): string {
+	if (!ADDRESSABLE_REEL_KINDS.includes(kind)) return '';
+	const d = tags.find((tag) => tag[0] === 'd')?.[1];
+	return d ? `${kind}:${pubkey}:${d}` : '';
+}

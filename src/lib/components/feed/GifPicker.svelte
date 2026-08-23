@@ -353,7 +353,10 @@
 					{@const isDisabled = multiple && !isSelected && atCapacity}
 					<button
 						type="button"
-						onclick={() => (multiple ? toggle(item) : pick(item))}
+						onclick={(event) => {
+							if (multiple) event.stopPropagation();
+							multiple ? toggle(item) : pick(item);
+						}}
 						disabled={isDisabled}
 						aria-pressed={multiple ? isSelected : undefined}
 						aria-label={multiple

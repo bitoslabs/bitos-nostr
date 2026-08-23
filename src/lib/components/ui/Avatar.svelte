@@ -25,6 +25,7 @@
 		shape = 'hex',
 		frame = false,
 		verified = false,
+		lightning = false,
 		class: cls
 	}: {
 		pubkey: string;
@@ -34,6 +35,7 @@
 		shape?: 'hex' | 'squircle' | 'circle';
 		frame?: boolean;
 		verified?: boolean;
+		lightning?: boolean;
 		class?: string;
 	} = $props();
 
@@ -82,6 +84,22 @@
 		{/if}
 	</div>
 
+	{#if lightning}
+		<!-- Lightning badge — green chip with the zap bolt -->
+		<span
+			class="absolute -right-0.5 -bottom-0.5 z-[1] grid place-items-center rounded-full bg-green-500 text-[var(--ui-text-inverted)] ring-[1.5px] ring-[var(--surface-bg)] drop-shadow-[0_0_3px_rgba(34,197,94,0.55)]"
+			style="width:{badgeSize}px;height:{badgeSize}px;font-size:{Math.round(badgeSize * 0.5)}px"
+			aria-label="Lightning address"
+			title="Lightning address"
+		>
+			<svg viewBox="0 0 24 24" class="size-[62%]" fill="currentColor" aria-hidden="true">
+				<path
+					d="M13.26 1.8a.6.6 0 0 1 1.07.51L12.96 9h4.99c.5 0 .76.6.42.98l-8.63 9.72a.6.6 0 0 1-1.05-.45L9.2 13H4.44a.6.6 0 0 1-.44-1.01l9.26-10.2Z"
+				/>
+			</svg>
+		</span>
+	{/if}
+
 	{#if verified}
 		<!-- NIP-05 verified badge — unclipped, above the hexagon layers -->
 		<span
@@ -90,8 +108,8 @@
 			aria-label="Verified (NIP-05)"
 			title="Verified (NIP-05)"
 		>
-			<svg viewBox="0 0 24 24" class="size-[60%]" fill="currentColor" aria-hidden="true">
-				<path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z" />
+			<svg viewBox="0 0 24 24" class="size-[62%]" fill="currentColor" aria-hidden="true">
+				<path d="M9.6 16.6 5.4 12.4 4 13.8l5.6 5.6 10.4-10.4L18.6 7.6 9.6 16.6Z" />
 			</svg>
 		</span>
 	{/if}

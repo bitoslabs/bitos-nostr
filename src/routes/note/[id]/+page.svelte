@@ -86,6 +86,7 @@
 									NOSTR_KINDS.REACTION,
 									NOSTR_KINDS.POLL_RESPONSE,
 									NOSTR_KINDS.REPOST,
+									NOSTR_KINDS.GENERIC_REPOST,
 									NOSTR_KINDS.ZAP
 								],
 								'#e': [id],
@@ -143,6 +144,7 @@
 							NOSTR_KINDS.REACTION,
 							NOSTR_KINDS.POLL_RESPONSE,
 							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.GENERIC_REPOST,
 							NOSTR_KINDS.ZAP
 						],
 						'#e': replyIds,

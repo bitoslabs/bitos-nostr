@@ -17,6 +17,7 @@
 
 	const tabs = [
 		{ to: '/', label: 'Home', icon: 'i-lucide-house' },
+		{ to: '/studio', label: 'Create', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{
 			to: '/messages',

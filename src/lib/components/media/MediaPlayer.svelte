@@ -6,6 +6,10 @@
 
 	let {
 		src,
+		/** Ordered fallback URLs tried automatically when `src` fails to load
+		 * (dead CDN, mirrored media, …). Mirrors the NIP-92 idea that the same
+		 * bytes may live at several addresses. */
+		fallbackSrcs = [],
 		kind = 'video',
 		label = kind === 'video' ? 'Video player' : 'Audio player',
 		class: className = '',
@@ -27,6 +31,7 @@
 		onDoubleTap
 	}: {
 		src: string;
+		fallbackSrcs?: string[];
 		kind?: MediaKind;
 		label?: string;
 		class?: string;
@@ -74,6 +79,10 @@
 	let playbackRate = $state<number>(readStoredRate());
 	let isFullscreen = $state(false);
 	let hasError = $state(false);
+	/** Candidate URLs: primary first, then fallbacks. Index 0 = the given src. */
+	let srcIndex = $state(0);
+	const candidates = $derived([src, ...fallbackSrcs]);
+	const activeSrc = $derived(candidates[Math.min(srcIndex, candidates.length - 1)]);
 	let isBuffering = $state(false);
 	let bufferedPct = $state(0);
 	let controlsVisible = $state(true);
@@ -277,6 +286,17 @@
 		if (onDoubleTap) event.preventDefault();
 	}
 
+	/** Advance to the next candidate URL; called on load errors. Returns true
+	 * when a fallback was armed, false when the chain is exhausted (→ error UI). */
+	function tryNextCandidate() {
+		if (srcIndex < candidates.length - 1) {
+			srcIndex += 1;
+			isBuffering = true;
+			return true;
+		}
+		return false;
+	}
+
 	function retryLoad() {
 		hasError = false;
 		isBuffering = true;
@@ -316,7 +336,7 @@
 		<!-- svelte-ignore a11y_media_has_caption -->
 		<video
 			bind:this={media}
-			{src}
+			src={activeSrc}
 			class={mediaClass}
 			{loop}
 			{playsinline}
@@ -333,6 +353,7 @@
 			onplaying={() => (isBuffering = false)}
 			oncanplay={() => (isBuffering = false)}
 			onerror={() => {
+				if (tryNextCandidate()) return; // dead URL — quietly try the mirror
 				hasError = true;
 				isBuffering = false;
 			}}
@@ -348,7 +369,7 @@
 	{:else}
 		<audio
 			bind:this={media}
-			{src}
+			src={activeSrc}
 			{loop}
 			{preload}
 			onplay={() => (isPlaying = true)}
@@ -358,7 +379,10 @@
 			ontimeupdate={updateState}
 			onvolumechange={updateState}
 			onratechange={updateState}
-			onerror={() => (hasError = true)}
+			onerror={() => {
+				if (tryNextCandidate()) return;
+				hasError = true;
+			}}
 			aria-label={label}
 		></audio>
 	{/if}
@@ -381,7 +405,7 @@
 				<span class="min-w-0">Couldn't play this video.</span>
 				<div class="ml-auto flex shrink-0 items-center gap-1">
 					<button type="button" class="media-reel-error-action" onclick={retryLoad}> Retry </button>
-					<a href={src} target="_blank" rel="noreferrer" class="media-reel-error-action">
+					<a href={activeSrc} target="_blank" rel="noreferrer" class="media-reel-error-action">
 						Open ↗
 					</a>
 				</div>

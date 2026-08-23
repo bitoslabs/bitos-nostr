@@ -25,7 +25,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasNip05, hasLightning } from '$lib/utils/verification';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
@@ -53,6 +53,8 @@
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
 		url: string;
 		host: string;
+		/** Ordered mirror URLs — player failover chain (F-017 / READ-003). */
+		fallbacks?: string[];
 		embedUrl?: string;
 		provider?: string;
 	};
@@ -514,7 +516,8 @@
 			attachments.push({
 				type: item.kind === 'video' ? 'video' : 'image',
 				url: item.url,
-				host: hostFromUrl(item.url)
+				host: hostFromUrl(item.url),
+				fallbacks: item.fallbacks
 			});
 		}
 
@@ -759,7 +762,7 @@
 				pubkey={comment.pubkey}
 				name={commentName}
 				picture={commentProfile?.picture}
-				verified={hasNip05(commentProfile)}
+				lightning={hasLightning(commentProfile)}
 				size={22}
 			/>
 		</a>
@@ -772,7 +775,11 @@
 					{commentName}
 				</a>
 				{#if hasNip05(commentProfile)}
-					<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+					<Icon
+						name="i-lucide-badge-check"
+						class="size-3 shrink-0 text-primary-500"
+						title="NIP-05 verified: {commentProfile?.nip05}"
+					/>
 				{/if}
 				{#if identity.current?.pk === comment.pubkey}
 					<span
@@ -875,7 +882,7 @@
 				pubkey={note.pubkey}
 				name={displayName}
 				picture={profile?.picture}
-				verified={hasNip05(profile)}
+				lightning={hasLightning(profile)}
 				size={44}
 			/>
 		</StoryRing>
@@ -890,6 +897,7 @@
 					{#if hasNip05(profile)}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
+							title="NIP-05 verified: {profile?.nip05}"
 						/>{/if}
 					{#if isMe}
 						<span
@@ -1205,6 +1213,7 @@
 								<MediaPlayer
 									src={media.url}
 									label={`Video from ${media.host}`}
+									fallbackSrcs={media.fallbacks}
 									variant="reel"
 									autoplay
 									class="absolute inset-0"
@@ -1471,7 +1480,7 @@
 								pubkey={reply.pubkey}
 								name={replyName}
 								picture={replyProfile?.picture}
-								verified={hasNip05(replyProfile)}
+								lightning={hasLightning(replyProfile)}
 								size={28}
 							/>
 						</a>
@@ -1484,7 +1493,11 @@
 									{replyName}
 								</a>
 								{#if hasNip05(replyProfile)}
-									<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
+									<Icon
+										name="i-lucide-badge-check"
+										class="size-3.5 shrink-0 text-primary-500"
+										title="NIP-05 verified: {replyProfile?.nip05}"
+									/>
 								{/if}
 								{#if identity.current?.pk === reply.pubkey}
 									<span
@@ -1777,6 +1790,7 @@
 				<MediaPlayer
 					src={selectedViewerMedia.url}
 					label={`Video from ${selectedViewerMedia.host}`}
+					fallbackSrcs={selectedViewerMedia.fallbacks}
 					class="relative mx-auto w-full max-w-5xl"
 					mediaClass="mx-auto max-h-[76vh] w-full bg-black object-contain"
 					overlayControls

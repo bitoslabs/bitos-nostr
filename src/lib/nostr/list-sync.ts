@@ -12,11 +12,10 @@
  * Publishes are debounced: rapid changes collapse into one event.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { activeSigner } from '$lib/auth/signer';
 import type { Event } from 'nostr-tools/pure';
 import { queryPrimaryFirst, publish } from './pool';
 import { identity } from './identity.svelte';
-import { hexToBytes } from './hex';
 import { clientTag } from './client-tag';
 import { NOSTR_KINDS } from './types';
 
@@ -45,10 +44,7 @@ export const INTEREST_SET_LIST: ListDefinition = {
 };
 
 /** Extract + normalize the entry values from a list event (deduped). */
-export function valuesFromListEvent(
-	ev: Event,
-	tagType: ListDefinition['tagType'] = 'p'
-): string[] {
+export function valuesFromListEvent(ev: Event, tagType: ListDefinition['tagType'] = 'p'): string[] {
 	const seen = new Set<string>();
 	for (const tag of ev.tags) {
 		if (tag[0] !== (tagType ?? 'p') || !tag[1]) continue;
@@ -103,17 +99,14 @@ export async function publishList(
 	values: string[],
 	preserveTags: string[][] = []
 ): Promise<void> {
-	const id = identity.current;
-	if (!id) throw new Error('No identity');
-	const event = finalizeEvent(
-		{
-			kind: definition.kind,
-			content: '',
-			created_at: Math.floor(Date.now() / 1000),
-			tags: buildListTags(values, preserveTags, definition)
-		},
-		hexToBytes(id.sk)
-	);
+	const signer = activeSigner();
+	if (!(await signer.isAvailable())) throw new Error('No identity');
+	const event = await signer.sign({
+		kind: definition.kind,
+		content: '',
+		created_at: Math.floor(Date.now() / 1000),
+		tags: buildListTags(values, preserveTags, definition)
+	});
 	await publish(event);
 }
 

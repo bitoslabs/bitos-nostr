@@ -14,6 +14,27 @@ import { relays } from './relays.svelte';
 let pool: SimplePool | null = null;
 const RELAY_KIND_SUPPORT_CACHE_KEY = 'bitos:relay-kind-support:v1';
 
+/** Observer for relay `OK: true` acknowledgements (plan §12.2 — the outbox
+ *  durability tracking needs per-relay outcomes). pool stays a thin relay
+ *  layer; the outbox store subscribes from app wiring. */
+type AckObserver = (eventId: string, relayUrl: string) => void;
+const ackObservers = new Set<AckObserver>();
+
+export function onRelayAck(observer: AckObserver): () => void {
+	ackObservers.add(observer);
+	return () => ackObservers.delete(observer);
+}
+
+function notifyAck(eventId: string, relayUrl: string) {
+	for (const observer of ackObservers) {
+		try {
+			observer(eventId, relayUrl);
+		} catch {
+			/* observers must never break publishing */
+		}
+	}
+}
+
 type RelayKindSupportCache = Record<
 	string,
 	{
@@ -121,6 +142,7 @@ async function publishToUrls(
 		const url = urls[index];
 		if (result.status === 'fulfilled') {
 			accepted.push(result.value);
+			notifyAck(event.id, result.value);
 			continue;
 		}
 

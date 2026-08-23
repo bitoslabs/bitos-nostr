@@ -6,7 +6,7 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasNip05, hasLightning } from '$lib/utils/verification';
 	import { npubEncode } from 'nostr-tools/nip19';
 	import { timeAgo } from '$lib/utils/format';
 	import type { FeedNote, PollVoter } from '$lib/nostr/types';
@@ -322,13 +322,20 @@
 							name={displayName(voter)}
 							picture={profile?.picture}
 							size={34}
-							verified={hasNip05(profile)}
+							lightning={hasLightning(profile)}
 						/>
 						<span class="min-w-0 flex-1 leading-tight">
 							<span class="flex items-center gap-1.5">
 								<span class="truncate text-[13.5px] font-bold text-[var(--ui-text)]">
 									{displayName(voter)}
 								</span>
+								{#if hasNip05(profile)}
+									<Icon
+										name="i-lucide-badge-check"
+										class="size-3.5 shrink-0 text-primary-500"
+										title="NIP-05 verified: {profile?.nip05}"
+									/>
+								{/if}
 								{#if mine}
 									<span class="rounded bg-primary-500/15 px-1.5 py-0.5 text-[10px] font-bold text-primary-500">You</span>
 								{/if}

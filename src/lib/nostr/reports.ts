@@ -8,11 +8,8 @@
  * decentralized moderation graph rather than a proprietary queue.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent } from 'nostr-tools/pure';
-import type { Event } from 'nostr-tools/pure';
+import { activeSigner } from '$lib/auth/signer';
 import { publish } from './pool';
-import { identity } from './identity.svelte';
-import { hexToBytes } from './hex';
 import { clientTag } from './client-tag';
 import { NOSTR_KINDS } from './types';
 
@@ -87,21 +84,18 @@ export async function reportTarget(params: {
 	comment?: string;
 }): Promise<string> {
 	if (!browser) throw new Error('browser only');
-	const id = identity.current;
-	if (!id) throw new Error('No identity — create or import a key first');
+	const signer = activeSigner();
+	if (!(await signer.isAvailable())) throw new Error('No identity — create or import a key first');
 	if (!REPORT_REASONS.some((r) => r.value === params.reason)) {
 		throw new Error('Unknown report reason');
 	}
 	const content = (params.comment ?? '').trim().slice(0, 280);
-	const event: Event = finalizeEvent(
-		{
-			kind: NOSTR_KINDS.REPORT,
-			content,
-			created_at: Math.floor(Date.now() / 1000),
-			tags: [...clientTag(), ...buildReportTags(params)]
-		},
-		hexToBytes(id.sk)
-	);
+	const event = await signer.sign({
+		kind: NOSTR_KINDS.REPORT,
+		content,
+		created_at: Math.floor(Date.now() / 1000),
+		tags: [...clientTag(), ...buildReportTags(params)]
+	});
 	await publish(event);
 	return event.id;
 }

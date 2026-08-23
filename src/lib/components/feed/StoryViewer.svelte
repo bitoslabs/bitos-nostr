@@ -50,6 +50,9 @@
 	let zapOpen = $state(false);
 	/** Instant feedback per slide until the live 9735 receipt lands. */
 	let optimisticZapSats = $state<Record<string, number>>({});
+	/** Measured video runtime for the current slide (ms) — set ondurationchange. */
+	let measuredVideoMs = $state(0);
+	let videoEl = $state<HTMLVideoElement | null>(null);
 
 	const profile = $derived(profiles.get(author.pubkey));
 	const displayName = $derived(profile?.display_name || profile?.name || 'Someone');
@@ -60,7 +63,14 @@
 		slide?.images?.length ? slide.images : slide.imageUrl ? [slide.imageUrl] : []
 	);
 	const currentImage = $derived(images[imageIndex]);
-	const durationMs = $derived(images.length ? 5000 : 7000);
+	/** Video slides replace the image carousel entirely. */
+	const videoUrl = $derived(slide?.videoUrl ?? '');
+	const isVideo = $derived(!!videoUrl && !images.length);
+	/** Video plays to its own end (capped at 60s for safety); images get fixed segments. */
+	const videoDurationMs = $derived(measuredVideoMs || slide?.videoDurationMs || 0);
+	const durationMs = $derived(
+		isVideo ? Math.min(videoDurationMs || 15_000, 60_000) : images.length ? 5000 : 7000
+	);
 	const isMine = $derived(author.pubkey === identity.current?.pk);
 	const interaction = $derived(slide ? stories.getInteraction(slide.id) : undefined);
 	const liked = $derived(!!interaction?.likedByMe);
@@ -77,13 +87,21 @@
 	);
 
 	// Auto-advance: restart the timer whenever the slide, image, or pause state
-	// changes — every carousel image gets its own full segment.
+	// changes — every carousel image gets its own full segment. Video slides
+	// advance on `ended` (with a capped fallback timer for safety).
 	$effect(() => {
 		void imageIndex;
 		if (paused || confirmDeleteOpen || zapOpen || !slide) return;
 		const ms = durationMs;
 		const t = setTimeout(() => advance(), ms);
 		return () => clearTimeout(t);
+	});
+
+	// Keep the playing video in sync with the viewer's pause state.
+	$effect(() => {
+		if (!isVideo || !videoEl) return;
+		if (paused) videoEl.pause();
+		else void videoEl.play().catch(() => {});
 	});
 
 	// Mark seen as soon as the viewer opens.
@@ -103,6 +121,7 @@
 		void slide?.id;
 		imageIndex = 0;
 		imageFailed = false;
+		measuredVideoMs = 0;
 	});
 	$effect(() => {
 		void imageIndex;
@@ -443,7 +462,43 @@
 
 		<!-- Slide -->
 		{#if slide}
-			{#if currentImage && !imageFailed}
+			{#if isVideo && !imageFailed}
+				<video
+					src={videoUrl}
+					poster={slide.videoPoster}
+					bind:this={videoEl}
+					class="size-full object-cover {hidden ? 'scale-110 blur-2xl brightness-50' : ''}"
+					autoplay
+					muted
+					playsinline
+					loop={false}
+					ondurationchange={(e) => {
+						const v = e.currentTarget as HTMLVideoElement;
+						if (Number.isFinite(v.duration) && v.duration > 0) measuredVideoMs = v.duration * 1000;
+					}}
+					onended={() => advance()}
+					onerror={() => (imageFailed = true)}
+				>
+					<track kind="captions" />
+				</video>
+				{#if hidden}
+					<button
+						type="button"
+						onclick={() => (revealed = true)}
+						class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/30"
+						aria-label="Sensitive content — tap to reveal"
+					>
+						<span
+							class="grid size-14 place-items-center rounded-full bg-black/60 ring-1 ring-white/20"
+						>
+							<Icon name="i-lucide-eye-off" class="size-6 text-white" />
+						</span>
+						<span class="px-6 text-center text-[13px] font-bold text-white">
+							Sensitive content · tap to view
+						</span>
+					</button>
+				{/if}
+			{:else if currentImage && !imageFailed}
 				<img
 					src={currentImage}
 					alt={slide.alt ?? ''}

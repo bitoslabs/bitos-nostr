@@ -11,13 +11,12 @@
  * Subscriptions cover the active user + everyone they follow.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
+import { signMined } from '$lib/auth/signer';
 import type { Event } from 'nostr-tools/pure';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { contacts } from './contacts.svelte';
 import { profiles } from './profiles.svelte';
-import { hexToBytes } from './hex';
 import type { Filter } from 'nostr-tools/filter';
 import { NOSTR_KINDS } from './types';
 import { zapSats } from './zaps';
@@ -35,6 +34,42 @@ const SEEN_KEY = 'bitos:seen-stories';
 const VIEWED_KEY = 'bitos:story-views';
 const IMG_RE = /https?:\/\/[^\s<>"')]+?\.(?:apng|avif|gif|jpe?g|png|webp)(?:[?#][^\s<>"')]*)?/i;
 const IMG_RE_GLOBAL = new RegExp(IMG_RE.source, 'gi');
+const VIDEO_RE_GLOBAL = /https?:\/\/[^\s<>"')]+?\.(?:m4v|mov|mp4|webm|mkv)(?:[?#][^\s<>"')]*)?/gi;
+
+/** A video attachment parsed off a story event (imeta url/m pair). */
+interface SlideVideo {
+	url: string;
+	mime?: string;
+	thumb?: string;
+	durationMs?: number;
+}
+
+/**
+ * Extract the slide's video: the first NIP-92 `imeta` whose `m` line is a
+ * video mime, else the first bare video link in the content. Relays and
+ * clients that never set `m` still work via the extension sniff.
+ */
+function extractVideo(ev: Pick<Event, 'content' | 'tags'>): SlideVideo | undefined {
+	for (const tag of ev.tags) {
+		if (tag[0] !== 'imeta') continue;
+		let url: string | undefined;
+		let mime: string | undefined;
+		let thumb: string | undefined;
+		let durationMs: number | undefined;
+		for (const seg of tag.slice(1)) {
+			if (seg.startsWith('url ')) url = seg.slice(4).trim();
+			else if (seg.startsWith('m ')) mime = seg.slice(2).trim();
+			else if (seg.startsWith('thumb ')) thumb = seg.slice(6).trim();
+			else if (seg.startsWith('duration ')) {
+				const seconds = Number(seg.slice(9).trim().replace(/s$/, ''));
+				if (Number.isFinite(seconds) && seconds > 0) durationMs = seconds * 1000;
+			}
+		}
+		if (url && mime?.startsWith('video/')) return { url, mime, thumb, durationMs };
+	}
+	const bare = ev.content.match(VIDEO_RE_GLOBAL)?.[0];
+	return bare ? { url: bare } : undefined;
+}
 
 export interface StorySlide {
 	id: string;
@@ -47,6 +82,14 @@ export interface StorySlide {
 	imageUrl?: string;
 	/** All attached images (NIP-92 imeta urls + image links in content), capped. */
 	images?: string[];
+	/** Attached video (NIP-92 imeta with a video mime) — plays in the viewer. */
+	videoUrl?: string;
+	/** Video mime type when `videoUrl` is set (for the poster/player). */
+	videoMime?: string;
+	/** Poster/thumbnail URL for the video (NIP-92 `thumb` on the video imeta). */
+	videoPoster?: string;
+	/** Approximate play duration in ms — caps the auto-advance fallback timer. */
+	videoDurationMs?: number;
 	/** CSS background for text-only stories (gradient or color). */
 	bg?: string;
 	/** NIP-13 difficulty (leading zero bits) when the slide was mined. */
@@ -181,6 +224,7 @@ function parseSlide(ev: Event): StorySlide | null {
 	const expiration = ev.tags.find((t) => t[0] === 'expiration')?.[1];
 	const expiresAt = expiration ? Number(expiration) : ev.created_at + STORY_TTL;
 	const images = extractImages(ev);
+	const video = extractVideo(ev);
 	const slide: StorySlide = {
 		id: ev.id,
 		d: ev.tags.find((t) => t[0] === 'd')?.[1] || undefined,
@@ -188,6 +232,10 @@ function parseSlide(ev: Event): StorySlide | null {
 		content: cleanStoryContent(ev.content, images),
 		imageUrl: images[0],
 		images: images.length ? images : undefined,
+		videoUrl: video?.url,
+		videoMime: video?.mime,
+		videoPoster: video?.thumb,
+		videoDurationMs: video?.durationMs,
 		bg: ev.tags.find((t) => t[0] === 'background')?.[1] || undefined,
 		pow: eventPow(ev),
 		alt: extractAlt(ev),
@@ -455,6 +503,8 @@ class StoriesStore {
 			alt?: string;
 			/** Blur the images until tapped in the viewer (content-warning tag). */
 			sensitive?: boolean;
+			/** Attach a video instead of images (NIP-92 imeta with a video mime). */
+			video?: { url: string; mime?: string; bytes?: number; dim?: string; thumb?: string };
 		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
@@ -467,7 +517,8 @@ class StoriesStore {
 			(typeof images === 'string' ? [images] : (images ?? [])).filter(Boolean)
 		);
 		const list = [...unique].slice(0, MAX_STORY_IMAGES);
-		if (!text && !list.length) throw new Error('Nothing to post');
+		const video = options.video;
+		if (!text && !list.length && !video) throw new Error('Nothing to post');
 		const now = nowSec();
 		const tags: string[][] = [
 			['d', `bitos-story-${now}-${Math.random().toString(36).slice(2, 8)}`],
@@ -475,8 +526,9 @@ class StoriesStore {
 			...clientTag(),
 			...extractHashtagTags(text)
 		];
-		if (bg && !list.length) tags.push(['background', bg]);
-		if (options.sensitive && list.length) tags.push(['content-warning', 'Sensitive media']);
+		if (bg && !list.length && !video) tags.push(['background', bg]);
+		if (options.sensitive && (list.length || video))
+			tags.push(['content-warning', 'Sensitive media']);
 		const alt = options.alt?.trim().slice(0, 280);
 		list.forEach((url, i) => {
 			const imeta = [`url ${url}`];
@@ -484,9 +536,21 @@ class StoriesStore {
 			if (i === 0 && alt) imeta.push(`alt ${alt}`);
 			tags.push(['imeta', ...imeta]);
 		});
-		const body = list.length ? [text, ...list].filter(Boolean).join('\n') : text;
+		if (video) {
+			const imeta = [`url ${video.url}`, `m ${video.mime ?? 'video/mp4'}`];
+			if ((video.bytes ?? 0) > 0) imeta.push(`size ${video.bytes}`);
+			if (video.dim) imeta.push(`dim ${video.dim}`);
+			if (video.thumb) imeta.push(`thumb ${video.thumb}`);
+			if (alt) imeta.push(`alt ${alt}`);
+			tags.push(['imeta', ...imeta]);
+		}
+		const body = video
+			? [text, video.url].filter(Boolean).join('\n')
+			: list.length
+				? [text, ...list].filter(Boolean).join('\n')
+				: text;
 		const unsigned = {
-			pubkey: getPublicKey(hexToBytes(me.sk)),
+			pubkey: me.pk,
 			kind: NOSTR_KINDS.STORY_STATUS,
 			content: body,
 			created_at: now,
@@ -500,7 +564,7 @@ class StoriesStore {
 						signal: options.signal
 					})
 				: unsigned;
-		const event = finalizeEvent(mined, hexToBytes(me.sk));
+		const event = await signMined(mined);
 		await publish(event);
 		this.ingest(event);
 		return event.id;
@@ -511,15 +575,12 @@ class StoriesStore {
 		const me = identity.current;
 		if (!me) throw new Error('No identity');
 		if (slide.pubkey !== me.pk) throw new Error('You can only delete your own stories');
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.DELETE,
-				content: 'Deleted story from BitOS',
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [['e', slide.id]]
-			},
-			hexToBytes(me.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.DELETE,
+			content: 'Deleted story from BitOS',
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [['e', slide.id]]
+		});
 		await publish(event);
 		this.ingestDelete(event);
 	}
@@ -573,15 +634,12 @@ class StoriesStore {
 	like = async (slide: StorySlide, emoji = '❤️'): Promise<void> => {
 		const me = identity.current;
 		if (!me) throw new Error('No identity');
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.REACTION,
-				content: emoji,
-				created_at: nowSec(),
-				tags: [...clientTag(), ...this.targetTags(slide)]
-			},
-			hexToBytes(me.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.REACTION,
+			content: emoji,
+			created_at: nowSec(),
+			tags: [...clientTag(), ...this.targetTags(slide)]
+		});
 		await publish(event);
 		this.ingestActivity(event);
 	};
@@ -593,15 +651,12 @@ class StoriesStore {
 		const targetId = this.interactions[slide.id]?.myLikeEventId;
 		const tags = this.targetTags(slide);
 		if (targetId) tags.unshift(['e', targetId]);
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.DELETE,
-				content: 'Removed story like from BitOS',
-				created_at: nowSec(),
-				tags
-			},
-			hexToBytes(me.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.DELETE,
+			content: 'Removed story like from BitOS',
+			created_at: nowSec(),
+			tags
+		});
 		await publish(event);
 		this.removeMyLike(slide.id);
 	};
@@ -620,10 +675,12 @@ class StoriesStore {
 			['p', slide.pubkey]
 		];
 		if (address) tags.push(['a', address, '', 'reply']);
-		const event = finalizeEvent(
-			{ kind: NOSTR_KINDS.TEXT_NOTE, content, created_at: nowSec(), tags },
-			hexToBytes(me.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content,
+			created_at: nowSec(),
+			tags
+		});
 		await publish(event);
 		this.ingestActivity(event);
 		return event.id;
@@ -638,15 +695,12 @@ class StoriesStore {
 		if (this.viewedSlides.has(slide.id)) return;
 		this.viewedSlides.add(slide.id);
 		this.persistViewed();
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.REACTION,
-				content: '👁️',
-				created_at: nowSec(),
-				tags: this.targetTags(slide)
-			},
-			hexToBytes(me.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.REACTION,
+			content: '👁️',
+			created_at: nowSec(),
+			tags: this.targetTags(slide)
+		});
 		try {
 			await publish(event);
 			this.ingestActivity(event);
