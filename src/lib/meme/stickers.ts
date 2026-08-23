@@ -5,6 +5,7 @@
  * (`meme` tag) carry stickers unchanged. Zero migration, zero custom kinds.
  */
 import { makeOverlay, type MemeTextOverlay } from './schema';
+import type { MemeFx } from './fx';
 
 export interface StickerPack {
 	id: string;
@@ -47,6 +48,10 @@ export const ALL_STICKERS: string[] = [...new Set(STICKER_PACKS.flatMap((p) => p
 
 export const MAX_RECENT_STICKERS = 16;
 
+/** Default motion cycled onto fresh stickers so they land feeling alive —
+ * creators can always switch it off (fx is per-overlay, optional wire data). */
+export const STICKER_FX_CYCLE: readonly MemeFx[] = ['pop', 'spin'];
+
 /** True when an overlay is a sticker (single grapheme, stroke-free). */
 export function isStickerOverlay(overlay: MemeTextOverlay): boolean {
 	return !overlay.stroke && overlay.caps === false && isEmojiOnly(overlay.text);
@@ -69,8 +74,13 @@ export function isEmojiOnly(text: string): boolean {
 	return sawEmoji;
 }
 
-/** Build a stage-ready sticker overlay at a jittered spot (avoid stacking). */
-export function makeSticker(emoji: string, options: { index?: number } = {}): MemeTextOverlay {
+/** Build a stage-ready sticker overlay at a jittered spot (avoid stacking).
+ *  A default pop/spin fx rides along so stickers feel alive without setup —
+ *  override with `fx` (e.g. 'none') when a still sticker is wanted. */
+export function makeSticker(
+	emoji: string,
+	options: { index?: number; fx?: MemeFx } = {}
+): MemeTextOverlay {
 	const i = options.index ?? 0;
 	// Rotate through pleasant anchor spots so consecutive stickers don't stack.
 	const anchors = [
@@ -82,13 +92,15 @@ export function makeSticker(emoji: string, options: { index?: number } = {}): Me
 		{ x: 0.72, y: 0.36 }
 	];
 	const spot = anchors[i % anchors.length]!;
+	const fx = options.fx ?? STICKER_FX_CYCLE[i % STICKER_FX_CYCLE.length];
 	return makeOverlay({
 		text: emoji,
 		x: spot.x,
 		y: spot.y,
 		size: 0.18,
 		stroke: false,
-		caps: false
+		caps: false,
+		fx
 	});
 }
 

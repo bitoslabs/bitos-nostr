@@ -178,4 +178,20 @@ describe('overlay round-trip', () => {
 		});
 		expect(normalizeOverlay(original)).toEqual(original);
 	});
+
+	it('makeOverlay tolerates BLANK text (fresh captions start editable-empty)', () => {
+		// Creation path: the wire parser drops empty text, but the editor's
+		// “+ Caption” button must get a real (empty) overlay back, not null.
+		const blank = makeOverlay({ y: 0.5 });
+		expect(blank).not.toBeNull();
+		expect(blank.text).toBe('');
+		expect(blank.y).toBe(0.5);
+		expect(blank.size).toBe(0.09);
+		expect(blank.caps).toBe(true);
+		// A seeded-timing blank (timeline insert) keeps its window.
+		const timed = makeOverlay({ y: 0.5, startMs: 800, endMs: 2800 });
+		expect(timed.text).toBe('');
+		expect(timed.startMs).toBe(800);
+		expect(timed.endMs).toBe(2800);
+	});
 });

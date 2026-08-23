@@ -41,20 +41,22 @@ export interface StudioHandoff {
 let handoff = $state<StudioHandoff | null>(null);
 
 export const studioHandoff = {
-	/** Queue a handoff (replaces any pending one) and navigate to the studio. */
+	/** Queue a handoff (replaces any pending one) and navigate to the studio.
+	 *  The tab always rides the URL so deep links / refreshes / share targets
+	 *  keep their surface (?tab=meme / ?tab=bitz — never a tabless /create). */
 	openInStudio(tab: CreateTab, remix?: StudioRemixHandoff) {
 		handoff = { tab, ...(remix ? { remix } : {}) };
-		void goto('/studio/create');
+		void goto(`/studio/create?tab=${tab}`);
 	},
 	/** Resume a saved draft slot in the Meme Studio. */
 	resumeSlot(slotId: string) {
 		handoff = { tab: 'meme', resumeSlotId: slotId };
-		void goto('/studio/create');
+		void goto('/studio/create?tab=meme');
 	},
 	/** Start a fresh meme with a saved layout pre-applied. */
 	useTemplate(templateId: string, overlays: MemeTextOverlay[]) {
 		handoff = { tab: 'meme', template: { id: templateId, overlays } };
-		void goto('/studio/create');
+		void goto('/studio/create?tab=meme');
 	},
 	/** Consume the pending handoff (one-shot — returns null after). */
 	take(): StudioHandoff | null {

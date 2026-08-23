@@ -20,6 +20,8 @@
 		layers = [],
 		cues = [],
 		busy = false,
+		soundOn = false,
+		onToggleSound,
 		onPlayPause,
 		onScrub
 	}: {
@@ -31,6 +33,9 @@
 		layers?: MemeImageOverlay[];
 		cues?: MemeSfxCue[];
 		busy?: boolean;
+		/** Preview sound (source audio + live cue firing) — parent owns the audio. */
+		soundOn?: boolean;
+		onToggleSound?: () => void;
 		onPlayPause: () => void;
 		onScrub: (sec: number) => void;
 	} = $props();
@@ -76,7 +81,13 @@
 		dragging = false;
 	}
 
+	/** Long clips read as m:ss (2:05 beats "125s"); short ones keep decimals. */
 	function fmt(sec: number): string {
+		if (sec >= 60) {
+			const m = Math.floor(sec / 60);
+			const s = Math.round(sec % 60);
+			return `${m}:${String(Math.min(59, s)).padStart(2, '0')}`;
+		}
 		return sec >= 10 ? `${sec.toFixed(0)}s` : `${sec.toFixed(1)}s`;
 	}
 </script>
@@ -101,6 +112,25 @@
 		<span class="font-mono text-[10.5px] font-bold text-[var(--ui-text-muted)] tabular-nums">
 			{fmt(seconds)} / {fmt(duration)}
 		</span>
+		<!-- Preview sound: unmutes source audio AND fires cue sounds live
+		     (the parent owns the audio — this is just the toggle). -->
+		{#if onToggleSound}
+			<button
+				type="button"
+				onclick={onToggleSound}
+				disabled={busy}
+				aria-pressed={soundOn}
+				aria-label={soundOn ? 'Mute preview sound' : 'Play preview with sound'}
+				title={soundOn
+					? 'Preview sound on — source audio + cue sounds'
+					: 'Preview sound off — tap to hear source audio + cue sounds'}
+				class="grid size-6 shrink-0 place-items-center rounded-full transition {soundOn
+					? 'bg-warm-500/15 text-warm-600'
+					: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+			>
+				<Icon name={soundOn ? 'i-lucide-volume-2' : 'i-lucide-volume-x'} class="size-3.5" />
+			</button>
+		{/if}
 		<span
 			class="ml-auto text-[9.5px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
 		>

@@ -26,8 +26,10 @@
 		pending?.tab ?? (paramTab === 'bitz' ? 'bitz' : paramTab === 'meme' ? 'meme' : 'meme');
 
 	let tab = $state<CreateTab>(initial);
-	let memeOpen = $state(false);
-	let bitzOpen = $state(false);
+	// The initial surface must actually open on mount (the tab bar only
+	// drives *switches* — a fresh deep-link would otherwise render a blank editor).
+	let memeOpen = $state(initial === 'meme');
+	let bitzOpen = $state(initial === 'bitz');
 	// A remix handoff seeds the meme studio once (one-shot: this intentionally
 	// captures the pending value at mount, not reactively).
 	let remixPayload: RemixHandoff | null = pending?.remix

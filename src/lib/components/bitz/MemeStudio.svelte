@@ -113,7 +113,7 @@
 		type SplitRole,
 		type SplitRow
 	} from '$lib/meme/splits';
-	import { makeSticker, STICKER_PACKS, type StickerPack } from '$lib/meme/stickers';
+	import { isEmojiOnly, makeSticker, STICKER_PACKS, type StickerPack } from '$lib/meme/stickers';
 	import { fxTransformAt, MEME_FX_OPTIONS } from '$lib/meme/fx';
 	import MemeTimeline from '$lib/components/bitz/MemeTimeline.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
@@ -591,8 +591,39 @@
 	let blankMenuId = `meme-blank-${Math.random().toString(36).slice(2, 8)}`;
 	let showGifUrlForm = $state(false);
 	let gifStageBusy = $state(false);
-	let queue = $state<{ url: string; label: string; caption?: string }[]>([]);
+	/** Batch queue items: either a remote GIF URL or a local File (videos and
+	 *  pictures multi-picked for mass production — each publish loads the next). */
+	interface QueueItem {
+		id: number;
+		url: string;
+		label: string;
+		caption?: string;
+		file?: File;
+	}
+	let queue = $state<QueueItem[]>([]);
 	let queueIndex = $state(0);
+	let queueSeq = 0;
+	let queueInput = $state<HTMLInputElement | null>(null);
+
+	/** Multi-pick local videos/pictures into the batch queue (first one stages
+	 *  immediately when the stage is empty). */
+	function onQueueInput(e: Event): void {
+		const input = e.currentTarget as HTMLInputElement;
+		const picked = [...(input.files ?? [])].filter(
+			(f) => f.type.startsWith('video/') || f.type.startsWith('image/')
+		);
+		input.value = '';
+		if (!picked.length) return;
+		if (!file) {
+			const [first, ...rest] = picked;
+			queue = [...queue, ...rest.map((f) => ({ id: ++queueSeq, url: '', label: f.name, file: f }))];
+			if (rest.length) toasts.info(`${rest.length} more queued — each post loads the next`);
+			if (first) void acceptFile(first, { keepRemix: true });
+			return;
+		}
+		queue = [...queue, ...picked.map((f) => ({ id: ++queueSeq, url: '', label: f.name, file: f }))];
+		toasts.info(`${picked.length} queued — each post loads the next`);
+	}
 
 	/** Fetch a GIF URL into the stage File (shared by single pick, multi-pick and queue advance). */
 	async function loadGifFromUrl(url: string, label = 'GIF', keepLayout = false): Promise<boolean> {
@@ -628,7 +659,10 @@
 		popovers.close();
 		const [first, ...rest] = gifs;
 		if (!first) return;
-		queue = [...queue, ...rest.map((g) => ({ url: g.url, label: g.title ?? 'GIF' }))];
+		queue = [
+			...queue,
+			...rest.map((g) => ({ id: ++queueSeq, url: g.url, label: g.title ?? 'GIF' }))
+		];
 		queueIndex = queue.length - rest.length;
 		if (file) {
 			if (rest.length)
@@ -648,6 +682,11 @@
 		// This item's caption (if any) becomes the post text — per-item, so each meme
 		// in the batch can carry its own words instead of inheriting the previous one's.
 		if (typeof next.caption === 'string') caption = next.caption;
+		// Local files (queued videos/pictures) stage directly; URL items fetch.
+		if (next.file) {
+			await acceptFile(next.file, { keepRemix: true, keepLayout: keepLayoutOnSwap });
+			return !!file; // false when the pick was rejected (type/size)
+		}
 		return loadGifFromUrl(next.url, next.label);
 	}
 
@@ -774,9 +813,83 @@
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
 
+	// ---- stage zoom (canvas size) --------------------------------------------
+	/** View zoom for the WYSIWYG stage — 1 = fit (old behavior). Bigger steps
+	 *  grow the canvas for detail work; overlay coords are normalized to the
+	 *  stage box so zoom never disturbs them. Persisted per device. */
+	const STAGE_ZOOM_KEY = 'bitos:meme-stage-zoom';
+	const STAGE_ZOOM_STEPS = [0.6, 0.8, 1, 1.25, 1.5];
+	let stageZoom = $state(1);
+
+	function setStageZoom(next: number) {
+		stageZoom = next;
+		try {
+			localStorage.setItem(STAGE_ZOOM_KEY, String(next));
+		} catch {
+			/* private mode — zoom just won't persist */
+		}
+	}
+
+	function zoomStage(dir: 1 | -1) {
+		const idx = STAGE_ZOOM_STEPS.findIndex((z) => Math.abs(z - stageZoom) < 0.001);
+		const nextIdx = Math.min(STAGE_ZOOM_STEPS.length - 1, Math.max(0, (idx < 0 ? 2 : idx) + dir));
+		setStageZoom(STAGE_ZOOM_STEPS[nextIdx]!);
+	}
+
 	// ---- preview transport + timeline ---------------------------------------
 	/** Preview play state for the stage clock (video element clocks itself). */
 	let previewPlaying = $state(false);
+	// ---- preview sound: source audio + live cue firing -----------------------
+	/** Sound toggle for the preview: unmutes the stage video AND fires every
+	 *  cue the playhead crosses — the timeline sounds like the export. */
+	let previewSoundOn = $state(false);
+	/** Last playhead the cue scheduler saw (ms) — crossing windows only fire
+	 *  on small forward deltas, so scrubs/seeks/media swaps never blip. */
+	let lastCueFireMs = 0;
+	/** Collapsed pinned transport bar (full layout) — hand the viewport to the stage. */
+	let timelineCollapsed = $state(false);
+
+	function togglePreviewSound() {
+		previewSoundOn = !previewSoundOn;
+		if (stageVideo) stageVideo.muted = !previewSoundOn;
+	}
+
+	/** Keep the stage video's mute state glued to the toggle (covers mounts,
+	 *  media swaps and the muted-by-default autoplay attribute). */
+	$effect(() => {
+		if (stageVideo) stageVideo.muted = !previewSoundOn;
+	});
+
+	/** Live cue firing: while previewing with sound on, each cue the playhead
+	 *  crosses plays immediately — synth recipes render on the fly, custom
+	 *  sounds come from the decoded library. A cue parked at 0 fires once when
+	 *  playback starts (the export mix includes t=0 too). */
+	$effect(() => {
+		void previewPlaying; // re-check on transport changes
+		const cur = stageSeconds * 1000;
+		if (!previewSoundOn) {
+			lastCueFireMs = cur; // stay current so toggling on never back-fires
+			return;
+		}
+		const prev = lastCueFireMs;
+		lastCueFireMs = cur;
+		const videoPlaying = mediaKind === 'video' && !!stageVideo && !stageVideo.paused;
+		if (!(previewPlaying || videoPlaying)) return;
+		const delta = cur - prev;
+		if (delta <= 0 || delta > 600) return; // scrub/seek/loop-wrap guard
+		for (const cue of sfxCues) {
+			const crossed = cue.atMs > prev && cue.atMs <= cur;
+			const startsNow = cue.atMs === 0 && prev === 0 && cur > 0;
+			if (!crossed && !startsNow) continue;
+			if (cue.sfx === CUSTOM_SOUND_KEY) {
+				const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
+				if (sound) void previewSound(sound);
+			} else {
+				previewSfx(cue.sfx);
+			}
+		}
+	});
+
 	/** Total timeline length the playhead scrubs over, per media kind:
 	 *  video → trimmed export window; gif → gif duration; static → cue track. */
 	const timelineDurationSec = $derived(
@@ -910,6 +1023,45 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let confirmDiscard = $state(false);
 	let dragOver = $state(false);
+	// ---- format-first start (user request: “select type meme”) --------------------
+	/** Which meme format the creator picked — filters the media chooser so the
+	 *  file dialog opens pre-scoped (image / GIF / video). `all` = unfiltered. */
+	let pickFormat = $state<'all' | 'image' | 'gif' | 'video'>('all');
+	const PICK_FORMATS: {
+		id: 'image' | 'gif' | 'video';
+		label: string;
+		hint: string;
+		icon: string;
+		accept: string;
+	}[] = [
+		{
+			id: 'image',
+			label: 'Image meme',
+			hint: 'JPG · PNG · WebP',
+			icon: 'i-lucide-image',
+			accept: 'image/png,image/jpeg,image/webp,image/*'
+		},
+		{
+			id: 'gif',
+			label: 'GIF meme',
+			hint: 'animated, keeps motion',
+			icon: 'i-lucide-film',
+			accept: 'image/gif'
+		},
+		{
+			id: 'video',
+			label: 'Video meme',
+			hint: 'MP4 · WebM · MOV',
+			icon: 'i-lucide-video',
+			accept: 'video/mp4,video/webm,video/quicktime,video/*'
+		}
+	];
+	/** Pick media pre-scoped to a format: filters the chooser, then opens it. */
+	async function pickMediaAs(format: 'image' | 'gif' | 'video') {
+		pickFormat = format;
+		await tick(); // let the accept attribute update before the dialog opens
+		fileInput?.click();
+	}
 	/** Tracks which overlay's timing row is expanded. */
 	let timingId = $state<string | null>(null);
 	/** Open motion-fx popover for this caption (video memes). */
@@ -940,10 +1092,29 @@
 			toasts.info('Twelve overlays is the meme limit');
 			return;
 		}
-		const sticker = makeSticker(emoji, { index: stickerSeq++ });
+		let sticker = makeSticker(emoji, { index: stickerSeq++ });
+		// Entrance fx (pop) starts at the playhead so the sticker visibly lands
+		// on timeline sources; loop fx (spin) stays always-visible.
+		if (sticker.fx === 'pop' && timelineActive) {
+			sticker = { ...sticker, startMs: Math.round(stageSeconds * 1000) };
+		}
 		overlays = [...overlays, sticker];
 		selectedId = sticker.id;
 		timingId = null;
+	}
+
+	// Custom sticker input (user request): type ANY emoji from the keyboard —
+	// single or a short combo — instead of hunting the curated packs.
+	let customSticker = $state('');
+	function addCustomSticker(): void {
+		const text = customSticker.trim();
+		if (!text) return;
+		if (!isEmojiOnly(text)) {
+			toasts.error('Stickers are emoji only — paste or type emoji (😂🔥💀)');
+			return;
+		}
+		addSticker(text);
+		customSticker = '';
 	}
 
 	// ---- image overlays (user request 2026-08-23, rec #1): PNG/GIF/JPEG layers
@@ -978,10 +1149,13 @@
 		});
 	}
 
-	/** Add a layer from a remote URL (upload first when bytes are given). */
+	/** Add a layer from a remote URL (upload first when bytes are given).
+	 *  `atMs` (timeline insert) births the layer with a 2s window at the
+	 *  playhead — timed sources show it as a span on the timeline. */
 	async function addImageLayer(
 		source: { url: string } | { bytes: Blob; name: string },
-		aspectHint?: number
+		aspectHint?: number,
+		opts: { atMs?: number } = {}
 	) {
 		if (imageLayers.length >= MAX_IMAGE_OVERLAYS) {
 			toasts.info(`Image layers max out at ${MAX_IMAGE_OVERLAYS}`);
@@ -1016,6 +1190,12 @@
 		if (!layer) {
 			toasts.error('Could not use that image URL');
 			return;
+		}
+		// Timeline insert: window [playhead, playhead+2s] on timed sources;
+		// static memes have no clock, so the layer stays always-visible.
+		if (opts.atMs !== undefined && timelineActive) {
+			layer.startMs = Math.max(0, Math.round(opts.atMs));
+			layer.endMs = layer.startMs + 2000;
 		}
 		imageLayers = [...imageLayers, layer];
 		selectedLayerId = layer.id;
@@ -1060,29 +1240,35 @@
 		imageLayers = imageLayers.map((l) => (l.id === id ? { ...l, ...patch } : l));
 	}
 
+	/** One-shot playhead stamp for the NEXT layer added via the file picker
+	 *  (the picker flow can't take arguments — set → click → consumed here). */
+	let pendingLayerAtMs: number | null = null;
+
 	/** Layer picker input → upload → layer. */
 	function onLayerFileInput(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		input.value = '';
+		const atMs = pendingLayerAtMs;
+		pendingLayerAtMs = null; // one-shot, always cleared
 		if (!file) return;
 		if (!file.type.startsWith('image/')) {
 			toasts.error('Layers take PNG, GIF or JPEG images');
 			return;
 		}
 		layerBusy = true;
-		addImageLayer({ bytes: file, name: file.name })
+		addImageLayer({ bytes: file, name: file.name }, undefined, { atMs: atMs ?? undefined })
 			.catch((err) => toasts.error(err instanceof Error ? err.message : 'Layer upload failed'))
 			.finally(() => (layerBusy = false));
 	}
 
 	/** Direct-URL layer form. */
-	async function addLayerFromUrl() {
+	async function addLayerFromUrl(atMs?: number) {
 		const url = layerUrl.trim();
 		if (!url || layerUrlBusy) return;
 		layerUrlBusy = true;
 		try {
-			await addImageLayer({ url });
+			await addImageLayer({ url }, undefined, { atMs });
 			layerUrl = '';
 			showLayerUrlForm = false;
 		} catch (e) {
@@ -1093,18 +1279,43 @@
 	}
 
 	/** GIF-library pick → sticker-size layer (NOT the base media swap). */
-	async function addLayerFromGifLib(gif: GifChoice) {
+	async function addLayerFromGifLib(gif: GifChoice, atMs?: number) {
 		popovers.close();
 		layerBusy = true;
 		try {
 			const aspect = gif.width && gif.height ? gif.width / gif.height : undefined;
-			await addImageLayer({ url: gif.url }, aspect);
+			await addImageLayer({ url: gif.url }, aspect, { atMs });
+		} finally {
+			layerBusy = false;
+		}
+	}
+
+	/** Insert another source straight from the current video: grab the frame at
+	 *  the playhead, upload it, drop it on the stage as a movable image layer
+	 *  (user request: “insert other source image-vdo”). */
+	async function insertFrameLayer(): Promise<void> {
+		if (!stageVideo) {
+			toasts.error('Load a video first — then scrub to the frame you want');
+			return;
+		}
+		layerBusy = true;
+		try {
+			const blob = await grabVideoFrame(stageVideo, Math.max(0, stageSeconds), {});
+			const frame = new File([blob], `frame-${Date.now()}.jpg`, { type: 'image/jpeg' });
+			await addImageLayer({ bytes: frame, name: frame.name });
+		} catch (e) {
+			toasts.error(e instanceof Error ? e.message : 'Could not grab that frame');
 		} finally {
 			layerBusy = false;
 		}
 	}
 
 	let selectedLayerId = $state<string | null>(null);
+	/** Expanded layer-timing row (mirrors the captions' timingId). */
+	let layerTimingId = $state<string | null>(null);
+	/** Timeline Image-@ insert popover + its inline URL form. */
+	let tlImageMenuId = `meme-tl-image-${Math.random().toString(36).slice(2, 8)}`;
+	let showTlLayerUrlForm = $state(false);
 	let layerDrag: { id: string; dx: number; dy: number; mode: 'move' | 'resize' } | null = null;
 
 	function onLayerPointerDown(
@@ -1523,6 +1734,7 @@
 		const input = e.currentTarget as HTMLInputElement;
 		acceptFile(input.files?.[0] ?? null);
 		input.value = '';
+		pickFormat = 'all'; // one scoped pick — later choosers see everything again
 	}
 
 	function onDrop(e: DragEvent) {
@@ -1655,6 +1867,25 @@
 		overlays = [...overlays, overlay];
 		selectedId = overlay.id;
 		timingId = null;
+	}
+
+	/** Timeline insert (user request): a caption born AT the playhead with a 2s
+	 *  window — timed sources get punch-in captions without opening the timing
+	 *  popover; static sources fall back to an always-visible caption. */
+	function addCaptionAtPlayhead(): void {
+		if (busy) return;
+		if (overlays.length >= 12) {
+			toasts.info('Twelve captions is the meme limit');
+			return;
+		}
+		const atMs = Math.round(stageSeconds * 1000);
+		const overlay = makeOverlay({
+			y: 0.5,
+			...(timelineActive ? { startMs: atMs, endMs: atMs + 2000 } : {})
+		});
+		overlays = [...overlays, overlay];
+		selectedId = overlay.id;
+		timingId = overlay.id; // open the timing row so the window is immediately tweakable
 	}
 
 	function removeOverlay(id: string) {
@@ -2362,6 +2593,46 @@
 		});
 	}
 
+	/** Export-to-file (user request): run the SAME render pipeline as a publish
+	 *  (captions, layers, looks, sounds, trim, speed all burned in) but save the
+	 *  result locally instead of posting — share it anywhere, keep it, or upload
+	 *  to another platform. Nothing hits a relay. */
+	async function exportFile(): Promise<void> {
+		if (!file || busy) return;
+		// An image meme with no cues exports as-is; everything else needs the
+		// recorder stack, so gate on the same support flag as publishing.
+		const needsRecorder = mediaKind === 'video' || !!gif || sfxCues.length > 0;
+		if (needsRecorder && !canRenderVideoMeme()) {
+			toasts.error('This browser can\u2019t render animated memes — try Chrome/Edge');
+			return;
+		}
+		if (mediaKind === 'video' && stageVideo) stageVideo.pause();
+		const controller = new AbortController();
+		mineController = controller;
+		try {
+			const rendered = await exportMeme();
+			const url = URL.createObjectURL(rendered);
+			const anchor = document.createElement('a');
+			anchor.href = url;
+			anchor.download = rendered.name;
+			document.body.appendChild(anchor);
+			anchor.click();
+			anchor.remove();
+			// Give the download a beat to start before revoking the blob URL.
+			setTimeout(() => URL.revokeObjectURL(url), 30_000);
+			toasts.success(`Exported ${rendered.name} · ${humanBytes(rendered.size)}`);
+		} catch (e) {
+			const message = (e as Error).message;
+			if (/cancelled/i.test(message)) toasts.info('Export cancelled');
+			else toasts.error(message);
+		} finally {
+			mineController = undefined;
+			phase = 'idle';
+			progressLabel = '';
+			progress = 0;
+		}
+	}
+
 	async function submit() {
 		if (!canPost) return;
 		const controller = new AbortController();
@@ -2439,8 +2710,66 @@
 		open = false;
 	}
 
+	/** True while an editable surface owns keystrokes — the shortcut layer
+	 *  must never fight typing (inputs, textareas, selects, contenteditable). */
+	function isTypingTarget(target: EventTarget | null): boolean {
+		return (
+			target instanceof Element &&
+			!!target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')
+		);
+	}
+
+	/** Nudge the playhead by `deltaSec` (keyboard arrows — no clock, no nudge). */
+	function nudgePlayhead(deltaSec: number): void {
+		if (!timelineActive) return;
+		const base = mediaKind === 'video' ? (stageVideo?.currentTime ?? stageSeconds) : stageSeconds;
+		scrubPreview(base + deltaSec);
+	}
+
+	/** Studio keyboard layer (both modes): Space = play/pause, ←/→ = nudge the
+	 *  playhead (Shift = 10×), 1–9 = audition + cue the nth synth sound at the
+	 *  playhead, ⌘/Ctrl+Enter = publish. Keys stay inert while typing, while a
+	 *  dialog/menu owns the screen, or mid-export. */
+	function handleStudioShortcut(event: KeyboardEvent): void {
+		if (!open || soundDialogOpen || popovers.active) return;
+		if (isTypingTarget(event.target)) return;
+		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+			event.preventDefault();
+			void submit();
+			return;
+		}
+		if (busy) return;
+		if (event.key === ' ') {
+			// Space also activates a focused control — leave that to the browser.
+			if (event.target instanceof Element && event.target.closest('button, a, [role="button"]'))
+				return;
+			event.preventDefault();
+			togglePreview();
+			return;
+		}
+		if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+			event.preventDefault();
+			const unit = event.shiftKey ? 1 : 0.1;
+			nudgePlayhead(event.key === 'ArrowLeft' ? -unit : unit);
+			return;
+		}
+		if (event.key === 'm' || event.key === 'M') {
+			event.preventDefault();
+			togglePreviewSound();
+			return;
+		}
+		if (!mediaKind) return;
+		const digit = Number(event.key);
+		const sfx = digit >= 1 && digit <= 9 ? MEME_SFX_IDS[digit - 1] : undefined;
+		if (sfx) {
+			event.preventDefault();
+			previewSfx(sfx);
+			addSfxCue(sfx);
+		}
+	}
+
 	function handleKeydown(event: KeyboardEvent) {
-		if (full) return; // the route owns keys in page mode
+		if (!open) return;
 		if (confirmDiscard) {
 			if (event.key === 'Escape') {
 				event.preventDefault();
@@ -2448,15 +2777,18 @@
 			}
 			return;
 		}
+		if (full) {
+			// Page mode: the route owns Escape (back to the studio home); the
+			// studio owns the editing shortcuts on top of it.
+			handleStudioShortcut(event);
+			return;
+		}
 		if (event.key === 'Escape') {
 			event.preventDefault();
 			requestClose();
 			return;
 		}
-		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-			event.preventDefault();
-			void submit();
-		}
+		handleStudioShortcut(event);
 	}
 
 	function clamp01(value: number): number {
@@ -2464,6 +2796,13 @@
 	}
 
 	onMount(() => {
+		// Stage zoom preference (per device) — tolerant parse, snapped to a step.
+		try {
+			const saved = Number(localStorage.getItem(STAGE_ZOOM_KEY));
+			if (STAGE_ZOOM_STEPS.some((z) => Math.abs(z - saved) < 0.001)) stageZoom = saved;
+		} catch {
+			/* ignore */
+		}
 		// Draft recovery (plan F-010): restore work-in-progress after a crash,
 		// refresh or accidental close. Runs once per component lifetime.
 		const draft = readMemeDraft();
@@ -2606,14 +2945,14 @@
 						<div class="flex items-center gap-2 text-[12px] font-semibold text-warm-600">
 							<Icon name="i-lucide-list-video" class="size-4 shrink-0" />
 							<span class="truncate">
-								Batch queue: {queue.length - queueIndex} GIF{queue.length - queueIndex === 1
+								Batch queue: {queue.length - queueIndex} clip{queue.length - queueIndex === 1
 									? ''
 									: 's'} left — each post loads the next
 							</span>
 						</div>
 						<!-- Per-item captions: type a line per queued GIF; it becomes that post's text. -->
 						<div class="flex flex-col gap-1">
-							{#each queue.slice(queueIndex) as item, i (item.url)}
+							{#each queue.slice(queueIndex) as item, i (item.id)}
 								<div class="flex items-center gap-1.5">
 									<span
 										class="grid size-5 shrink-0 place-items-center rounded-full bg-warm-500/15 font-mono text-[10px] font-bold text-warm-600"
@@ -2626,7 +2965,7 @@
 										value={item.caption ?? ''}
 										maxlength="280"
 										placeholder={`Caption for ${item.label}…`}
-										aria-label={`Caption for queued item ${queueIndex + i + 1}`}
+										aria-label={`Caption for queued clip ${queueIndex + i + 1}`}
 										oninput={(e) => {
 											const v = (e.target as HTMLInputElement).value;
 											item.caption = v === '' ? undefined : v;
@@ -2642,7 +2981,7 @@
 							type="button"
 							onclick={() => void stageNextQueued()}
 							disabled={gifStageBusy || busy}
-							title={`Skip this one and load the next queued GIF (${queue[queueIndex]?.label ?? 'none'})`}
+							title={`Skip this one and load the next queued clip (${queue[queueIndex]?.label ?? 'none'})`}
 							class="rounded-full px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
 						>
 							Skip →
@@ -2662,7 +3001,9 @@
 				</div>
 			{/if}
 
-			<div class="min-h-0 flex-1 overflow-y-auto">
+			<!-- Full page mode owns its own pane scrolling; the dialog keeps a
+			     single centered scroll column. -->
+			<div class={full ? 'flex min-h-0 flex-1 flex-col' : 'min-h-0 flex-1 overflow-y-auto'}>
 				{#if !file}
 					<!-- Empty state -->
 					<div class="flex min-h-[420px] flex-col items-center justify-center p-6">
@@ -2731,6 +3072,30 @@
 								<Icon name="i-lucide-globe" class="size-3.5" />
 								Captions are burned in — renders in every Nostr app
 							</p>
+							<!-- Format-first start: pick the meme type — the chooser opens
+							     pre-scoped to that format (image / GIF / video). -->
+							<div class="flex w-full flex-wrap items-stretch justify-center gap-2">
+								{#each PICK_FORMATS as format (format.id)}
+									<button
+										type="button"
+										onclick={() => void pickMediaAs(format.id)}
+										class="group/fmt flex min-w-[104px] flex-1 flex-col items-center gap-1 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 px-3 py-2.5 transition hover:border-warm-500/50 hover:bg-warm-500/10 active:scale-95"
+										title={`Start a ${format.label} — opens the ${format.id.toUpperCase()} picker`}
+									>
+										<span
+											class="grid size-8 place-items-center rounded-xl bg-warm-500/12 text-warm-500 transition group-hover/fmt:scale-110"
+										>
+											<Icon name={format.icon} class="size-4.5" />
+										</span>
+										<span class="text-[11.5px] font-bold text-[var(--ui-text)]">
+											{format.label}
+										</span>
+										<span class="text-[9.5px] leading-tight text-[var(--ui-text-dimmed)]">
+											{format.hint}
+										</span>
+									</button>
+								{/each}
+							</div>
 						</div>
 						<div class="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-1.5">
 							<Popover
@@ -2823,26 +3188,61 @@
 						{/if}
 					</div>
 				{:else}
-					<div class="grid gap-4 p-4 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)] sm:gap-5 sm:p-5">
-						{#if remixSource}
-							<!-- Lineage chip: this project derives from a remixed bitz; the
-							     published event will carry remix + meme tags crediting it. -->
-							<div
-								class="mb-4 flex items-center gap-2 rounded-full bg-warm-500/10 px-3 py-1.5 text-[12px] font-semibold text-warm-600 sm:col-span-2"
-							>
-								<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
-								<span class="truncate"
-									>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
+					<!-- Panes as snippets — one markup source, two layouts: the dialog grid
+					     (composer dialog) and the full-page pro studio (tools · stage ·
+					     inspector + a pinned timeline bar). -->
+					{#snippet stagePane()}
+						<!-- WYSIWYG 9:16 stage: fills the center pane on the full page (scaled
+						     by the zoom control — overlay coords are normalized to the stage
+						     box, so zoom never disturbs them), fixed 260px in the dialog. -->
+						<div
+							class="mx-auto w-full {full ? '' : 'max-w-[260px] sm:mx-0'}"
+							style={full
+								? `width:calc(min(430px, (100dvh - 17.5rem) * 0.5625) * ${stageZoom})`
+								: ''}
+						>
+							<div class="mb-1.5 flex items-center justify-between gap-2">
+								<p
+									class="text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
 								>
+									Preview — drag captions
+								</p>
+								<!-- Canvas-size zoom (full layout): fit ↔ 150% for detail work.
+									     The % readout doubles as a reset-to-fit button. -->
+								{#if full}
+									<div class="flex items-center gap-0.5" role="group" aria-label="Stage zoom">
+										<button
+											type="button"
+											onclick={() => zoomStage(-1)}
+											disabled={stageZoom <= STAGE_ZOOM_STEPS[0] + 0.001}
+											aria-label="Zoom out stage"
+											title="Zoom out the preview canvas"
+											class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+										>
+											<Icon name="i-lucide-zoom-out" class="size-3.5" />
+										</button>
+										<button
+											type="button"
+											onclick={() => setStageZoom(1)}
+											disabled={Math.abs(stageZoom - 1) < 0.001}
+											title="Reset zoom to fit"
+											class="min-w-11 rounded-full px-1 font-mono text-[10px] font-bold text-[var(--ui-text-dimmed)] tabular-nums transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-60"
+										>
+											{Math.round(stageZoom * 100)}%
+										</button>
+										<button
+											type="button"
+											onclick={() => zoomStage(1)}
+											disabled={stageZoom >= STAGE_ZOOM_STEPS[STAGE_ZOOM_STEPS.length - 1] - 0.001}
+											aria-label="Zoom in stage"
+											title="Zoom in the preview canvas — pan by scrolling the stage"
+											class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+										>
+											<Icon name="i-lucide-zoom-in" class="size-3.5" />
+										</button>
+									</div>
+								{/if}
 							</div>
-						{/if}
-						<!-- WYSIWYG 9:16 stage -->
-						<div class="mx-auto w-full max-w-[260px] sm:mx-0">
-							<p
-								class="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
-							>
-								Preview — drag captions
-							</p>
 							<div
 								bind:this={stageBox}
 								role="application"
@@ -2863,6 +3263,22 @@
 										playsinline
 										aria-label="Meme video preview"
 										onloadedmetadata={onVideoMetadata}
+										ondurationchange={(e) => {
+											// Browser-recorded webm clips report duration=Infinity at
+											// loadedmetadata and resolve it later — adopt it when it lands.
+											const v = e.currentTarget as HTMLVideoElement;
+											if (
+												v.videoWidth &&
+												Number.isFinite(v.duration) &&
+												v.duration !== meta?.duration
+											) {
+												meta = {
+													width: v.videoWidth,
+													height: v.videoHeight,
+													duration: v.duration
+												};
+											}
+										}}
 										ontimeupdate={(e) => {
 											stageSeconds = (e.currentTarget as HTMLVideoElement).currentTime;
 										}}
@@ -3009,6 +3425,18 @@
 										<Icon name="i-lucide-repeat-2" class="size-3" />
 										Replace
 									</button>
+									<!-- Mass production: multi-pick more sources (videos/pictures) into
+								     the batch queue — each publish loads the next one. -->
+									<button
+										type="button"
+										onclick={() => queueInput?.click()}
+										disabled={busy}
+										title="Queue more clips — each publish loads the next one"
+										class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+									>
+										<Icon name="i-lucide-list-video" class="size-3" />
+										Queue clips
+									</button>
 									<Popover
 										id={swapGifMenuId}
 										placement="top-start"
@@ -3091,34 +3519,161 @@
 								</form>
 							{/if}
 						</div>
-						{#if timelineActive}
-							<MemeTimeline
-								durationSec={timelineDurationSec}
-								seconds={mediaKind === 'video' ? (stageVideo?.currentTime ?? 0) : stageSeconds}
-								playing={mediaKind === 'video'
-									? stageVideo
-										? !stageVideo.paused
-										: false
-									: previewPlaying}
-								onPlayPause={togglePreview}
-								onScrub={(s) => scrubPreview(s)}
-								{overlays}
-								layers={imageLayers}
-								cues={sfxCues}
-								{busy}
-							/>
-						{/if}
-						<!-- Controls -->
-						<div class="flex min-w-0 flex-col gap-3">
-							{#if !videoMemeSupported}
-								<p
-									class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
-								>
-									<Icon name="i-lucide-triangle-alert" class="size-3.5 shrink-0" />
-									This browser can't export video memes — try Chrome/Edge, or start from a picture.
-								</p>
-							{/if}
+					{/snippet}
 
+					{#snippet timelinePane()}
+						<MemeTimeline
+							durationSec={timelineDurationSec}
+							seconds={mediaKind === 'video' ? (stageVideo?.currentTime ?? 0) : stageSeconds}
+							playing={mediaKind === 'video'
+								? stageVideo
+									? !stageVideo.paused
+									: false
+								: previewPlaying}
+							onPlayPause={togglePreview}
+							onScrub={(s) => scrubPreview(s)}
+							soundOn={previewSoundOn}
+							onToggleSound={togglePreviewSound}
+							{overlays}
+							layers={imageLayers}
+							cues={sfxCues}
+							{busy}
+						/>
+						<!-- Insert-at-playhead actions (video/timed sources): the timeline is
+						     the natural place to drop a timed caption / sound / poster frame. -->
+						<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+							<button
+								type="button"
+								onclick={addCaptionAtPlayhead}
+								disabled={busy}
+								title="Add a caption with a 2s window starting at the playhead"
+								class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[10.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+							>
+								<Icon name="i-lucide-captions-plus" class="size-3.5" />
+								Caption @ {formatDuration(stageSeconds)}
+							</button>
+							<button
+								type="button"
+								onclick={() => popovers.open(sfxMenuId)}
+								disabled={busy || !mediaKind}
+								title="Add a sound cue at the playhead"
+								class="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[10.5px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-40"
+							>
+								<Icon name="i-lucide-music-plus" class="size-3.5" />
+								Sound @ {formatDuration(stageSeconds)}
+							</button>
+							<!-- Image @ playhead: drop a movable layer with a 2s window right
+							     where the playhead sits — sources: upload / URL / GIF library. -->
+							<Popover
+								id={tlImageMenuId}
+								placement="top-start"
+								width="auto"
+								label="Add an image layer at the playhead"
+								triggerClass="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10.5px] font-bold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-40"
+								triggerActiveClass="bg-emerald-500/20"
+							>
+								{#snippet trigger()}
+									<Icon name="i-lucide-image-plus" class="size-3.5" />
+									Image @ {formatDuration(stageSeconds)}
+								{/snippet}
+								<div class="w-64 max-w-[80vw] p-1.5">
+									<p class="px-1.5 pb-1.5 text-[10.5px] leading-snug text-[var(--ui-text-dimmed)]">
+										Lands with a 2s window at {formatDuration(stageSeconds)} — tweak it in the Image layers
+										list.
+									</p>
+									<div class="flex items-center gap-1">
+										<button
+											type="button"
+											onclick={() => {
+												pendingLayerAtMs = Math.round(stageSeconds * 1000);
+												layerInput?.click();
+												popovers.close();
+											}}
+											disabled={layerBusy}
+											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
+										>
+											<Icon name="i-lucide-upload" class="size-3.5" />
+											Upload file
+										</button>
+										<button
+											type="button"
+											onclick={(e) => {
+												// keep the popover open — the global click-close would eat it
+												e.stopPropagation();
+												showTlLayerUrlForm = !showTlLayerUrlForm;
+											}}
+											disabled={layerBusy}
+											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
+										>
+											<Icon name="i-lucide-link" class="size-3.5" />
+											URL
+										</button>
+									</div>
+									{#if showTlLayerUrlForm}
+										<div class="mt-1.5 flex items-center gap-1">
+											<input
+												type="url"
+												inputmode="url"
+												bind:value={layerUrl}
+												placeholder="https://…/sticker.png"
+												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
+												disabled={layerUrlBusy}
+												onkeydown={(e) => {
+													// keydown (not form submit) — popover panels unmount on
+													// the global click-close before deferred submits fire.
+													if (e.key === 'Enter') {
+														e.preventDefault();
+														void addLayerFromUrl(Math.round(stageSeconds * 1000));
+														popovers.close();
+													}
+												}}
+											/>
+											<button
+												type="button"
+												onclick={() => {
+													void addLayerFromUrl(Math.round(stageSeconds * 1000));
+													popovers.close();
+												}}
+												disabled={layerUrlBusy || !layerUrl.trim()}
+												class="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-500/12 text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
+												aria-label="Add this URL as a timed layer"
+											>
+												<Icon
+													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
+													class="size-3.5 {layerUrlBusy ? 'animate-spin' : ''}"
+												/>
+											</button>
+										</div>
+									{/if}
+									<p
+										class="mt-1.5 flex items-center gap-1 px-1 text-[10.5px] text-[var(--ui-text-dimmed)]"
+									>
+										<Icon name="i-lucide-film" class="size-3" />
+										or pick a GIF sticker
+									</p>
+									<GifPicker
+										onpick={(g) => void addLayerFromGifLib(g, Math.round(stageSeconds * 1000))}
+									/>
+								</div>
+							</Popover>
+							{#if mediaKind === 'video'}
+								<button
+									type="button"
+									onclick={() => void pickPosterAt(stageSeconds)}
+									disabled={busy || !stageVideo}
+									title="Use the frame at the playhead as the poster/thumbnail"
+									class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[10.5px] font-bold text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)] disabled:opacity-40"
+								>
+									<Icon name="i-lucide-image-up" class="size-3.5" />
+									Poster @ {formatDuration(stageSeconds)}
+								</button>
+							{/if}
+						</div>
+					{/snippet}
+
+					{#snippet toolsPane()}
+						<!-- Tool rail: layouts, stickers, image layers, looks -->
+						<div class="flex min-w-0 flex-col gap-3">
 							<!-- Templates -->
 							<div class="flex flex-wrap items-center gap-1.5">
 								<span
@@ -3376,6 +3931,375 @@
 									</div>
 								</Popover>
 							</div>
+
+							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
+								they ride the same schema/wire format as captions. -->
+							<Popover
+								id={stickerMenuId}
+								placement="top-start"
+								width="auto"
+								label="Add a sticker"
+								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+								triggerActiveClass="bg-warm-500/15 text-warm-600"
+							>
+								{#snippet trigger()}
+									<Icon name="i-lucide-smile-plus" class="size-3.5" />
+									Stickers
+								{/snippet}
+								<div class="w-64 max-w-[80vw] p-2">
+									<!-- Custom sticker input: type/paste ANY emoji from the keyboard.
+										 NOTE: no <form> here — popover panels unmount on the layout's global
+										 click-close before a deferred form submit can fire (the established
+										 pattern is keydown-Enter + button onclick, like the slot/template savers). -->
+									<div class="mb-2 flex items-center gap-1">
+										<label class="sr-only" for="meme-custom-sticker">Custom emoji sticker</label>
+										<input
+											id="meme-custom-sticker"
+											onclick={(e) => e.stopPropagation()}
+											type="text"
+											bind:value={customSticker}
+											placeholder="Type any emoji… 😎"
+											maxlength="8"
+											onkeydown={(e) => {
+												if (e.key === 'Enter') {
+													e.preventDefault();
+													addCustomSticker();
+												}
+											}}
+											class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-center text-[15px] outline-none placeholder:text-[11px] placeholder:font-normal placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
+										/>
+										<button
+											type="button"
+											onclick={addCustomSticker}
+											title="Add this emoji as a sticker"
+											class="grid size-8 shrink-0 place-items-center rounded-full bg-warm-500/12 text-warm-500 transition hover:bg-warm-500/20 active:scale-95"
+										>
+											<Icon name="i-lucide-plus" class="size-4" />
+										</button>
+									</div>
+									<div class="flex items-center gap-1 overflow-x-auto pb-1.5">
+										{#each STICKER_PACKS as pack (pack.id)}
+											<button
+												type="button"
+												onclick={(e) => {
+													// keep the popover open — the global click-close would eat it
+													e.stopPropagation();
+													activePackId = pack.id;
+												}}
+												class="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition {activePackId ===
+												pack.id
+													? 'bg-warm-500 text-white'
+													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+											>
+												{pack.label}
+											</button>
+										{/each}
+									</div>
+									{#if activePack}
+										<div class="grid grid-cols-8 gap-1">
+											{#each activePack.stickers as emoji (emoji)}
+												<button
+													type="button"
+													onclick={() => addSticker(emoji)}
+													aria-label={`Add ${emoji} sticker`}
+													class="grid size-7 place-items-center rounded-lg text-[17px] leading-none transition hover:scale-110 hover:bg-[var(--ui-bg-muted)] active:scale-95"
+												>
+													{emoji}
+												</button>
+											{/each}
+										</div>
+									{/if}
+								</div>
+							</Popover>
+
+							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
+							     Sources: local file, https URL, GIF library (as a sticker-sized
+							     layer — NOT the base-media swap in the footer). -->
+							<Popover
+								id={imageMenuId}
+								placement="top-start"
+								width="auto"
+								label="Add an image layer"
+								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+								triggerActiveClass="bg-warm-500/15 text-warm-600"
+							>
+								{#snippet trigger()}
+									<Icon name="i-lucide-image-plus" class="size-3.5" />
+									Image
+									{#if layerBusy}
+										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+									{/if}
+								{/snippet}
+								<div class="w-64 max-w-[80vw] p-2">
+									<div class="flex items-center gap-1">
+										<button
+											type="button"
+											onclick={() => layerInput?.click()}
+											disabled={layerBusy}
+											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
+										>
+											<Icon name="i-lucide-upload" class="size-3.5" />
+											Upload file
+										</button>
+										<button
+											type="button"
+											onclick={(e) => {
+												// keep the popover open — the global click-close would eat it
+												e.stopPropagation();
+												showLayerUrlForm = !showLayerUrlForm;
+											}}
+											disabled={layerBusy}
+											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
+										>
+											<Icon name="i-lucide-link" class="size-3.5" />
+											URL
+										</button>
+									</div>
+									<!-- Insert another source from the stage itself: grab the current video
+								     frame at the playhead and drop it in as a movable layer. -->
+									{#if mediaKind === 'video'}
+										<button
+											type="button"
+											onclick={() => void insertFrameLayer()}
+											disabled={layerBusy || busy}
+											title="Grab the frame at the playhead and add it as a movable image layer"
+											class="mt-1.5 flex w-full items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
+										>
+											<Icon
+												name={layerBusy ? 'i-lucide-loader-circle' : 'i-lucide-image-up'}
+												class="size-3.5 {layerBusy ? 'animate-spin' : ''}"
+											/>
+											Frame from video @ {formatDuration(stageSeconds)}
+										</button>
+									{/if}
+									{#if showLayerUrlForm}
+										<form
+											class="mt-1.5 flex items-center gap-1"
+											onsubmit={(e) => {
+												e.preventDefault();
+												void addLayerFromUrl();
+											}}
+										>
+											<input
+												type="url"
+												inputmode="url"
+												bind:value={layerUrl}
+												placeholder="https://…/sticker.png"
+												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
+												disabled={layerUrlBusy}
+											/>
+											<button
+												type="submit"
+												class="flex h-8 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
+												disabled={layerUrlBusy || !layerUrl.trim()}
+											>
+												<Icon
+													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
+													class="size-3 {layerUrlBusy ? 'animate-spin' : ''}"
+												/>
+											</button>
+										</form>
+									{/if}
+									<p
+										class="mt-1.5 flex items-center gap-1 px-0.5 text-[10.5px] text-[var(--ui-text-dimmed)]"
+									>
+										<Icon name="i-lucide-film" class="size-3" />
+										or pick a GIF as a sticker layer
+									</p>
+									<GifPicker onpick={addLayerFromGifLib} />
+									{#if imageLayers.length}
+										<div class="mt-1.5 border-t border-[var(--ui-border-muted)] pt-1.5">
+											<p
+												class="mb-1 px-0.5 text-[10px] font-bold text-[var(--ui-text-dimmed)] uppercase"
+											>
+												Layers ({imageLayers.length}/{MAX_IMAGE_OVERLAYS})
+											</p>
+											<div class="flex flex-col gap-1">
+												{#each imageLayers as layer, li (layer.id)}
+													<div
+														class="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition {selectedLayerId ===
+														layer.id
+															? 'bg-warm-500/15'
+															: 'hover:bg-[var(--ui-bg-muted)]'}"
+													>
+														<button
+															type="button"
+															onclick={() => (selectedLayerId = layer.id)}
+															class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+														>
+															<span
+																class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-black/40"
+															>
+																{#if layerBitmaps.has(layer.src)}
+																	<img src={layer.src} alt="" class="max-h-full max-w-full" />
+																{:else}
+																	<Icon name="i-lucide-image" class="size-3.5 text-white/60" />
+																{/if}
+															</span>
+															<span
+																class="truncate text-[11px] font-semibold text-[var(--ui-text)]"
+															>
+																Layer {li + 1}
+															</span>
+														</button>
+														<!-- Layer timing (timed sources): chip toggles an edit row — same
+														     model as caption windows; missing window = always visible. -->
+														{#if timelineActive}
+															<button
+																type="button"
+																onclick={(e) => {
+																	// keep the popover open — the global click-close would eat it
+																	e.stopPropagation();
+																	layerTimingId = layerTimingId === layer.id ? null : layer.id;
+																}}
+																disabled={busy}
+																aria-expanded={layerTimingId === layer.id}
+																title="Show this layer only during part of the timeline"
+																class="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-bold transition {layerTimingId ===
+																	layer.id ||
+																layer.startMs !== undefined ||
+																layer.endMs !== undefined
+																	? 'bg-emerald-500/15 text-emerald-600'
+																	: 'text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]'}"
+															>
+																{layer.startMs !== undefined || layer.endMs !== undefined
+																	? `${((layer.startMs ?? 0) / 1000).toFixed(1)}–${layer.endMs !== undefined ? (layer.endMs / 1000).toFixed(1) : '∞'}s`
+																	: 'always'}
+															</button>
+														{/if}
+														<button
+															type="button"
+															onclick={() => removeLayer(layer.id)}
+															aria-label={`Remove layer ${li + 1}`}
+															class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
+														>
+															<Icon name="i-lucide-x" class="size-3.5" />
+														</button>
+													</div>
+													{#if timelineActive && layerTimingId === layer.id}
+														<div
+															class="mb-1 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2"
+														>
+															<label
+																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
+															>
+																Show from
+																<input
+																	type="number"
+																	min="0"
+																	step="0.1"
+																	value={((layer.startMs ?? 0) / 1000).toFixed(1)}
+																	oninput={(e) => {
+																		const seconds = Number(
+																			(e.currentTarget as HTMLInputElement).value
+																		);
+																		patchLayer(layer.id, {
+																			startMs:
+																				Number.isFinite(seconds) && seconds > 0
+																					? Math.round(seconds * 1000)
+																					: undefined
+																		});
+																	}}
+																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
+																/>
+																s
+															</label>
+															<label
+																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
+															>
+																until
+																<input
+																	type="number"
+																	min="0"
+																	step="0.1"
+																	value={layer.endMs !== undefined
+																		? (layer.endMs / 1000).toFixed(1)
+																		: ''}
+																	placeholder="end"
+																	oninput={(e) => {
+																		const raw = (e.currentTarget as HTMLInputElement).value;
+																		const seconds = Number(raw);
+																		patchLayer(layer.id, {
+																			endMs:
+																				raw !== '' && Number.isFinite(seconds) && seconds > 0
+																					? Math.round(seconds * 1000)
+																					: undefined
+																		});
+																	}}
+																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
+																/>
+																s
+															</label>
+															<button
+																type="button"
+																onclick={() =>
+																	patchLayer(layer.id, { startMs: undefined, endMs: undefined })}
+																class="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
+															>
+																Always visible
+															</button>
+														</div>
+													{/if}
+												{/each}
+											</div>
+										</div>
+									{/if}
+								</div>
+							</Popover>
+
+							<!-- Look picker: one-tap color presets. Preview = CSS filter,
+						     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
+							{#if looksAvailable}
+								<Popover
+									id={lookMenuId}
+									placement="top-start"
+									width="auto"
+									label="Pick a look"
+									triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+									triggerActiveClass="bg-warm-500/15 text-warm-600"
+								>
+									{#snippet trigger()}
+										<Icon name="i-lucide-sparkles" class="size-3.5" />
+										Look
+										{#if lookId !== 'none'}
+											<span
+												class="rounded-full bg-warm-500/20 px-1.5 text-[10px] font-extrabold text-warm-600"
+											>
+												{MEME_LOOKS.find((look) => look.id === lookId)?.label}
+											</span>
+										{/if}
+									{/snippet}
+									<div class="flex w-56 max-w-[80vw] flex-wrap gap-1 p-1.5">
+										{#each MEME_LOOKS as look (look.id)}
+											<button
+												type="button"
+												onclick={() => (lookId = memeLookOf(look.id))}
+												aria-pressed={lookId === look.id}
+												class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition {lookId ===
+												look.id
+													? 'bg-warm-500 text-white'
+													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+											>
+												{look.label}
+											</button>
+										{/each}
+									</div>
+								</Popover>
+							{/if}
+						</div>
+					{/snippet}
+
+					{#snippet inspectorPane()}
+						<!-- Inspector: export support, overlay list, composition, sound, publish -->
+						<div class="flex min-w-0 flex-col gap-3">
+							{#if !videoMemeSupported}
+								<p
+									class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
+								>
+									<Icon name="i-lucide-triangle-alert" class="size-3.5 shrink-0" />
+									This browser can't export video memes — try Chrome/Edge, or start from a picture.
+								</p>
+							{/if}
 
 							<!-- Overlay list -->
 							{#if overlays.length}
@@ -3668,217 +4592,6 @@
 								</button>
 							{/if}
 
-							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
-								they ride the same schema/wire format as captions. -->
-							<Popover
-								id={stickerMenuId}
-								placement="top-start"
-								width="auto"
-								label="Add a sticker"
-								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-								triggerActiveClass="bg-warm-500/15 text-warm-600"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-smile-plus" class="size-3.5" />
-									Stickers
-								{/snippet}
-								<div class="w-64 max-w-[80vw] p-2">
-									<div class="flex items-center gap-1 overflow-x-auto pb-1.5">
-										{#each STICKER_PACKS as pack (pack.id)}
-											<button
-												type="button"
-												onclick={() => (activePackId = pack.id)}
-												class="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition {activePackId ===
-												pack.id
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-											>
-												{pack.label}
-											</button>
-										{/each}
-									</div>
-									{#if activePack}
-										<div class="grid grid-cols-8 gap-1">
-											{#each activePack.stickers as emoji (emoji)}
-												<button
-													type="button"
-													onclick={() => addSticker(emoji)}
-													aria-label={`Add ${emoji} sticker`}
-													class="grid size-7 place-items-center rounded-lg text-[17px] leading-none transition hover:scale-110 hover:bg-[var(--ui-bg-muted)] active:scale-95"
-												>
-													{emoji}
-												</button>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							</Popover>
-
-							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
-							     Sources: local file, https URL, GIF library (as a sticker-sized
-							     layer — NOT the base-media swap in the footer). -->
-							<Popover
-								id={imageMenuId}
-								placement="top-start"
-								width="auto"
-								label="Add an image layer"
-								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-								triggerActiveClass="bg-warm-500/15 text-warm-600"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-image-plus" class="size-3.5" />
-									Image
-									{#if layerBusy}
-										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-									{/if}
-								{/snippet}
-								<div class="w-64 max-w-[80vw] p-2">
-									<div class="flex items-center gap-1">
-										<button
-											type="button"
-											onclick={() => layerInput?.click()}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-upload" class="size-3.5" />
-											Upload file
-										</button>
-										<button
-											type="button"
-											onclick={() => (showLayerUrlForm = !showLayerUrlForm)}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-link" class="size-3.5" />
-											URL
-										</button>
-									</div>
-									{#if showLayerUrlForm}
-										<form
-											class="mt-1.5 flex items-center gap-1"
-											onsubmit={(e) => {
-												e.preventDefault();
-												void addLayerFromUrl();
-											}}
-										>
-											<input
-												type="url"
-												inputmode="url"
-												bind:value={layerUrl}
-												placeholder="https://…/sticker.png"
-												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-												disabled={layerUrlBusy}
-											/>
-											<button
-												type="submit"
-												class="flex h-8 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-												disabled={layerUrlBusy || !layerUrl.trim()}
-											>
-												<Icon
-													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
-													class="size-3 {layerUrlBusy ? 'animate-spin' : ''}"
-												/>
-											</button>
-										</form>
-									{/if}
-									<p
-										class="mt-1.5 flex items-center gap-1 px-0.5 text-[10.5px] text-[var(--ui-text-dimmed)]"
-									>
-										<Icon name="i-lucide-film" class="size-3" />
-										or pick a GIF as a sticker layer
-									</p>
-									<GifPicker onpick={addLayerFromGifLib} />
-									{#if imageLayers.length}
-										<div class="mt-1.5 border-t border-[var(--ui-border-muted)] pt-1.5">
-											<p
-												class="mb-1 px-0.5 text-[10px] font-bold text-[var(--ui-text-dimmed)] uppercase"
-											>
-												Layers ({imageLayers.length}/{MAX_IMAGE_OVERLAYS})
-											</p>
-											<div class="flex flex-col gap-1">
-												{#each imageLayers as layer, li (layer.id)}
-													<div
-														class="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition {selectedLayerId ===
-														layer.id
-															? 'bg-warm-500/15'
-															: 'hover:bg-[var(--ui-bg-muted)]'}"
-													>
-														<button
-															type="button"
-															onclick={() => (selectedLayerId = layer.id)}
-															class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-														>
-															<span
-																class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-black/40"
-															>
-																{#if layerBitmaps.has(layer.src)}
-																	<img src={layer.src} alt="" class="max-h-full max-w-full" />
-																{:else}
-																	<Icon name="i-lucide-image" class="size-3.5 text-white/60" />
-																{/if}
-															</span>
-															<span
-																class="truncate text-[11px] font-semibold text-[var(--ui-text)]"
-															>
-																Layer {li + 1}
-															</span>
-														</button>
-														<button
-															type="button"
-															onclick={() => removeLayer(layer.id)}
-															aria-label={`Remove layer ${li + 1}`}
-															class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
-														>
-															<Icon name="i-lucide-x" class="size-3.5" />
-														</button>
-													</div>
-												{/each}
-											</div>
-										</div>
-									{/if}
-								</div>
-							</Popover>
-
-							<!-- Look picker: one-tap color presets. Preview = CSS filter,
-						     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
-							{#if looksAvailable}
-								<Popover
-									id={lookMenuId}
-									placement="top-start"
-									width="auto"
-									label="Pick a look"
-									triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-									triggerActiveClass="bg-warm-500/15 text-warm-600"
-								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-sparkles" class="size-3.5" />
-										Look
-										{#if lookId !== 'none'}
-											<span
-												class="rounded-full bg-warm-500/20 px-1.5 text-[10px] font-extrabold text-warm-600"
-											>
-												{MEME_LOOKS.find((look) => look.id === lookId)?.label}
-											</span>
-										{/if}
-									{/snippet}
-									<div class="flex w-56 max-w-[80vw] flex-wrap gap-1 p-1.5">
-										{#each MEME_LOOKS as look (look.id)}
-											<button
-												type="button"
-												onclick={() => (lookId = memeLookOf(look.id))}
-												aria-pressed={lookId === look.id}
-												class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition {lookId ===
-												look.id
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-											>
-												{look.label}
-											</button>
-										{/each}
-									</div>
-								</Popover>
-							{/if}
-
 							<!-- Caption -->
 							<div
 								class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 py-3 transition focus-within:border-warm-500 focus-within:bg-[var(--ui-bg)] focus-within:ring-2 focus-within:ring-warm-500/20"
@@ -3906,8 +4619,9 @@
 								{/if}
 							</div>
 
-							<!-- Frame strip: scrub + poster pick (video sources). -->
-							{#if stripFrames}
+							<!-- Frame strip (dialog mode — the full layout shows it in the
+							     pinned transport bar instead, next to the timeline). -->
+							{#if stripFrames && !full}
 								<VideoFrameStrip
 									durationSec={meta?.duration ?? 0}
 									thumbUrls={frameThumbs}
@@ -4056,60 +4770,132 @@
 								<div
 									class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 py-3"
 								>
-									<div class="flex items-center justify-between gap-2">
+									<!-- Compact sound toolbar: label + status chips on one line, actions as
+								     chips — the long explanations move into tooltips so the card stays tight. -->
+									<div class="flex flex-wrap items-center gap-1.5">
 										<p
-											class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+											class="mr-auto flex min-w-0 items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+										>
+											<Icon name="i-lucide-audio-lines" class="size-3.5 shrink-0" />
+											Sound
+											{#if sfxCues.length}
+												<span
+													class="rounded-full bg-warm-500/15 px-1.5 font-mono text-[10px] font-bold text-warm-600 normal-case"
+													>{sfxCues.length}</span
+												>
+											{/if}
+											<!-- A static meme flips to a video export once it has cues — tiny badge,
+											     full sentence in the tooltip. -->
+											{#if mediaKind === 'image' && !animated && sfxCues.length === 0}
+												<span
+													class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--ui-text-muted)] normal-case"
+													title="Adding a sound cue makes this ship as a video with audio"
+												>
+													<Icon name="i-lucide-clapperboard" class="size-3" />
+													+ sound = video
+												</span>
+											{/if}
+										</p>
+										<button
+											type="button"
+											disabled={busy}
+											onclick={() => (soundDialogOpen = true)}
+											title="Browse, preview and fine-tune every sound cue"
+											class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
 										>
 											<Icon name="i-lucide-audio-lines" class="size-3.5" />
-											Sound effects
-										</p>
-										<!-- Hint: a static meme flips to a video export as soon as it has
-									     sound cues — say so before the type flips under the user. -->
-										{#if mediaKind === 'image' && !animated && sfxCues.length === 0}
-											<p
-												class="mt-1.5 flex items-center gap-1 text-[10.5px] text-[var(--ui-text-dimmed)]"
-											>
-												<Icon name="i-lucide-clapperboard" class="size-3 shrink-0" />
-												Add a sound cue and this ships as a video with audio
-											</p>
-										{/if}
-
-										<!-- #2 sound-timed captions: snap every caption window onto the cue
-											sheet in order (caption i lights up with cue i). -->
+											Sound studio
+										</button>
+										<Popover
+											id={sfxMenuId}
+											placement="top-start"
+											width="auto"
+											label="Add sound effect"
+											triggerClass="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20"
+											triggerActiveClass="bg-warm-500/20"
+										>
+											{#snippet trigger()}
+												<Icon name="i-lucide-plus" class="size-3.5" />
+												Cue @ {formatDuration(stageSeconds)}
+											{/snippet}
+											<div class="max-h-80 scrollbar-thin overflow-y-auto">
+												{#each MEME_SFX_IDS as sfxId (sfxId)}
+													<MenuItem
+														onclick={() => {
+															previewSfx(sfxId);
+															addSfxCue(sfxId);
+														}}
+													>
+														{sfxLabels[sfxId]}
+													</MenuItem>
+												{/each}
+												{#if soundLibrary.list.length}
+													<MenuDivider />
+													{#each soundLibrary.list as sound (sound.id)}
+														<MenuItem
+															onclick={() => {
+																void previewSound(sound);
+																addCustomCue(sound);
+															}}
+														>
+															<span class="flex min-w-0 items-center gap-2">
+																<Icon
+																	name={sound.source === 'mic'
+																		? 'i-lucide-mic'
+																		: 'i-lucide-file-audio'}
+																	class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
+																/>
+																<span class="min-w-0">
+																	<span class="block truncate">{sound.label}</span>
+																	<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+																		{sound.durationSec.toFixed(1)}s · custom · cues at {formatDuration(
+																			stageSeconds
+																		)}
+																	</span>
+																</span>
+															</span>
+														</MenuItem>
+													{/each}
+												{/if}
+												<MenuDivider />
+												<MenuItem
+													icon="i-lucide-upload"
+													onclick={() => {
+														soundFileInput?.click();
+													}}
+												>
+													Import audio from device…
+												</MenuItem>
+												<MenuItem
+													icon="i-lucide-mic"
+													onclick={() => {
+														void toggleMicRecording();
+													}}
+												>
+													{recording ? 'Stop recording · save' : 'Record with mic…'}
+												</MenuItem>
+											</div>
+										</Popover>
+										<!-- #2 sound-timed captions: snap every caption window onto the cue sheet in order. -->
 										{#if sfxCues.length && overlays.length}
 											<button
 												type="button"
 												onclick={syncCaptionsToCues}
 												disabled={busy}
 												title="Each caption appears with its own sound cue"
-												class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+												class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
 											>
 												<Icon name="i-lucide-captions" class="size-3.5" />
 												Sync captions
 											</button>
 										{/if}
-
-										<button
-											type="button"
-											disabled={busy}
-											onclick={() => (soundDialogOpen = true)}
-											title="Browse, preview and fine-tune every sound cue"
-											class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
-										>
-											<Icon name="i-lucide-audio-lines" class="size-3.5" />
-											Sound studio
-										</button>
-
-										<!-- AI-002: Mild/Funny/Chaos timelines from this clip's
-										     audio peaks — always preview-and-edit, never direct to wire,
-										     and applying flips the AI-004 provenance flag on. -->
 										<Popover
 											id={suggestMenuId}
 											placement="top-start"
 											width="auto"
 											class="w-72 max-w-[80vw] p-0"
 											label="Suggested timings"
-											triggerClass="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+											triggerClass="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
 											triggerActiveClass="bg-primary-500/20 text-primary-600"
 										>
 											{#snippet trigger()}
@@ -4123,8 +4909,7 @@
 												<p
 													class="px-2 pb-1.5 text-[11px] leading-snug text-[var(--ui-text-dimmed)]"
 												>
-													Analyzes this clip's audio locally (silence, peaks, speech) and builds 3
-													editable timelines — nothing leaves your device.
+													Local audio analysis → 3 editable timelines. Nothing leaves your device.
 												</p>
 												{#if !suggestionGroups.length}
 													<button
@@ -4134,7 +4919,7 @@
 														class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-500/12 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-[0.98] disabled:opacity-40"
 													>
 														<Icon name="i-lucide-wand-sparkles" class="size-4" />
-														{suggestBusy ? 'Analyzing audio…' : 'Generate 3 vibes'}
+														{suggestBusy ? 'Analyzing…' : 'Generate 3 vibes'}
 													</button>
 												{:else}
 													{#each suggestionGroups as group (group.intensity)}
@@ -4188,30 +4973,6 @@
 													</button>
 												{/if}
 											</div>
-										</Popover>
-
-										<Popover
-											id={sfxMenuId}
-											placement="top-start"
-											width="auto"
-											label="Add sound effect"
-											triggerClass="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[11.5px] font-bold text-warm-600 transition hover:bg-warm-500/20"
-											triggerActiveClass="bg-warm-500/20"
-										>
-											{#snippet trigger()}
-												<Icon name="i-lucide-plus" class="size-3.5" />
-												Add at {formatDuration(stageSeconds)}
-											{/snippet}
-											{#each MEME_SFX_IDS as sfxId (sfxId)}
-												<MenuItem
-													onclick={() => {
-														previewSfx(sfxId);
-														addSfxCue(sfxId);
-													}}
-												>
-													{sfxLabels[sfxId]}
-												</MenuItem>
-											{/each}
 										</Popover>
 									</div>
 									<!-- My sounds: mic recorder + device import + reusable library -->
@@ -4433,9 +5194,11 @@
 											{/each}
 										</ul>
 									{:else}
-										<p class="mt-1.5 text-[11.5px] text-[var(--ui-text-dimmed)]">
-											Synthesis only (no licensing headaches) — cue a sound at the playhead, it gets
-											mixed into the exported video.
+										<p
+											class="mt-1.5 text-[11px] text-[var(--ui-text-dimmed)]"
+											title="Cue a sound at the playhead — it gets mixed into the export. All synthesized, no licensing headaches."
+										>
+											No cues yet — tap “Cue @” or press 1–9.
 										</p>
 									{/if}
 								</div>
@@ -4698,7 +5461,173 @@
 								{/if}
 							</p>
 						</div>
-					</div>
+					{/snippet}
+
+					{#if full}
+						<!-- Full-page pro layout (mass production): tool rail · big stage ·
+						     inspector — panes scroll on their own; the timeline bar stays pinned.
+						     Mobile stacks the panes in one scroll column. -->
+						{#if remixSource}
+							<div
+								class="flex shrink-0 items-center gap-2 border-b border-warm-500/25 bg-warm-500/10 px-4 py-2 text-[12px] font-semibold text-warm-600"
+							>
+								<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
+								<span class="truncate"
+									>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
+								>
+							</div>
+						{/if}
+						<div
+							class="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden"
+						>
+							<!-- Tool rail (left): add things to the meme -->
+							<aside
+								class="order-2 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:order-1 lg:w-[248px] lg:overflow-y-auto lg:border-r lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-3.5 lg:pl-4"
+								aria-label="Meme tools"
+							>
+								<p
+									class="mb-3 hidden text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase lg:block"
+								>
+									Tools
+								</p>
+								{@render toolsPane()}
+							</aside>
+							<!-- Stage (center): the WYSIWYG mirror, as tall as the viewport allows.
+							     A zoomed-in stage overflows the pane — scroll to pan. -->
+							<section
+								class="order-1 flex min-h-0 flex-1 scrollbar-thin flex-col items-center justify-center gap-2 overflow-y-auto p-3 sm:p-4 lg:order-2"
+							>
+								{@render stagePane()}
+							</section>
+							<!-- Inspector (right): selection, composition, sound, publish -->
+							<aside
+								class="order-3 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:w-[330px] lg:overflow-y-auto lg:border-l lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-4 lg:pl-3.5 xl:w-[368px]"
+								aria-label="Meme inspector"
+							>
+								{@render inspectorPane()}
+							</aside>
+						</div>
+						<!-- Pinned transport bar: timeline + the keyboard layer. Collapsible —
+						     hide it to hand the whole viewport to the stage (chevron, top-right). -->
+						<div
+							class="relative shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/40 px-3 py-2 sm:px-4"
+						>
+							<button
+								type="button"
+								onclick={() => (timelineCollapsed = !timelineCollapsed)}
+								aria-expanded={!timelineCollapsed}
+								aria-label={timelineCollapsed ? 'Show timeline' : 'Hide timeline'}
+								title={timelineCollapsed ? 'Show the timeline' : 'Hide the timeline — more stage'}
+								class="absolute top-1.5 right-2 z-10 grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+							>
+								<Icon
+									name={timelineCollapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'}
+									class="size-4"
+								/>
+							</button>
+							{#if timelineCollapsed}
+								<p
+									class="py-1 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
+								>
+									Timeline hidden — Space still plays · {timelineActive
+										? 'chevron to reopen'
+										: 'add a sound cue to unlock it'}
+								</p>
+							{:else}
+								{#if stripFrames && full}
+									<!-- Video frame strip rides the transport bar in the full layout: scrub,
+								     pick the poster, see the trim window — right under the timeline. -->
+									<VideoFrameStrip
+										durationSec={meta?.duration ?? 0}
+										thumbUrls={frameThumbs}
+										playheadSec={scrubSec}
+										{trimStartSec}
+										{trimEndSec}
+										posterSec={posterAtSec}
+										posterUrl={posterDataUrl}
+										{busy}
+										onScrub={scrubTo}
+										onPickPoster={(sec) => void pickPosterAt(sec)}
+									/>
+								{/if}
+								{#if timelineActive}
+									{@render timelinePane()}
+								{:else}
+									<p
+										class="py-1.5 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
+									>
+										Static meme — add a sound cue to unlock the timeline
+									</p>
+								{/if}
+								<p
+									class="mt-1.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9.5px] font-semibold text-[var(--ui-text-dimmed)]"
+								>
+									<span class="flex items-center gap-1"
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>Space</kbd
+										> play / pause</span
+									>
+									<span class="flex items-center gap-1"
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>←</kbd
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>→</kbd
+										> nudge playhead</span
+									>
+									<span class="flex items-center gap-1"
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>1</kbd
+										>–<kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>9</kbd
+										> cue a sound</span
+									>
+									<span class="flex items-center gap-1"
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>Ctrl ↵</kbd
+										> publish</span
+									>
+									<span class="flex items-center gap-1"
+										><kbd
+											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+											>M</kbd
+										> preview sound</span
+									>
+								</p>
+							{/if}
+						</div>
+					{:else}
+						<!-- Dialog layout: 260px stage column + stacked controls -->
+						<div
+							class="grid gap-4 p-4 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)] sm:gap-5 sm:p-5"
+						>
+							{#if remixSource}
+								<!-- Lineage chip: this project derives from a remixed bitz; the
+							     published event will carry remix + meme tags crediting it. -->
+								<div
+									class="mb-4 flex items-center gap-2 rounded-full bg-warm-500/10 px-3 py-1.5 text-[12px] font-semibold text-warm-600 sm:col-span-2"
+								>
+									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
+									<span class="truncate"
+										>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
+									>
+								</div>
+							{/if}
+							{@render stagePane()}
+							<div class="flex min-w-0 flex-col gap-4">
+								{#if timelineActive}
+									{@render timelinePane()}
+								{/if}
+								{@render toolsPane()}
+								{@render inspectorPane()}
+							</div>
+						</div>
+					{/if}
 				{/if}
 			</div>
 
@@ -4723,6 +5652,18 @@
 							class="h-9 rounded-full px-4 text-[13px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
 						>
 							Cancel
+						</button>
+						<!-- Export to file: same render pipeline as publish, saved locally —
+						     nothing hits a relay. -->
+						<button
+							type="button"
+							onclick={() => void exportFile()}
+							disabled={!file || busy}
+							title="Render and download the meme as a file — same output as publishing"
+							class="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-warm-500/50 hover:bg-warm-500/10 hover:text-warm-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+						>
+							<Icon name="i-lucide-download" class="size-4" />
+							<span class="hidden sm:inline">Export</span>
 						</button>
 						<button
 							type="button"
@@ -4795,7 +5736,9 @@
 <input
 	bind:this={fileInput}
 	type="file"
-	accept="image/*,video/mp4,video/webm,video/quicktime,image/gif"
+	accept={pickFormat === 'all'
+		? 'image/*,video/mp4,video/webm,video/quicktime,image/gif'
+		: (PICK_FORMATS.find((f) => f.id === pickFormat)?.accept ?? 'image/*,video/*')}
 	class="hidden"
 	onchange={onFileInput}
 />
@@ -4805,6 +5748,14 @@
 	accept="image/png,image/gif,image/jpeg,image/webp"
 	class="hidden"
 	onchange={onLayerFileInput}
+/>
+<input
+	bind:this={queueInput}
+	type="file"
+	accept="image/*,video/mp4,video/webm,video/quicktime,image/gif"
+	multiple
+	class="hidden"
+	onchange={onQueueInput}
 />
 <input
 	bind:this={soundFileInput}

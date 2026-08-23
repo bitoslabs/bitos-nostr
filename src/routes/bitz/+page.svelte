@@ -38,7 +38,7 @@
 	import { shortKey, timeAgo, formatDuration, formatCompact } from '$lib/utils/format';
 	import { lazyVideoMetadata } from '$lib/utils/media';
 	import { isEventReference, parseContent } from '$lib/utils/note-content';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasLightning } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { compactSats } from '$lib/utils/profile-stats';
@@ -162,6 +162,26 @@
 	let exploreScroller: HTMLDivElement | undefined = $state();
 	let exploreVisible = $state(EXPLORE_INITIAL_VISIBLE);
 	let gridVideoDurations = $state<Record<string, number>>({});
+	/** Reel view mode: 'fill' = crop-to-fill (default), 'full' = letterbox the
+	 * whole video. Global — one choice applies to every reel while swiping and
+	 * persists across sessions (same pattern as the playback-rate pref). */
+	const REEL_VIEW_MODE_KEY = 'bitos:reel-view-mode';
+	function loadReelViewMode(): 'fill' | 'full' {
+		try {
+			return localStorage.getItem(REEL_VIEW_MODE_KEY) === 'full' ? 'full' : 'fill';
+		} catch {
+			return 'full';
+		}
+	}
+	let reelViewMode = $state<'fill' | 'full'>(loadReelViewMode());
+	function toggleReelViewMode() {
+		reelViewMode = reelViewMode === 'full' ? 'fill' : 'full';
+		try {
+			localStorage.setItem(REEL_VIEW_MODE_KEY, reelViewMode);
+		} catch {
+			/* best-effort persistence */
+		}
+	}
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let activeReelId = $state('');
 	let activeReelMuted = $state(true);
@@ -225,6 +245,9 @@
 		...rankedReels.filter((reel) => reel.mediaType === 'video'),
 		...rankedReels.filter((reel) => reel.mediaType !== 'video')
 	]);
+	// Explore is page chrome on the themed background (light/dark aware);
+	// the player tabs float over video and stay dark-media chrome.
+	const isExplore = $derived(bitzMode === 'explore');
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
 
 	function bitzAuthorName(reel: ReelNote) {
@@ -1039,7 +1062,9 @@
 	}
 
 	/** Double-tap anywhere on the video: like (never unlike) + a burst of
-	 * hearts at the tap point — the reflex interaction every reels app needs. */
+	 * hearts at the tap point — the reflex interaction every reels app needs.
+	 * The video element always fills the card (letterboxed inside when in full
+	 * view), so video-relative coords are card-relative too. */
 	async function likeAtTap(reel: ReelNote, x: number, y: number) {
 		spawnBurst(reel.id, '❤️', `${x}px`, `${y}px`, 9);
 		if (reel.reactions.some((reaction) => reaction.byMe)) return;
@@ -1499,7 +1524,7 @@
 		<!-- Explore: video-first grid, TikTok-discover style -->
 		<div
 			bind:this={exploreScroller}
-			class="h-full [scrollbar-width:none] overflow-y-auto bg-black [&::-webkit-scrollbar]:hidden"
+			class="h-full [scrollbar-width:none] overflow-y-auto bg-[var(--ui-bg)] [&::-webkit-scrollbar]:hidden"
 			onscroll={handleExploreScroll}
 		>
 			{#if visibleExploreReels.length}
@@ -1515,7 +1540,7 @@
 						<button
 							type="button"
 							onclick={() => openFromExplore(reel)}
-							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-black text-left"
+							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-[var(--ui-bg-muted)] text-left"
 							aria-label="Open bitz by {name}"
 						>
 							{#if reel.mediaType === 'video'}
@@ -1601,15 +1626,19 @@
 											{captionFor(reel)}
 										</span>
 									{/if}
-									<span class="flex min-w-0 items-center gap-1">
+									<span class="flex min-w-0 items-center gap-1.5">
 										<Avatar
 											pubkey={reel.pubkey}
 											{name}
 											picture={profile?.picture}
-											size={16}
+											lightning={hasLightning(profile)}
+											size={20}
 											shape="hex"
 										/>
 										<span class="truncate text-[10px] font-bold">{name}</span>
+										{#if profile?.nip05}
+											<Icon name="i-lucide-badge-check" class="size-2.5 shrink-0 text-white/85" />
+										{/if}
 									</span>
 									<span class="flex items-center gap-2 text-[10px] font-bold">
 										<span class="inline-flex items-center gap-0.5">
@@ -1637,7 +1666,7 @@
 									exploreReels.length,
 									exploreVisible + EXPLORE_PAGE_SIZE
 								))}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 text-[13px] font-bold text-white transition hover:bg-white/20"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)]"
 						>
 							<Icon name="i-lucide-plus" class="size-4" />
 							Load more bitz
@@ -1647,7 +1676,7 @@
 							type="button"
 							onclick={() => void loadMoreExploreReels()}
 							disabled={loadingMoreReels}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 text-[13px] font-bold text-white transition hover:bg-white/20 disabled:cursor-default disabled:opacity-60"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60"
 						>
 							<Icon
 								name="i-lucide-loader-circle"
@@ -1656,26 +1685,30 @@
 							{loadingMoreReels ? 'Loading older bitz' : 'Load older bitz'}
 						</button>
 					{:else}
-						<p class="text-[11px] font-semibold text-white/50">That's all the bitz for now</p>
+						<p class="text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+							That's all the bitz for now
+						</p>
 					{/if}
 				</div>
 			{:else}
 				<div
-					class="flex h-full flex-col items-center justify-center gap-3 px-6 pb-16 text-center text-white"
+					class="flex h-full flex-col items-center justify-center gap-3 px-6 pb-16 text-center text-[var(--ui-text)]"
 				>
-					<div class="grid size-14 place-items-center rounded-2xl bg-white/10 text-white/70">
+					<div
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)] ring-1 ring-[var(--ui-border-muted)]"
+					>
 						<Icon name="i-lucide-clapperboard" class="size-7" />
 					</div>
 					<div>
 						<p class="text-[15px] font-bold">No bitz to explore yet</p>
-						<p class="mt-1 text-[13px] text-white/60">
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
 							Short videos and pictures from your relays will appear here.
 						</p>
 					</div>
 					<button
 						type="button"
 						onclick={() => loadReels()}
-						class="mt-2 rounded-full bg-white px-5 py-2.5 text-[13px] font-bold text-black transition hover:opacity-90"
+						class="mt-2 rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
 					>
 						Refresh
 					</button>
@@ -1705,14 +1738,18 @@
 						class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 					>
 						{#if reel.mediaType === 'video'}
+							{@const fullView = reelViewMode === 'full'}
 							<MediaPlayer
 								src={reelSource(reel)}
 								fallbackSrcs={reel.mediaFallbacks}
 								label="Relay video note"
-								class="absolute inset-0"
-								mediaClass="absolute inset-0 size-full object-cover {reelCovered
-									? 'scale-105 blur-2xl saturate-50'
-									: ''}"
+								mediaClass={fullView
+									? `absolute inset-0 size-full object-contain ${reelCovered
+										? 'scale-105 blur-2xl saturate-50'
+										: ''}`
+									: `absolute inset-0 size-full object-cover ${reelCovered
+										? 'scale-105 blur-2xl saturate-50'
+										: ''}`}
 								variant="reel"
 								loop
 								muted={reel.id === activeReelId ? activeReelMuted : true}
@@ -1835,12 +1872,13 @@
 								</span>
 								<span class="text-[11px] font-semibold">Save</span>
 							</button>
-							<a href={`/profile/${reel.pubkey}`} class="spin-slow mt-2" aria-label="Open profile">
+							<a href={`/profile/${reel.pubkey}`} class="mt-2" aria-label="Open profile">
 								<Avatar
 									pubkey={reel.pubkey}
 									{name}
 									picture={profile?.picture}
-									verified={hasNip05(profile)}
+									lightning={hasLightning(profile)}
+									orbit
 									size={40}
 									frame
 								/>
@@ -1854,7 +1892,7 @@
 									pubkey={reel.pubkey}
 									{name}
 									picture={profile?.picture}
-									verified={hasNip05(profile)}
+									lightning={hasLightning(profile)}
 									size={40}
 									frame
 								/>
@@ -1909,6 +1947,21 @@
 											<MenuItem icon="i-lucide-repeat" onclick={() => remixReel(reel)}>
 												Remix this meme
 											</MenuItem>
+											{#if reel.mediaType === 'video'}
+												<!-- Whole-video view vs the default crop-to-fill. Global:
+												     applies to every reel while swiping, and persists. -->
+												<MenuItem
+													icon={reelViewMode === 'full' ? 'i-lucide-shrink' : 'i-lucide-expand'}
+													onclick={() => {
+														toggleReelViewMode();
+														popovers.close();
+													}}
+												>
+													{reelViewMode === 'full'
+														? 'Fill screen · all bitz'
+														: 'View full video · all bitz'}
+												</MenuItem>
+											{/if}
 											<MenuItem
 												icon="i-lucide-link"
 												onclick={() =>
@@ -2164,19 +2217,27 @@
 	{/if}
 
 	<!-- Sticky top bar: Bitz wordmark · view tabs · refresh. Shrinks with the
-	     comments panel so the tabs stay centered over the video area (lg). -->
+	     comments panel so the tabs stay centered over the video area (lg).
+	     Over the player it is dark media chrome (gradient over video); on the
+	     Explore grid it follows the theme so light mode gets a themed page. -->
 	<div
-		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-gradient-to-b from-black/55 via-black/25 to-transparent px-4 pt-4 pb-12 text-white transition-[padding] duration-200 {commentReel
+		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 pt-4 pb-12 transition-[padding] duration-200 {isExplore
+			? 'bg-gradient-to-b from-[var(--ui-bg)] via-[color-mix(in_oklab,var(--ui-bg)_72%,transparent)] to-transparent text-[var(--ui-text)]'
+			: 'bg-gradient-to-b from-black/55 via-black/25 to-transparent text-white'} {commentReel
 			? 'lg:pr-[390px]'
 			: ''}"
 	>
 		<h2
-			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold text-white drop-shadow sm:block"
+			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold sm:block {isExplore
+				? 'text-[var(--ui-text-highlighted)]'
+				: 'text-white drop-shadow'}"
 		>
 			Bitz
 		</h2>
 		<div
-			class="pointer-events-auto flex items-center gap-0.5 rounded-full bg-black/40 p-1 backdrop-blur-md"
+			class="pointer-events-auto flex items-center gap-0.5 rounded-full p-1 {isExplore
+				? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
+				: 'bg-black/40 backdrop-blur-md'}"
 			role="tablist"
 			aria-label="Bitz views"
 		>
@@ -2186,10 +2247,13 @@
 					role="tab"
 					aria-selected={bitzMode === tab.key}
 					onclick={() => switchBitzMode(tab.key)}
-					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
-					tab.key
-						? 'bg-white text-black'
-						: 'text-white/75 hover:text-white'}"
+					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode === tab.key
+						? isExplore
+							? 'bg-[var(--ui-bg)] text-[var(--ui-text-highlighted)] ring-1 ring-[var(--ui-border-muted)] shadow-sm'
+							: 'bg-white text-black'
+						: isExplore
+							? 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+							: 'text-white/75 hover:text-white'}"
 				>
 					{tab.label}
 				</button>
@@ -2199,7 +2263,9 @@
 			<button
 				type="button"
 				onclick={() => search.openOverlay()}
-				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+				class="grid size-10 place-items-center rounded-xl transition {isExplore
+					? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
+					: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
 				aria-label="Search bitz"
 			>
 				<Icon name="i-lucide-search" class="size-5" />
@@ -2207,7 +2273,9 @@
 			<button
 				type="button"
 				onclick={() => loadReels()}
-				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+				class="grid size-10 place-items-center rounded-xl transition {isExplore
+					? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
+					: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
 				aria-label="Refresh bitz"
 			>
 				<Icon name="i-lucide-rotate-cw" class="size-5" />
@@ -2304,7 +2372,7 @@
 											pubkey={comment.pubkey}
 											name={commentName}
 											picture={commentProfile?.picture}
-											verified={hasNip05(commentProfile)}
+											lightning={hasLightning(commentProfile)}
 											size={nested ? 22 : 34}
 											frame={!nested}
 										/>

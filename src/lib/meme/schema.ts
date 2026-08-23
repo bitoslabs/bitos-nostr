@@ -264,9 +264,17 @@ export function overlayVisibleAt(overlay: MemeTextOverlay, atMs: number): boolea
 	return true;
 }
 
-/** Fresh overlay with sensible meme defaults. */
+/** Fresh overlay with sensible meme defaults. Creation helper — unlike the
+ * wire parser, a fresh caption may start EMPTY (the editor shows a placeholder
+ * until the creator types); `normalizeOverlay` alone would drop blank text. */
 export function makeOverlay(partial: Partial<MemeTextOverlay> = {}): MemeTextOverlay {
-	return normalizeOverlay({ x: 0.5, y: 0.5, size: 0.09, ...partial })!;
+	const merged = { x: 0.5, y: 0.5, size: 0.09, ...partial };
+	const normalized = normalizeOverlay(merged);
+	if (normalized) return normalized;
+	// Blank-text path: seed a throwaway char so the parser coerces every other
+	// field (clamps, defaults), then blank the text for the editor.
+	const seeded = normalizeOverlay({ ...merged, text: '.' })!;
+	return { ...seeded, text: partial.text?.trim() ? partial.text : '' };
 }
 
 export function makeClassicPair(): MemeTextOverlay[] {

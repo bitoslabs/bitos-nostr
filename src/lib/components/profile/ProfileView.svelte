@@ -17,6 +17,7 @@
 	import ProfileStats from '$lib/components/profile/ProfileStats.svelte';
 	import ActivityHeatmap from '$lib/components/profile/ActivityHeatmap.svelte';
 	import MediaGallery from '$lib/components/profile/MediaGallery.svelte';
+	import ProfileBitzGrid from '$lib/components/profile/ProfileBitzGrid.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
@@ -24,6 +25,8 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { toFeedNote } from '$lib/nostr/feed-note';
+	import { BITZ_MEDIA_KINDS, latestAddressableEvents, parseBitz } from '$lib/nostr/bitz-codec';
+	import { toReelNote, type ReelNote } from '$lib/stores/bitz-session.svelte';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { receiptToZapEntry, type ZapEntry } from '$lib/nostr/wallet.svelte';
 	import ZapLedgerRow from '$lib/components/zaps/ZapLedgerRow.svelte';
@@ -36,7 +39,7 @@
 
 	const NOTE_PAGE_LIMIT = 30;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
-	type Tab = 'posts' | 'replies' | 'media' | 'zaps' | 'pinned' | 'liked' | 'reposts';
+	type Tab = 'posts' | 'replies' | 'media' | 'zaps' | 'pinned' | 'liked' | 'reposts' | 'bitz';
 
 	const profile = $derived(pubkey ? profiles.get(pubkey) : undefined);
 	const displayName = $derived(
@@ -70,6 +73,10 @@
 	let zapEntries = $state<ZapEntry[]>([]);
 	let zapsLoading = $state(false);
 	let zapsLoadedFor = $state('');
+	/** Bitz (short-form media) published by this profile — loaded on first open. */
+	let bitzReels = $state<ReelNote[]>([]);
+	let bitzLoading = $state(false);
+	let bitzLoadedFor = $state('');
 	let bioExpanded = $state(false);
 	let npubCopied = $state(false);
 	let stuck = $state(false);
@@ -97,7 +104,8 @@
 			['zaps', zapEntries.length],
 			['pinned', pinnedNotes.length],
 			['liked', likedNotes.length],
-			['reposts', repostedNotes.length]
+			['reposts', repostedNotes.length],
+			['bitz', bitzReels.length]
 		])
 	);
 
@@ -152,20 +160,31 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 500 }
+					{
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.ZAP
+						],
+						'#e': noteIds,
+						limit: 500
+					}
 				])
 			: [];
 		return {
 			notes: applyActivityToNotes(nextNotes, activity, identity.current?.pk),
 			mayHaveMore:
-				events.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE || event.kind === NOSTR_KINDS.POLL).length >= NOTE_PAGE_LIMIT
+				events.filter(
+					(event) => event.kind === NOSTR_KINDS.TEXT_NOTE || event.kind === NOSTR_KINDS.POLL
+				).length >= NOTE_PAGE_LIMIT
 		};
 	}
 
 	async function fetchNotePage(nextPubkey: string, until?: number) {
 		const events = await queryPrimaryFirst([
 			{
-			kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
+				kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
 				authors: [nextPubkey],
 				limit: NOTE_PAGE_LIMIT,
 				...(until ? { until } : {})
@@ -198,9 +217,83 @@
 		}
 	}
 
+	/** Load the profile's bitz (NIP-68/71 media events by this author) plus
+	 *  legacy video-bearing kind-1 notes already on the page. */
+	async function loadBitz(nextPubkey: string) {
+		if (bitzLoading || bitzLoadedFor === nextPubkey) return;
+		bitzLoading = true;
+		try {
+			const events = await queryPrimaryFirst([
+				{ kinds: [...BITZ_MEDIA_KINDS], authors: [nextPubkey], limit: 60 }
+			]);
+			if (loadedFor !== nextPubkey) return;
+			const mediaReels = latestAddressableEvents(events)
+				.sort((a, b) => b.created_at - a.created_at)
+				.map((event) => toReelNote(event))
+				.filter((reel): reel is ReelNote => !!reel);
+			const legacyReels = notes.map(reelFromLegacyNote).filter((reel): reel is ReelNote => !!reel);
+			const seen = new SvelteSet<string>();
+			const base = [...mediaReels, ...legacyReels]
+				.filter((reel) => {
+					if (seen.has(reel.id)) return false;
+					seen.add(reel.id);
+					return true;
+				})
+				.sort((a, b) => b.createdAt - a.createdAt);
+			const activity = base.length
+				? await queryPrimaryFirst([
+						{
+							kinds: [
+								NOSTR_KINDS.REACTION,
+								NOSTR_KINDS.REPOST,
+								NOSTR_KINDS.GENERIC_REPOST,
+								NOSTR_KINDS.ZAP
+							],
+							'#e': base.map((reel) => reel.id),
+							limit: 500
+						}
+					])
+				: [];
+			if (loadedFor !== nextPubkey) return;
+			// applyActivityToNotes returns plain FeedNotes (1:1 with `base`) — zip
+			// the hydrated counts back onto the media descriptors (same pattern as
+			// the Bitz page).
+			const hydratedById = new Map(
+				applyActivityToNotes(base, activity, identity.current?.pk).map((note) => [note.id, note])
+			);
+			bitzReels = base.map((reel) => ({ ...reel, ...hydratedById.get(reel.id)! }));
+			bitzLoadedFor = nextPubkey;
+		} catch {
+			/* best-effort */
+		} finally {
+			bitzLoading = false;
+		}
+	}
+
+	/** Legacy kind-1 video notes from the loaded page parse into reels with no
+	 *  extra relay round trip (NIP-71 compatibility path, mirrors the Bitz feed). */
+	function reelFromLegacyNote(note: FeedNote): ReelNote | null {
+		const media = parseBitz({
+			id: note.id,
+			pubkey: note.pubkey,
+			kind: NOSTR_KINDS.TEXT_NOTE,
+			content: note.content,
+			tags: note.tags
+		});
+		if (!media) return null;
+		return {
+			...note,
+			mediaUrl: media.url,
+			mediaType: media.type,
+			mediaFallbacks: media.fallbacks,
+			...(media.renditions ? { mediaRenditions: media.renditions } : {})
+		};
+	}
+
 	function onTabSelect(tab: Tab) {
 		activeTab = tab;
 		if (tab === 'zaps' && pubkey) void loadZaps(pubkey);
+		if (tab === 'bitz' && pubkey) void loadBitz(pubkey);
 	}
 
 	async function loadPinnedNotes(nextPubkey: string) {
@@ -222,7 +315,12 @@
 		const ordered = ids.map((id) => notesById.get(id)).filter((note): note is FeedNote => !!note);
 		const activity = await queryPrimaryFirst([
 			{
-				kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
+				kinds: [
+					NOSTR_KINDS.REACTION,
+					NOSTR_KINDS.POLL_RESPONSE,
+					NOSTR_KINDS.REPOST,
+					NOSTR_KINDS.ZAP
+				],
 				'#e': ordered.map((note) => note.id),
 				limit: 500
 			}
@@ -265,7 +363,12 @@
 				.filter((note): note is FeedNote => !!note);
 			const activity = await queryPrimaryFirst([
 				{
-					kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP],
+					kinds: [
+						NOSTR_KINDS.REACTION,
+						NOSTR_KINDS.POLL_RESPONSE,
+						NOSTR_KINDS.REPOST,
+						NOSTR_KINDS.ZAP
+					],
 					'#e': ordered.map((note) => note.id),
 					limit: 500
 				}
@@ -327,7 +430,13 @@
 			});
 			const currentLoad = nextPubkey;
 			const primaryEvents = await queryPrimaryFirst(
-				[{ kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL], authors: [nextPubkey], limit: NOTE_PAGE_LIMIT }],
+				[
+					{
+						kinds: [NOSTR_KINDS.TEXT_NOTE, NOSTR_KINDS.POLL],
+						authors: [nextPubkey],
+						limit: NOTE_PAGE_LIMIT
+					}
+				],
 				{
 					onSecondary: (mergedEvents) => {
 						if (loadedFor !== currentLoad) return;
@@ -835,7 +944,7 @@
 				<div
 					class="ml-auto flex [scrollbar-width:none] gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden"
 				>
-					{#each [['posts', 'Posts'], ['replies', 'Replies'], ['media', 'Media'], ['zaps', 'Zaps']] as [tab, label] (tab)}
+					{#each [['posts', 'Posts'], ['replies', 'Replies'], ['reposts', 'Reposts'], ['bitz', 'Bitz'], ['media', 'Media'], ['zaps', 'Zaps']] as [tab, label] (tab)}
 						<button
 							type="button"
 							onclick={() => onTabSelect(tab as Tab)}
@@ -876,19 +985,6 @@
 						>
 							<Icon name="i-lucide-heart" class="size-3.5" />
 							Liked
-						</button>
-					{/if}
-					{#if repostedNotes.length}
-						<button
-							type="button"
-							onclick={() => (activeTab = 'reposts')}
-							class="flex items-center gap-1.5 border-b-2 px-3 py-3 text-[13px] font-bold whitespace-nowrap transition {activeTab ===
-							'reposts'
-								? 'border-primary-500 text-[var(--ui-text)]'
-								: 'border-transparent text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-						>
-							<Icon name="i-lucide-repeat-2" class="size-3.5" />
-							Reposts
 						</button>
 					{/if}
 				</div>
@@ -958,6 +1054,10 @@
 		{:else if activeTab === 'media'}
 			<div class="pb-8">
 				<MediaGallery {notes} />
+			</div>
+		{:else if activeTab === 'bitz'}
+			<div class="pb-8">
+				<ProfileBitzGrid reels={bitzReels} loading={bitzLoading} />
 			</div>
 		{:else if visibleNotes.length}
 			<div class="feed-note-list pb-8">

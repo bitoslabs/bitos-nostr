@@ -50,6 +50,9 @@
 		studioHandoff.useTemplate(tpl.id, tpl.overlays);
 	}
 
+	/** Freshest WIP slot (slots are stored newest-first) — the hero card's subject. */
+	const newestSlot = $derived(memeSlots.list[0] ?? null);
+
 	function removeTemplate(id: string) {
 		const tpl = memeTemplates.list.find((t) => t.id === id);
 		memeTemplates.remove(id);
@@ -71,6 +74,76 @@
 			Studio home — pick a surface, resume work in progress, or reuse a saved layout.
 		</p>
 	</header>
+
+	<!-- Continue creating: the freshest WIP slot as a hero card — one tap from
+	     cold start back into the exact meme you were making. -->
+	{#if newestSlot}
+		<section class="mb-6" aria-label="Continue creating">
+			<div
+				class="group relative overflow-hidden rounded-2xl border border-warm-500/35 bg-gradient-to-br from-warm-500/12 via-[var(--ui-bg-muted)]/60 to-[var(--ui-bg-muted)]/40 p-4 transition hover:border-warm-500/60"
+			>
+				<div class="flex items-center gap-3.5">
+					<button
+						type="button"
+						onclick={() => resumeSlot(newestSlot.id)}
+						class="relative block h-[86px] w-[52px] shrink-0 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] text-[var(--ui-text-dimmed)] transition group-hover:border-warm-500/50"
+						title="Resume “{newestSlot.label}” in the Meme Studio"
+					>
+						{#if newestSlot.media?.dataUrl}
+							<img src={newestSlot.media.dataUrl} alt="" class="size-full object-cover" />
+						{:else}
+							<span class="grid size-full place-items-center">
+								{#if newestSlot.mediaKindValue === 'video'}
+									<Icon name="i-lucide-film" class="size-5" />
+								{:else if newestSlot.mediaKindValue === 'image'}
+									<Icon name="i-lucide-image" class="size-5" />
+								{:else}
+									<Icon name="i-lucide-type" class="size-5" />
+								{/if}
+							</span>
+						{/if}
+					</button>
+					<div class="min-w-0 flex-1">
+						<p
+							class="flex items-center gap-1.5 text-[10.5px] font-bold tracking-wider text-warm-600 uppercase"
+						>
+							<Icon name="i-lucide-pencil-line" class="size-3.5" />
+							Continue creating
+						</p>
+						<button
+							type="button"
+							onclick={() => resumeSlot(newestSlot.id)}
+							class="mt-0.5 block max-w-full truncate text-left text-[16px] font-bold text-[var(--ui-text-highlighted)] transition hover:text-warm-600"
+							title="Resume “{newestSlot.label}” in the Meme Studio"
+						>
+							{newestSlot.label}
+						</button>
+						<p class="mt-0.5 truncate text-[12px] text-[var(--ui-text-muted)]">
+							{slotSummary(newestSlot)} · {agoLabel(newestSlot.savedAt)}
+						</p>
+					</div>
+					<div class="flex shrink-0 flex-col items-end gap-1.5">
+						<button
+							type="button"
+							onclick={() => resumeSlot(newestSlot.id)}
+							class="inline-flex h-9 items-center gap-1.5 rounded-full bg-warm-500 px-4 text-[13px] font-bold text-white transition hover:brightness-110 active:scale-95"
+						>
+							<Icon name="i-lucide-play" class="size-4" />
+							Resume
+						</button>
+						<button
+							type="button"
+							onclick={() => removeSlot(newestSlot.id)}
+							aria-label="Delete {newestSlot.label}"
+							class="rounded-full px-2 py-0.5 text-[10.5px] font-bold text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
+						>
+							Discard
+						</button>
+					</div>
+				</div>
+			</div>
+		</section>
+	{/if}
 
 	<!-- Quick start -->
 	<section aria-label="Start something new">

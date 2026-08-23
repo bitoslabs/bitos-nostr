@@ -16,6 +16,11 @@
 	 * The verified (NIP-05) badge sits on an unclipped layer above everything
 	 * (`z-index: 2` + surface ring), matching the design's
 	 * `.hex-avatar.verified::after`.
+	 *
+	 * `orbit` recycles the boot splash's perimeter trace (`.bs-boot-orbit`)
+	 * as ambient motion: the border draws itself, holds, and discharges in a
+	 * slow loop. Use it sparingly — one orbiting avatar per surface reads as
+	 * a brand flourish; several read as noise.
 	 */
 	let {
 		pubkey,
@@ -24,6 +29,7 @@
 		size = 40,
 		shape = 'hex',
 		frame = false,
+		orbit = false,
 		verified = false,
 		lightning = false,
 		class: cls
@@ -34,6 +40,7 @@
 		size?: number;
 		shape?: 'hex' | 'squircle' | 'circle';
 		frame?: boolean;
+		orbit?: boolean;
 		verified?: boolean;
 		lightning?: boolean;
 		class?: string;
@@ -83,6 +90,21 @@
 			<span class="relative">{initials}</span>
 		{/if}
 	</div>
+
+	{#if orbit}
+		<!-- Perimeter trace (splash-screen language). pathLength normalizes the
+		     dash math per shape; non-scaling-stroke keeps the line hairline-fine
+		     at any avatar size. -->
+		<svg class="avatar-orbit" viewBox="0 0 100 100" aria-hidden="true">
+			{#if shape === 'hex'}
+				<polygon points="25,6.7 75,6.7 100,50 75,93.3 25,93.3 0,50" pathLength="100" />
+			{:else if shape === 'circle'}
+				<circle cx="50" cy="50" r="47.5" pathLength="100" />
+			{:else}
+				<rect x="3" y="3" width="94" height="94" rx="26" pathLength="100" />
+			{/if}
+		</svg>
+	{/if}
 
 	{#if lightning}
 		<!-- Lightning badge — green chip with the zap bolt -->

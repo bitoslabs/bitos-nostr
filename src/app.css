@@ -1000,20 +1000,7 @@
 			opacity: 1;
 		}
 	}
-	.spin-slow {
-		animation: pulse-spin 8s linear infinite;
-		clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
-		border: 2px solid rgba(255, 255, 255, 0.72);
-		box-shadow: 0 0 0 1px color-mix(in oklab, var(--ui-color-primary-500) 32%, transparent);
-	}
-	@keyframes pulse-spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
+	/* Facebook/Instagram-style double-tap “like” burst. */
 	.heart-burst {
 		animation: pulse-heart-burst 0.6s ease-out forwards;
 	}
@@ -1040,6 +1027,71 @@
 		}
 		50% {
 			box-shadow: 0 0 0 3px rgb(247 147 26 / 0.35);
+		}
+	}
+
+	/* Avatar orbit (Avatar.svelte `orbit` prop): the boot splash's perimeter
+	   trace (.bs-boot-orbit) recycled as ambient creator motion — the border
+	   draws itself, holds, and discharges in a slow, mostly-idle loop. The
+	   stroke travels the brand palette (primary → accent → warm) in lock-step
+	   with the draw, all via theme vars so it follows the active theme.
+	   Shapes carry pathLength="100", so the dash math is unit-normalized. */
+	.avatar-orbit {
+		position: absolute;
+		inset: 1px;
+		z-index: 1;
+		width: calc(100% - 2px);
+		height: calc(100% - 2px);
+		pointer-events: none;
+	}
+	.avatar-orbit polygon,
+	.avatar-orbit circle,
+	.avatar-orbit rect {
+		fill: none;
+		stroke: var(--ui-color-primary-400);
+		stroke-width: 2;
+		stroke-linejoin: round;
+		stroke-linecap: round;
+		vector-effect: non-scaling-stroke;
+		filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.35));
+		stroke-dasharray: 100;
+		stroke-dashoffset: 100;
+		animation: avatar-orbit-trace 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+	}
+	@keyframes avatar-orbit-trace {
+		0%,
+		6% {
+			stroke-dashoffset: 100;
+			opacity: 0;
+			stroke: var(--ui-color-primary-400);
+		}
+		9% {
+			opacity: 1;
+		}
+		14% {
+			stroke: var(--ui-color-primary-500);
+		}
+		22% {
+			stroke: var(--color-accent-500);
+		}
+		30% {
+			stroke-dashoffset: 0;
+			opacity: 1;
+			stroke: var(--color-warm-500);
+		}
+		46%,
+		100% {
+			stroke-dashoffset: 0;
+			opacity: 0;
+			stroke: var(--ui-color-primary-400);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.avatar-orbit polygon,
+		.avatar-orbit circle,
+		.avatar-orbit rect {
+			animation: none;
+			opacity: 0;
 		}
 	}
 

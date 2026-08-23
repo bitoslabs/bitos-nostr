@@ -47,6 +47,14 @@ describe('stickers', () => {
 		expect(normalizeOverlay(a)).toEqual(a);
 	});
 
+	it('makeSticker lands alive — default pop/spin fx cycles by index', () => {
+		expect(makeSticker('😂', { index: 0 }).fx).toBe('pop');
+		expect(makeSticker('🔥', { index: 1 }).fx).toBe('spin');
+		expect(makeSticker('💀', { index: 2 }).fx).toBe('pop');
+		// explicit fx always wins over the cycle default
+		expect(makeSticker('👀', { index: 0, fx: 'none' }).fx).toBe('none');
+	});
+
 	it('isStickerOverlay detects stickers among text overlays', () => {
 		const sticker = makeSticker('💀');
 		const caption = makeOverlay({ text: 'WHEN THE CODE SHIPS' });

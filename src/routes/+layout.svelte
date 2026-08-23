@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
+	import { browser, dev } from '$app/environment';
 	import { page } from '$app/state';
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
@@ -240,10 +240,27 @@
 			setTimeout(() => splash.remove(), 400);
 		}
 		if ('serviceWorker' in navigator) {
-			void navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch((e) => {
-				/* PWA support is best-effort. */
-				console.error('Failed to register service worker:', e);
-			});
+			if (dev) {
+				// The SW is cache-first for same-origin GETs — in dev that caches
+				// Vite module URLs and serves stale code after every edit (broken
+				// HMR, phantom old UI). Never register it in dev, and unregister
+				// any copy left over from a previous production run.
+				void navigator.serviceWorker
+					.getRegistrations()
+					.then((registrations) => {
+						for (const registration of registrations) void registration.unregister();
+					})
+					.catch(() => {
+						/* best-effort cleanup */
+					});
+			} else {
+				void navigator.serviceWorker
+					.register('/service-worker.js', { type: 'module' })
+					.catch((e) => {
+						/* PWA support is best-effort. */
+						console.error('Failed to register service worker:', e);
+					});
+			}
 		}
 		preferences.load();
 		preferences.apply();
@@ -501,7 +518,13 @@
 	<!-- Keep this shell out of its own stacking context. Full-screen viewers rendered
 	     by page content must be able to layer above the mobile tab bar. -->
 	<div class="relative flex h-screen w-full justify-center overflow-hidden">
-		<div class="flex w-full max-w-[var(--ui-container)] overflow-hidden">
+		<!-- Breakout editors (studio) drop the centered container clamp too — the
+		     editing surface owns the whole width next to the nav rail. -->
+		<div
+			class={isBreakout
+				? 'flex h-full w-full overflow-hidden'
+				: 'flex w-full max-w-[var(--ui-container)] overflow-hidden'}
+		>
 			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
 				class="z-20 hidden w-[260px] shrink-0 border-r border-[var(--ui-border-muted)] lg:flex lg:flex-col"
