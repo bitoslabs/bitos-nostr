@@ -101,6 +101,58 @@ describe('image-overlay', () => {
 		expect(back!.endMs).toBe(3000);
 	});
 
+	it('effect fields round-trip the wire and default when absent', () => {
+		const styled = normalizeImageOverlay({
+			src: 'https://cdn.example.com/s.gif',
+			x: 0.5,
+			y: 0.5,
+			size: 0.3,
+			opacity: 0.55,
+			rotate: 90,
+			flipH: true,
+			flipV: false,
+			lookId: 'sepia'
+		})!;
+		expect(styled.opacity).toBe(0.55);
+		expect(styled.rotate).toBe(90);
+		expect(styled.flipH).toBe(true);
+		expect(styled.flipV).toBeUndefined();
+		expect(styled.lookId).toBe('sepia');
+		const wire = encodeImageOverlay(styled);
+		expect(wire.o).toBeCloseTo(0.55);
+		expect(wire.r).toBe(90);
+		expect(wire.fh).toBe(1);
+		expect(wire.fv).toBeUndefined();
+		expect(wire.k).toBe('sepia');
+		const back = decodeImageOverlay(wire)!;
+		expect(back.opacity).toBeCloseTo(0.55);
+		expect(back.rotate).toBe(90);
+		expect(back.flipH).toBe(true);
+		expect(back.flipV).toBeUndefined();
+		expect(back.lookId).toBe('sepia');
+
+		// Defaults stay wire-silent: an untouched layer encodes no effect keys.
+		const plain = normalizeImageOverlay({ src: 'https://cdn.example.com/p.png' })!;
+		const plainWire = encodeImageOverlay(plain);
+		expect(plainWire.o).toBeUndefined();
+		expect(plainWire.r).toBeUndefined();
+		expect(plainWire.fh).toBeUndefined();
+		expect(plainWire.k).toBeUndefined();
+		expect(plain.opacity).toBeUndefined();
+		expect(plain.rotate).toBeUndefined();
+
+		// Junk is clamped/dropped, never thrown.
+		const junk = normalizeImageOverlay({
+			src: 'https://cdn.example.com/j.png',
+			opacity: 9,
+			rotate: 9999,
+			lookId: 'not-a-look'
+		})!;
+		expect(junk.opacity).toBe(1);
+		expect(junk.rotate).toBe(180);
+		expect(junk.lookId).toBeUndefined();
+	});
+
 	it('decodeImageOverlay drops junk entries instead of throwing', () => {
 		expect(decodeImageOverlay(null)).toBeNull();
 		expect(decodeImageOverlay({})).toBeNull();

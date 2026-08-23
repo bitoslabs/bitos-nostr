@@ -12,6 +12,8 @@
  *     keep working — they simply never see the image layer)
  */
 
+import { memeLookOf } from './look';
+
 const SRC_RE = /^https:\/\/\S+$/i;
 
 /** Hard cap — image layers are accents, not a collage tool. */
@@ -36,6 +38,15 @@ export interface MemeImageOverlay {
 	/** Visibility window in media time (ms). Missing = always visible. */
 	startMs?: number;
 	endMs?: number;
+	/** Opacity 0.05–1. Missing = opaque. */
+	opacity?: number;
+	/** Rotation in degrees (−180…180, 90 is common). Missing = upright. */
+	rotate?: number;
+	/** Mirror flips. Missing = false. */
+	flipH?: boolean;
+	flipV?: boolean;
+	/** Per-layer color look (id from meme/look.ts). Missing/none = as-is. */
+	lookId?: string;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -62,6 +73,7 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	const src = typeof o.src === 'string' ? o.src.trim() : '';
 	if (!isHttpUrl(src)) return null;
 	const aspect = clamp(num(o.aspect, 1), 0.05, 20);
+	const lookId = memeLookOf(o.lookId);
 	const overlay: MemeImageOverlay = {
 		id: typeof o.id === 'string' && o.id.trim() ? o.id.slice(0, 64) : newId(),
 		src: src.slice(0, 512),
@@ -70,7 +82,15 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 		y: clamp(num(o.y, 0.5), 0, 1),
 		size: clamp(num(o.size, 0.25), MIN_IMAGE_SIZE, MAX_IMAGE_SIZE),
 		startMs: o.startMs === undefined ? undefined : Math.max(0, Math.round(Number(o.startMs))),
-		endMs: o.endMs === undefined ? undefined : Math.max(0, Math.round(Number(o.endMs)))
+		endMs: o.endMs === undefined ? undefined : Math.max(0, Math.round(Number(o.endMs))),
+		opacity: o.opacity === undefined ? undefined : clamp(num(o.opacity, 1), 0.05, 1),
+		rotate:
+			o.rotate === undefined || !Number.isFinite(Number(o.rotate))
+				? undefined
+				: clamp(Math.round(Number(o.rotate)), -180, 180),
+		flipH: o.flipH === true ? true : undefined,
+		flipV: o.flipV === true ? true : undefined,
+		...(lookId !== 'none' ? { lookId } : {})
 	};
 	if (
 		overlay.startMs !== undefined &&
@@ -125,6 +145,11 @@ export interface WireImageOverlay {
 	s: number;
 	a?: number; // aspect
 	w?: [number, number]; // [startMs, endMs]
+	o?: number; // opacity (0–1, only when < 1)
+	r?: number; // rotation degrees (only when ≠ 0)
+	fh?: 1; // horizontal flip (only when true)
+	fv?: 1; // vertical flip (only when true)
+	k?: string; // per-layer look id (only when set)
 }
 
 export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay {
@@ -137,6 +162,12 @@ export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay 
 	if (overlay.aspect !== 1) w.a = round2(overlay.aspect);
 	if (overlay.startMs !== undefined && overlay.endMs !== undefined)
 		w.w = [overlay.startMs, overlay.endMs];
+	if (overlay.opacity !== undefined && overlay.opacity < 1)
+		w.o = Math.round(overlay.opacity * 20) / 20;
+	if (overlay.rotate) w.r = overlay.rotate;
+	if (overlay.flipH) w.fh = 1;
+	if (overlay.flipV) w.fv = 1;
+	if (overlay.lookId && overlay.lookId !== 'none') w.k = overlay.lookId;
 	return w;
 }
 
@@ -150,7 +181,12 @@ export function decodeImageOverlay(w: unknown): MemeImageOverlay | null {
 		y: raw.y,
 		size: raw.s,
 		startMs: raw.w?.[0],
-		endMs: raw.w?.[1]
+		endMs: raw.w?.[1],
+		opacity: raw.o,
+		rotate: raw.r,
+		flipH: raw.fh === 1,
+		flipV: raw.fv === 1,
+		lookId: raw.k
 	});
 }
 

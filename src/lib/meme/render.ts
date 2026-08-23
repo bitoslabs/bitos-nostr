@@ -10,6 +10,7 @@
  */
 import { overlayVisibleAt, type MemeFont, type MemeTextOverlay } from './schema';
 import { imageOverlayVisibleAt, type MemeImageOverlay } from './image-overlay';
+import { memeLookCss } from './look';
 import { fxTransformAt } from './fx';
 
 /** Paints an animated layer frame into (x,y) — one scratch canvas per use. */
@@ -41,6 +42,13 @@ export interface RenderOptions {
 	animPainters?: (src: string, box: { w: number; h: number }) => AnimatedLayerPainter | null;
 	/** Canvas long-edge cap (px). Defaults to 1080; 0 = keep source size. */
 	maxEdge?: number;
+	/**
+	 * Explicit output canvas size (the "artboard"). When set it replaces the
+	 * source-derived sizing — the media cover-fits into it, so a 16:9 clip on
+	 * a 9:16 artboard crops to fill. Overlays are normalized, so they land
+	 * identically whatever the artboard.
+	 */
+	target?: { width: number; height: number };
 	/** JPEG quality for image exports. */
 	quality?: number;
 	/** CSS filter chain burned into the MEDIA pixels (captions stay crisp). */
@@ -244,16 +252,38 @@ export function paintImageOverlays(
 		const w = h * (layer.aspect || 1);
 		const x = layer.x * canvas.width - w / 2;
 		const y = layer.y * canvas.height - h / 2;
+		// Per-layer effects: opacity, rotation, mirror flips, color look.
+		// Mirrors the studio's CSS exactly — WYSIWYG by construction.
+		const rad = ((layer.rotate ?? 0) * Math.PI) / 180;
+		const flipX = layer.flipH ? -1 : 1;
+		const flipY = layer.flipV ? -1 : 1;
+		const alpha = layer.opacity ?? 1;
+		const look = layer.lookId && layer.lookId !== 'none' ? memeLookCss(layer.lookId) : '';
+		const transformed = rad !== 0 || flipX < 0 || flipY < 0;
+		if (transformed || alpha < 1 || look) {
+			ctx.save();
+			if (alpha < 1) ctx.globalAlpha = alpha;
+			if (look) ctx.filter = look;
+			if (transformed) {
+				ctx.translate(x + w / 2, y + h / 2);
+				ctx.rotate(rad);
+				ctx.scale(flipX, flipY);
+				ctx.translate(-(x + w / 2), -(y + h / 2));
+			}
+		}
+		let painted = false;
 		if (atMs !== undefined && animFor) {
 			const painter = animFor(layer.src, { w, h });
 			if (painter) {
 				painter(ctx, x, y, atMs / 1000);
-				continue;
+				painted = true;
 			}
 		}
-		const bitmap = bitmapFor(layer.src);
-		if (!bitmap) continue;
-		ctx.drawImage(bitmap, x, y, w, h);
+		if (!painted) {
+			const bitmap = bitmapFor(layer.src);
+			if (bitmap) ctx.drawImage(bitmap, x, y, w, h);
+		}
+		if (transformed || alpha < 1 || look) ctx.restore();
 	}
 }
 
@@ -300,7 +330,7 @@ export async function renderImageMeme(
 	overlays: MemeTextOverlay[],
 	options: RenderOptions = {}
 ): Promise<Blob> {
-	const size = targetSize(mediaSize(media), options.maxEdge ?? 1080);
+	const size = options.target ?? targetSize(mediaSize(media), options.maxEdge ?? 1080);
 	const canvas = makeCanvas(size.width, size.height);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');
@@ -401,10 +431,9 @@ export async function renderVideoMeme(
 	if (!canRenderVideoMeme()) {
 		throw new Error('This browser cannot export video memes — try Chrome or Edge');
 	}
-	const size = targetSize(
-		{ width: source.videoWidth, height: source.videoHeight },
-		options.maxEdge ?? 1080
-	);
+	const size = options.target
+		? targetSize(options.target, 0)
+		: targetSize({ width: source.videoWidth, height: source.videoHeight }, options.maxEdge ?? 1080);
 	const canvas = makeCanvas(size.width, size.height);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');

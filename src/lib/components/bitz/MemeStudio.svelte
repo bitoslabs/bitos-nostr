@@ -63,6 +63,7 @@
 		paintImageOverlays,
 		renderImageMeme,
 		renderVideoMeme,
+		targetSize,
 		type AnimatedLayerPainter
 	} from '$lib/meme/render';
 	import {
@@ -90,6 +91,10 @@
 	import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
 	import { buildCueMixBuffer } from '$lib/meme/cue-mix';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
+	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
+	import MemeLookPicker from '$lib/components/bitz/MemeLookPicker.svelte';
+	import MemeStickerPicker from '$lib/components/bitz/MemeStickerPicker.svelte';
+	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
 	import {
@@ -113,19 +118,13 @@
 		type SplitRole,
 		type SplitRow
 	} from '$lib/meme/splits';
-	import { isEmojiOnly, makeSticker, STICKER_PACKS, type StickerPack } from '$lib/meme/stickers';
+	import { makeSticker } from '$lib/meme/stickers';
 	import { fxTransformAt, MEME_FX_OPTIONS } from '$lib/meme/fx';
 	import MemeTimeline from '$lib/components/bitz/MemeTimeline.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
 	import GifPicker, { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
-	import {
-		MEME_LOOKS,
-		canvasFiltersSupported,
-		memeLookCss,
-		memeLookOf,
-		type MemeLookId
-	} from '$lib/meme/look';
+	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import {
 		parseSharedSound,
 		rankSharedSounds,
@@ -316,6 +315,15 @@
 	const sfxDurations: Record<MemeSfxId, number> = Object.fromEntries(
 		MEME_SFX_IDS.map((id) => [id, SFX_RECIPES[id].duration])
 	) as Record<MemeSfxId, number>;
+	/** Timeline sound blocks: label + play length per cue (synth recipes have
+	 *  fixed lengths; custom sounds carry theirs in the library). */
+	function cueMeta(cue: MemeSfxCue): { label: string; durationSec: number } | null {
+		if (cue.sfx === CUSTOM_SOUND_KEY) {
+			const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
+			return sound ? { label: sound.label, durationSec: sound.durationSec } : null;
+		}
+		return { label: sfxLabels[cue.sfx], durationSec: sfxDurations[cue.sfx] ?? 0.5 };
+	}
 	const sfxLabels: Record<MemeSfxId, string> = {
 		boom: 'Boom',
 		bruh: 'Bruh',
@@ -329,7 +337,6 @@
 	};
 
 	// ---- custom sound library (device / mic one-shots) -----------------------
-	let soundMenuId = `meme-sound-${Math.random().toString(36).slice(2, 8)}`;
 	let recording = $state(false);
 	let micDenied = $state(false);
 	let micRecorder: MediaRecorder | null = null;
@@ -836,6 +843,71 @@
 		setStageZoom(STAGE_ZOOM_STEPS[nextIdx]!);
 	}
 
+	// ---- artboard (output canvas size) ----------------------------------------
+	/** The export canvas the stage previews: `source` keeps the loaded media's
+	 *  own frame (the old behavior — now mirrored by the stage aspect so the
+	 *  preview finally matches the export for EVERY media shape); the presets
+	 *  cover-fit the media (a 16:9 clip on 9:16 crops to fill — mobile-first).
+	 *  Overlay coordinates are normalized, so they land identically on any
+	 *  artboard. Persisted per device. */
+	const ARTBOARD_KEY = 'bitos:meme-artboard';
+	type ArtboardId = 'source' | '9:16' | '16:9' | '1:1' | '4:5';
+	const ARTBOARDS: { id: ArtboardId; label: string; hint: string; w: number; h: number }[] = [
+		{ id: 'source', label: 'Source', hint: "Keep the media's own frame", w: 0, h: 0 },
+		{ id: '9:16', label: '9:16', hint: 'Mobile full-screen · stories / reels', w: 1080, h: 1920 },
+		{ id: '16:9', label: '16:9', hint: 'Landscape · YouTube', w: 1920, h: 1080 },
+		{ id: '1:1', label: '1:1', hint: 'Square feed post', w: 1080, h: 1080 },
+		{ id: '4:5', label: '4:5', hint: 'Portrait feed post', w: 1080, h: 1350 }
+	];
+	let artboardId = $state<ArtboardId>('source');
+
+	function setArtboard(next: ArtboardId) {
+		artboardId = next;
+		try {
+			localStorage.setItem(ARTBOARD_KEY, next);
+		} catch {
+			/* private mode — the choice just won't persist */
+		}
+	}
+
+	/** The media's natural frame (whatever is loaded), for `source`. */
+	const sourceFrame = $derived.by(() => {
+		if (mediaKind === 'video' && meta?.width && meta?.height) {
+			return { width: meta.width, height: meta.height };
+		}
+		if (gif?.width && gif?.height) return { width: gif.width, height: gif.height };
+		if (stageImg?.naturalWidth && stageImg?.naturalHeight) {
+			return { width: stageImg.naturalWidth, height: stageImg.naturalHeight };
+		}
+		return null;
+	});
+
+	/** Export canvas dims — artboard preset or the source's own (capped). */
+	const renderTarget = $derived.by(() => {
+		const ab = ARTBOARDS.find((a) => a.id === artboardId);
+		if (ab && ab.w > 0) return { width: ab.w, height: ab.h };
+		if (sourceFrame) return targetSize(sourceFrame);
+		return { width: 1080, height: 1920 };
+	});
+
+	/** Stage aspect-ratio CSS — the preview mirrors the export canvas exactly. */
+	const stageAspect = $derived.by(() => {
+		if (artboardId === 'source' && sourceFrame) {
+			return `${sourceFrame.width} / ${sourceFrame.height}`;
+		}
+		const ab = ARTBOARDS.find((a) => a.id === artboardId) ?? ARTBOARDS[0]!;
+		return ab.w > 0 ? `${ab.w} / ${ab.h}` : '9 / 16';
+	});
+
+	/** Same ratio as a number (w/h) — feeds the full-page stage width calc. */
+	const stageRatio = $derived.by(() => {
+		if (artboardId === 'source' && sourceFrame && sourceFrame.height > 0) {
+			return sourceFrame.width / sourceFrame.height;
+		}
+		const ab = ARTBOARDS.find((a) => a.id === artboardId) ?? ARTBOARDS[0]!;
+		return ab.w > 0 ? ab.w / ab.h : 9 / 16;
+	});
+
 	// ---- preview transport + timeline ---------------------------------------
 	/** Preview play state for the stage clock (video element clocks itself). */
 	let previewPlaying = $state(false);
@@ -940,34 +1012,72 @@
 	const layerGifs = new SvelteMap<string, DecodedGif>();
 
 	/** Decode (best-effort) a layer src as animated; resolves false when the
-	 *  src is static or the browser can't decode frame-by-frame. */
+	 *  src is static or the browser can't decode frame-by-frame. Bytes we
+	 *  already hold decode synchronously-started and CORS-free — only pure-URL
+	 *  layers (draft restore) fall back to a network fetch. */
+	/** Last GIF decode failure reason — surfaces in the export warning so the
+	 *  failure is diagnosable instead of a silent frame-1 freeze. */
+	let lastGifDecodeError = '';
+
 	async function cacheLayerGif(src: string): Promise<boolean> {
 		if (layerGifs.has(src)) return true;
 		if (!canDecodeGif()) return false;
 		try {
-			const res = await fetch(src, { mode: 'cors' });
-			const data = await res.arrayBuffer();
-			const decoded = await decodeGif(data);
+			const blob = layerBlobs.get(src) ?? (await fetchLayerBlob(src));
+			if (!blob) {
+				lastGifDecodeError = 'no bytes';
+				return false;
+			}
+			const decoded = await decodeGif(await blob.arrayBuffer());
 			layerGifs.set(src, decoded);
 			return true;
-		} catch {
+		} catch (e) {
+			lastGifDecodeError = e instanceof Error ? e.message : String(e);
 			return false; // static layer — the bitmap path already covers it
 		}
 	}
 
-	/** Export-time painters: one scratch canvas per animated layer src. */
+	/** Does this src look like an animated GIF layer? (content type when we
+	 *  hold the bytes; else the URL extension). */
+	function looksAnimatedGif(src: string): boolean {
+		const type = layerBlobs.get(src)?.type;
+		if (type) return type === 'image/gif';
+		return /\.gif(\?|$)/i.test(src);
+	}
+
+	/** Export-time painters: one scratch canvas per animated layer src, CACHED
+	 *  for the run — paintImageOverlays asks every recorded frame and a fresh
+	 *  painter per frame would churn (and leak) a canvas 30×/second. */
+	const layerPainters = new SvelteMap<
+		string,
+		{ key: string; handle: ReturnType<typeof gifLayerPainter> }
+	>();
+
 	function animatedLayerResolver(
 		src: string,
 		box: { w: number; h: number }
 	): AnimatedLayerPainter | null {
 		const decoded = layerGifs.get(src);
 		if (!decoded) return null;
-		const handle = gifLayerPainter(decoded, box);
-		return (ctx, x, y, timeSec) => handle.paint(ctx, x, y, timeSec);
+		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}`;
+		const cached = layerPainters.get(src);
+		let handle = cached && cached.key === sizeKey ? cached.handle : undefined;
+		if (!handle) {
+			cached?.handle.close();
+			handle = gifLayerPainter(decoded, box);
+			layerPainters.set(src, { key: sizeKey, handle });
+		}
+		const painter = handle;
+		return (ctx, x, y, timeSec) => painter.paint(ctx, x, y, timeSec);
 	}
 
 	/** FX transform → CSS (live preview mirrors the canvas renderer). */
 	function overlayFxStyle(overlay: MemeTextOverlay): string {
+		// Dead clock (static image, no cues): entrances render SETTLED — a pop
+		// sticker at t=0 is scale-0, which made stickers invisible on image
+		// memes ("the system thinks it's a video"). The export path agrees
+		// (paintAll with no atMs = untransformed).
+		if (!timelineActive) return '';
 		const fx = fxTransformAt(overlay, stageSeconds * 1000);
 		if (fx.scale === 1 && fx.rotate === 0 && fx.dx === 0 && fx.dy === 0 && fx.alpha === 1)
 			return '';
@@ -995,6 +1105,22 @@
 	);
 	/** Preview + export duration after speed — the number creators care about. */
 	const exportDurationSec = $derived(trimDuration / (playbackRate || 1));
+
+	/** Set the export window's LENGTH (user request: “set time 5s, 10s, 30s…”):
+	 *  keeps the current start mark, caps at the source's remaining time and
+	 *  the 90s video-meme limit — and says so when a preset doesn't fit. */
+	function setTrimLength(sec: number): void {
+		const dur = meta?.duration ?? 0;
+		if (!Number.isFinite(sec) || sec <= 0 || !dur) return;
+		const avail = Math.max(0, dur - trimStartSec);
+		const capped = Math.min(sec, avail, MAX_VIDEO_MEME_SECONDS);
+		trimEndSec = trimStartSec + capped;
+		if (sec > avail) {
+			toasts.info(`Only ${formatDuration(avail)} left after the start mark — window capped`);
+		} else if (sec > MAX_VIDEO_MEME_SECONDS) {
+			toasts.info(`Video memes cap at ${MAX_VIDEO_MEME_SECONDS}s`);
+		}
+	}
 
 	// ---- video frame strip (poster frame + scrubbing) ------------------------
 	/** Poster frame data URL — picked on the strip, rides the publish imeta. */
@@ -1078,11 +1204,8 @@
 	let destMenuId = `meme-dest-${Math.random().toString(36).slice(2, 8)}`;
 
 	// ---- sticker picker (#3) --------------------------------------------------
+	// (UI lives in MemeStickerPicker.svelte — this is the state it drives.)
 	let stickerMenuId = `meme-stickers-${Math.random().toString(36).slice(2, 8)}`;
-	let activePackId = $state(STICKER_PACKS[0]?.id ?? '');
-	const activePack: StickerPack | undefined = $derived(
-		STICKER_PACKS.find((p) => p.id === activePackId)
-	);
 	/** Sticker count this session — feeds the anchor rotation so consecutive
 	 *  stickers land on different spots instead of stacking. */
 	let stickerSeq = 0;
@@ -1103,20 +1226,6 @@
 		timingId = null;
 	}
 
-	// Custom sticker input (user request): type ANY emoji from the keyboard —
-	// single or a short combo — instead of hunting the curated packs.
-	let customSticker = $state('');
-	function addCustomSticker(): void {
-		const text = customSticker.trim();
-		if (!text) return;
-		if (!isEmojiOnly(text)) {
-			toasts.error('Stickers are emoji only — paste or type emoji (😂🔥💀)');
-			return;
-		}
-		addSticker(text);
-		customSticker = '';
-	}
-
 	// ---- image overlays (user request 2026-08-23, rec #1): PNG/GIF/JPEG layers
 	// dropped onto the stage as movable + resizable accedns. Sources: local file,
 	// direct URL, or the GIF library. `src` is always a remote http(s) URL —
@@ -1126,6 +1235,14 @@
 	let layerSeq = 0;
 	/** Cached decoded bitmaps per src — the export reads these, no refetch. */
 	const layerBitmaps = new SvelteMap<string, HTMLImageElement>();
+	/** Same-origin render source per layer src (object URL over bytes we
+	 *  already hold). Rendering and exporting from blobs sidesteps CDN/provider
+	 *  CORS entirely — no tainted-canvas SecurityError, no layer silently
+	 *  missing from the export when a host withholds CORS headers. */
+	const layerRenderSrcs = new SvelteMap<string, string>();
+	/** Bytes per src, held SYNCHRONOUSLY at add time — the GIF decoder reads
+	 *  them without a network round-trip (and without any race). */
+	const layerBlobs = new SvelteMap<string, Blob>();
 	let layerInput = $state<HTMLInputElement | null>(null);
 	let layerBusy = $state(false);
 	let imageMenuId = `meme-image-${Math.random().toString(36).slice(2, 8)}`;
@@ -1133,27 +1250,69 @@
 	let layerUrl = $state('');
 	let layerUrlBusy = $state(false);
 
-	/** Decode (and cache) the bitmap for a src; resolves even on failure. */
+	/** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
+	 *  failure — callers fall back to the plain URL path). */
+	async function fetchLayerBlob(url: string): Promise<Blob | null> {
+		try {
+			const res = await fetch(url, { mode: 'cors' });
+			if (!res.ok) return null;
+			const blob = await res.blob();
+			if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
+			return blob;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Keep the bytes we already have as the render source for a remote src.
+	 *  The Blob lands SYNCHRONOUSLY — cacheLayerGif must never race a promise
+	 *  (the old async arrayBuffer() handoff made fresh layers fall back to a
+	 *  network fetch that non-CORS providers fail, freezing the GIF at
+	 *  frame 1 in exports). */
+	function rememberLayerBytes(src: string, blob: Blob) {
+		if (!layerBlobs.has(src)) layerBlobs.set(src, blob);
+		if (!layerRenderSrcs.has(src)) layerRenderSrcs.set(src, URL.createObjectURL(blob));
+	}
+
+	/** Drop every per-src asset (blob URL, bytes, decoder, painter) — call when
+	 *  no remaining layer references the src. */
+	function releaseLayerAssets(src: string) {
+		const obj = layerRenderSrcs.get(src);
+		if (obj) {
+			URL.revokeObjectURL(obj);
+			layerRenderSrcs.delete(src);
+		}
+		layerBlobs.delete(src);
+		layerGifs.get(src)?.close();
+		layerGifs.delete(src);
+		layerPainters.get(src)?.handle.close();
+		layerPainters.delete(src);
+	}
+
+	/** Decode (and cache) the bitmap for a src; resolves even on failure.
+	 *  Prefers the same-origin blob render source — only pure-URL layers
+	 *  (draft restore, failed fetch) touch the network, and those need CORS. */
 	function cacheLayerBitmap(src: string): Promise<boolean> {
 		if (layerBitmaps.has(src)) return Promise.resolve(true);
 		return new Promise((resolve) => {
 			const img = new Image();
-			img.crossOrigin = 'anonymous';
+			const local = layerRenderSrcs.get(src);
+			if (!local) img.crossOrigin = 'anonymous';
 			img.onload = () => {
 				layerBitmaps.set(src, img);
 				imageLayers = [...imageLayers];
 				resolve(true);
 			};
 			img.onerror = () => resolve(false);
-			img.src = src;
+			img.src = local ?? src;
 		});
 	}
 
-	/** Add a layer from a remote URL (upload first when bytes are given).
-	 *  `atMs` (timeline insert) births the layer with a 2s window at the
-	 *  playhead — timed sources show it as a span on the timeline. */
+	/** Add a layer from bytes and/or a remote URL. Rendering always prefers
+	 *  the bytes (same-origin blob → export-safe); the media provider re-homes
+	 *  them best-effort so drafts and the wire keep plain https srcs. */
 	async function addImageLayer(
-		source: { url: string } | { bytes: Blob; name: string },
+		source: { url?: string; bytes?: Blob; name?: string },
 		aspectHint?: number,
 		opts: { atMs?: number } = {}
 	) {
@@ -1161,32 +1320,46 @@
 			toasts.info(`Image layers max out at ${MAX_IMAGE_OVERLAYS}`);
 			return;
 		}
-		let url: string;
+		let bytes: Blob | undefined = source.bytes;
+		let url = source.url?.trim() ?? '';
 		let aspect = aspectHint ?? 1;
-		if ('bytes' in source) {
-			if (source.bytes.size > MAX_IMAGE_OVERLAY_BYTES) {
+		// URL-only: pull the bytes once so the canvas never sees a
+		// cross-origin image (the "not same origin" export failure).
+		if (!bytes && url) bytes = (await fetchLayerBlob(url)) ?? undefined;
+		if (bytes) {
+			if (bytes.size > MAX_IMAGE_OVERLAY_BYTES) {
 				toasts.error('That image is over the 8 MB layer cap');
 				return;
 			}
-			// Local files need a remote home before they can persist anywhere.
-			const file = new File([source.bytes], source.name, {
-				type: source.bytes.type || 'image/png'
-			});
-			const probe = await probeAspect(source.bytes);
+			const probe = await probeAspect(bytes);
 			aspect = probe ?? aspect;
-			const uploaded = await media.upload(file, undefined, {
-				pubkey: me?.pk,
-				purpose: 'note'
-			});
-			url = uploaded.url;
-		} else {
-			url = source.url.trim();
 		}
-		if (!/^https:\/\//i.test(url)) {
+		// Device files have no canonical URL — they need a remote home to
+		// persist in drafts/wire. URL-sourced layers (GIF picker, pasted
+		// links) KEEP their source URL: the bytes we already hold render and
+		// export locally, and the published media has the pixels burned in —
+		// re-uploading CDN content to the provider would just duplicate it.
+		let src = url;
+		if (bytes && !src) {
+			try {
+				const file = new File([bytes], source.name ?? 'layer', {
+					type: bytes.type || 'image/png'
+				});
+				const uploaded = await media.upload(file, undefined, {
+					pubkey: me?.pk,
+					purpose: 'note'
+				});
+				src = uploaded.url;
+			} catch {
+				toasts.error('Layer upload failed — check your connection and try again');
+				return;
+			}
+		}
+		if (!/^https:\/\//i.test(src)) {
 			toasts.error('Image layers need an https URL');
 			return;
 		}
-		const layer = makeImageOverlay(url, aspect, { index: layerSeq++ });
+		const layer = makeImageOverlay(src, aspect, { index: layerSeq++ });
 		if (!layer) {
 			toasts.error('Could not use that image URL');
 			return;
@@ -1199,11 +1372,20 @@
 		}
 		imageLayers = [...imageLayers, layer];
 		selectedLayerId = layer.id;
+		if (bytes) rememberLayerBytes(layer.src, bytes);
 		const ok = await cacheLayerBitmap(layer.src);
 		if (!ok) toasts.warning('Layer added — but the image failed to load (will retry on export)');
 		// Animated GIF layers keep their motion in previews AND exports;
-		// static layers just fall through to the bitmap path.
-		void cacheLayerGif(layer.src);
+		// static layers just fall through to the bitmap path. Browsers without
+		// WebCodecs ImageDecoder (Safari/Firefox) can't — say so up front.
+		void cacheLayerGif(layer.src).then((animated) => {
+			if (!animated && looksAnimatedGif(layer.src) && !canDecodeGif()) {
+				toasts.info(
+					'This GIF plays in the preview but exports as a still on this browser — Chrome or Edge keeps layers moving',
+					5000
+				);
+			}
+		});
 	}
 
 	/** Read natural aspect without keeping the decoder around. */
@@ -1229,10 +1411,9 @@
 		const gone = imageLayers.find((l) => l.id === id);
 		imageLayers = imageLayers.filter((l) => l.id !== id);
 		if (selectedLayerId === id) selectedLayerId = null;
-		// Release the decoded GIF when no remaining layer references its src.
+		// Release the per-src assets when no remaining layer references it.
 		if (gone && !imageLayers.some((l) => l.src === gone.src)) {
-			layerGifs.get(gone.src)?.close();
-			layerGifs.delete(gone.src);
+			releaseLayerAssets(gone.src);
 		}
 	}
 
@@ -1240,26 +1421,58 @@
 		imageLayers = imageLayers.map((l) => (l.id === id ? { ...l, ...patch } : l));
 	}
 
+	/** Per-layer color look → CSS filter (mirror of render.ts's paint path). */
+	function layerLookCss(layer: MemeImageOverlay): string {
+		return layer.lookId && layer.lookId !== 'none' ? memeLookCss(layer.lookId) : 'none';
+	}
+
+	/** The layer the inspector edits (null = nothing selected). */
+	const selectedLayer = $derived(imageLayers.find((l) => l.id === selectedLayerId) ?? null);
+
+	/** Reorder = z-order: later array slots paint on top (paintImageOverlays). */
+	function moveLayerRow(id: string, dir: -1 | 1) {
+		const idx = imageLayers.findIndex((l) => l.id === id);
+		const next = idx + dir;
+		if (idx < 0 || next < 0 || next >= imageLayers.length) return;
+		const list = [...imageLayers];
+		const [row] = list.splice(idx, 1);
+		list.splice(next, 0, row!);
+		imageLayers = list;
+	}
+
 	/** One-shot playhead stamp for the NEXT layer added via the file picker
 	 *  (the picker flow can't take arguments — set → click → consumed here). */
 	let pendingLayerAtMs: number | null = null;
 
-	/** Layer picker input → upload → layer. */
+	/** Layer picker input → upload → layers. Multi-select lands one layer per
+	 *  file; playhead inserts stagger 250ms apart (mirrors the GIF volley). */
 	function onLayerFileInput(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
+		const picked = [...(input.files ?? [])];
 		input.value = '';
 		const atMs = pendingLayerAtMs;
 		pendingLayerAtMs = null; // one-shot, always cleared
-		if (!file) return;
-		if (!file.type.startsWith('image/')) {
-			toasts.error('Layers take PNG, GIF or JPEG images');
+		const files = picked.filter((f) => f.type.startsWith('image/'));
+		if (!files.length) {
+			if (picked.length) toasts.error('Layers take PNG, GIF or JPEG images');
 			return;
 		}
+		const room = MAX_IMAGE_OVERLAYS - imageLayers.length;
+		if (room <= 0) {
+			toasts.info(`Image layers max out at ${MAX_IMAGE_OVERLAYS}`);
+			return;
+		}
+		if (files.length > room) {
+			toasts.info(`Adding ${room} of ${files.length} — the layer cap is ${MAX_IMAGE_OVERLAYS}`);
+		}
 		layerBusy = true;
-		addImageLayer({ bytes: file, name: file.name }, undefined, { atMs: atMs ?? undefined })
-			.catch((err) => toasts.error(err instanceof Error ? err.message : 'Layer upload failed'))
-			.finally(() => (layerBusy = false));
+		Promise.all(
+			files.slice(0, room).map((file, i) =>
+				addImageLayer({ bytes: file, name: file.name }, undefined, {
+					atMs: atMs !== null ? atMs + i * 250 : undefined
+				}).catch((err) => toasts.error(err instanceof Error ? err.message : 'Layer upload failed'))
+			)
+		).finally(() => (layerBusy = false));
 	}
 
 	/** Direct-URL layer form. */
@@ -1521,8 +1734,9 @@
 			if (box && layer) {
 				if (layerDrag.mode === 'resize') {
 					const y = clamp01((event.clientY - box.top) / box.height);
-					// Distance from the layer's center, doubled = new height.
-					const next = (y - layer.y + layer.size / 2) * 2;
+					// Pointer-to-center distance, doubled = new height (the bottom
+					// edge follows the pointer; at rest this reproduces `size`).
+					const next = (y - layer.y) * 2;
 					patchLayer(layer.id, { size: Math.min(0.9, Math.max(0.05, next)) });
 				} else {
 					patchLayer(layer.id, {
@@ -1580,6 +1794,7 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
+		for (const layer of imageLayers) releaseLayerAssets(layer.src);
 		imageLayers = [];
 		selectedLayerId = null;
 		layerDrag = null;
@@ -1898,6 +2113,17 @@
 		overlays = overlays.map((o) => (o.id === id ? { ...o, ...patch } : o));
 	}
 
+	/** Reorder = z-order: later array slots paint on top (render.ts paintAll). */
+	function moveOverlayRow(id: string, dir: -1 | 1) {
+		const idx = overlays.findIndex((o) => o.id === id);
+		const next = idx + dir;
+		if (idx < 0 || next < 0 || next >= overlays.length) return;
+		const list = [...overlays];
+		const [row] = list.splice(idx, 1);
+		list.splice(next, 0, row!);
+		overlays = list;
+	}
+
 	function moveOverlay(id: string, dy: number) {
 		const overlay = overlays.find((o) => o.id === id);
 		if (!overlay) return;
@@ -2019,6 +2245,11 @@
 		}
 		const cue = normalizeSfxCue({ sfx, atMs: Math.round(stageSeconds * 1000), gain: 1 });
 		if (cue) sfxCues = [...sfxCues, cue];
+	}
+
+	/** Timeline tick drag: move a cue to a new time (wire ms model). */
+	function retimeSfxCue(id: string, atMs: number) {
+		sfxCues = sfxCues.map((c) => (c.id === id ? { ...c, atMs: Math.max(0, Math.round(atMs)) } : c));
 	}
 
 	/** Dialog adapter: stage a custom cue by library sound id. */
@@ -2203,9 +2434,173 @@
 		})();
 	}
 
+	// ---- output format (export + publish share exportMeme) -------------------
+	/** `auto` keeps the inferred format (GIF base → recorded video, static +
+	 *  cue → sound video, plain static → JPEG, video → video). The explicit
+	 *  options let creators ship the SAME composition as a still, a true
+	 *  looping .gif, or a video regardless of the source type. */
+	let exportFormat = $state<'auto' | 'image' | 'gif' | 'video'>('auto');
+
+	/** JPEG still of the current frame — works from ANY source (video draws
+	 *  the element's current frame; GIF paints the playhead frame). */
+	async function exportStillImageMeme(): Promise<File> {
+		track('rendering', 'Rendering still…', 30);
+		await tick();
+		const a = document.createElement('canvas');
+		a.width = renderTarget.width;
+		a.height = renderTarget.height;
+		const ctx = a.getContext('2d');
+		if (!ctx) throw new Error('Canvas is not available in this browser');
+		ctx.fillStyle = '#000';
+		ctx.fillRect(0, 0, a.width, a.height);
+		if (lookCss !== 'none') ctx.filter = lookCss;
+		if (mediaKind === 'video' && stageVideo) {
+			ctx.drawImage(stageVideo, 0, 0, a.width, a.height);
+		} else if (gif) {
+			paintGifFrameAt(ctx, gif, stageSeconds, a);
+		} else if (stageImg) {
+			const s = Math.max(
+				a.width / (stageImg.naturalWidth || a.width),
+				a.height / (stageImg.naturalHeight || a.height)
+			);
+			const dw = (stageImg.naturalWidth || a.width) * s;
+			const dh = (stageImg.naturalHeight || a.height) * s;
+			ctx.drawImage(stageImg, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
+		} else {
+			throw new Error('The preview is still loading');
+		}
+		ctx.filter = 'none';
+		paintImageOverlays(
+			ctx,
+			imageLayers,
+			(src) => layerBitmaps.get(src) ?? null,
+			a,
+			undefined,
+			animatedLayerResolver
+		);
+		paintAll(ctx, overlays, a);
+		const blob = await new Promise<Blob | null>((res) => a.toBlob(res, 'image/jpeg', 0.92));
+		if (!blob) throw new Error('Could not encode the still');
+		return new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' });
+	}
+
+	/** True looping GIF — offline (not recorder-bound): repaint the whole
+	 *  composition at fixed steps and encode. Image/GIF bases only; video
+	 *  sources keep the recorder path (video→GIF would need seek-stepping). */
+	async function exportAnimatedGifMeme(): Promise<File> {
+		if (mediaKind === 'video') {
+			throw new Error('GIF export starts from an image or GIF base — pick Image or Video');
+		}
+		if (!stageImg && !gif) throw new Error('The preview is still loading');
+		const durationSec = gif ? gif.duration : sfxCues.length ? cueTrackDurationSec(sfxCues) : 0;
+		const fps = 12;
+		// GIFs stay light: ≤640px long edge, ≤360 frames (30s at 12fps).
+		const scale = Math.min(1, 640 / Math.max(renderTarget.width, renderTarget.height));
+		const a = document.createElement('canvas');
+		a.width = Math.max(2, Math.round(renderTarget.width * scale) & ~1);
+		a.height = Math.max(2, Math.round(renderTarget.height * scale) & ~1);
+		const ctx = a.getContext('2d');
+		if (!ctx) throw new Error('Canvas is not available in this browser');
+		let frameCount = Math.max(1, Math.round(durationSec * fps));
+		if (frameCount > 360) {
+			frameCount = 360;
+			toasts.info('GIF capped at 30 seconds — trim or drop cues for a shorter loop');
+		}
+		const frames: GifEncodeFrame[] = [];
+		for (let i = 0; i < frameCount; i++) {
+			const t = i / fps;
+			track(
+				'rendering',
+				`Painting GIF frame ${i + 1}/${frameCount}…`,
+				Math.round((i / frameCount) * 80)
+			);
+			ctx.fillStyle = '#000';
+			ctx.fillRect(0, 0, a.width, a.height);
+			if (lookCss !== 'none') ctx.filter = lookCss;
+			if (gif) {
+				paintGifFrameAt(ctx, gif, t, a);
+			} else if (stageImg) {
+				const s = Math.max(
+					a.width / (stageImg.naturalWidth || a.width),
+					a.height / (stageImg.naturalHeight || a.height)
+				);
+				const dw = (stageImg.naturalWidth || a.width) * s;
+				const dh = (stageImg.naturalHeight || a.height) * s;
+				ctx.drawImage(stageImg, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
+			}
+			ctx.filter = 'none';
+			paintImageOverlays(
+				ctx,
+				imageLayers,
+				(src) => layerBitmaps.get(src) ?? null,
+				a,
+				t * 1000,
+				animatedLayerResolver
+			);
+			paintAll(ctx, overlays, a, t * 1000);
+			frames.push({ source: await createImageBitmap(a), delayMs: 1000 / fps });
+		}
+		track('rendering', 'Encoding GIF…', 85);
+		const blob = await encodeAnimatedGif(frames, { width: a.width, height: a.height });
+		for (const f of frames) {
+			const src = f.source as ImageBitmap;
+			if (typeof src.close === 'function') src.close();
+		}
+		return new File([blob], `meme-${Date.now()}.gif`, { type: 'image/gif' });
+	}
+
 	async function exportMeme(): Promise<File> {
 		if (!file || !mediaKind) throw new Error('Pick a picture, GIF or video first');
-		// Animated GIF: canvas-record a single pass with overlays + SFX mixed in.
+		// Layer readiness: a layer without a bitmap silently vanishes from the
+		// render — retry once, then say which layers will be skipped or frozen.
+		if (imageLayers.length) {
+			const missing: number[] = [];
+			const frozen: number[] = [];
+			for (let i = 0; i < imageLayers.length; i++) {
+				const src = imageLayers[i]!.src;
+				if (!(await cacheLayerBitmap(src))) missing.push(i + 1);
+				// GIF decode retry right before recording — held bytes make this
+				// local and certain; failure means the layer freezes at frame 1.
+				if (looksAnimatedGif(src) && !(await cacheLayerGif(src))) frozen.push(i + 1);
+			}
+			if (missing.length) {
+				toasts.warning(
+					`Layer${missing.length > 1 ? 's' : ''} ${missing.join(', ')} failed to load — skipped in this export`,
+					4000
+				);
+			}
+			if (frozen.length) {
+				toasts.warning(
+					`Animated layer${frozen.length > 1 ? 's' : ''} ${frozen.join(', ')} will export as a still frame${
+						canDecodeGif()
+							? ` — the GIF failed to decode (${lastGifDecodeError || 'unknown'})`
+							: ' — animated layers need Chrome or Edge'
+					}`,
+					6000
+				);
+			}
+		}
+		// Explicit output format (user choice beats inference):
+		//   image → JPEG still of the current frame, from ANY source
+		//   gif   → true looping .gif (image/GIF bases; video→gif is recorder-
+		//           bound, so the chip is disabled for video sources)
+		//   video → the recorder stack (static sources need a cue = a clock)
+		if (exportFormat === 'image') return exportStillImageMeme();
+		if (exportFormat === 'gif') return exportAnimatedGifMeme();
+		if (exportFormat === 'video') {
+			if (!canRenderVideoMeme()) {
+				throw new Error('This browser cannot export video memes — try Chrome/Edge');
+			}
+			if (gif) return exportGifMeme();
+			if (mediaKind === 'image') {
+				if (!sfxCues.length) {
+					throw new Error('A video export needs a timeline — add a sound cue, or pick Image / GIF');
+				}
+				return exportStaticVideoMeme();
+			}
+			// video source → the normal video branch below
+		}
+		// Auto (the old inference):
 		if (gif) return exportGifMeme();
 		if (mediaKind === 'image') {
 			// Sound-on-static rides the recorder stack as a short video so the
@@ -2217,7 +2612,8 @@
 			const blob = await renderImageMeme(stageImg, overlays, {
 				lookCss,
 				imageLayers,
-				bitmaps: layerBitmaps
+				bitmaps: layerBitmaps,
+				target: renderTarget
 			});
 			return new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' });
 		}
@@ -2254,6 +2650,7 @@
 			imageLayers,
 			bitmaps: layerBitmaps,
 			animPainters: animatedLayerResolver,
+			target: renderTarget,
 			trimStartSec: mediaKind === 'video' ? trimStartSec : undefined,
 			trimEndSec: mediaKind === 'video' ? (trimEndSec ?? undefined) : undefined,
 			playbackRate: mediaKind === 'video' ? playbackRate : undefined,
@@ -2278,12 +2675,12 @@
 		// Reuse the recorder stack: a canvas we paint frames onto, captureStream,
 		// MediaRecorder with the first supported container/codec.
 		const a = document.createElement('canvas');
-		const size = { width: decoded.width, height: decoded.height };
-		// Even dims + long-edge cap 1080 like every meme export.
-		const longest = Math.max(size.width, size.height);
-		const scale = longest > 1080 ? 1080 / longest : 1;
-		a.width = Math.max(2, Math.round(size.width * scale) & ~1);
-		a.height = Math.max(2, Math.round(size.height * scale) & ~1);
+		// Artboard (cover-fit) or the GIF's own frame — even dims, 1080 cap on
+		// the source path like every meme export.
+		const srcSize = { width: decoded.width, height: decoded.height };
+		const size = artboardId === 'source' ? targetSize(srcSize) : renderTarget;
+		a.width = Math.max(2, size.width - (size.width % 2));
+		a.height = Math.max(2, size.height - (size.height % 2));
 		const ctx = a.getContext('2d');
 		if (!ctx) throw new Error('Canvas is not available in this browser');
 		track('rendering', 'Recording meme…', 0);
@@ -2381,11 +2778,10 @@
 			throw new Error('This browser cannot export sound memes — try Chrome/Edge');
 		}
 		const a = document.createElement('canvas');
-		const size = { width: stageImg.naturalWidth || 1080, height: stageImg.naturalHeight || 1080 };
-		const longest = Math.max(size.width, size.height);
-		const scale = longest > 1080 ? 1080 / longest : 1;
-		a.width = Math.max(2, Math.round(size.width * scale) & ~1);
-		a.height = Math.max(2, Math.round(size.height * scale) & ~1);
+		// Artboard (cover-fit) or the image's own frame, even dims, 1080 cap.
+		const size = renderTarget;
+		a.width = Math.max(2, size.width - (size.width % 2));
+		a.height = Math.max(2, size.height - (size.height % 2));
 		const ctx = a.getContext('2d');
 		if (!ctx) throw new Error('Canvas is not available in this browser');
 		// Duration: last cue end + tail, clamped to the video-meme cap (shared
@@ -2438,7 +2834,15 @@
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
-				ctx.drawImage(img, 0, 0, a.width, a.height);
+				// Cover-fit (not stretch) — a mismatched artboard crops like the
+				// stage preview instead of distorting the picture.
+				const scale = Math.max(
+					a.width / (img.naturalWidth || a.width),
+					a.height / (img.naturalHeight || a.height)
+				);
+				const dw = (img.naturalWidth || a.width) * scale;
+				const dh = (img.naturalHeight || a.height) * scale;
+				ctx.drawImage(img, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
 				ctx.filter = 'none';
 				paintImageOverlays(
 					ctx,
@@ -2532,7 +2936,11 @@
 				caption,
 				sensitive,
 				portrait,
-				dim: meta ? `${meta.width}x${meta.height}` : undefined,
+				dim: mediaKind
+					? `${renderTarget.width}x${renderTarget.height}`
+					: meta
+						? `${meta.width}x${meta.height}`
+						: undefined,
 				thumb,
 				// Remix lineage rides the tags (remix + meme + attribution p) —
 				// only when this project actually derives from a source meme.
@@ -2694,20 +3102,53 @@
 		}
 		if (dirty) {
 			draftWriter.flush();
+			discardIntent = 'close';
 			confirmDiscard = true;
 			return;
 		}
-		open = false;
 		reset();
+		// Full-page mode has no overlay to hide — land on the start panel.
+		if (!full) open = false;
 	}
 
-	function discard() {
+	/** What the discard dialog should do after wiping: `close` leaves the
+	 *  studio (dialog mode hides, full mode resets to the start panel — the
+	 *  page NEVER blanks), `new` is the "Start over" action (always stays). */
+	let discardIntent = $state<'close' | 'new'>('close');
+
+	/** Shared wipe: clears everything (media, captions, layers, sounds, remix
+	 *  lineage, queue, draft) and lands on the start panel. */
+	function startFresh() {
 		confirmDiscard = false;
 		queue = [];
 		queueIndex = 0;
 		reset();
 		draftWriter.clear();
-		open = false;
+		// Dialog mode: closing hides the overlay. Full-page mode keeps the
+		// studio mounted — the creator sees the format-card start panel
+		// instead of a blank route (the old Cancel-blanks-the-page bug).
+		if (!full && discardIntent === 'close') open = false;
+	}
+
+	/** "Start over" — a functional reset/create-new from inside the editor
+	 *  (remix included: wipes the lineage and any handoff leftovers). */
+	function requestNew() {
+		if (busy) {
+			toasts.info('Still working on your meme — one moment…');
+			return;
+		}
+		if (dirty) {
+			draftWriter.flush();
+			discardIntent = 'new';
+			confirmDiscard = true;
+			return;
+		}
+		discardIntent = 'new';
+		startFresh();
+	}
+
+	function discard() {
+		startFresh();
 	}
 
 	/** True while an editable surface owns keystrokes — the shortcut layer
@@ -2800,6 +3241,13 @@
 		try {
 			const saved = Number(localStorage.getItem(STAGE_ZOOM_KEY));
 			if (STAGE_ZOOM_STEPS.some((z) => Math.abs(z - saved) < 0.001)) stageZoom = saved;
+		} catch {
+			/* ignore */
+		}
+		// Artboard preference (per device).
+		try {
+			const saved = localStorage.getItem(ARTBOARD_KEY) as ArtboardId | null;
+			if (saved && ARTBOARDS.some((a) => a.id === saved)) artboardId = saved;
 		} catch {
 			/* ignore */
 		}
@@ -3100,6 +3548,7 @@
 						<div class="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-1.5">
 							<Popover
 								id={gifPickerMenuId}
+								float
 								placement="top-start"
 								width="auto"
 								class="w-72 max-w-[80vw] p-0 sm:w-80"
@@ -3123,6 +3572,7 @@
 							</Popover>
 							<Popover
 								id={blankMenuId}
+								float
 								placement="top-start"
 								width="auto"
 								label="Start from a blank canvas"
@@ -3192,13 +3642,14 @@
 					     (composer dialog) and the full-page pro studio (tools · stage ·
 					     inspector + a pinned timeline bar). -->
 					{#snippet stagePane()}
-						<!-- WYSIWYG 9:16 stage: fills the center pane on the full page (scaled
-						     by the zoom control — overlay coords are normalized to the stage
-						     box, so zoom never disturbs them), fixed 260px in the dialog. -->
+						<!-- WYSIWYG stage: fills the center pane on the full page (scaled
+					     by the zoom control — overlay coords are normalized to the stage
+					     box, so zoom never disturbs them), fixed 260px in the dialog.
+					     The width calc uses the ARTBOARD ratio (was hardcoded 9:16). -->
 						<div
 							class="mx-auto w-full {full ? '' : 'max-w-[260px] sm:mx-0'}"
 							style={full
-								? `width:calc(min(430px, (100dvh - 17.5rem) * 0.5625) * ${stageZoom})`
+								? `width:calc(min(430px, (100dvh - 17.5rem) * ${stageRatio}) * ${stageZoom})`
 								: ''}
 						>
 							<div class="mb-1.5 flex items-center justify-between gap-2">
@@ -3247,16 +3698,19 @@
 								bind:this={stageBox}
 								role="application"
 								aria-label="Meme preview — drag captions to position them"
-								class="relative aspect-[9/16] touch-none overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-black select-none"
+								class="relative max-h-full touch-none overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-black select-none"
+								style="aspect-ratio:{stageAspect};"
 								onpointermove={onStagePointerMove}
 								onpointerup={endDrag}
 								onpointercancel={endDrag}
 							>
 								{#if mediaKind === 'video'}
+									<!-- object-cover mirrors the export's drawCover — what you
+									     see (including the crop on a mismatched artboard) is the file. -->
 									<video
 										src={previewUrl}
 										bind:this={stageVideo}
-										class="absolute inset-0 size-full object-contain"
+										class="absolute inset-0 size-full object-cover"
 										autoplay
 										muted
 										loop
@@ -3299,7 +3753,7 @@
 										src={previewUrl}
 										alt="Meme preview"
 										bind:this={stageImg}
-										class="absolute inset-0 size-full object-contain"
+										class="absolute inset-0 size-full object-cover"
 										style="filter:{lookCss};"
 										onload={onImageLoad}
 									/>
@@ -3344,21 +3798,27 @@
 										(layer.startMs === undefined && layer.endMs === undefined) ||
 										imageOverlayVisibleAt(layer, stageSeconds * 1000)}
 									{#if layerOn}
+										<!-- Effects mirror paintImageOverlays exactly: center-anchored
+										     rotate + mirror flips, opacity, per-layer look (CSS filter
+										     both places = WYSIWYG). -->
 										<div
 											role="button"
 											tabindex="-1"
 											onpointerdown={(e) => onLayerPointerDown(e, layer)}
-											class="absolute flex -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center {selectedLayerId ===
+											class="absolute flex cursor-grab items-center justify-center {selectedLayerId ===
 											layer.id
 												? 'ring-2 ring-warm-500/80'
 												: 'hover:ring-1 hover:ring-white/40'}"
 											style="left:{layer.x * 100}%; top:{layer.y * 100}%; height:{layer.size *
-												100}%; aspect-ratio:{layer.aspect};"
+												100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) rotate({layer.rotate ??
+												0}deg) scaleX({layer.flipH ? -1 : 1}) scaleY({layer.flipV
+												? -1
+												: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
 											aria-label={`Image layer ${li + 1}`}
 										>
 											{#if layerBitmaps.has(layer.src)}
 												<img
-													src={layer.src}
+													src={layerRenderSrcs.get(layer.src) ?? layer.src}
 													alt=""
 													crossOrigin="anonymous"
 													class="pointer-events-none max-h-full max-w-full select-none {layerBitmaps.get(
@@ -3377,11 +3837,16 @@
 											{/if}
 											{#if selectedLayerId === layer.id}
 												<!-- Resize handle: bottom-right corner, pointer-down starts
-											     size mode (patched via the stage move handler). -->
+											     size mode (patched via the stage move handler).
+											     stopPropagation keeps the layer's own move-grab from
+											     overwriting the resize drag mode. -->
 												<span
 													role="button"
 													tabindex="-1"
-													onpointerdown={(e) => onLayerPointerDown(e, layer, 'resize')}
+													onpointerdown={(e) => {
+														e.stopPropagation();
+														onLayerPointerDown(e, layer, 'resize');
+													}}
 													class="absolute -right-1.5 -bottom-1.5 grid size-5 cursor-nwse-resize place-items-center rounded-full border border-warm-500 bg-black/80 text-warm-500"
 													aria-label={`Resize image layer ${li + 1}`}
 												>
@@ -3439,6 +3904,7 @@
 									</button>
 									<Popover
 										id={swapGifMenuId}
+										float
 										placement="top-start"
 										width="auto"
 										class="w-72 max-w-[80vw] p-0 sm:w-80"
@@ -3487,6 +3953,18 @@
 								>
 									<Icon name="i-lucide-trash-2" class="size-3" />
 									Remove
+								</button>
+								<!-- Start over: full reset (media + captions + sounds + remix
+								     lineage + queue + draft) back to the format-card start panel. -->
+								<button
+									type="button"
+									onclick={requestNew}
+									disabled={busy}
+									title="Clear everything and start a new meme"
+									class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-warm-600 transition hover:bg-warm-500/15 disabled:opacity-40"
+								>
+									<Icon name="i-lucide-file-plus" class="size-3" />
+									New
 								</button>
 							</div>
 							{#if showSwapUrlForm}
@@ -3538,6 +4016,20 @@
 							layers={imageLayers}
 							cues={sfxCues}
 							{busy}
+							selectedOverlayId={selectedId}
+							{selectedLayerId}
+							onSelectOverlay={(id) => {
+								selectedId = id;
+								selectedLayerId = null;
+							}}
+							onSelectLayer={(id) => {
+								selectedLayerId = id;
+								selectedId = null;
+							}}
+							onPatchOverlay={patchOverlay}
+							onPatchLayer={(id, patch) => patchLayer(id, patch)}
+							onPatchCue={retimeSfxCue}
+							cueMetaFor={cueMeta}
 						/>
 						<!-- Insert-at-playhead actions (video/timed sources): the timeline is
 						     the natural place to drop a timed caption / sound / poster frame. -->
@@ -3566,6 +4058,7 @@
 							     where the playhead sits — sources: upload / URL / GIF library. -->
 							<Popover
 								id={tlImageMenuId}
+								float
 								placement="top-start"
 								width="auto"
 								label="Add an image layer at the playhead"
@@ -3653,6 +4146,13 @@
 									</p>
 									<GifPicker
 										onpick={(g) => void addLayerFromGifLib(g, Math.round(stageSeconds * 1000))}
+										onbrowse={() => {
+											// Same one-shot as the popover's Upload file: lands with a
+											// 2s window at the playhead.
+											pendingLayerAtMs = Math.round(stageSeconds * 1000);
+											layerInput?.click();
+											popovers.close();
+										}}
 									/>
 								</div>
 							</Popover>
@@ -3705,6 +4205,7 @@
 								<!-- Saved templates: user layouts persisted locally -->
 								<Popover
 									id={templateMenuId}
+									float
 									placement="bottom-start"
 									width="auto"
 									class="w-72 max-w-[80vw] p-0"
@@ -3814,6 +4315,7 @@
 								<!-- Draft slots: named WIP snapshots (save now, resume later) -->
 								<Popover
 									id={slotsMenuId}
+									float
 									placement="bottom-start"
 									width="auto"
 									class="w-72 max-w-[80vw] p-0"
@@ -3933,90 +4435,15 @@
 							</div>
 
 							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
-								they ride the same schema/wire format as captions. -->
-							<Popover
-								id={stickerMenuId}
-								placement="top-start"
-								width="auto"
-								label="Add a sticker"
-								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-								triggerActiveClass="bg-warm-500/15 text-warm-600"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-smile-plus" class="size-3.5" />
-									Stickers
-								{/snippet}
-								<div class="w-64 max-w-[80vw] p-2">
-									<!-- Custom sticker input: type/paste ANY emoji from the keyboard.
-										 NOTE: no <form> here — popover panels unmount on the layout's global
-										 click-close before a deferred form submit can fire (the established
-										 pattern is keydown-Enter + button onclick, like the slot/template savers). -->
-									<div class="mb-2 flex items-center gap-1">
-										<label class="sr-only" for="meme-custom-sticker">Custom emoji sticker</label>
-										<input
-											id="meme-custom-sticker"
-											onclick={(e) => e.stopPropagation()}
-											type="text"
-											bind:value={customSticker}
-											placeholder="Type any emoji… 😎"
-											maxlength="8"
-											onkeydown={(e) => {
-												if (e.key === 'Enter') {
-													e.preventDefault();
-													addCustomSticker();
-												}
-											}}
-											class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-center text-[15px] outline-none placeholder:text-[11px] placeholder:font-normal placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-										/>
-										<button
-											type="button"
-											onclick={addCustomSticker}
-											title="Add this emoji as a sticker"
-											class="grid size-8 shrink-0 place-items-center rounded-full bg-warm-500/12 text-warm-500 transition hover:bg-warm-500/20 active:scale-95"
-										>
-											<Icon name="i-lucide-plus" class="size-4" />
-										</button>
-									</div>
-									<div class="flex items-center gap-1 overflow-x-auto pb-1.5">
-										{#each STICKER_PACKS as pack (pack.id)}
-											<button
-												type="button"
-												onclick={(e) => {
-													// keep the popover open — the global click-close would eat it
-													e.stopPropagation();
-													activePackId = pack.id;
-												}}
-												class="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition {activePackId ===
-												pack.id
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-											>
-												{pack.label}
-											</button>
-										{/each}
-									</div>
-									{#if activePack}
-										<div class="grid grid-cols-8 gap-1">
-											{#each activePack.stickers as emoji (emoji)}
-												<button
-													type="button"
-													onclick={() => addSticker(emoji)}
-													aria-label={`Add ${emoji} sticker`}
-													class="grid size-7 place-items-center rounded-lg text-[17px] leading-none transition hover:scale-110 hover:bg-[var(--ui-bg-muted)] active:scale-95"
-												>
-													{emoji}
-												</button>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							</Popover>
+							     they ride the same schema/wire format as captions. -->
+							<MemeStickerPicker id={stickerMenuId} onAdd={addSticker} />
 
 							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
 							     Sources: local file, https URL, GIF library (as a sticker-sized
 							     layer — NOT the base-media swap in the footer). -->
 							<Popover
 								id={imageMenuId}
+								float
 								placement="top-start"
 								width="auto"
 								label="Add an image layer"
@@ -4030,11 +4457,16 @@
 										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
 									{/if}
 								{/snippet}
-								<div class="w-64 max-w-[80vw] p-2">
+								<div class="w-auto max-w-[100vw] p-2">
 									<div class="flex items-center gap-1">
 										<button
 											type="button"
-											onclick={() => layerInput?.click()}
+											onclick={() => {
+												// Playhead window on timed sources — same contract as
+												// the picker's From device / GIF volley.
+												pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
+												layerInput?.click();
+											}}
 											disabled={layerBusy}
 											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
 										>
@@ -4073,13 +4505,9 @@
 										</button>
 									{/if}
 									{#if showLayerUrlForm}
-										<form
-											class="mt-1.5 flex items-center gap-1"
-											onsubmit={(e) => {
-												e.preventDefault();
-												void addLayerFromUrl();
-											}}
-										>
+										<!-- keydown-Enter (not a <form> submit) — popover panels unmount
+										     on the global click-close before deferred submits fire. -->
+										<div class="mt-1.5 flex items-center gap-1">
 											<input
 												type="url"
 												inputmode="url"
@@ -4087,26 +4515,55 @@
 												placeholder="https://…/sticker.png"
 												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
 												disabled={layerUrlBusy}
+												onkeydown={(e) => {
+													if (e.key === 'Enter') {
+														e.preventDefault();
+														void addLayerFromUrl();
+													}
+												}}
 											/>
 											<button
-												type="submit"
+												type="button"
 												class="flex h-8 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
 												disabled={layerUrlBusy || !layerUrl.trim()}
+												onclick={() => void addLayerFromUrl()}
 											>
 												<Icon
 													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
 													class="size-3 {layerUrlBusy ? 'animate-spin' : ''}"
 												/>
 											</button>
-										</form>
+										</div>
 									{/if}
 									<p
 										class="mt-1.5 flex items-center gap-1 px-0.5 text-[10.5px] text-[var(--ui-text-dimmed)]"
 									>
-										<Icon name="i-lucide-film" class="size-3" />
-										or pick a GIF as a sticker layer
+										<Icon name="i-lucide-sticker" class="size-3" />
+										pick GIFs or transparent stickers — tap several, then Add
 									</p>
-									<GifPicker onpick={addLayerFromGifLib} />
+									<!-- Multi-select for mass production: tap several stickers,
+									     confirm once — each lands as a layer with a 2s window at
+									     the playhead, staggered 250ms apart. -->
+									<GifPicker
+										multiple
+										max={Math.max(1, MAX_IMAGE_OVERLAYS - imageLayers.length)}
+										onpick={(g) => void addLayerFromGifLib(g)}
+										onbrowse={() => {
+											// Device browse joins the volley: playhead window (timed
+											// sources), multi-select, 250ms stagger per file.
+											pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
+											layerInput?.click();
+										}}
+										onpickmany={(gifs) => {
+											const base = Math.round(stageSeconds * 1000);
+											for (let i = 0; i < gifs.length; i++) {
+												void addLayerFromGifLib(
+													gifs[i]!,
+													timelineActive ? base + i * 250 : undefined
+												);
+											}
+										}}
+									/>
 									{#if imageLayers.length}
 										<div class="mt-1.5 border-t border-[var(--ui-border-muted)] pt-1.5">
 											<p
@@ -4131,7 +4588,11 @@
 																class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-black/40"
 															>
 																{#if layerBitmaps.has(layer.src)}
-																	<img src={layer.src} alt="" class="max-h-full max-w-full" />
+																	<img
+																		src={layerRenderSrcs.get(layer.src) ?? layer.src}
+																		alt=""
+																		class="max-h-full max-w-full"
+																	/>
 																{:else}
 																	<Icon name="i-lucide-image" class="size-3.5 text-white/60" />
 																{/if}
@@ -4142,6 +4603,36 @@
 																Layer {li + 1}
 															</span>
 														</button>
+														<!-- Z-order: later layers paint on top — stack controls.
+														     stopPropagation keeps the popover open (global click-close). -->
+														<span class="flex shrink-0 items-center">
+															<button
+																type="button"
+																onclick={(e) => {
+																	e.stopPropagation();
+																	moveLayerRow(layer.id, 1);
+																}}
+																disabled={busy || li === imageLayers.length - 1}
+																aria-label={`Bring layer ${li + 1} forward`}
+																title="Bring forward (on top)"
+																class="grid size-5 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+															>
+																<Icon name="i-lucide-chevron-up" class="size-3" />
+															</button>
+															<button
+																type="button"
+																onclick={(e) => {
+																	e.stopPropagation();
+																	moveLayerRow(layer.id, -1);
+																}}
+																disabled={busy || li === 0}
+																aria-label={`Send layer ${li + 1} backward`}
+																title="Send backward (behind)"
+																class="grid size-5 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+															>
+																<Icon name="i-lucide-chevron-down" class="size-3" />
+															</button>
+														</span>
 														<!-- Layer timing (timed sources): chip toggles an edit row — same
 														     model as caption windows; missing window = always visible. -->
 														{#if timelineActive}
@@ -4248,43 +4739,9 @@
 							</Popover>
 
 							<!-- Look picker: one-tap color presets. Preview = CSS filter,
-						     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
+							     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
 							{#if looksAvailable}
-								<Popover
-									id={lookMenuId}
-									placement="top-start"
-									width="auto"
-									label="Pick a look"
-									triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-									triggerActiveClass="bg-warm-500/15 text-warm-600"
-								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-sparkles" class="size-3.5" />
-										Look
-										{#if lookId !== 'none'}
-											<span
-												class="rounded-full bg-warm-500/20 px-1.5 text-[10px] font-extrabold text-warm-600"
-											>
-												{MEME_LOOKS.find((look) => look.id === lookId)?.label}
-											</span>
-										{/if}
-									{/snippet}
-									<div class="flex w-56 max-w-[80vw] flex-wrap gap-1 p-1.5">
-										{#each MEME_LOOKS as look (look.id)}
-											<button
-												type="button"
-												onclick={() => (lookId = memeLookOf(look.id))}
-												aria-pressed={lookId === look.id}
-												class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition {lookId ===
-												look.id
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-											>
-												{look.label}
-											</button>
-										{/each}
-									</div>
-								</Popover>
+								<MemeLookPicker id={lookMenuId} {lookId} onPick={(id) => (lookId = id)} />
 							{/if}
 						</div>
 					{/snippet}
@@ -4292,6 +4749,19 @@
 					{#snippet inspectorPane()}
 						<!-- Inspector: export support, overlay list, composition, sound, publish -->
 						<div class="flex min-w-0 flex-col gap-3">
+							<!-- Selected image layer: precise resize + effects. -->
+							{#if selectedLayer}
+								{#key selectedLayer.id}
+									<MemeLayerEditor
+										layer={selectedLayer}
+										index={imageLayers.findIndex((l) => l.id === selectedLayer.id) + 1}
+										renderSrc={layerRenderSrcs.get(selectedLayer.src) ?? null}
+										{busy}
+										onPatch={(id, patch) => patchLayer(id, patch)}
+										onRemove={(id) => removeLayer(id)}
+									/>
+								{/key}
+							{/if}
 							{#if !videoMemeSupported}
 								<p
 									class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
@@ -4347,6 +4817,29 @@
 														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-40"
 													>
 														<Icon name="i-lucide-chevron-down" class="size-3.5" />
+													</button>
+												{/if}
+												<!-- Z-order (2+ captions): later slots paint on top. -->
+												{#if overlays.length > 1}
+													<button
+														type="button"
+														onclick={() => moveOverlayRow(overlay.id, 1)}
+														disabled={busy || i === overlays.length - 1}
+														aria-label={`Stack caption ${i + 1} on top`}
+														title="Bring forward (paints on top)"
+														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-30"
+													>
+														<Icon name="i-lucide-bring-to-front" class="size-3.5" />
+													</button>
+													<button
+														type="button"
+														onclick={() => moveOverlayRow(overlay.id, -1)}
+														disabled={busy || i === 0}
+														aria-label={`Send caption ${i + 1} backward`}
+														title="Send backward (paints behind)"
+														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-30"
+													>
+														<Icon name="i-lucide-send-to-back" class="size-3.5" />
 													</button>
 												{/if}
 												<button
@@ -4619,8 +5112,51 @@
 								{/if}
 							</div>
 
+							<!-- Artboard: the output canvas. `source` keeps the media's own
+							     frame; presets cover-fit (crop to fill) — the stage preview
+							     mirrors the choice live, overlays land identically on any. -->
+							{#if mediaKind}
+								<div
+									class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-border-muted)] px-3.5 py-3"
+								>
+									<div class="flex items-center justify-between gap-2">
+										<p
+											class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+										>
+											<Icon name="i-lucide-frame" class="size-3.5" />
+											Artboard
+										</p>
+										<p class="font-mono text-[11px] font-bold text-warm-600 tabular-nums">
+											{renderTarget.width}×{renderTarget.height}
+										</p>
+									</div>
+									<div class="mt-2 flex flex-wrap items-center gap-1.5">
+										{#each ARTBOARDS as ab (ab.id)}
+											<button
+												type="button"
+												disabled={busy}
+												onclick={() => setArtboard(ab.id)}
+												aria-pressed={artboardId === ab.id}
+												title={ab.hint}
+												class="h-7 rounded-full px-2.5 font-mono text-[11px] font-bold tabular-nums transition {artboardId ===
+												ab.id
+													? 'bg-warm-500 text-white'
+													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+											>
+												{ab.label}
+											</button>
+										{/each}
+									</div>
+									{#if artboardId !== 'source'}
+										<p class="mt-1.5 text-[10.5px] leading-snug text-[var(--ui-text-dimmed)]">
+											Media cover-fits the {artboardId} canvas — the preview's crop is the export's crop.
+										</p>
+									{/if}
+								</div>
+							{/if}
+
 							<!-- Frame strip (dialog mode — the full layout shows it in the
-							     pinned transport bar instead, next to the timeline). -->
+								     pinned transport bar instead, next to the timeline). -->
 							{#if stripFrames && !full}
 								<VideoFrameStrip
 									durationSec={meta?.duration ?? 0}
@@ -4753,6 +5289,58 @@
 											</button>
 										{/if}
 									</div>
+									<!-- Length presets (user request: “set time 5s / 10s / 30s…”): set
+									     the window's length from the current start mark; caps at the
+									     source's remaining time and the 90s video-meme limit. -->
+									<div class="mt-2 flex flex-wrap items-center gap-1.5">
+										<span class="text-[10.5px] font-bold text-[var(--ui-text-dimmed)]">
+											Length
+										</span>
+										{#each [5, 10, 15, 30, 60] as n (n)}
+											<button
+												type="button"
+												disabled={busy}
+												onclick={() => setTrimLength(n)}
+												aria-pressed={Math.abs(trimDuration - n) < 0.05}
+												title={`Make the export window ${n}s long from the start mark`}
+												class="h-7 rounded-full px-2.5 text-[11px] font-bold tabular-nums transition {Math.abs(
+													trimDuration - n
+												) < 0.05
+													? 'bg-warm-500 text-white'
+													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+											>
+												{n}s
+											</button>
+										{/each}
+										<label
+											class="flex items-center gap-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)]"
+										>
+											custom
+											<input
+												type="number"
+												min="0.5"
+												step="0.5"
+												value={trimDuration.toFixed(1)}
+												disabled={busy}
+												aria-label="Custom window length in seconds"
+												onkeydown={(e) => {
+													if (e.key === 'Enter') {
+														e.preventDefault();
+														(e.currentTarget as HTMLInputElement).blur();
+													}
+												}}
+												onchange={(e) =>
+													setTrimLength(Number((e.currentTarget as HTMLInputElement).value))}
+												class="h-7 w-16 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 text-center font-mono text-[11px] tabular-nums outline-none focus:border-warm-500"
+											/>
+											s
+										</label>
+										<span
+											class="ml-auto text-[10px] font-semibold text-[var(--ui-text-dimmed)] tabular-nums"
+										>
+											source {formatDuration(meta.duration)}
+										</span>
+									</div>
 									{#if exportDurationSec > MAX_VIDEO_MEME_SECONDS}
 										<p
 											class="mt-2 flex items-center gap-1 text-[11px] font-bold text-[var(--tone-error-text)]"
@@ -4808,6 +5396,7 @@
 										</button>
 										<Popover
 											id={sfxMenuId}
+											float
 											placement="top-start"
 											width="auto"
 											label="Add sound effect"
@@ -4815,8 +5404,8 @@
 											triggerActiveClass="bg-warm-500/20"
 										>
 											{#snippet trigger()}
-												<Icon name="i-lucide-plus" class="size-3.5" />
-												Cue @ {formatDuration(stageSeconds)}
+												<Icon name="i-lucide-music-plus" class="size-3.5" />
+												Add sound @ {formatDuration(stageSeconds)}
 											{/snippet}
 											<div class="max-h-80 scrollbar-thin overflow-y-auto">
 												{#each MEME_SFX_IDS as sfxId (sfxId)}
@@ -4854,6 +5443,44 @@
 																	</span>
 																</span>
 															</span>
+															{#snippet trailing()}
+																<!-- Library management rides along (share as kind-30078 /
+																     delete) — no separate My-sounds surface needed. -->
+																<span class="flex items-center">
+																	<button
+																		type="button"
+																		class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-600"
+																		aria-label={`Share ${sound.label} with other creators`}
+																		title="Publish as a kind-30078 shared sound"
+																		disabled={sharingSoundId === sound.id || !!sharingSoundId}
+																		onclick={(e) => {
+																			e.stopPropagation();
+																			void shareSound(sound);
+																		}}
+																	>
+																		<Icon
+																			name={sharingSoundId === sound.id
+																				? 'i-lucide-loader-circle'
+																				: 'i-lucide-share-2'}
+																			class="size-3.5 {sharingSoundId === sound.id
+																				? 'animate-spin'
+																				: ''}"
+																		/>
+																	</button>
+																	<button
+																		type="button"
+																		class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
+																		aria-label={`Delete ${sound.label} from this device`}
+																		title="Delete from this device"
+																		onclick={(e) => {
+																			e.stopPropagation();
+																			removeSoundFromLibrary(sound.id);
+																		}}
+																	>
+																		<Icon name="i-lucide-trash-2" class="size-3.5" />
+																	</button>
+																</span>
+															{/snippet}
 														</MenuItem>
 													{/each}
 												{/if}
@@ -4872,9 +5499,89 @@
 														void toggleMicRecording();
 													}}
 												>
-													{recording ? 'Stop recording · save' : 'Record with mic…'}
+													<span class="flex items-center gap-1">
+														{recording ? 'Stop recording · save' : 'Record with mic…'}
+														{#if micDenied && !recording}
+															<Icon
+																name="i-lucide-alert-circle"
+																class="size-3 text-[var(--tone-error-text)]"
+															/>
+														{/if}
+													</span>
 												</MenuItem>
 											</div>
+										</Popover>
+										<!-- Shared sounds (plan 17.1/17.2): pick CC-licensed sounds
+										     other creators published as kind-30078 events; hash-verified import. -->
+										<Popover
+											id={sharedMenuId}
+											float
+											placement="top-start"
+											width="auto"
+											label="Shared sounds"
+											triggerClass="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/10"
+											triggerActiveClass="bg-primary-500/15"
+										>
+											{#snippet trigger()}
+												<Icon name="i-lucide-globe-2" class="size-3.5" />
+												Shared
+											{/snippet}
+											<button
+												type="button"
+												class="flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
+												disabled={sharedLoading}
+												onclick={() => void loadSharedSounds()}
+											>
+												<Icon
+													name="i-lucide-refresh-cw"
+													class="size-3.5 {sharedLoading ? 'animate-spin' : ''}"
+												/>
+												{sharedLoading ? 'Searching relays…' : 'Refresh'}
+											</button>
+											{#if sharedSounds.length}
+												<MenuDivider />
+												{#each sharedSounds as sound (sound.eventId)}
+													<MenuItem
+														onclick={() => {
+															void importSharedSound(sound);
+														}}
+													>
+														<span class="flex min-w-0 items-center gap-2">
+															<Icon
+																name="i-lucide-download"
+																class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
+															/>
+															<span class="min-w-0">
+																<span class="block truncate">{sound.label}</span>
+																<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+																	{sound.durationSec.toFixed(1)}s · {sound.license}
+																	{#if sound.creatorPubkey === me?.pk}· yours{/if}
+																</span>
+															</span>
+														</span>
+														{#snippet trailing()}
+															{#if sharedImportingId === sound.eventId}
+																<Icon
+																	name="i-lucide-loader-circle"
+																	class="size-3.5 animate-spin text-primary-600"
+																/>
+															{:else if sound.sha256}
+																<span
+																	class="text-[10px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
+																>
+																	+ add
+																</span>
+															{:else}
+																<Icon
+																	name="i-lucide-shield-off"
+																	class="size-3.5 text-[var(--ui-text-dimmed)]"
+																	title="No content hash — cannot verify"
+																/>
+															{/if}
+														{/snippet}
+													</MenuItem>
+												{/each}
+											{/if}
 										</Popover>
 										<!-- #2 sound-timed captions: snap every caption window onto the cue sheet in order. -->
 										{#if sfxCues.length && overlays.length}
@@ -4891,6 +5598,7 @@
 										{/if}
 										<Popover
 											id={suggestMenuId}
+											float
 											placement="top-start"
 											width="auto"
 											class="w-72 max-w-[80vw] p-0"
@@ -4975,183 +5683,6 @@
 											</div>
 										</Popover>
 									</div>
-									<!-- My sounds: mic recorder + device import + reusable library -->
-									<div
-										class="mt-1.5 flex flex-wrap items-center gap-1.5 rounded-xl border border-dashed border-[var(--ui-border-muted)] px-3 py-2"
-									>
-										{#if soundLibrary.list.length}
-											<Popover
-												id={soundMenuId}
-												placement="top-start"
-												width="auto"
-												label="My sounds"
-												triggerClass="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11.5px] font-bold text-primary-600 transition hover:bg-primary-500/20"
-												triggerActiveClass="bg-primary-500/20"
-											>
-												{#snippet trigger()}
-													<Icon name="i-lucide-library" class="size-3.5" />
-													My sounds ({soundLibrary.list.length})
-												{/snippet}
-												{#each soundLibrary.list as sound (sound.id)}
-													<MenuItem
-														onclick={() => {
-															void previewSound(sound);
-															addCustomCue(sound);
-														}}
-													>
-														<span class="flex min-w-0 items-center gap-2">
-															<Icon
-																name={sound.source === 'mic'
-																	? 'i-lucide-mic'
-																	: 'i-lucide-file-audio'}
-																class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
-															/>
-															<span class="min-w-0">
-																<span class="block truncate">{sound.label}</span>
-																<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																	{sound.durationSec.toFixed(1)}s &middot; cue at {formatDuration(
-																		stageSeconds
-																	)}
-																</span>
-															</span>
-														</span>
-														{#snippet trailing()}
-															<span class="flex items-center">
-																<button
-																	type="button"
-																	class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-600"
-																	aria-label={`Share ${sound.label} with other creators`}
-																	title="Publish as a kind-30078 shared sound"
-																	disabled={sharingSoundId === sound.id || !!sharingSoundId}
-																	onclick={(e) => {
-																		e.stopPropagation();
-																		void shareSound(sound);
-																	}}
-																>
-																	<Icon
-																		name={sharingSoundId === sound.id
-																			? 'i-lucide-loader-circle'
-																			: 'i-lucide-share-2'}
-																		class="size-3.5 {sharingSoundId === sound.id
-																			? 'animate-spin'
-																			: ''}"
-																	/>
-																</button>
-																<button
-																	onclick={(e) => {
-																		e.stopPropagation();
-																		removeSoundFromLibrary(sound.id);
-																	}}
-																>
-																	<Icon name="i-lucide-trash-2" class="size-3.5" />
-																</button>
-															</span>
-														{/snippet}
-													</MenuItem>
-												{/each}
-											</Popover>
-										{/if}
-										<button
-											type="button"
-											class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition {recording
-												? 'bg-[var(--tone-error-text)] text-white'
-												: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]'}"
-											aria-label={recording ? 'Stop recording' : 'Record a sound'}
-											title={micDenied ? 'Mic blocked — allow access in site settings' : undefined}
-											onclick={() => void toggleMicRecording()}
-										>
-											<Icon
-												name={recording ? 'i-lucide-square' : 'i-lucide-mic'}
-												class="size-3.5"
-											/>
-											{recording ? 'Stop · save' : 'Record'}
-											{#if micDenied && !recording}
-												<Icon
-													name="i-lucide-alert-circle"
-													class="size-3 text-[var(--tone-error-text)]"
-												/>
-											{/if}
-										</button>
-										<button
-											type="button"
-											class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-											onclick={() => soundFileInput?.click()}
-										>
-											<Icon name="i-lucide-upload" class="size-3.5" />
-											From device
-										</button>
-										<!-- Shared sounds (plan 17.1/17.2): pick CC-licensed sounds
-										     other creators published as kind-30078 events; hash-verified import. -->
-										<Popover
-											id={sharedMenuId}
-											placement="top-start"
-											width="auto"
-											label="Shared sounds"
-											triggerClass="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
-											triggerActiveClass="bg-primary-500/15"
-										>
-											{#snippet trigger()}
-												<Icon name="i-lucide-globe-2" class="size-3.5" />
-												Shared sounds
-											{/snippet}
-											<button
-												type="button"
-												class="flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
-												disabled={sharedLoading}
-												onclick={() => void loadSharedSounds()}
-											>
-												<Icon
-													name="i-lucide-refresh-cw"
-													class="size-3.5 {sharedLoading ? 'animate-spin' : ''}"
-												/>
-												{sharedLoading ? 'Searching relays…' : 'Refresh'}
-											</button>
-											{#if sharedSounds.length}
-												<MenuDivider />
-												{#each sharedSounds as sound (sound.eventId)}
-													<MenuItem
-														onclick={() => {
-															void importSharedSound(sound);
-														}}
-													>
-														<span class="flex min-w-0 items-center gap-2">
-															<Icon
-																name="i-lucide-download"
-																class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
-															/>
-															<span class="min-w-0">
-																<span class="block truncate">{sound.label}</span>
-																<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																	{sound.durationSec.toFixed(1)}s · {sound.license}
-																	{#if sound.creatorPubkey === me?.pk}· yours{/if}
-																</span>
-															</span>
-														</span>
-														{#snippet trailing()}
-															{#if sharedImportingId === sound.eventId}
-																<Icon
-																	name="i-lucide-loader-circle"
-																	class="size-3.5 animate-spin text-primary-600"
-																/>
-															{:else if sound.sha256}
-																<span
-																	class="text-[10px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
-																>
-																	+ add
-																</span>
-															{:else}
-																<Icon
-																	name="i-lucide-shield-off"
-																	class="size-3.5 text-[var(--ui-text-dimmed)]"
-																	title="No content hash — cannot verify"
-																/>
-															{/if}
-														{/snippet}
-													</MenuItem>
-												{/each}
-											{/if}
-										</Popover>
-									</div>
 									{#if sfxCues.length}
 										<ul class="mt-2 flex flex-col gap-1">
 											{#each sfxCues as cue (cue.id)}
@@ -5161,9 +5692,16 @@
 													<span class="flex items-center gap-1.5 font-semibold">
 														<Icon name={cueIcon(cue)} class="size-3.5 text-warm-500" />
 														{cueLabel(cue)}
-														<span class="text-[var(--ui-text-dimmed)]">
+														<!-- Time chip doubles as a seek: jump the playhead to the cue. -->
+														<button
+															type="button"
+															disabled={busy || !timelineActive}
+															title="Jump the playhead to this cue"
+															onclick={() => scrubPreview(cue.atMs / 1000)}
+															class="rounded-full bg-[var(--ui-bg-muted)] px-1.5 py-px font-mono text-[10.5px] font-bold text-[var(--ui-text-muted)] tabular-nums transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+														>
 															@ {formatDuration(cue.atMs / 1000)}
-														</span>
+														</button>
 													</span>
 													<span class="flex items-center gap-1">
 														<button
@@ -5208,6 +5746,7 @@
 							<div class="flex flex-wrap items-center gap-1.5">
 								<Popover
 									id={destMenuId}
+									float
 									placement="top-start"
 									width="auto"
 									label="Post destination"
@@ -5386,6 +5925,7 @@
 								{/if}
 								<Popover
 									id={providerMenuId}
+									float
 									placement="top-start"
 									width="lg"
 									label="Upload provider"
@@ -5641,8 +6181,40 @@
 						<span class="truncate">
 							{overlays.length} caption{overlays.length === 1 ? '' : 's'} ·
 							{kindInfo?.label ?? 'Meme'}
-							{#if meta}${meta.width}×${meta.height}{/if}
+							{#if mediaKind}{renderTarget.width}×{renderTarget.height}{:else if meta}{meta.width}×{meta.height}{/if}
 						</span>
+					</div>
+					<!-- Output format: Auto infers from the source; the explicit
+					     options re-render the SAME composition as image / true GIF /
+					     video. Publish rides the same choice. -->
+					<div
+						class="hidden items-center gap-0.5 rounded-full bg-[var(--ui-bg-muted)] p-0.5 sm:flex"
+						role="group"
+						aria-label="Output format"
+					>
+						{#each [{ id: 'auto', label: 'Auto', hint: 'Infer from the source media' }, { id: 'image', label: 'Image', hint: 'JPEG still of the current frame' }, { id: 'gif', label: 'GIF', hint: 'True looping .gif (image or GIF base)' }, { id: 'video', label: 'Video', hint: 'Recorded video with sound' }] as fmt (fmt.id)}
+							{@const disabled =
+								fmt.id === 'gif' && mediaKind === 'video'
+									? 'GIF export needs an image or GIF base'
+									: fmt.id === 'video' && !canRenderVideoMeme()
+										? 'This browser cannot record video'
+										: ''}
+							<button
+								type="button"
+								disabled={busy || !!disabled}
+								onclick={() => (exportFormat = fmt.id as typeof exportFormat)}
+								aria-pressed={exportFormat === fmt.id}
+								title={disabled || fmt.hint}
+								class="rounded-full px-2.5 py-1 text-[11px] font-bold transition {exportFormat ===
+								fmt.id
+									? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
+									: disabled
+										? 'cursor-not-allowed text-[var(--ui-text-dimmed)] opacity-50'
+										: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
+							>
+								{fmt.label}
+							</button>
+						{/each}
 					</div>
 					<div class="flex items-center gap-2">
 						<button
@@ -5692,10 +6264,19 @@
 		{#if confirmDiscard}
 			<div class="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4">
 				<div class="surface-card w-full max-w-xs rounded-2xl p-5 text-center">
-					<Icon name="i-lucide-trash-2" class="mx-auto size-8 text-[var(--tone-error-text)]" />
-					<h3 class="mt-2 text-[15px] font-bold">Discard this meme?</h3>
+					<Icon
+						name={discardIntent === 'new' ? 'i-lucide-file-plus' : 'i-lucide-trash-2'}
+						class="mx-auto size-8 {discardIntent === 'new'
+							? 'text-warm-500'
+							: 'text-[var(--tone-error-text)]'}"
+					/>
+					<h3 class="mt-2 text-[15px] font-bold">
+						{discardIntent === 'new' ? 'Start a new meme?' : 'Discard this meme?'}
+					</h3>
 					<p class="mt-1 text-[12.5px] text-[var(--ui-text-muted)]">
-						Captions and the chosen media will be lost.
+						{discardIntent === 'new'
+							? 'The canvas resets — media, captions, sounds and remix lineage are cleared.'
+							: 'Captions and the chosen media will be lost.'}
 					</p>
 					<div class="mt-4 flex gap-2">
 						<button
@@ -5708,9 +6289,11 @@
 						<button
 							type="button"
 							onclick={discard}
-							class="h-9 flex-1 rounded-full bg-[var(--tone-error-text)] text-[13px] font-bold text-white transition hover:brightness-110"
+							class="h-9 flex-1 rounded-full {discardIntent === 'new'
+								? 'bg-warm-500'
+								: 'bg-[var(--tone-error-text)]'} text-[13px] font-bold text-white transition hover:brightness-110"
 						>
-							Discard
+							{discardIntent === 'new' ? 'Start over' : 'Discard'}
 						</button>
 					</div>
 					<!-- Middle path: park the WIP in a slot instead of losing it. -->
@@ -5718,14 +6301,12 @@
 						type="button"
 						onclick={async () => {
 							await saveCurrentSlot();
-							confirmDiscard = false;
-							open = false;
-							reset();
+							startFresh();
 						}}
 						class="mt-2 h-9 w-full rounded-full bg-primary-500/10 text-[12.5px] font-bold text-primary-600 transition hover:bg-primary-500/20"
 					>
 						<Icon name="i-lucide-save" class="mr-1 inline size-3.5" />
-						Save to slots instead
+						Save to slots instead{discardIntent === 'new' ? ', then start over' : ''}
 					</button>
 				</div>
 			</div>
@@ -5746,6 +6327,7 @@
 	bind:this={layerInput}
 	type="file"
 	accept="image/png,image/gif,image/jpeg,image/webp"
+	multiple
 	class="hidden"
 	onchange={onLayerFileInput}
 />

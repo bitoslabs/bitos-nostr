@@ -39,6 +39,9 @@
 	let {
 		onpick,
 		onpickmany,
+		/** Device browse — opens the host's image/GIF chooser (the caller owns
+		 *  the hidden input so popover click-close can't eat the dialog). */
+		onbrowse,
 		variant = 'popover',
 		/** Multi-select mode: taps toggle selection, confirmed via `onpickmany`. */
 		multiple = false,
@@ -47,6 +50,7 @@
 	}: {
 		onpick?: (gif: GifChoice) => void;
 		onpickmany?: (gifs: GifChoice[]) => void;
+		onbrowse?: () => void;
 		variant?: 'popover' | 'inline';
 		multiple?: boolean;
 		max?: number;
@@ -55,9 +59,12 @@
 	type GiphyImageSet = { url: string; width?: string; height?: string };
 	type GiphyItem = { id: string; images: Record<string, GiphyImageSet>; title?: string };
 	type GifItem = { id: string; preview: string; url: string; w: number; h: number; title?: string };
+	type TrendingCache = { savedAt: number; items: GifItem[] };
 	type GifStorage = {
 		recent?: GifItem[];
-		trending?: { savedAt: number; items: GifItem[] };
+		trending?: TrendingCache;
+		trendingStickers?: TrendingCache;
+		kind?: 'gifs' | 'stickers';
 	};
 
 	let query = $state('');
@@ -65,6 +72,9 @@
 	let items = $state<GifItem[]>([]);
 	let recent = $state<GifItem[]>([]);
 	let tab = $state<'recent' | 'trending'>('trending');
+	/** GIFs vs Stickers — Giphy's sticker endpoints return transparent
+	 *  cut-outs, exactly what meme layers want on top of the media. */
+	let kind = $state<'gifs' | 'stickers'>('gifs');
 	let loading = $state(false);
 	let loadingMore = $state(false);
 	let loaded = $state(false);
@@ -78,18 +88,28 @@
 	const selected = new SvelteMap<string, GifItem>();
 	const atCapacity = $derived(multiple && selected.size >= max);
 
+	function trendingCache(): TrendingCache | undefined {
+		return kind === 'stickers' ? storage.trendingStickers : storage.trending;
+	}
+
 	function readStorage() {
 		try {
 			const raw = localStorage.getItem(STORAGE_KEY);
 			if (raw) {
 				const saved = JSON.parse(raw) as GifStorage;
 				// Keep only the intentionally persistent data; older versions stored search results here.
-				storage = { recent: saved.recent, trending: saved.trending };
+				storage = {
+					recent: saved.recent,
+					trending: saved.trending,
+					trendingStickers: saved.trendingStickers,
+					kind: saved.kind === 'stickers' ? 'stickers' : 'gifs'
+				};
 				localStorage.setItem(STORAGE_KEY, JSON.stringify(storage));
 			}
 		} catch {
 			storage = {};
 		}
+		kind = storage.kind ?? 'gifs';
 		recent = Array.isArray(storage.recent) ? storage.recent.slice(0, RECENT_LIMIT) : [];
 	}
 
@@ -133,8 +153,8 @@
 		const offset = options.append ? nextOffset : 0;
 		try {
 			const endpoint = q.trim()
-				? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`
-				: `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_KEY}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`;
+				? `https://api.giphy.com/v1/${kind}/search?api_key=${GIPHY_KEY}&q=${encodeURIComponent(q)}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`
+				: `https://api.giphy.com/v1/${kind}/trending?api_key=${GIPHY_KEY}&limit=${GIPHY_PAGE_SIZE}&offset=${offset}&rating=pg`;
 			const res = await fetch(endpoint, { signal: controller.signal });
 			if (!res.ok) throw new Error(`Giphy ${res.status}`);
 			const json = (await res.json()) as {
@@ -164,7 +184,10 @@
 				: nextItems.length >= GIPHY_PAGE_SIZE;
 			const savedAt = Date.now();
 			if (!normalizedQuery) {
-				storage = { ...storage, trending: { savedAt, items: allItems } };
+				storage = {
+					...storage,
+					[kind === 'stickers' ? 'trendingStickers' : 'trending']: { savedAt, items: allItems }
+				};
 				writeStorage();
 			}
 			if (!items.length && q.trim()) error = 'No GIFs found';
@@ -241,10 +264,25 @@
 
 	function showTrending() {
 		tab = 'trending';
-		items = storage.trending?.items ?? items;
+		items = trendingCache()?.items ?? items;
 		nextOffset = items.length;
 		hasMore = true;
 		error = '';
+	}
+
+	/** Switch GIFs ⇄ Stickers — keeps the query (searching the same words in
+	 *  stickers is the whole point) and reloads the grid for the new kind. */
+	function switchKind(next: 'gifs' | 'stickers') {
+		if (kind === next) return;
+		kind = next;
+		storage = { ...storage, kind };
+		writeStorage();
+		tab = 'trending';
+		nextOffset = 0;
+		hasMore = true;
+		items = [];
+		selected.clear();
+		void fetchGifs(query);
 	}
 
 	function loadMore() {
@@ -261,9 +299,9 @@
 	$effect(() => {
 		if (!browser || loaded || loading) return;
 		readStorage();
-		const cached = storage.trending;
+		const cached = trendingCache();
 		// Recent history is the fastest and most useful first view. Trending is
-		// still revalidated below so it is ready when the user switches tabs.
+		// still revalidated below so it's ready when the user switches tabs.
 		if (recent.length) {
 			tab = 'recent';
 			items = recent;
@@ -296,8 +334,10 @@
 		{/if}
 	</div>
 
-	{#if !query.trim() && recent.length}
-		<div class="flex gap-1 border-b border-[var(--ui-border-muted)] px-2 py-2">
+	<!-- Filter row: recents (when any) + the GIFs ⇄ Stickers kind toggle —
+	     stickers are transparent cut-outs made for layering on media. -->
+	<div class="flex items-center gap-1 border-b border-[var(--ui-border-muted)] px-2 py-1.5">
+		{#if recent.length}
 			<button
 				type="button"
 				onclick={(event) => {
@@ -316,14 +356,48 @@
 					event.stopPropagation();
 					showTrending();
 				}}
-				class="rounded-md px-2 py-1 text-[11px] {tab === 'trending'
+				class="rounded-md px-2 py-1 text-[11px] {tab === 'trending' && kind === 'gifs'
 					? 'bg-[var(--ui-bg-muted)] font-medium text-[var(--ui-text)]'
 					: 'text-[var(--ui-text-dimmed)]'}"
 			>
 				Trending
 			</button>
+		{/if}
+		<div class="ml-auto flex items-center gap-0.5 rounded-full bg-[var(--ui-bg-muted)] p-0.5">
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					switchKind('gifs');
+				}}
+				aria-pressed={kind === 'gifs'}
+				title="Full-frame animated GIFs"
+				class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition {kind ===
+				'gifs'
+					? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				<Icon name="i-lucide-film" class="size-3" />
+				GIFs
+			</button>
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					switchKind('stickers');
+				}}
+				aria-pressed={kind === 'stickers'}
+				title="Transparent cut-out stickers — ideal as meme layers"
+				class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition {kind ===
+				'stickers'
+					? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				<Icon name="i-lucide-sticker" class="size-3" />
+				Stickers
+			</button>
 		</div>
-	{/if}
+	</div>
 
 	<div
 		class="{variant === 'popover'
@@ -354,8 +428,12 @@
 					<button
 						type="button"
 						onclick={(event) => {
-							if (multiple) event.stopPropagation();
-							multiple ? toggle(item) : pick(item);
+							if (multiple) {
+								event.stopPropagation();
+								toggle(item);
+							} else {
+								pick(item);
+							}
 						}}
 						disabled={isDisabled}
 						aria-pressed={multiple ? isSelected : undefined}
@@ -370,6 +448,9 @@
 							: isDisabled
 								? 'cursor-not-allowed opacity-40'
 								: ''}"
+						style={kind === 'stickers'
+							? 'background-image:repeating-conic-gradient(rgba(127,127,127,0.18) 0% 25%, transparent 0% 50%); background-size:12px 12px;'
+							: ''}
 					>
 						<img
 							src={item.preview}
@@ -461,9 +542,28 @@
 		</div>
 	{/if}
 	<p
-		class="flex items-center justify-center gap-1 border-t border-[var(--ui-border-muted)] p-1.5 text-[10px] text-[var(--ui-text-dimmed)]"
+		class="flex items-center justify-between gap-1 border-t border-[var(--ui-border-muted)] p-1.5 text-[10px] text-[var(--ui-text-dimmed)]"
 	>
-		<Icon name="i-lucide-info" class="size-3" />
-		Powered by Giphy
+		{#if onbrowse}
+			<!-- Device browse lives next to the library — one picker, every source.
+			     stopPropagation keeps the host popover open through the dialog. -->
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					onbrowse();
+				}}
+				class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+			>
+				<Icon name="i-lucide-folder-open" class="size-3" />
+				From device
+			</button>
+		{:else}
+			<span></span>
+		{/if}
+		<span class="flex items-center gap-1">
+			<Icon name="i-lucide-info" class="size-3" />
+			Powered by Giphy
+		</span>
 	</p>
 </div>
