@@ -48,6 +48,7 @@
 	import { formatDuration } from '$lib/utils/format';
 	import {
 		MAX_OVERLAY_CHARS,
+		MAX_OVERLAYS,
 		MEME_COLORS,
 		MEME_FONTS,
 		overlayVisibleAt,
@@ -94,6 +95,8 @@
 	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
 	import MemeLookPicker from '$lib/components/bitz/MemeLookPicker.svelte';
 	import MemeStickerPicker from '$lib/components/bitz/MemeStickerPicker.svelte';
+	import MemeSourceLibrary from '$lib/components/bitz/MemeSourceLibrary.svelte';
+	import { mediaLibrary } from '$lib/stores/media-library.svelte';
 	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
@@ -592,6 +595,8 @@
 	// posted meme advances to the next source. Caption once per GIF, publish N times.
 	let gifPickerMenuId = `meme-giflib-${Math.random().toString(36).slice(2, 8)}`;
 	let swapGifMenuId = `meme-swapgif-${Math.random().toString(36).slice(2, 8)}`;
+	let startLibMenuId = `meme-lib-start-${Math.random().toString(36).slice(2, 8)}`;
+	let swapLibMenuId = `meme-lib-swap-${Math.random().toString(36).slice(2, 8)}`;
 	let showSwapUrlForm = $state(false);
 	/** Keep captions/layers/cues when swapping base media (user toggle, #1). */
 	let keepLayoutOnSwap = $state(false);
@@ -645,10 +650,40 @@
 				keepRemix: true,
 				keepLayout
 			});
+			mediaLibrary.remember(url, label, blob.type || 'image/gif');
 			return true;
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : `Could not load that ${label}`);
 			return false;
+		} finally {
+			gifStageBusy = false;
+		}
+	}
+
+	/** Library open: any recent source (image OR video) as the base media.
+	 *  CORS-hostile hosts route through the image proxy fallback. */
+	async function loadSourceFromUrl(url: string, label = ''): Promise<void> {
+		if (gifStageBusy) return;
+		gifStageBusy = true;
+		popovers.close();
+		try {
+			const res = await fetchMediaResponse(url);
+			if (!res) throw new Error('Could not fetch that source (CORS-blocked host)');
+			const type = (res.headers.get('content-type') ?? '').split(';')[0]!;
+			if (!type.startsWith('image/') && !type.startsWith('video/')) {
+				throw new Error('That link is not a picture or video');
+			}
+			const blob = await res.blob();
+			if (blob.size > MAX_MEDIA_BYTES) throw new Error('Over the 200 MB cap');
+			const ext = (type.split('/')[1] ?? 'bin').replace('quicktime', 'mov');
+			const name = `${(label || 'source').replace(/[^\w.-]+/g, '-')}-${Date.now()}.${ext}`;
+			await acceptFile(new File([blob], name, { type: type || 'application/octet-stream' }), {
+				keepRemix: true,
+				keepLayout: keepLayoutOnSwap
+			});
+			mediaLibrary.remember(url, label, type);
+		} catch (e) {
+			toasts.error(e instanceof Error ? e.message : 'Could not open that source');
 		} finally {
 			gifStageBusy = false;
 		}
@@ -700,25 +735,44 @@
 	/** Blank 9:16 canvas — caption-first memes that start from nothing. */
 	function startBlank(color: string) {
 		popovers.close();
-		const canvas = document.createElement('canvas');
-		canvas.width = 1080;
-		canvas.height = 1920;
-		const ctx = canvas.getContext('2d');
-		if (!ctx) {
-			toasts.error('Could not create a blank canvas');
-			return;
-		}
-		ctx.fillStyle = color;
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		canvas.toBlob((blob) => {
-			if (!blob) {
-				toasts.error('Could not create a blank canvas');
-				return;
-			}
-			void acceptFile(new File([blob], `blank-${Date.now()}.png`, { type: 'image/png' }), {
-				keepRemix: true
+		void applyBackgroundColor(color);
+	}
+
+	/** Active background color when the base IS a blank canvas (swatch
+	 *  highlight in the Artboard card; unknown after a draft restore). */
+	let blankBg = $state<string | null>(null);
+
+	/** Solid-color background: swap the base media to a blank canvas (at the
+	 *  artboard's size) in the chosen color — captions, image layers and sound
+	 *  cues survive via keepLayout. Powers the start-panel swatches AND the
+	 *  Artboard card's background row. */
+	async function applyBackgroundColor(color: string) {
+		if (busy || gifStageBusy) return;
+		gifStageBusy = true;
+		try {
+			const size =
+				artboardId === 'source'
+					? { width: 1080, height: 1920 }
+					: { width: renderTarget.width, height: renderTarget.height };
+			const canvas = document.createElement('canvas');
+			canvas.width = size.width;
+			canvas.height = size.height;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) throw new Error('no canvas');
+			ctx.fillStyle = color;
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+			if (!blob) throw new Error('no blob');
+			await acceptFile(new File([blob], `blank-${Date.now()}.png`, { type: 'image/png' }), {
+				keepRemix: true,
+				keepLayout: true
 			});
-		}, 'image/png');
+			blankBg = color;
+		} catch {
+			toasts.error('Could not set that background color');
+		} finally {
+			gifStageBusy = false;
+		}
 	}
 
 	// ---- "Look" color presets (user request 2026-08-23) -----------------------
@@ -1250,18 +1304,34 @@
 	let layerUrl = $state('');
 	let layerUrlBusy = $state(false);
 
+	/** fetch() with a wsrv.nl retry for CORS-hostile CDNs — resolves null
+	 *  when both the direct request and the proxy fail. CDNs that withhold
+	 *  CORS (betterttv and friends — the "blocked by CORS policy" adds) are
+	 *  unreadable to the browser any other way; wsrv.nl is an open-source
+	 *  image proxy that sends ACAO:*. */
+	async function fetchMediaResponse(url: string): Promise<Response | null> {
+		const targets = /^https:\/\/wsrv\.nl\//i.test(url)
+			? [url]
+			: [url, `https://wsrv.nl/?url=${encodeURIComponent(url)}`];
+		for (const target of targets) {
+			try {
+				const res = await fetch(target, { mode: 'cors' });
+				if (res.ok) return res;
+			} catch {
+				/* try the proxy */
+			}
+		}
+		return null;
+	}
+
 	/** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
 	 *  failure — callers fall back to the plain URL path). */
 	async function fetchLayerBlob(url: string): Promise<Blob | null> {
-		try {
-			const res = await fetch(url, { mode: 'cors' });
-			if (!res.ok) return null;
-			const blob = await res.blob();
-			if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
-			return blob;
-		} catch {
-			return null;
-		}
+		const res = await fetchMediaResponse(url);
+		if (!res) return null;
+		const blob = await res.blob();
+		if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
+		return blob;
 	}
 
 	/** Keep the bytes we already have as the render source for a remote src.
@@ -1373,6 +1443,7 @@
 		imageLayers = [...imageLayers, layer];
 		selectedLayerId = layer.id;
 		if (bytes) rememberLayerBytes(layer.src, bytes);
+		mediaLibrary.remember(layer.src, source.name ?? '', bytes?.type);
 		const ok = await cacheLayerBitmap(layer.src);
 		if (!ok) toasts.warning('Layer added — but the image failed to load (will retry on export)');
 		// Animated GIF layers keep their motion in previews AND exports;
@@ -2078,7 +2149,9 @@
 			toasts.info('Twelve captions is the meme limit');
 			return;
 		}
-		const overlay = makeOverlay({ y });
+		// Free-write: manually added captions keep YOUR casing (the classic
+		// all-caps look is a template thing — the Aa toggle flips either way).
+		const overlay = makeOverlay({ y, caps: false });
 		overlays = [...overlays, overlay];
 		selectedId = overlay.id;
 		timingId = null;
@@ -2096,6 +2169,7 @@
 		const atMs = Math.round(stageSeconds * 1000);
 		const overlay = makeOverlay({
 			y: 0.5,
+			caps: false,
 			...(timelineActive ? { startMs: atMs, endMs: atMs + 2000 } : {})
 		});
 		overlays = [...overlays, overlay];
@@ -2111,6 +2185,11 @@
 
 	function patchOverlay(id: string, patch: Partial<MemeTextOverlay>) {
 		overlays = overlays.map((o) => (o.id === id ? { ...o, ...patch } : o));
+	}
+
+	/** Is this caption color from outside the preset palette (custom picker)? */
+	function isCustomCaptionColor(color: string): boolean {
+		return !(MEME_COLORS as readonly string[]).includes(color);
 	}
 
 	/** Reorder = z-order: later array slots paint on top (render.ts paintAll). */
@@ -2130,12 +2209,37 @@
 		patchOverlay(id, { y: clamp01(overlay.y + dy) });
 	}
 
+	/** Templates APPEND onto existing captions (bug fix: applying one used to
+	 *  wipe every manually-added caption/sticker). An empty stage takes the
+	 *  layout whole; a busy one gets the rows added below the existing work,
+	 *  near-duplicates nudged down so they don't stack. */
+	function addTemplateOverlays(rows: MemeTextOverlay[], label: string) {
+		if (busy || !rows.length) return;
+		const appending = overlays.length > 0;
+		const room = MAX_OVERLAYS - overlays.length;
+		if (room <= 0) {
+			toasts.info('Twelve captions is the meme limit — remove one first');
+			return;
+		}
+		const take = rows
+			.slice(0, room)
+			.map((row) =>
+				overlays.some((o) => o.text.trim().toLowerCase() === row.text.trim().toLowerCase())
+					? { ...row, y: clamp01(row.y + 0.08) }
+					: row
+			);
+		if (rows.length > room) {
+			toasts.info(`Added ${room} of ${rows.length} — the caption cap is ${MAX_OVERLAYS}`);
+		}
+		overlays = [...overlays, ...take];
+		selectedId = take[take.length - 1]?.id ?? null;
+		timingId = null;
+		toasts.info(appending ? `${label} appended to your captions` : `${label} template applied`);
+	}
+
 	function applyTemplate(template: Template) {
 		if (busy) return;
-		overlays = template.overlays();
-		selectedId = overlays[0]?.id ?? null;
-		timingId = null;
-		toasts.info(`${template.label} template applied`);
+		addTemplateOverlays(template.overlays(), template.label);
 	}
 
 	/** Re-apply a user-saved layout — fresh ids so each overlay is editable. */
@@ -2143,10 +2247,7 @@
 		if (busy) return;
 		const saved = memeTemplates.list.find((t) => t.id === id);
 		if (!saved) return;
-		overlays = memeTemplates.apply(saved);
-		selectedId = overlays[0]?.id ?? null;
-		timingId = null;
-		toasts.info(`“${saved.label}” applied`);
+		addTemplateOverlays(memeTemplates.apply(saved), `“${saved.label}”`);
 	}
 
 	/** Snapshot the whole studio state into a named slot (media ≤ cap). */
@@ -3604,6 +3705,16 @@
 								<Icon name="i-lucide-link" class="size-3.5" />
 								{showGifUrlForm ? 'Hide URL' : 'Paste URL'}
 							</button>
+							<!-- Recently-used sources: one-tap reopen for mass production. -->
+							<MemeSourceLibrary
+								id={startLibMenuId}
+								busy={gifStageBusy || busy}
+								onOpenBase={(source) => void loadSourceFromUrl(source.url, source.label)}
+								onAddLayer={(source) =>
+									void addImageLayer({ url: source.url }, undefined, {
+										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									})}
+							/>
 						</div>
 						{#if showGifUrlForm}
 							<!-- Image/GIF sourcing: paste a direct URL (user request 2026-08-23). -->
@@ -3891,7 +4002,7 @@
 										Replace
 									</button>
 									<!-- Mass production: multi-pick more sources (videos/pictures) into
-								     the batch queue — each publish loads the next one. -->
+									     the batch queue — each publish loads the next one. -->
 									<button
 										type="button"
 										onclick={() => queueInput?.click()}
@@ -3902,6 +4013,17 @@
 										<Icon name="i-lucide-list-video" class="size-3" />
 										Queue clips
 									</button>
+									<!-- Recent sources: swap the base or drop a layer in one tap. -->
+									<MemeSourceLibrary
+										id={swapLibMenuId}
+										busy={gifStageBusy || busy}
+										triggerLabel="Library"
+										onOpenBase={(source) => void loadSourceFromUrl(source.url, source.label)}
+										onAddLayer={(source) =>
+											void addImageLayer({ url: source.url }, undefined, {
+												atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+											})}
+									/>
 									<Popover
 										id={swapGifMenuId}
 										float
@@ -4435,8 +4557,17 @@
 							</div>
 
 							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
-							     they ride the same schema/wire format as captions. -->
-							<MemeStickerPicker id={stickerMenuId} onAdd={addSticker} />
+							     they ride the same schema/wire format as captions. Nostr picks
+							     (kind-30030 custom emojis) are PICTURES → image layers. -->
+							<MemeStickerPicker
+								id={stickerMenuId}
+								onAdd={addSticker}
+								onPickCustom={(emoji) => {
+									void addImageLayer({ url: emoji.url }, undefined, {
+										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									});
+								}}
+							/>
 
 							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
 							     Sources: local file, https URL, GIF library (as a sticker-sized
@@ -4786,6 +4917,9 @@
 												>
 													{i + 1}
 												</span>
+												<!-- The input always shows the RAW typed text ('Hi' stays 'Hi') —
+												     only the STAGE applies the ALL-CAPS styling, so editing is
+												     never visually mangled. -->
 												<input
 													value={overlay.text}
 													maxlength={MAX_OVERLAY_CHARS}
@@ -4799,6 +4933,22 @@
 													onfocus={() => (selectedId = overlay.id)}
 													class="min-w-0 flex-1 bg-transparent text-[13.5px] font-semibold text-[var(--ui-text)] outline-none placeholder:font-normal placeholder:text-[var(--ui-text-dimmed)]"
 												/>
+												<!-- Case quick-toggle, always visible: free-write (Aa) vs
+												     classic ALL CAPS (AA) — one click, no selection needed. -->
+												<button
+													type="button"
+													onclick={() => patchOverlay(overlay.id, { caps: !overlay.caps })}
+													disabled={busy}
+													aria-pressed={overlay.caps}
+													title={overlay.caps
+														? 'ALL CAPS on — click to keep your own casing'
+														: 'Keeping your casing — click for ALL CAPS'}
+													class="grid size-6 shrink-0 place-items-center rounded-full text-[10.5px] font-extrabold transition {overlay.caps
+														? 'bg-warm-500/15 text-warm-500'
+														: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+												>
+													{overlay.caps ? 'AA' : 'Aa'}
+												</button>
 												{#if mediaKind === 'video'}
 													<button
 														type="button"
@@ -4883,6 +5033,40 @@
 															style={`background:${color}`}
 														></button>
 													{/each}
+													<!-- Custom color: any hex via the native picker; shows the
+													     current color when it's outside the preset palette. -->
+													<label
+														class="relative grid size-5 cursor-pointer place-items-center overflow-hidden rounded-full border border-dashed transition hover:scale-110 {isCustomCaptionColor(
+															overlay.color
+														)
+															? 'border-warm-500 ring-2 ring-warm-500 ring-offset-1 ring-offset-[var(--ui-bg-muted)]'
+															: 'border-[var(--ui-border-accented)]'}"
+														title="Custom text color"
+														style={isCustomCaptionColor(overlay.color)
+															? `background:${overlay.color};`
+															: ''}
+													>
+														{#if !isCustomCaptionColor(overlay.color)}
+															<Icon
+																name="i-lucide-pipette"
+																class="size-3 text-[var(--ui-text-muted)]"
+															/>
+														{/if}
+														<input
+															type="color"
+															value={/^#[0-9a-f]{6}$/i.test(overlay.color)
+																? overlay.color
+																: '#ffffff'}
+															disabled={busy}
+															aria-label="Custom text color"
+															class="absolute inset-0 size-full cursor-pointer opacity-0"
+															oninput={(e) => {
+																const color = (e.currentTarget as HTMLInputElement).value;
+																if (/^#[0-9a-f]{6}$/i.test(color))
+																	patchOverlay(overlay.id, { color });
+															}}
+														/>
+													</label>
 													<span class="mx-1 h-4 w-px bg-[var(--ui-border-muted)]"></span>
 													<button
 														type="button"
@@ -5152,6 +5336,46 @@
 											Media cover-fits the {artboardId} canvas — the preview's crop is the export's crop.
 										</p>
 									{/if}
+									<!-- Background: swap the base media to a solid-color canvas at
+									     the artboard's size. Swatches + a native custom color picker;
+									     captions/layers/sounds survive the swap (keepLayout). -->
+									<div class="mt-2 flex flex-wrap items-center gap-1.5">
+										<span class="text-[10.5px] font-bold text-[var(--ui-text-muted)]">Bg</span>
+										{#each BLANK_CANVAS_COLORS as color (color)}
+											<button
+												type="button"
+												disabled={busy || gifStageBusy}
+												aria-label={`Set the background to ${color}`}
+												title={color}
+												onclick={() => void applyBackgroundColor(color)}
+												class="size-6 rounded-full border transition hover:scale-110 active:scale-95 {blankBg ===
+												color
+													? 'ring-2 ring-warm-500 ring-offset-1'
+													: ''} border-black/10 disabled:opacity-40 dark:border-white/20"
+												style="background:{color};"
+											></button>
+										{/each}
+										<label
+											class="relative grid size-6 cursor-pointer place-items-center overflow-hidden rounded-full border border-dashed border-[var(--ui-border-accented)] transition hover:scale-110"
+											title="Custom background color"
+										>
+											<Icon name="i-lucide-pipette" class="size-3 text-[var(--ui-text-muted)]" />
+											<input
+												type="color"
+												class="absolute inset-0 size-full cursor-pointer opacity-0"
+												aria-label="Custom background color"
+												disabled={busy || gifStageBusy}
+												oninput={(e) => {
+													const color = (e.currentTarget as HTMLInputElement).value;
+													if (/^#[0-9a-f]{6}$/i.test(color)) void applyBackgroundColor(color);
+												}}
+											/>
+										</label>
+									</div>
+									<p class="mt-1.5 text-[10px] leading-snug text-[var(--ui-text-dimmed)]">
+										A color replaces the media with a blank canvas — captions, layers and sounds
+										stay.
+									</p>
 								</div>
 							{/if}
 

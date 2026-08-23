@@ -5,28 +5,29 @@
 	 * Videos preview (muted) on hover with a duration badge; pictures show a
 	 * lazy thumbnail. Sensitive media is blurred until tapped.
 	 *
-	 * Clicking a tile opens the immersive in-profile viewer (same surface as
-	 * the Discover media viewer): full MediaPlayer with autoplay + controls,
-	 * prev/next browsing through the profile's bitz, caption, and an
-	 * "Open note" link to the full thread.
+	 * Tapping a tile launches the SHARED reels player (`/bitz?author=<npub>
+	 * #reel=<id>`) — the same swipe-up/down surface as the Bitz tab, with the
+	 * full action rail (like, comments, zap, share/repost, remix). One player,
+	 * context-aware data — the TikTok/Instagram grid→player pattern.
 	 */
+	import { goto } from '$app/navigation';
+	import { npubEncode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { lazyVideoMetadata } from '$lib/utils/media';
 	import { formatDuration } from '$lib/utils/format';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import type { ReelNote } from '$lib/stores/bitz-session.svelte';
 
-	let { reels, loading = false }: { reels: ReelNote[]; loading?: boolean } = $props();
+	let {
+		reels,
+		pubkey,
+		loading = false
+	}: { reels: ReelNote[]; pubkey: string; loading?: boolean } = $props();
 
 	let durations = $state<Record<string, number>>({});
 	let failed = $state<Record<string, boolean>>({});
 	let revealed = $state<Record<string, boolean>>({});
-	/** Immersive viewer state — open with the clicked reel's index. */
-	let viewerOpen = $state(false);
-	let viewerIndex = $state(0);
-	const viewerReel = $derived(viewerOpen ? (reels[viewerIndex] ?? null) : null);
 
 	const imageExtPattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
 	const videoExtPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
@@ -46,42 +47,18 @@
 		return reel.reactions.reduce((sum, reaction) => sum + reaction.count, 0);
 	}
 
+	/** No-JS / modifier-click fallback: the note thread. */
 	function noteHref(reel: ReelNote) {
 		return `/note/${reel.id}?from=reels&returnTo=${encodeURIComponent(location.pathname)}`;
 	}
 
-	function openViewer(reel: ReelNote) {
-		const index = reels.findIndex((item) => item.id === reel.id);
-		if (index < 0) return;
-		viewerIndex = index;
-		viewerOpen = true;
-	}
-
-	function prevReel() {
-		if (viewerIndex > 0) viewerIndex -= 1;
-	}
-
-	function nextReel() {
-		if (viewerIndex < reels.length - 1) viewerIndex += 1;
-	}
-
-	/** Viewer keyboard: Esc closes, ←/→ browse. */
-	function handleKeydown(event: KeyboardEvent) {
-		if (!viewerOpen) return;
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			viewerOpen = false;
-		} else if (event.key === 'ArrowLeft') {
-			event.preventDefault();
-			prevReel();
-		} else if (event.key === 'ArrowRight') {
-			event.preventDefault();
-			nextReel();
-		}
+	/** Open the shared reels player scoped to this author, starting at this
+	 *  bitz. Chronological author order means the tapped tile is the first
+	 *  thing on screen; swipe up/down walks the author's bitz. */
+	function openInPlayer(reel: ReelNote) {
+		goto(`/bitz?author=${npubEncode(pubkey)}#reel=${reel.id}`);
 	}
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 {#if loading && !reels.length}
 	<div
@@ -116,14 +93,14 @@
 				href={noteHref(reel)}
 				onclick={(event) => {
 					// First tap on a covered tile reveals it; every other tap plays
-					// the bitz in the in-profile viewer (modifier clicks — cmd/ctrl,
-					// middle — fall through to the note link).
+					// the bitz in the shared reels player. Modifier clicks (cmd/ctrl,
+					// shift, alt) fall through to the note link natively.
 					if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 					event.preventDefault();
 					if (covered) revealed = { ...revealed, [reel.id]: true };
-					else openViewer(reel);
+					else openInPlayer(reel);
 				}}
-				class="group focus-brand relative aspect-[9/16] overflow-hidden rounded-xl bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)] transition"
+				class="group focus-brand relative aspect-[9/16] overflow-hidden rounded-xl bg-black ring-1 ring-[var(--ui-border-muted)] transition"
 				aria-label="Play bitz {caption ? `“${caption.slice(0, 40)}”` : 'post'}"
 			>
 				{#if failed[reel.id]}
@@ -216,129 +193,5 @@
 				{/if}
 			</a>
 		{/each}
-	</div>
-{/if}
-
-{#if viewerOpen && viewerReel}
-	{@const caption = captionFor(viewerReel)}
-	{@const covered =
-		privacyNotificationSettings.state.hideSensitiveMedia &&
-		!!sensitiveMediaReason(viewerReel.tags, viewerReel.content) &&
-		!revealed[viewerReel.id]}
-	<!-- Immersive in-profile bitz viewer (mirrors the Discover media viewer) -->
-	<div class="animate-fade fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm">
-		<!-- Top bar: counter + open-note + close -->
-		<header class="flex items-center gap-2 p-3 text-white">
-			<span
-				class="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-white/80"
-				aria-hidden="true"
-			>
-				<Icon name="i-lucide-clapperboard" class="size-4.5" />
-			</span>
-			<div class="min-w-0 flex-1 leading-tight">
-				<p class="truncate text-[14px] font-bold">Bitz</p>
-				<p class="text-[11.5px] text-white/65 tabular-nums">
-					{viewerIndex + 1} / {reels.length}
-				</p>
-			</div>
-			<a
-				href={noteHref(viewerReel)}
-				class="hidden h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold transition hover:bg-white/10 sm:inline-flex"
-			>
-				Open note
-			</a>
-			<button
-				type="button"
-				onclick={() => (viewerOpen = false)}
-				class="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 transition hover:bg-white/20"
-				aria-label="Close viewer"
-			>
-				<Icon name="i-lucide-x" class="size-5" />
-			</button>
-		</header>
-
-		<!-- Media stage -->
-		<div class="relative flex min-h-0 flex-1 items-center justify-center px-2 pb-2">
-			{#if viewerIndex > 0}
-				<button
-					type="button"
-					onclick={prevReel}
-					class="absolute top-1/2 left-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white backdrop-blur transition hover:bg-white/20"
-					aria-label="Previous bitz"
-				>
-					<Icon name="i-lucide-chevron-left" class="size-6" />
-				</button>
-			{/if}
-
-			<div class="relative min-h-0 w-full overflow-hidden">
-				{#if covered}
-					<div class="grid min-h-[60vh] place-items-center px-4">
-						<button
-							type="button"
-							onclick={() => (revealed = { ...revealed, [viewerReel.id]: true })}
-							class="max-w-sm rounded-3xl bg-white/10 px-6 py-5 text-center text-white shadow-xl backdrop-blur"
-						>
-							<Icon name="i-lucide-eye-off" class="mx-auto mb-3 size-8 text-white/90" />
-							<p class="text-[15px] font-bold">Sensitive media hidden</p>
-							{#if privacyNotificationSettings.state.sensitiveReason}
-								<p class="mt-1 text-[12px] text-white/75">
-									{privacyNotificationSettings.state.sensitiveReason}
-								</p>
-							{/if}
-							<span
-								class="mt-4 inline-flex rounded-full bg-white px-4 py-2 text-[12px] font-bold text-black"
-							>
-								Show media
-							</span>
-						</button>
-					</div>
-				{:else if viewerReel.mediaType === 'video'}
-					<!-- Full BitOS player: seek bar, speed, volume, fallback chain. -->
-					<MediaPlayer
-						src={viewerReel.mediaUrl}
-						label="Profile bitz"
-						fallbackSrcs={viewerReel.mediaFallbacks ?? []}
-						class="relative mx-auto w-full max-w-5xl"
-						mediaClass="mx-auto max-h-[80vh] w-full bg-black object-contain"
-						overlayControls
-						autoplay
-					/>
-				{:else}
-					<img
-						src={viewerReel.mediaUrl}
-						alt={caption || 'Bitz picture'}
-						class="mx-auto max-h-[80vh] w-auto rounded-xl object-contain"
-					/>
-				{/if}
-			</div>
-
-			{#if viewerIndex < reels.length - 1}
-				<button
-					type="button"
-					onclick={nextReel}
-					class="absolute top-1/2 right-2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full bg-white/10 text-white backdrop-blur transition hover:bg-white/20"
-					aria-label="Next bitz"
-				>
-					<Icon name="i-lucide-chevron-right" class="size-6" />
-				</button>
-			{/if}
-		</div>
-
-		<!-- Caption footer -->
-		{#if caption}
-			<footer
-				class="mx-auto max-h-28 max-w-2xl overflow-y-auto px-4 py-2 text-center text-[13px] leading-relaxed whitespace-pre-wrap text-white/90"
-			>
-				{caption}
-			</footer>
-		{/if}
-		<div class="flex justify-center gap-2 px-4 pt-1 pb-3 sm:hidden">
-			<a
-				href={noteHref(viewerReel)}
-				class="inline-flex h-9 items-center rounded-full border border-white/20 px-4 text-[12px] font-bold text-white transition hover:bg-white/10"
-			>
-				Open note
-			</a>
-		</div>
 	</div>
 {/if}

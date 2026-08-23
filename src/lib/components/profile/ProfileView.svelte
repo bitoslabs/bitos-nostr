@@ -1057,7 +1057,7 @@
 			</div>
 		{:else if activeTab === 'bitz'}
 			<div class="pb-8">
-				<ProfileBitzGrid reels={bitzReels} loading={bitzLoading} />
+				<ProfileBitzGrid reels={bitzReels} loading={bitzLoading} {pubkey} />
 			</div>
 		{:else if visibleNotes.length}
 			<div class="feed-note-list pb-8">

@@ -90,8 +90,15 @@
 	let viewportW = $state(0);
 	/** User zoom (px/s); 0 = auto-fit the viewport. */
 	let zoomPxPerSec = $state(0);
+	/** Scale frozen for the duration of a drag. At fit zoom, dragging the
+	 *  LAST cue extends the track, which re-fits pxPerSec under the cursor
+	 *  mid-gesture — the span then slips and "moves sometimes don't work".
+	 *  Freezing keeps the pointer math stable until pointerup. */
+	let dragFrozenPx = $state<number | null>(null);
 	const fitPxPerSec = $derived(viewportW > 0 ? viewportW / duration : 0);
-	const pxPerSec = $derived(zoomPxPerSec > 0 ? zoomPxPerSec : Math.max(fitPxPerSec, 8));
+	const pxPerSec = $derived(
+		dragFrozenPx ?? (zoomPxPerSec > 0 ? zoomPxPerSec : Math.max(fitPxPerSec, 8))
+	);
 	const trackWidth = $derived(Math.max(duration * pxPerSec + 24, viewportW));
 	/** Zoom readout relative to fit (Fit = 100%). */
 	const zoomPct = $derived(fitPxPerSec > 0 ? Math.round((pxPerSec / fitPxPerSec) * 100) : 100);
@@ -247,6 +254,7 @@
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		if (kind === 'overlay') onSelectOverlay?.(item.id);
 		else onSelectLayer?.(item.id);
+		dragFrozenPx = pxPerSec;
 		const w = windowOf(item);
 		spanDrag = {
 			kind,
@@ -287,17 +295,27 @@
 	function endSpanDrag() {
 		spanDrag = null;
 		cueDragId = null;
+		dragFrozenPx = null;
 	}
 
 	function onCuePointerDown(e: PointerEvent, cue: MemeSfxCue) {
 		if (busy || !onPatchCue) return;
 		e.stopPropagation();
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		dragFrozenPx = pxPerSec;
 		cueDragId = cue.id;
 	}
 
 	function onCuePointerMove(e: PointerEvent) {
 		if (!cueDragId || busy) return;
+		// Same edge auto-pan as caption/layer spans — drags past the viewport
+		// keep going instead of dead-ending at the edge.
+		const el = scrollEl;
+		if (el) {
+			const box = el.getBoundingClientRect();
+			if (e.clientX > box.right - 20) el.scrollLeft += 10;
+			else if (e.clientX < box.left + 20) el.scrollLeft -= 10;
+		}
 		onPatchCue?.(cueDragId, Math.round(snapSec(timeAtClientX(e.clientX)) * 1000));
 	}
 

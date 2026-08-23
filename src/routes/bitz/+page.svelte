@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { npubEncode, decode as nip19Decode } from 'nostr-tools/nip19';
 	import type { Filter } from 'nostr-tools/filter';
@@ -133,6 +135,41 @@
 		{ key: 'foryou', label: 'For you' }
 	];
 
+	// --- Author mode (profile → Bitz tab → tile tap) -------------------------
+	// The shared reels player scoped to one author (`/bitz?author=<npub>`):
+	// same snap-scroll surface, same action rail — like/comments/zap/share/
+	// remix all work. The tab bar is replaced by a back-to-profile bar and the
+	// feed stays in loaded (chronological) order so the deep-linked tile lands
+	// exactly where the user tapped in the profile grid (TikTok/Instagram grid
+	// → player pattern: one player surface, context-aware data).
+	function resolveAuthorParam(value: string | null): string {
+		if (!value) return '';
+		if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
+		if (value.startsWith('npub1')) {
+			try {
+				const decoded = nip19Decode(value);
+				if (decoded.type === 'npub') return decoded.data as string;
+			} catch {
+				return '';
+			}
+		}
+		return '';
+	}
+
+	const authorPubkey = $derived(resolveAuthorParam(page.url.searchParams.get('author')));
+	const authorMode = $derived(!!authorPubkey);
+	const authorProfile = $derived(authorPubkey ? profiles.get(authorPubkey) : undefined);
+	const authorDisplayName = $derived(
+		authorProfile?.display_name ||
+			authorProfile?.name ||
+			(authorPubkey ? shortKey(authorPubkey) : '')
+	);
+
+	function exitAuthorMode() {
+		if (history.length > 1) history.back();
+		else if (authorPubkey) goto(`/profile/${npubEncode(authorPubkey)}`);
+	}
+
 	let loading = $state(true);
 	let loadingComments = $state(false);
 	let deletingCommentId = $state('');
@@ -221,6 +258,9 @@
 	let remixHandoff = $state<RemixHandoff | null>(null);
 	const rankedReels = $derived.by(() => {
 		if (!reels.length) return reels;
+		// Author mode keeps the loaded (chronological) order — the profile grid
+		// deep-links to an exact index, so re-ranking would land elsewhere.
+		if (authorMode) return reels;
 		if (!algorithmPreferences.isEnabled('reels')) return reels;
 		// Fold the current watch-time proxy into engagement. Snap a copy so dwell is a
 		// soft, best-effort input (re-ranking only fires when `reels`/config change,
@@ -532,6 +572,9 @@
 			reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey)
 		);
 		for (const reel of next) feed.upsertNote(reel);
+		// Author playback never overwrites the global Bitz session — returning
+		// to /bitz must restore the user's own feed, tabs and scroll position.
+		if (authorMode) return;
 		bitzSession.reels = reels;
 		bitzSession.renderedReelCount = renderedReelCount;
 	}
@@ -555,6 +598,7 @@
 	}
 
 	function saveReelsCache(next: ReelNote[]) {
+		if (authorMode) return; // never seed the global cache from author playback
 		try {
 			localStorage.setItem(
 				REELS_CACHE_KEY,
@@ -582,12 +626,14 @@
 		oldestReelEventCreatedAt = oldestReelEventCreatedAt
 			? Math.min(oldestReelEventCreatedAt, oldestSeen || oldestReelEventCreatedAt)
 			: oldestSeen;
-		bitzSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
-		bitzSession.hasMoreReels = hasMoreReels;
+		if (!authorMode) {
+			bitzSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
+			bitzSession.hasMoreReels = hasMoreReels;
+		}
 		// Relays may return short pages even when older events remain. Keep the
 		// cursor alive until a subsequent all-relays request returns nothing.
 		hasMoreReels = !!oldestReelEventCreatedAt;
-		saveReelsCache(options.append ? reels : nextReels);
+		if (!authorMode) saveReelsCache(options.append ? reels : nextReels);
 	}
 
 	async function buildReelsFromEvents(
@@ -648,11 +694,14 @@
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
+			// Author mode: every filter is scoped to one author; discovery relays
+			// never contribute (the profile grid is configured-relay territory).
+			const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
 			const filters = [
-				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT }
+				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter },
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT, ...authorFilter }
 			];
-			const discoveryPromise = queryUrls(discoveryUrls(), filters);
+			const discoveryPromise = queryUrls(authorMode ? [] : discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
 					void discoveryPromise.then((discovered) =>
@@ -670,7 +719,9 @@
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
 			loading = false;
-			bitzSession.lastRefreshedAt = Date.now();
+			// Author playback must not mark the global session fresh — returning to
+			// /bitz should still get its own background refresh when stale.
+			if (!authorMode) bitzSession.lastRefreshedAt = Date.now();
 		}
 	}
 
@@ -687,16 +738,19 @@
 			) {
 				// Media kinds come back as ready-made bitz (no walking needed); the
 				// kind-1 window is what the cursor walks past. Same round trip.
+				const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
 				const filters = [
 					{
 						kinds: REEL_MEDIA_KINDS,
 						limit: REELS_MEDIA_PAGE_LIMIT,
-						until: oldestReelEventCreatedAt - 1
+						until: oldestReelEventCreatedAt - 1,
+						...authorFilter
 					},
 					{
 						kinds: [NOSTR_KINDS.TEXT_NOTE],
 						limit: REELS_QUERY_BATCH_LIMIT,
-						until: oldestReelEventCreatedAt - 1
+						until: oldestReelEventCreatedAt - 1,
+						...authorFilter
 					}
 				];
 				// Match Discover pagination: query every configured read relay together,
@@ -772,7 +826,8 @@
 
 	function handleReelScroll() {
 		if (!reelScroller) return;
-		bitzSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
+		if (!authorMode)
+			bitzSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
 		const remaining =
 			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
 		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
@@ -1417,6 +1472,9 @@
 	// exactly this view. (reels/cursor mirror imperatively in applyReels —
 	// async relay loads can land after this component unmounts.)
 	$effect(() => {
+		// Author playback is a transient view — it must never leak its tab,
+		// reveal or render state into the global Bitz session.
+		if (authorMode) return;
 		bitzSession.bitzMode = bitzMode;
 		bitzSession.exploreVisible = exploreVisible;
 		bitzSession.revealedSensitiveReels = revealedSensitiveReels;
@@ -1434,6 +1492,7 @@
 
 	onMount(() => {
 		handleDeepLinkHash();
+		if (authorPubkey) void profiles.ensure([authorPubkey]);
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
 		// The former cache could retain 120 items. Drop it once after moving to
@@ -1452,8 +1511,9 @@
 
 		// Returning from another page: hydrate the in-memory session for an
 		// instant paint with the previous tab, position, and cursor intact.
+		// Author mode starts from its own author-scoped fetch instead.
 		let hydrated = false;
-		if (bitzSession.reels.length) {
+		if (!authorMode && bitzSession.reels.length) {
 			loading = false;
 			// PUB-013: an optimistic reel staged by a fresh publish (feed.postBitz
 			// → stageOptimisticReel) reconciles here — same-id entries are
@@ -1488,7 +1548,7 @@
 				void loadReels({ background: true });
 			}
 		}
-		const hasCache = hydrated ? false : loadCachedReels();
+		const hasCache = hydrated || authorMode ? false : loadCachedReels();
 		if (hasCache) {
 			loading = false;
 			void loadReels({ background: true });
@@ -1744,12 +1804,12 @@
 								fallbackSrcs={reel.mediaFallbacks}
 								label="Relay video note"
 								mediaClass={fullView
-									? `absolute inset-0 size-full object-contain ${reelCovered
-										? 'scale-105 blur-2xl saturate-50'
-										: ''}`
-									: `absolute inset-0 size-full object-cover ${reelCovered
-										? 'scale-105 blur-2xl saturate-50'
-										: ''}`}
+									? `absolute inset-0 size-full object-contain ${
+											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+										}`
+									: `absolute inset-0 size-full object-cover ${
+											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+										}`}
 								variant="reel"
 								loop
 								muted={reel.id === activeReelId ? activeReelMuted : true}
@@ -2227,49 +2287,87 @@
 			? 'lg:pr-[390px]'
 			: ''}"
 	>
-		<h2
-			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold sm:block {isExplore
-				? 'text-[var(--ui-text-highlighted)]'
-				: 'text-white drop-shadow'}"
-		>
-			Bitz
-		</h2>
-		<div
-			class="pointer-events-auto flex items-center gap-0.5 rounded-full p-1 {isExplore
-				? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
-				: 'bg-black/40 backdrop-blur-md'}"
-			role="tablist"
-			aria-label="Bitz views"
-		>
-			{#each bitzTabs as tab (tab.key)}
+		{#if authorMode}
+			<!-- Author mode: back-to-profile bar replaces the wordmark. Tapping the
+			     identity opens the full profile; bitz count frames the swipe deck. -->
+			<div class="pointer-events-auto flex min-w-0 items-center gap-2 justify-self-start">
 				<button
 					type="button"
-					role="tab"
-					aria-selected={bitzMode === tab.key}
-					onclick={() => switchBitzMode(tab.key)}
-					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode === tab.key
-						? isExplore
-							? 'bg-[var(--ui-bg)] text-[var(--ui-text-highlighted)] ring-1 ring-[var(--ui-border-muted)] shadow-sm'
-							: 'bg-white text-black'
-						: isExplore
-							? 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-							: 'text-white/75 hover:text-white'}"
+					onclick={exitAuthorMode}
+					class="grid size-9 shrink-0 place-items-center rounded-full bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+					aria-label="Back to profile"
 				>
-					{tab.label}
+					<Icon name="i-lucide-arrow-left" class="size-5" />
 				</button>
-			{/each}
-		</div>
-		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
-			<button
-				type="button"
-				onclick={() => search.openOverlay()}
-				class="grid size-10 place-items-center rounded-xl transition {isExplore
-					? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
-					: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
-				aria-label="Search bitz"
+				<a
+					href={authorPubkey ? `/profile/${npubEncode(authorPubkey)}` : '#'}
+					class="flex min-w-0 items-center gap-2 rounded-full bg-black/30 p-1 pr-3 text-white backdrop-blur-md transition hover:bg-black/50"
+				>
+					<Avatar
+						pubkey={authorPubkey}
+						name={authorDisplayName}
+						picture={authorProfile?.picture}
+						size={28}
+						shape="hex"
+					/>
+					<span class="min-w-0 leading-tight">
+						<span class="block max-w-[120px] truncate text-[13px] font-bold sm:max-w-[200px]"
+							>{authorDisplayName}</span
+						>
+						<span class="block text-[10.5px] text-white/65 tabular-nums">{reels.length} bitz</span>
+					</span>
+				</a>
+			</div>
+		{:else}
+			<h2
+				class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold sm:block {isExplore
+					? 'text-[var(--ui-text-highlighted)]'
+					: 'text-white drop-shadow'}"
 			>
-				<Icon name="i-lucide-search" class="size-5" />
-			</button>
+				Bitz
+			</h2>
+		{/if}
+		{#if !authorMode}
+			<div
+				class="pointer-events-auto flex items-center gap-0.5 rounded-full p-1 {isExplore
+					? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
+					: 'bg-black/40 backdrop-blur-md'}"
+				role="tablist"
+				aria-label="Bitz views"
+			>
+				{#each bitzTabs as tab (tab.key)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={bitzMode === tab.key}
+						onclick={() => switchBitzMode(tab.key)}
+						class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
+						tab.key
+							? isExplore
+								? 'bg-[var(--ui-bg)] text-[var(--ui-text-highlighted)] shadow-sm ring-1 ring-[var(--ui-border-muted)]'
+								: 'bg-white text-black'
+							: isExplore
+								? 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+								: 'text-white/75 hover:text-white'}"
+					>
+						{tab.label}
+					</button>
+				{/each}
+			</div>
+		{/if}
+		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
+			{#if !authorMode}
+				<button
+					type="button"
+					onclick={() => search.openOverlay()}
+					class="grid size-10 place-items-center rounded-xl transition {isExplore
+						? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
+						: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
+					aria-label="Search bitz"
+				>
+					<Icon name="i-lucide-search" class="size-5" />
+				</button>
+			{/if}
 			<button
 				type="button"
 				onclick={() => loadReels()}
