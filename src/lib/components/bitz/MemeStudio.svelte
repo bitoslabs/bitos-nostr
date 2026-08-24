@@ -1031,6 +1031,8 @@
 	/** Carry the clip's own audio into video exports (video bases). Off = the
 	 *  export keeps only the sound cues' mix. */
 	let includeSourceAudio = $state(true);
+	/** Source-video fader for the Expert audio mix. Cue gains live on each cue. */
+	let sourceAudioGain = $state(1);
 	/** Last playhead the cue scheduler saw (ms) — crossing windows only fire
 	 *  on small forward deltas, so scrubs/seeks/media swaps never blip. */
 	let lastCueFireMs = 0;
@@ -1045,7 +1047,10 @@
 	/** Keep the stage video's mute state glued to the toggle (covers mounts,
 	 *  media swaps and the muted-by-default autoplay attribute). */
 	$effect(() => {
-		if (stageVideo) stageVideo.muted = !previewSoundOn;
+		if (stageVideo) {
+			stageVideo.muted = !previewSoundOn;
+			stageVideo.volume = sourceAudioGain;
+		}
 	});
 
 	/** Live cue firing: while previewing with sound on, each cue the playhead
@@ -1926,13 +1931,7 @@
 	const me = $derived(identity.current);
 	const busy = $derived(phase !== 'idle');
 	const dirty = $derived(!!file || overlays.some((o) => o.text.trim()) || !!caption.trim());
-	const canPost = $derived(
-		!!file &&
-			!busy &&
-			(animated || overlays.some((o) => o.text.trim())) &&
-			caption.length <= HARD_CAP &&
-			splitCheck.ok
-	);
+	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
 	const overSoft = $derived(caption.length > SOFT_CAP);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
 	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
@@ -2630,6 +2629,12 @@
 		sfxCues = sfxCues.map((c) => (c.id === id ? { ...c, atMs: Math.max(0, Math.round(atMs)) } : c));
 	}
 
+	function moveSfxCueLane(id: string, lane: number) {
+		sfxCues = sfxCues.map((c) =>
+			c.id === id ? { ...c, lane: Math.max(0, Math.min(3, lane)) } : c
+		);
+	}
+
 	/** Dialog adapter: stage a custom cue by library sound id. */
 	function addCustomCueById(soundId: string) {
 		const sound = soundLibrary.list.find((s) => s.id === soundId);
@@ -3051,6 +3056,7 @@
 			signal: mineController?.signal,
 			extraTracks,
 			sourceAudio: includeSourceAudio,
+			sourceAudioGain,
 			lookCss,
 			imageLayers,
 			bitmaps: layerBitmaps,
@@ -3539,7 +3545,7 @@
 			track('publishing', 'Publishing to Nostr…');
 			const eventId = await (destination === 'story'
 				? publishStory(uploaded)
-				: destination === 'note'
+				: destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
 					? publishNote(uploaded)
 					: publishBitz(uploaded));
 			powPrefs.remember(showPow ? pow : 0);
@@ -3547,12 +3553,12 @@
 			toasts.push(
 				destination === 'story'
 					? 'Meme story posted · lasts 24h'
-					: destination === 'note'
+					: destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
 						? 'Meme note posted · kind 1'
 						: `Meme published · kind ${kindInfo?.kind}`,
 				'success',
 				6000,
-				destination === 'note'
+				destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
 					? { label: 'View note', run: () => goto(`/note/${eventId}`) }
 					: { label: 'View in Bitz', run: () => goto(`/bitz${bitzHashLink(eventId)}`) }
 			);
@@ -4645,6 +4651,7 @@
 							onRemoveLayer={removeLayer}
 							onReorderLayer={moveLayerRow}
 							onPatchCue={retimeSfxCue}
+							onPatchCueLane={moveSfxCueLane}
 							cueMetaFor={cueMeta}
 						/>
 						<!-- Insert-at-playhead actions (video/timed sources): the timeline is
@@ -4661,6 +4668,31 @@
 								Other source
 							</button>
 							{#if mediaKind === 'video'}
+								<div
+									class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 py-1 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
+									title="Source-video volume in preview and export"
+								>
+									<Icon
+										name={includeSourceAudio ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
+										class="size-3.5"
+									/>
+									<input
+										aria-label="Source video volume"
+										type="range"
+										min="0"
+										max="1"
+										step="0.05"
+										bind:value={sourceAudioGain}
+										disabled={!includeSourceAudio || busy}
+										class="h-1 w-14 accent-[var(--color-warm-500)]"
+									/>
+									<button
+										type="button"
+										onclick={() => (includeSourceAudio = !includeSourceAudio)}
+										class="font-mono text-[9px] hover:text-[var(--ui-text)]"
+										>{Math.round(sourceAudioGain * 100)}%</button
+									>
+								</div>
 								<button
 									type="button"
 									onclick={enableExpertTimeline}

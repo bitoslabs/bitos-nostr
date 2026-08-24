@@ -64,6 +64,8 @@ export interface VideoRenderOptions extends RenderOptions {
 	extraTracks?: MediaStreamTrack[];
 	/** Include the source clip's own audio (default true). */
 	sourceAudio?: boolean;
+	/** Source clip volume in the final mix (0–1, default 1). */
+	sourceAudioGain?: number;
 	/** Export window: play from trimStartSec (default 0). */
 	trimStartSec?: number;
 	/** Export window: stop at trimEndSec (default = source duration). */
@@ -541,7 +543,10 @@ export async function renderVideoMeme(
 				// element → graph (cached route: a second createMediaElementSource
 				// on the same element throws, so the first node is reused forever)
 				const route = elementAudioNode(ctx, source);
-				route.node.connect(dest);
+				const gain = ctx.createGain();
+				gain.gain.value = Math.max(0, Math.min(1, options.sourceAudioGain ?? 1));
+				route.node.connect(gain);
+				gain.connect(dest);
 				monitor = route.monitor;
 			}
 			for (const track of extra) {

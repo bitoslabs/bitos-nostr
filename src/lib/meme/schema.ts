@@ -163,6 +163,8 @@ export interface MemeSfxCue {
 	atMs: number;
 	/** Master gain multiplier 0–1 (recipe envelope is scaled by this). */
 	gain: number;
+	/** Mixer lane (0–3). Lanes are visual/organizational; all are mixed on export. */
+	lane?: number;
 	/** Custom sound-library id — required when sfx === 'custom'. */
 	soundId?: string;
 }
@@ -178,12 +180,14 @@ export function normalizeSfxCue(raw: unknown): MemeSfxCue | null {
 	} else if (!MEME_SFX_IDS.includes(c.sfx as MemeSfxId)) return null;
 	const at = Number(c.atMs);
 	const gain = Number(c.gain);
+	const lane = Number(c.lane);
 	return {
 		id: typeof c.id === 'string' && c.id.trim() ? c.id.slice(0, 64) : newId(),
 		sfx: c.sfx === CUSTOM_SOUND_KEY ? CUSTOM_SOUND_KEY : (c.sfx as MemeSfxId),
 		...(c.sfx === CUSTOM_SOUND_KEY && soundId ? { soundId } : {}),
 		atMs: Number.isFinite(at) && at > 0 ? Math.round(at) : 0,
-		gain: Number.isFinite(gain) ? clamp(gain, 0, 1) : 1
+		gain: Number.isFinite(gain) ? clamp(gain, 0, 1) : 1,
+		...(Number.isFinite(lane) && lane > 0 ? { lane: Math.min(3, Math.floor(lane)) } : {})
 	};
 }
 

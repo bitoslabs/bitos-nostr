@@ -69,6 +69,7 @@ interface WireCue {
 	i?: string; // soundId for custom
 	a: number; // atMs
 	g: number; // gain
+	l?: number; // mixer lane
 }
 
 /** Serialize overlays + cues into the compact `meme` tag payload. */
@@ -87,8 +88,14 @@ export function encodeRemixPayload(payload: RemixPayload): string {
 		}),
 		c: payload.sfxCues.map((cue) =>
 			cue.sfx === 'custom'
-				? { s: cue.sfx, ...(cue.soundId ? { i: cue.soundId } : {}), a: cue.atMs, g: cue.gain }
-				: { s: cue.sfx, a: cue.atMs, g: cue.gain }
+				? {
+						s: cue.sfx,
+						...(cue.soundId ? { i: cue.soundId } : {}),
+						a: cue.atMs,
+						g: cue.gain,
+						...(cue.lane ? { l: cue.lane } : {})
+					}
+				: { s: cue.sfx, a: cue.atMs, g: cue.gain, ...(cue.lane ? { l: cue.lane } : {}) }
 		),
 		// Image layers ride as `g` ("graphics") — omitted entirely when none,
 		// and hard-capped so a collage never blows the 700-char tag limit.
@@ -136,7 +143,13 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			.filter((o): o is MemeTextOverlay => !!o)
 			.slice(0, 12);
 		const cues = normalizeSfxCues(
-			(parsed.c ?? []).map((w) => ({ sfx: w.s, soundId: w.i, atMs: w.a, gain: w.g }))
+			(parsed.c ?? []).map((w) => ({
+				sfx: w.s,
+				soundId: w.i,
+				atMs: w.a,
+				gain: w.g,
+				lane: w.l
+			}))
 		);
 		const imageLayers = (parsed.g ?? [])
 			.map(decodeImageOverlay)

@@ -41,6 +41,7 @@
 		onRemoveLayer,
 		onReorderLayer,
 		onPatchCue,
+		onPatchCueLane,
 		cueMetaFor,
 		onSelectOverlay,
 		onSelectLayer,
@@ -83,6 +84,8 @@
 		onReorderLayer?: (id: string, dir: -1 | 1) => void;
 		/** Drag a cue tick to a new time (ms). */
 		onPatchCue?: (id: string, atMs: number) => void;
+		/** Move a cue between the visual mixer lanes. */
+		onPatchCueLane?: (id: string, lane: number) => void;
 		/** Sound blocks: label + play length per cue — turns cue ticks into
 		 *  duration spans on the timeline (falls back to ticks when absent). */
 		cueMetaFor?: (cue: MemeSfxCue) => { label: string; durationSec: number } | null;
@@ -334,6 +337,7 @@
 
 	function onCuePointerDown(e: PointerEvent, cue: MemeSfxCue) {
 		if (busy || !onPatchCue) return;
+		e.preventDefault();
 		e.stopPropagation();
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		dragFrozenPx = pxPerSec;
@@ -350,7 +354,9 @@
 			if (e.clientX > box.right - 20) el.scrollLeft += 10;
 			else if (e.clientX < box.left + 20) el.scrollLeft -= 10;
 		}
-		onPatchCue?.(cueDragId, Math.round(snapSec(timeAtClientX(e.clientX)) * 1000));
+		// Cue retiming needs to feel continuous. Snapping every move to the
+		// playhead/whole seconds made short drags appear frozen around a snap point.
+		onPatchCue?.(cueDragId, Math.round(timeAtClientX(e.clientX) * 1000));
 	}
 
 	// ---- ruler ----------------------------------------------------------------
@@ -388,6 +394,7 @@
 		onpointerup: endSpanDrag,
 		onpointercancel: endSpanDrag
 	};
+	const cueLaneCount = $derived(Math.max(1, ...cues.map((cue) => (cue.lane ?? 0) + 1)));
 </script>
 
 <div
@@ -739,60 +746,98 @@
 				{/each}
 
 				{#if cues.length}
-					<div class="relative h-3.5">
-						{#each cues as cue (cue.id)}
-							{@const meta = cueMetaFor?.(cue) ?? null}
-							{#if meta && meta.durationSec > 0}
-								<!-- Sound block: a span as long as the sound plays, labeled
+					{#each Array(cueLaneCount) as _, lane}
+						<div
+							class="relative h-3.5 border-t border-[var(--ui-border-muted)]/40 first:border-t-0"
+						>
+							<span
+								class="pointer-events-none absolute top-0 left-0 text-[7px] font-bold text-[var(--ui-text-dimmed)]"
+								>S{lane + 1}</span
+							>
+							{#each cues.filter((cue) => (cue.lane ?? 0) === lane) as cue (cue.id)}
+								{@const meta = cueMetaFor?.(cue) ?? null}
+								{#if meta && meta.durationSec > 0}
+									<!-- Sound block: a span as long as the sound plays, labeled
 								     when there's room — reads like a real editor's audio row. -->
-								<span
-									role="button"
-									tabindex="-1"
-									class="absolute top-0 h-3.5 rounded-sm bg-warm-500/80 {onPatchCue
-										? 'cursor-ew-resize hover:brightness-110'
-										: ''}"
-									style="left:{(cue.atMs / 1000) * pxPerSec}px; width:{Math.max(
-										8,
-										meta.durationSec * pxPerSec
-									)}px;"
-									title="{meta.label} @ {(cue.atMs / 1000).toFixed(1)}s · {meta.durationSec.toFixed(
-										1
-									)}s{onPatchCue ? ' · drag to retime' : ''}"
-									aria-label={`${meta.label} cue at ${(cue.atMs / 1000).toFixed(1)}s`}
-									onpointerdown={(e) => onCuePointerDown(e, cue)}
-									onpointermove={onCuePointerMove}
-									onpointerup={endSpanDrag}
-									onpointercancel={endSpanDrag}
-								>
-									{#if meta.durationSec * pxPerSec > 34}
-										<span
-											class="pointer-events-none absolute inset-y-0 left-1 flex items-center overflow-hidden text-[8px] font-bold whitespace-nowrap text-white"
-											style="max-width:calc(100% - 4px)"
-										>
-											{meta.label}
-										</span>
-									{/if}
-								</span>
-							{:else}
-								<span
-									role="button"
-									tabindex="-1"
-									class="absolute top-0 h-3.5 w-1.5 rounded-sm bg-warm-500 {onPatchCue
-										? 'cursor-ew-resize hover:brightness-125'
-										: ''}"
-									style="left:{(cue.atMs / 1000) * pxPerSec}px;"
-									title="Sound cue at {(cue.atMs / 1000).toFixed(1)}s{onPatchCue
-										? ' · drag to retime'
-										: ''}"
-									aria-label={`Sound cue at ${(cue.atMs / 1000).toFixed(1)}s`}
-									onpointerdown={(e) => onCuePointerDown(e, cue)}
-									onpointermove={onCuePointerMove}
-									onpointerup={endSpanDrag}
-									onpointercancel={endSpanDrag}
-								></span>
-							{/if}
-						{/each}
-					</div>
+									<span
+										role="button"
+										tabindex="-1"
+										class="absolute top-0 h-3.5 rounded-sm bg-warm-500/80 {onPatchCue
+											? 'cursor-ew-resize hover:brightness-110'
+											: ''}"
+										style="left:{(cue.atMs / 1000) * pxPerSec}px; width:{Math.max(
+											8,
+											meta.durationSec * pxPerSec
+										)}px;"
+										title="{meta.label} @ {(cue.atMs / 1000).toFixed(
+											1
+										)}s · {meta.durationSec.toFixed(1)}s{onPatchCue ? ' · drag to retime' : ''}"
+										aria-label={`${meta.label} cue at ${(cue.atMs / 1000).toFixed(1)}s`}
+										onpointerdown={(e) => onCuePointerDown(e, cue)}
+										onpointermove={onCuePointerMove}
+										onpointerup={endSpanDrag}
+										onpointercancel={endSpanDrag}
+									>
+										{#if meta.durationSec * pxPerSec > 34}
+											<span
+												class="pointer-events-none absolute inset-y-0 left-1 flex items-center overflow-hidden text-[8px] font-bold whitespace-nowrap text-white"
+												style="max-width:calc(100% - 4px)"
+											>
+												{meta.label}
+											</span>
+										{/if}
+										{#if onPatchCueLane}
+											<span
+												class="absolute top-0 right-0 flex h-full items-center rounded bg-black/30"
+											>
+												<button
+													type="button"
+													title="Move to the lane above"
+													disabled={lane === 0}
+													onpointerdown={(e) => e.stopPropagation()}
+													onclick={(e) => {
+														e.stopPropagation();
+														onPatchCueLane?.(cue.id, lane - 1);
+													}}
+													class="grid h-full w-3 place-items-center text-white/80 disabled:opacity-30"
+													><Icon name="i-lucide-chevron-up" class="size-2.5" /></button
+												>
+												<button
+													type="button"
+													title="Move to the lane below"
+													disabled={lane >= 3}
+													onpointerdown={(e) => e.stopPropagation()}
+													onclick={(e) => {
+														e.stopPropagation();
+														onPatchCueLane?.(cue.id, lane + 1);
+													}}
+													class="grid h-full w-3 place-items-center text-white/80 disabled:opacity-30"
+													><Icon name="i-lucide-chevron-down" class="size-2.5" /></button
+												>
+											</span>
+										{/if}
+									</span>
+								{:else}
+									<span
+										role="button"
+										tabindex="-1"
+										class="absolute top-0 h-3.5 w-1.5 rounded-sm bg-warm-500 {onPatchCue
+											? 'cursor-ew-resize hover:brightness-125'
+											: ''}"
+										style="left:{(cue.atMs / 1000) * pxPerSec}px;"
+										title="Sound cue at {(cue.atMs / 1000).toFixed(1)}s{onPatchCue
+											? ' · drag to retime'
+											: ''}"
+										aria-label={`Sound cue at ${(cue.atMs / 1000).toFixed(1)}s`}
+										onpointerdown={(e) => onCuePointerDown(e, cue)}
+										onpointermove={onCuePointerMove}
+										onpointerup={endSpanDrag}
+										onpointercancel={endSpanDrag}
+									></span>
+								{/if}
+							{/each}
+						</div>
+					{/each}
 				{/if}
 
 				{#if !overlays.length && !layers.length && !cues.length}
