@@ -17,7 +17,6 @@
 </script>
 
 <script lang="ts">
-	import { SvelteMap } from 'svelte/reactivity';
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -77,8 +76,7 @@
 		renderImageMeme,
 		renderVideoMeme,
 		targetSize,
-		coverRect,
-		type AnimatedLayerPainter
+		coverRect
 	} from '$lib/meme/render';
 	import {
 		imageOverlayVisibleAt,
@@ -87,13 +85,7 @@
 		MAX_IMAGE_OVERLAY_BYTES,
 		type MemeImageOverlay
 	} from '$lib/meme/image-overlay';
-	import {
-		canDecodeGif,
-		decodeGif,
-		gifLayerPainter,
-		paintGifFrameAt,
-		type DecodedGif
-	} from '$lib/meme/gif';
+	import { canDecodeGif, decodeGif, paintGifFrameAt, type DecodedGif } from '$lib/meme/gif';
 	import { planGifExport } from '$lib/meme/gif-export';
 	import {
 		CUSTOM_SOUND_KEY,
@@ -123,10 +115,22 @@
 	import MemeSourceLibrary from '$lib/components/bitz/MemeSourceLibrary.svelte';
 	import { mediaLibrary } from '$lib/stores/media-library.svelte';
 	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
+	import {
+		exportErrorMessage,
+		exportImetaDuration,
+		pickRecorderMime,
+		RecorderSession,
+		shiftCuesForExport
+	} from '$lib/meme/export-support';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
 	import { memeSlots, MAX_SLOT_BYTES } from '$lib/stores/meme-slots.svelte';
+	import {
+		LayerAssetCache,
+		fetchLayerBlob,
+		probeAspect
+	} from '$lib/stores/meme-layer-assets.svelte';
 	import {
 		applyRemixPayload,
 		remixTagsFor,
@@ -819,72 +823,6 @@
 	/** Scrubbed playhead for gif/static previews (the paint loop chases it). */
 	let previewSeconds = $state(0);
 
-	// ---- animated image layers ----------------------------------------------
-	/** Decoded animated GIFs per layer src — layers painted via gifLayerPainter
-	 *  stay animated in previews AND exports (a bare drawImage freezes frame 1;
-	 *  this is the fix for "GIF lost its animation when published"). */
-	const layerGifs = new SvelteMap<string, DecodedGif>();
-
-	/** Decode (best-effort) a layer src as animated; resolves false when the
-	 *  src is static or the browser can't decode frame-by-frame. Bytes we
-	 *  already hold decode synchronously-started and CORS-free — only pure-URL
-	 *  layers (draft restore) fall back to a network fetch. */
-	/** Last GIF decode failure reason — surfaces in the export warning so the
-	 *  failure is diagnosable instead of a silent frame-1 freeze. */
-	let lastGifDecodeError = '';
-
-	async function cacheLayerGif(src: string): Promise<boolean> {
-		if (layerGifs.has(src)) return true;
-		if (!canDecodeGif()) return false;
-		try {
-			const blob = layerBlobs.get(src) ?? (await fetchLayerBlob(src));
-			if (!blob) {
-				lastGifDecodeError = 'no bytes';
-				return false;
-			}
-			const decoded = await decodeGif(await blob.arrayBuffer());
-			layerGifs.set(src, decoded);
-			return true;
-		} catch (e) {
-			lastGifDecodeError = e instanceof Error ? e.message : String(e);
-			return false; // static layer — the bitmap path already covers it
-		}
-	}
-
-	/** Does this src look like an animated GIF layer? (content type when we
-	 *  hold the bytes; else the URL extension). */
-	function looksAnimatedGif(src: string): boolean {
-		const type = layerBlobs.get(src)?.type;
-		if (type) return type === 'image/gif';
-		return /\.gif(\?|$)/i.test(src);
-	}
-
-	/** Export-time painters: one scratch canvas per animated layer src, CACHED
-	 *  for the run — paintImageOverlays asks every recorded frame and a fresh
-	 *  painter per frame would churn (and leak) a canvas 30×/second. */
-	const layerPainters = new SvelteMap<
-		string,
-		{ key: string; handle: ReturnType<typeof gifLayerPainter> }
-	>();
-
-	function animatedLayerResolver(
-		src: string,
-		box: { w: number; h: number }
-	): AnimatedLayerPainter | null {
-		const decoded = layerGifs.get(src);
-		if (!decoded) return null;
-		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}`;
-		const cached = layerPainters.get(src);
-		let handle = cached && cached.key === sizeKey ? cached.handle : undefined;
-		if (!handle) {
-			cached?.handle.close();
-			handle = gifLayerPainter(decoded, box);
-			layerPainters.set(src, { key: sizeKey, handle });
-		}
-		const painter = handle;
-		return (ctx, x, y, timeSec) => painter.paint(ctx, x, y, timeSec);
-	}
-
 	/** FX transform → CSS (live preview mirrors the canvas renderer). */
 	function overlayFxStyle(overlay: MemeTextOverlay): string {
 		// Dead clock (static image, no cues): entrances render SETTLED — a pop
@@ -1188,16 +1126,17 @@
 	// `meme` wire tag.
 	let imageLayers = $state<MemeImageOverlay[]>([]);
 	let layerSeq = 0;
-	/** Cached decoded bitmaps per src — the export reads these, no refetch. */
-	const layerBitmaps = new SvelteMap<string, HTMLImageElement>();
-	/** Same-origin render source per layer src (object URL over bytes we
-	 *  already hold). Rendering and exporting from blobs sidesteps CDN/provider
-	 *  CORS entirely — no tainted-canvas SecurityError, no layer silently
-	 *  missing from the export when a host withholds CORS headers. */
-	const layerRenderSrcs = new SvelteMap<string, string>();
-	/** Bytes per src, held SYNCHRONOUSLY at add time — the GIF decoder reads
-	 *  them without a network round-trip (and without any race). */
-	const layerBlobs = new SvelteMap<string, Blob>();
+	/** Every per-src layer resource — decoded bitmaps, render URLs, bytes,
+	 *  GIF decoders and export painters (stores/meme-layer-assets.svelte).
+	 *  The component owns the layer ROWS; the store owns the bytes they use. */
+	const layerAssets = new LayerAssetCache();
+
+	/** Bitmap decode -> cache; reallocates imageLayers so the layer rows and
+	 *  the stage repaint once the bitmap lands (store owns bytes, the
+	 *  component owns the rerender). */
+	function cacheLayerBitmap(src: string): Promise<boolean> {
+		return layerAssets.cacheBitmap(src, () => (imageLayers = [...imageLayers]));
+	}
 	let layerInput = $state<HTMLInputElement | null>(null);
 	let layerBusy = $state(false);
 	let imageMenuId = `meme-image-${Math.random().toString(36).slice(2, 8)}`;
@@ -1206,81 +1145,8 @@
 	let layerUrlBusy = $state(false);
 
 	/** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
-	 *  failure — callers fall back to the plain URL path). */
-	async function fetchLayerBlob(url: string): Promise<Blob | null> {
-		const res = await fetchRemoteMedia(url);
-		if (!res) return null;
-		const blob = await res.blob();
-		if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
-		return blob;
-	}
 
 	/** Keep the bytes we already have as the render source for a remote src.
-	 *  The Blob lands SYNCHRONOUSLY — cacheLayerGif must never race a promise
-	 *  (the old async arrayBuffer() handoff made fresh layers fall back to a
-	 *  network fetch that non-CORS providers fail, freezing the GIF at
-	 *  frame 1 in exports). */
-	function rememberLayerBytes(src: string, blob: Blob) {
-		if (!layerBlobs.has(src)) layerBlobs.set(src, blob);
-		if (!layerRenderSrcs.has(src)) layerRenderSrcs.set(src, URL.createObjectURL(blob));
-	}
-
-	/** Drop every per-src asset (blob URL, bytes, decoder, painter) — call when
-	 *  no remaining layer references the src. */
-	function releaseLayerAssets(src: string) {
-		const obj = layerRenderSrcs.get(src);
-		if (obj) {
-			URL.revokeObjectURL(obj);
-			layerRenderSrcs.delete(src);
-		}
-		layerBlobs.delete(src);
-		layerGifs.get(src)?.close();
-		layerGifs.delete(src);
-		layerPainters.get(src)?.handle.close();
-		layerPainters.delete(src);
-	}
-
-	/** Decode (and cache) the bitmap for a src; resolves even on failure.
-	 *  Prefers the same-origin blob render source — only pure-URL layers
-	 *  (draft restore, failed fetch) touch the network, and those need CORS.
-	 *  A CORS-blocked URL retries once through the image proxy so hostile
-	 *  hosts still render AND export (a skipped layer quietly vanishes from
-	 *  the meme instead). */
-	function cacheLayerBitmap(src: string): Promise<boolean> {
-		if (layerBitmaps.has(src)) return Promise.resolve(true);
-		return new Promise((resolve) => {
-			const img = new Image();
-			const local = layerRenderSrcs.get(src);
-			if (!local) img.crossOrigin = 'anonymous';
-			img.onload = () => {
-				layerBitmaps.set(src, img);
-				imageLayers = [...imageLayers];
-				resolve(true);
-			};
-			img.onerror = () => {
-				if (local) {
-					resolve(false);
-					return;
-				}
-				void fetchLayerBlob(src).then((blob) => {
-					if (!blob) {
-						resolve(false);
-						return;
-					}
-					rememberLayerBytes(src, blob);
-					const retry = new Image();
-					retry.onload = () => {
-						layerBitmaps.set(src, retry);
-						imageLayers = [...imageLayers];
-						resolve(true);
-					};
-					retry.onerror = () => resolve(false);
-					retry.src = layerRenderSrcs.get(src) ?? '';
-				});
-			};
-			img.src = local ?? src;
-		});
-	}
 
 	/** Add a layer from bytes and/or a remote URL. Rendering always prefers
 	 *  the bytes (same-origin blob → export-safe); the media provider re-homes
@@ -1346,15 +1212,15 @@
 		}
 		imageLayers = [...imageLayers, layer];
 		selectedLayerId = layer.id;
-		if (bytes) rememberLayerBytes(layer.src, bytes);
+		if (bytes) layerAssets.rememberBytes(layer.src, bytes);
 		mediaLibrary.remember(layer.src, source.name ?? '', bytes?.type);
 		const ok = await cacheLayerBitmap(layer.src);
 		if (!ok) toasts.warning('Layer added — but the image failed to load (will retry on export)');
 		// Animated GIF layers keep their motion in previews AND exports;
 		// static layers just fall through to the bitmap path. Browsers without
 		// WebCodecs ImageDecoder (Safari/Firefox) can't — say so up front.
-		void cacheLayerGif(layer.src).then((animated) => {
-			if (!animated && looksAnimatedGif(layer.src) && !canDecodeGif()) {
+		void layerAssets.cacheGif(layer.src).then((animated) => {
+			if (!animated && layerAssets.looksAnimatedGif(layer.src) && !canDecodeGif()) {
 				toasts.info(
 					'This GIF plays in the preview but exports as a still on this browser — Chrome or Edge keeps layers moving',
 					5000
@@ -1364,23 +1230,6 @@
 	}
 
 	/** Read natural aspect without keeping the decoder around. */
-	async function probeAspect(bytes: Blob): Promise<number | null> {
-		try {
-			const url = URL.createObjectURL(bytes);
-			try {
-				return await new Promise<number | null>((resolve) => {
-					const img = new Image();
-					img.onload = () => resolve(img.naturalWidth / img.naturalHeight || null);
-					img.onerror = () => resolve(null);
-					img.src = url;
-				});
-			} finally {
-				URL.revokeObjectURL(url);
-			}
-		} catch {
-			return null;
-		}
-	}
 
 	function removeLayer(id: string) {
 		const gone = imageLayers.find((l) => l.id === id);
@@ -1388,7 +1237,7 @@
 		if (selectedLayerId === id) selectedLayerId = null;
 		// Release the per-src assets when no remaining layer references it.
 		if (gone && !imageLayers.some((l) => l.src === gone.src)) {
-			releaseLayerAssets(gone.src);
+			layerAssets.release(gone.src);
 		}
 	}
 
@@ -1766,7 +1615,7 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
-		for (const layer of imageLayers) releaseLayerAssets(layer.src);
+		for (const layer of imageLayers) layerAssets.release(layer.src);
 		imageLayers = [];
 		selectedLayerId = null;
 		layerDrag = null;
@@ -1982,8 +1831,7 @@
 		fxId = null;
 		imageLayers = [];
 		selectedLayerId = null;
-		layerGifs.forEach((g) => g.close());
-		layerGifs.clear();
+		layerAssets.releaseAll();
 		previewPlaying = false;
 		previewSeconds = 0;
 		stageSeconds = 0;
@@ -2023,7 +1871,7 @@
 		imageLayers = applied.imageLayers;
 		for (const layer of applied.imageLayers) {
 			void cacheLayerBitmap(layer.src);
-			void cacheLayerGif(layer.src);
+			void layerAssets.cacheGif(layer.src);
 		}
 		selectedId = overlays[0]?.id ?? null;
 		remixSource = { eventId: handoff.eventId, pubkey: handoff.pubkey, relays: handoff.relays };
@@ -2356,16 +2204,6 @@
 		if (percent !== undefined) progress = percent;
 	}
 
-	/** Tainted-canvas SecurityErrors read like alphabet soup ("The canvas has
-	 *  been tainted by cross-origin data") — translate them into the fix. */
-	function exportErrorMessage(e: unknown): string {
-		const message = (e as Error)?.message ?? 'Export failed';
-		if (e instanceof DOMException && e.name === 'SecurityError') {
-			return 'Export blocked by a cross-origin image — remove and re-add that sticker/layer, then retry';
-		}
-		return message;
-	}
-
 	/** Build the full cue schedule (synth + custom sounds) and render it to
 	 * an AudioBuffer ready to attach to a MediaRecorder stream. Returns null
 	 * when there is nothing audible to mix (silent export). */
@@ -2518,10 +2356,10 @@
 		paintImageOverlays(
 			ctx,
 			imageLayers,
-			(src) => layerBitmaps.get(src) ?? null,
+			(src) => layerAssets.bitmaps.get(src) ?? null,
 			a,
 			undefined,
-			animatedLayerResolver
+			layerAssets.painterFor
 		);
 		paintAll(ctx, overlays, a);
 		const blob = await new Promise<Blob | null>((res) => a.toBlob(res, 'image/jpeg', 0.92));
@@ -2545,7 +2383,7 @@
 		// pick still trims (longer picks can't extend — the NETSCAPE loop tag
 		// handles repetition).
 		const layerFrameSets = imageLayers
-			.map((layer) => layerGifs.get(layer.src)?.frames)
+			.map((layer) => layerAssets.gifs.get(layer.src)?.frames)
 			.filter((f): f is NonNullable<typeof f> => !!f && f.length > 0);
 		const plan = planGifExport(
 			gif?.frames,
@@ -2595,10 +2433,10 @@
 			paintImageOverlays(
 				ctx,
 				imageLayers,
-				(src) => layerBitmaps.get(src) ?? null,
+				(src) => layerAssets.bitmaps.get(src) ?? null,
 				a,
 				t * 1000,
-				animatedLayerResolver
+				layerAssets.painterFor
 			);
 			paintAll(ctx, overlays, a, t * 1000);
 			frames.push({ source: await createImageBitmap(a), delayMs: step.delayMs });
@@ -2624,7 +2462,8 @@
 				if (!(await cacheLayerBitmap(src))) missing.push(i + 1);
 				// GIF decode retry right before recording — held bytes make this
 				// local and certain; failure means the layer freezes at frame 1.
-				if (looksAnimatedGif(src) && !(await cacheLayerGif(src))) frozen.push(i + 1);
+				if (layerAssets.looksAnimatedGif(src) && !(await layerAssets.cacheGif(src)))
+					frozen.push(i + 1);
 			}
 			if (missing.length) {
 				toasts.warning(
@@ -2636,7 +2475,7 @@
 				toasts.warning(
 					`Animated layer${frozen.length > 1 ? 's' : ''} ${frozen.join(', ')} will export as a still frame${
 						canDecodeGif()
-							? ` — the GIF failed to decode (${lastGifDecodeError || 'unknown'})`
+							? ` — the GIF failed to decode (${layerAssets.lastGifDecodeError || 'unknown'})`
 							: ' — animated layers need Chrome or Edge'
 					}`,
 					6000
@@ -2675,7 +2514,7 @@
 			const blob = await renderImageMeme(stageImg, overlays, {
 				lookCss,
 				imageLayers,
-				bitmaps: layerBitmaps,
+				bitmaps: layerAssets.bitmaps,
 				target: renderTarget,
 				mediaTransform
 			});
@@ -2697,10 +2536,7 @@
 		// inside renderVideoMeme via the extra-track hook below.
 		// Cue mix is built on the EXPORT timeline: media time re-mapped by the
 		// trim window and compressed by playbackRate (cues after trimEnd drop).
-		const shiftCues = (atMs: number) => (atMs - trimStartSec * 1000) / (playbackRate || 1);
-		const exportCues = sfxCues
-			.map((c) => ({ ...c, atMs: shiftCues(c.atMs) }))
-			.filter((c) => c.atMs >= 0 && c.atMs <= trimDuration * 1000);
+		const exportCues = shiftCuesForExport(sfxCues, trimStartSec, playbackRate, trimDuration);
 		const cueBuffer = await renderCueMix(trimDuration / (playbackRate || 1), exportCues);
 		const extraTracks: MediaStreamTrack[] = [];
 		if (cueBuffer) {
@@ -2714,8 +2550,8 @@
 			sourceAudioGain,
 			lookCss,
 			imageLayers,
-			bitmaps: layerBitmaps,
-			animPainters: animatedLayerResolver,
+			bitmaps: layerAssets.bitmaps,
+			animPainters: layerAssets.painterFor,
 			target: renderTarget,
 			mediaTransform,
 			trimStartSec: mediaKind === 'video' ? trimStartSec : undefined,
@@ -2731,6 +2567,7 @@
 	}
 
 	/** GIF export: paint decoded frames onto a canvas at creation speed, mix
+	/** GIF export: paint decoded frames onto a canvas at creation speed, mix
 	 * the synthesized SFX track into the MediaRecorder stream, and return the
 	 * recorded video. Same recorder contract as renderVideoMeme. */
 	async function exportGifMeme(): Promise<File> {
@@ -2739,8 +2576,6 @@
 		if (!canRenderVideoMeme()) {
 			throw new Error('This browser cannot export animated memes — try Chrome/Edge');
 		}
-		// Reuse the recorder stack: a canvas we paint frames onto, captureStream,
-		// MediaRecorder with the first supported container/codec.
 		const a = document.createElement('canvas');
 		// Artboard (cover-fit) or the GIF's own frame — even dims, 1080 cap on
 		// the source path like every meme export.
@@ -2748,10 +2583,6 @@
 		const size = artboardId === 'source' ? targetSize(srcSize) : renderTarget;
 		a.width = Math.max(2, size.width - (size.width % 2));
 		a.height = Math.max(2, size.height - (size.height % 2));
-		const ctx = a.getContext('2d');
-		if (!ctx) throw new Error('Canvas is not available in this browser');
-		track('rendering', 'Recording meme…', 0);
-		const stream = a.captureStream(30);
 		// Export length: the GIF's own duration, or the creator's Length pick
 		// (shorter trims the loop, longer repeats the GIF). Cue audio is built
 		// on the same clock so sounds fire inside the exported window.
@@ -2759,51 +2590,24 @@
 			Math.max(pinnedLengthSec ?? decoded.duration, 0.2),
 			MAX_VIDEO_MEME_SECONDS
 		);
-		// Synthesized + custom cue mix (if any cues exist) becomes the audio track.
-		{
-			const buffer = await renderCueMix(exportLengthSec);
-			if (buffer) {
-				const cueTrack = safeCueTrack(buffer);
-				if (cueTrack) stream.addTrack(cueTrack);
-			}
-		}
-		const chunks: Blob[] = [];
-		const pick = (): string => {
-			for (const type of [
-				'video/webm;codecs=vp9,opus',
-				'video/webm;codecs=vp8,opus',
-				'video/webm',
-				'video/mp4'
-			]) {
-				if (MediaRecorder.isTypeSupported(type)) return type;
-			}
-			return '';
-		};
-		const mimeType = pick();
+		const mimeType = pickRecorderMime();
 		if (!mimeType) throw new Error('This browser cannot record animated memes');
-		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
-		recorder.ondataavailable = (e) => {
-			if (e.data.size) chunks.push(e.data);
-		};
-		const done = new Promise<void>((resolve, reject) => {
-			recorder.onstop = () => resolve();
-			recorder.onerror = () => reject(new Error('Recording the meme failed'));
+		track('rendering', 'Recording meme…', 0);
+		// Synthesized + custom cue mix (if any cues exist) becomes the audio track.
+		const cueBuffer = await renderCueMix(exportLengthSec);
+		const cueTrack = cueBuffer ? safeCueTrack(cueBuffer) : null;
+		const session = new RecorderSession({
+			canvas: a,
+			mimeType,
+			signal: mineController?.signal,
+			extraTracks: cueTrack ? [cueTrack] : []
 		});
-		recorder.start(250);
-		let cancelled = false;
-		const onAbort = () => {
-			cancelled = true;
-		};
-		mineController?.signal.addEventListener('abort', onAbort);
 		try {
 			// Real-time single pass: paint each frame for its own duration. GIF
 			// timestamps are wall-clock aligned so SFX cues stay in sync; the
 			// base painter loops (mod duration) so a longer Length pick
 			// repeats the GIF instead of freezing on its last frame.
-			let cursor = 0; // ms into the timeline
-			const startedAt = performance.now();
-			const paint = () => {
-				const elapsedMs = performance.now() - startedAt;
+			await session.run((ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
@@ -2818,126 +2622,62 @@
 				paintImageOverlays(
 					ctx,
 					imageLayers,
-					(src) => layerBitmaps.get(src) ?? null,
+					(src) => layerAssets.bitmaps.get(src) ?? null,
 					a,
 					elapsedMs,
-					animatedLayerResolver
+					layerAssets.painterFor
 				);
 				paintAll(ctx, overlays, a, elapsedMs);
-				if (elapsedMs / 1000 >= exportLengthSec) cursor = 1;
-				if (optionsProgress(elapsedMs, exportLengthSec * 1000)) return;
-				if (cancelled) return;
-				requestAnimationFrame(paint);
-			};
-			requestAnimationFrame(paint);
-			await new Promise<void>((resolve) => {
-				const check = setInterval(() => {
-					if (cancelled || cursor === 1) {
-						clearInterval(check);
-						resolve();
-					}
-				}, 100);
+				return optionsProgress(elapsedMs, exportLengthSec * 1000);
 			});
-		} finally {
-			mineController?.signal.removeEventListener('abort', onAbort);
+			return await session.finish();
+		} catch (e) {
+			session.dispose();
+			throw e;
 		}
-		recorder.stop();
-		// Hidden/background renderers sometimes never flush the WebM muxer —
-		// onstop hangs and the studio stays busy forever. Race a force-flush:
-		// re-stop + close the tracks so pending data events land (better a
-		// possibly-short file than a wedged export).
-		await Promise.race([
-			done,
-			new Promise<void>((resolve) =>
-				setTimeout(() => {
-					try {
-						recorder.stop();
-					} catch {
-						/* already inactive */
-					}
-					stream.getTracks().forEach((t) => t.stop());
-					resolve();
-				}, 10_000)
-			)
-		]);
-		stream.getTracks().forEach((t) => t.stop());
-		if (cancelled) throw new Error('Meme export cancelled');
-		const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
-		if (!blob.size) throw new Error('The meme export produced an empty video');
-		return new File([blob], `meme-${Date.now()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`, {
-			type: mimeType.split(';')[0]
-		});
 	}
 
+	/** Static + SFX: real-time record a painted frame for as long as the cue
 	/** Static + SFX: real-time record a painted frame for as long as the cue
 	 * sheet runs (+ padding), so the audio track carries the sound. */
 	async function exportStaticVideoMeme(): Promise<File> {
 		if (!stageImg) throw new Error('The preview is still loading');
 		if (!canRenderVideoMeme()) {
-			throw new Error('This browser cannot export sound memes — try Chrome/Edge');
+			throw new Error('This browser cannot export sound memes \u2014 try Chrome/Edge');
 		}
 		const a = document.createElement('canvas');
 		// Artboard (cover-fit) or the image's own frame, even dims, 1080 cap.
 		const size = renderTarget;
 		a.width = Math.max(2, size.width - (size.width % 2));
 		a.height = Math.max(2, size.height - (size.height % 2));
-		const ctx = a.getContext('2d');
-		if (!ctx) throw new Error('Canvas is not available in this browser');
 		// Duration: last cue end + tail, clamped to the video-meme cap (shared
-		// with the suggestion path via cue-track). A pinned Length overrides —
+		// with the suggestion path via cue-track). A pinned Length overrides \u2014
 		// shorter drops late cues, longer holds the last frame in silence.
 		const durationSec = Math.min(
 			Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
 			MAX_VIDEO_MEME_SECONDS
 		);
-		track('rendering', 'Recording sound meme…', 0);
-		const stream = a.captureStream(30);
-		const cueBuffer = await renderCueMix(durationSec, sfxCues);
-		if (cueBuffer) {
-			const cueTrack = safeCueTrack(cueBuffer);
-			if (cueTrack) stream.addTrack(cueTrack);
-		}
-		const chunks: Blob[] = [];
-		const pick = (): string => {
-			for (const type of [
-				'video/webm;codecs=vp9,opus',
-				'video/webm;codecs=vp8,opus',
-				'video/webm',
-				'video/mp4'
-			]) {
-				if (MediaRecorder.isTypeSupported(type)) return type;
-			}
-			return '';
-		};
-		const mimeType = pick();
+		const mimeType = pickRecorderMime();
 		if (!mimeType) throw new Error('This browser cannot record sound memes');
-		const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
-		recorder.ondataavailable = (e) => {
-			if (e.data.size) chunks.push(e.data);
-		};
-		const done = new Promise<void>((resolve, reject) => {
-			recorder.onstop = () => resolve();
-			recorder.onerror = () => reject(new Error('Recording the meme failed'));
+		track('rendering', 'Recording sound meme\u2026', 0);
+		const cueBuffer = await renderCueMix(durationSec, sfxCues);
+		const cueTrack = cueBuffer ? safeCueTrack(cueBuffer) : null;
+		const session = new RecorderSession({
+			canvas: a,
+			mimeType,
+			signal: mineController?.signal,
+			extraTracks: cueTrack ? [cueTrack] : []
 		});
-		recorder.start(250);
-		let cancelled = false;
-		const onAbort = () => {
-			cancelled = true;
-		};
-		mineController?.signal.addEventListener('abort', onAbort);
 		try {
 			// Real-time pass: paint the static frame (look + image layers + timed
 			// captions), then re-paint as the timeline advances so start/end
 			// windows and cue-synced captions behave exactly like GIF export.
-			const cursor = { done: false };
-			const startedAt = performance.now();
 			const img: HTMLImageElement = stageImg;
-			const paint = () => {
-				const elapsedMs = performance.now() - startedAt;
+			await session.run((ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
-				// Cover-fit (not stretch) — a mismatched artboard crops like the
+				// Cover-fit (not stretch) \u2014 a mismatched artboard crops like the
 				// stage preview instead of distorting the picture; the framing
 				// (crop/zoom) rides the same rect.
 				const rect = coverRect(
@@ -2952,54 +2692,19 @@
 				paintImageOverlays(
 					ctx,
 					imageLayers,
-					(src) => layerBitmaps.get(src) ?? null,
+					(src) => layerAssets.bitmaps.get(src) ?? null,
 					a,
 					elapsedMs,
-					animatedLayerResolver
+					layerAssets.painterFor
 				);
 				paintAll(ctx, overlays, a, elapsedMs);
-				if (optionsProgress(elapsedMs, durationSec * 1000)) cursor.done = true;
-				if (cancelled || cursor.done) return;
-				requestAnimationFrame(paint);
-			};
-			requestAnimationFrame(paint);
-			await new Promise<void>((resolve) => {
-				const check = setInterval(() => {
-					if (cancelled || cursor.done) {
-						clearInterval(check);
-						resolve();
-					}
-				}, 100);
+				return optionsProgress(elapsedMs, durationSec * 1000);
 			});
-		} finally {
-			mineController?.signal.removeEventListener('abort', onAbort);
+			return await session.finish();
+		} catch (e) {
+			session.dispose();
+			throw e;
 		}
-		recorder.stop();
-		// Hidden/background renderers sometimes never flush the WebM muxer —
-		// onstop hangs and the studio stays busy forever. Race a force-flush:
-		// re-stop + close the tracks so pending data events land (better a
-		// possibly-short file than a wedged export).
-		await Promise.race([
-			done,
-			new Promise<void>((resolve) =>
-				setTimeout(() => {
-					try {
-						recorder.stop();
-					} catch {
-						/* already inactive */
-					}
-					stream.getTracks().forEach((t) => t.stop());
-					resolve();
-				}, 10_000)
-			)
-		]);
-		stream.getTracks().forEach((t) => t.stop());
-		if (cancelled) throw new Error('Meme export cancelled');
-		const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
-		if (!blob.size) throw new Error('The meme export produced an empty video');
-		return new File([blob], `meme-${Date.now()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`, {
-			type: mimeType.split(';')[0]
-		});
 	}
 
 	function optionsProgress(elapsedMs: number, totalMs: number): boolean {
@@ -3049,21 +2754,16 @@
 		const thumb = await posterThumbUrl();
 		// §6.4 imeta enrichment: the exported FILE's duration (only when it's a
 		// actually a video) + the average bitrate from the uploaded bytes.
-		const durationSec =
-			uploaded.kind === 'video'
-				? mediaKind === 'video'
-					? exportDurationSec || undefined
-					: gif
-						? exportFormat === 'gif'
-							? Math.min(pinnedLengthSec ?? Infinity, gif.duration)
-							: (pinnedLengthSec ?? gif.duration)
-						: sfxCues.length
-							? Math.min(
-									Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
-									MAX_VIDEO_MEME_SECONDS
-								)
-							: undefined
-				: undefined;
+		const durationSec = exportImetaDuration({
+			uploadedKind: uploaded.kind,
+			mediaKind,
+			gifDuration: gif?.duration,
+			exportFormat,
+			pinnedLengthSec,
+			cueRuntimeSec: sfxCues.length ? cueTrackDurationSec(sfxCues) : undefined,
+			exportDurationSec,
+			capSec: MAX_VIDEO_MEME_SECONDS
+		});
 		const bitrate =
 			durationSec && durationSec > 0.2 && uploaded.bytes > 0
 				? (uploaded.bytes * 8) / durationSec
@@ -3158,7 +2858,7 @@
 		// recorder stack, so gate on the same support flag as publishing.
 		const needsRecorder = mediaKind === 'video' || !!gif || sfxCues.length > 0;
 		if (needsRecorder && !canRenderVideoMeme()) {
-			toasts.error('This browser can\u2019t render animated memes — try Chrome/Edge');
+			toasts.error('This browser can’t render animated memes — try Chrome/Edge');
 			return;
 		}
 		if (mediaKind === 'video' && stageVideo) stageVideo.pause();
@@ -3417,7 +3117,7 @@
 				imageLayers = draftImageLayers(draft);
 				for (const layer of imageLayers) {
 					void cacheLayerBitmap(layer.src);
-					void cacheLayerGif(layer.src);
+					void layerAssets.cacheGif(layer.src);
 				}
 				trimStartSec = Math.max(0, draft.trimStartSec ?? 0);
 				trimEndSec = draft.trimEndSec ?? null;
@@ -3956,12 +3656,12 @@
 												: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
 											aria-label={`Image layer ${li + 1}`}
 										>
-											{#if layerBitmaps.has(layer.src)}
+											{#if layerAssets.bitmaps.has(layer.src)}
 												<img
-													src={layerRenderSrcs.get(layer.src) ?? layer.src}
+													src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
 													alt=""
 													crossOrigin="anonymous"
-													class="pointer-events-none max-h-full max-w-full select-none {layerBitmaps.get(
+													class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
 														layer.src
 													)?.complete
 														? ''
@@ -4906,9 +4606,9 @@
 															<span
 																class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-black/40"
 															>
-																{#if layerBitmaps.has(layer.src)}
+																{#if layerAssets.bitmaps.has(layer.src)}
 																	<img
-																		src={layerRenderSrcs.get(layer.src) ?? layer.src}
+																		src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
 																		alt=""
 																		class="max-h-full max-w-full"
 																	/>
@@ -5074,7 +4774,7 @@
 									<MemeLayerEditor
 										layer={selectedLayer}
 										index={imageLayers.findIndex((l) => l.id === selectedLayer.id) + 1}
-										renderSrc={layerRenderSrcs.get(selectedLayer.src) ?? null}
+										renderSrc={layerAssets.renderSrcs.get(selectedLayer.src) ?? null}
 										{busy}
 										onPatch={(id, patch) => patchLayer(id, patch)}
 										onRemove={(id) => removeLayer(id)}
@@ -5629,8 +5329,8 @@
 												onclick={() => (includeSourceAudio = !includeSourceAudio)}
 												aria-pressed={includeSourceAudio}
 												title={includeSourceAudio
-													? 'The clip\u2019s own audio is included in the export'
-													: 'The clip\u2019s own audio is dropped — only sound cues export'}
+													? 'The clip’s own audio is included in the export'
+													: 'The clip’s own audio is dropped — only sound cues export'}
 												class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-40 {includeSourceAudio
 													? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20'
 													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)]'}"
