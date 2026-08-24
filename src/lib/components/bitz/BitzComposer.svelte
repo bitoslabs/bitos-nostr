@@ -49,6 +49,7 @@
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { formatDuration } from '$lib/utils/format';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
 
 	/**
 	 * Bitz Studio — create a short-form bitz straight from the post form.
@@ -735,7 +736,7 @@
 					: `${kindInfo?.label ?? 'Bitz'} published to Nostr`,
 				'success',
 				6000,
-				{ label: 'View in Bitz', run: () => goto(`/bitz#reel=${eventId}`) }
+				{ label: 'View in Bitz', run: () => goto(`/bitz${bitzHashLink(eventId)}`) }
 			);
 			if (quoteError) toasts.warning(`Bitz posted, but the timeline quote failed — ${quoteError}`);
 			onposted(eventId);

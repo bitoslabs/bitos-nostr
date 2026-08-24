@@ -70,8 +70,8 @@ describe('shareWebLink', () => {
 });
 
 describe('bitzHashLink', () => {
-	it('targets the Bitz route hash handler', () => {
-		expect(bitzHashLink(EVENT_ID)).toBe(`#reel=${EVENT_ID}`);
+	it('targets the Bitz route hash handler with the canonical bitz keyword', () => {
+		expect(bitzHashLink(EVENT_ID)).toBe(`#bitz=${EVENT_ID}`);
 	});
 });
 

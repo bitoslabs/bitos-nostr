@@ -37,6 +37,8 @@ export interface MemeDraftData {
 	selectedId: string | null;
 	/** Source-media color look id (meme/look.ts). */
 	lookId?: string;
+	/** Base-media crop/zoom framing (render.ts MediaTransform). */
+	mediaTransform?: { scale: number; x: number; y: number };
 }
 
 /** Parse + validate localStorage contents; null when absent or foreign. */

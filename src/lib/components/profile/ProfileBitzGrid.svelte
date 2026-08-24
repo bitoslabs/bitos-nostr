@@ -6,7 +6,7 @@
 	 * lazy thumbnail. Sensitive media is blurred until tapped.
 	 *
 	 * Tapping a tile launches the SHARED reels player (`/bitz?author=<npub>
-	 * #reel=<id>`) — the same swipe-up/down surface as the Bitz tab, with the
+	 * #bitz=<id>`) — the same swipe-up/down surface as the Bitz tab, with the
 	 * full action rail (like, comments, zap, share/repost, remix). One player,
 	 * context-aware data — the TikTok/Instagram grid→player pattern.
 	 */
@@ -15,6 +15,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { lazyVideoMetadata } from '$lib/utils/media';
 	import { formatDuration } from '$lib/utils/format';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import type { ReelNote } from '$lib/stores/bitz-session.svelte';
@@ -49,14 +50,14 @@
 
 	/** No-JS / modifier-click fallback: the note thread. */
 	function noteHref(reel: ReelNote) {
-		return `/note/${reel.id}?from=reels&returnTo=${encodeURIComponent(location.pathname)}`;
+		return `/note/${reel.id}?from=bitz&returnTo=${encodeURIComponent(location.pathname)}`;
 	}
 
 	/** Open the shared reels player scoped to this author, starting at this
 	 *  bitz. Chronological author order means the tapped tile is the first
 	 *  thing on screen; swipe up/down walks the author's bitz. */
 	function openInPlayer(reel: ReelNote) {
-		goto(`/bitz?author=${npubEncode(pubkey)}#reel=${reel.id}`);
+		goto(`/bitz?author=${npubEncode(pubkey)}${bitzHashLink(reel.id)}`);
 	}
 </script>
 

@@ -49,6 +49,8 @@ export interface RenderOptions {
 	 * identically whatever the artboard.
 	 */
 	target?: { width: number; height: number };
+	/** Base-media framing (crop/zoom) — see coverRect. */
+	mediaTransform?: MediaTransform;
 	/** JPEG quality for image exports. */
 	quality?: number;
 	/** CSS filter chain burned into the MEDIA pixels (captions stay crisp). */
@@ -294,22 +296,54 @@ function mediaSize(el: HTMLImageElement | HTMLVideoElement): { width: number; he
 	return { width: el.naturalWidth, height: el.naturalHeight };
 }
 
+/** Base-media framing: zoom multiplier + pan, each axis −1…1 of the
+ *  cover-fit overflow (0 = centered). Rides RenderOptions/drafts; layers and
+ *  captions stay fixed to the artboard — only the media moves. */
+export interface MediaTransform {
+	scale: number;
+	x: number;
+	y: number;
+}
+
+/** Cover-fit rectangle for a source in a target box, with optional zoom/pan.
+ *  Pure math — the preview (CSS transform), every export path and the GIF
+ *  painter all derive from it, so framing is WYSIWYG everywhere by
+ *  construction. Exported for tests. */
+export function coverRect(
+	sourceW: number,
+	sourceH: number,
+	canvasW: number,
+	canvasH: number,
+	transform?: MediaTransform
+): { x: number; y: number; w: number; h: number } {
+	const scale = Math.max(canvasW / (sourceW || 1), canvasH / (sourceH || 1));
+	const zoom = clampNum(transform?.scale ?? 1, 1, 4);
+	const w = (sourceW || canvasW) * scale * zoom;
+	const h = (sourceH || canvasH) * scale * zoom;
+	// Pan travels within the overflow past the canvas edges; at zoom 1 the
+	// overflow can be zero on one axis, so that axis just stays centered.
+	const maxX = Math.max(0, (w - canvasW) / 2);
+	const maxY = Math.max(0, (h - canvasH) / 2);
+	const dx = clampNum(transform?.x ?? 0, -1, 1) * maxX;
+	const dy = clampNum(transform?.y ?? 0, -1, 1) * maxY;
+	return { x: (canvasW - w) / 2 + dx, y: (canvasH - h) / 2 + dy, w, h };
+}
+
 function drawCover(
 	ctx: CanvasRenderingContext2D,
 	el: HTMLImageElement | HTMLVideoElement,
 	canvas: HTMLCanvasElement,
-	lookCss?: string
+	lookCss?: string,
+	transform?: MediaTransform
 ): void {
 	// Look filter (if any) applies to the media draw only — set right before
 	// drawImage and never around the caption paint pass.
 	if (lookCss && lookCss !== 'none') ctx.filter = lookCss;
 	// Cover-fit the source into the target box (meme canvases match the media
-	// aspect already; cover just guards odd sizes).
+	// aspect already; cover just guards odd sizes), then apply framing.
 	const { width: sw, height: sh } = mediaSize(el);
-	const scale = Math.max(canvas.width / (sw || 1), canvas.height / (sh || 1));
-	const dw = (sw || canvas.width) * scale;
-	const dh = (sh || canvas.height) * scale;
-	ctx.drawImage(el, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+	const rect = coverRect(sw, sh, canvas.width, canvas.height, transform);
+	ctx.drawImage(el, rect.x, rect.y, rect.w, rect.h);
 	ctx.filter = 'none';
 }
 
@@ -334,7 +368,7 @@ export async function renderImageMeme(
 	const canvas = makeCanvas(size.width, size.height);
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');
-	drawCover(ctx, media, canvas, options.lookCss);
+	drawCover(ctx, media, canvas, options.lookCss, options.mediaTransform);
 	if (options.imageLayers?.length) {
 		paintImageOverlays(
 			ctx,
@@ -483,7 +517,7 @@ export async function renderVideoMeme(
 		source.playbackRate = 1;
 	};
 	const paint = () => {
-		drawCover(ctx, source, canvas, options.lookCss);
+		drawCover(ctx, source, canvas, options.lookCss, options.mediaTransform);
 		if (options.imageLayers?.length) {
 			paintImageOverlays(
 				ctx,

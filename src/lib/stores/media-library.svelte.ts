@@ -64,6 +64,22 @@ function parseSource(raw: unknown): MediaSource | null {
 	};
 }
 
+function normalizeSources(list: MediaSource[]): MediaSource[] {
+	const seenUrls = new Set<string>();
+	const normalized: MediaSource[] = [];
+	for (const source of list) {
+		if (seenUrls.has(source.url)) continue;
+		seenUrls.add(source.url);
+		normalized.push({
+			...source,
+			// Keep DOM keys unique even if older persisted rows reused URL/id values.
+			id: `${source.url}#${source.addedAt}`
+		});
+		if (normalized.length >= MAX_MEDIA_SOURCES) break;
+	}
+	return normalized;
+}
+
 class MediaLibraryStore {
 	list = $state<MediaSource[]>([]);
 
@@ -77,10 +93,12 @@ class MediaLibraryStore {
 			if (!raw) return;
 			const stored = JSON.parse(raw) as StoredLibrary;
 			if (stored?.schema !== MEDIA_LIBRARY_KEY) return;
-			this.list = (Array.isArray(stored.list) ? stored.list : [])
-				.map(parseSource)
-				.filter((s): s is MediaSource => s !== null)
-				.slice(0, MAX_MEDIA_SOURCES);
+			this.list = normalizeSources(
+				(Array.isArray(stored.list) ? stored.list : [])
+					.map(parseSource)
+					.filter((s): s is MediaSource => s !== null)
+			);
+			this.write();
 		} catch {
 			this.list = [];
 		}
@@ -104,14 +122,15 @@ class MediaLibraryStore {
 		const clean = url.trim();
 		if (!HTTP_RE.test(clean)) return;
 		const kind = kindOf(clean, mime) ?? 'image';
+		const addedAt = Date.now();
 		const row: MediaSource = {
-			id: clean,
+			id: `${clean}#${addedAt}`,
 			kind,
 			url: clean.slice(0, 512),
 			label: (label.trim() || clean.split('/').pop()?.split('?')[0] || clean).slice(0, 60),
-			addedAt: Date.now()
+			addedAt
 		};
-		this.list = [row, ...this.list.filter((s) => s.url !== row.url)].slice(0, MAX_MEDIA_SOURCES);
+		this.list = normalizeSources([row, ...this.list]);
 		this.write();
 	}
 

@@ -970,7 +970,7 @@ class FeedStore {
 		// the home timeline; the Bitz route picks it up from relays on next load.
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		// PUB-013: also stage the optimistic reel so the Bitz player (and the
-		// #reel=<id> deep link) renders instantly; the relay echo reconciles
+		// #bitz=<id> deep link) renders instantly; the relay echo reconciles
 		// into the same id — idempotent by event id, never a duplicate.
 		this.stageOptimisticReel(event);
 		return event.id;

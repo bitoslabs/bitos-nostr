@@ -19,7 +19,10 @@
 	let loadedFor = $state('');
 
 	const noteId = $derived(resolveNoteId(page.params.id));
-	const noteSource = $derived(page.url.searchParams.get('from'));
+	// `reels` is the legacy ?from value from before the keyword rename —
+	// normalize so both spellings behave identically.
+	const rawSource = $derived(page.url.searchParams.get('from'));
+	const noteSource = $derived(rawSource === 'reels' ? 'bitz' : rawSource);
 	const requestedReturnTo = $derived(page.url.searchParams.get('returnTo'));
 	const safeReturnTo = $derived(
 		requestedReturnTo?.startsWith('/') && !requestedReturnTo.startsWith('//')
@@ -28,11 +31,7 @@
 	);
 	const backHref = $derived(
 		safeReturnTo ||
-			(noteSource === 'reels'
-				? '/bitz'
-				: noteSource === 'discover'
-					? '/discover'
-					: '/notifications')
+			(noteSource === 'bitz' ? '/bitz' : noteSource === 'discover' ? '/discover' : '/notifications')
 	);
 	const backLabel = $derived(
 		safeReturnTo
@@ -41,7 +40,7 @@
 				: safeReturnTo.startsWith('/notifications')
 					? 'Notifications'
 					: 'Back'
-			: noteSource === 'reels'
+			: noteSource === 'bitz'
 				? 'Bitz'
 				: noteSource === 'discover'
 					? 'Discover'

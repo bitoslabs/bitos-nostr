@@ -8,8 +8,10 @@
  *     natively (with relays + author hints when known).
  *   • `https://<origin>/note/<nevent|hex>` — a web link any browser opens;
  *     BitOS resolves it through the note route into the Bitz player.
- *   • `#reel=<hex>` — the in-app deep link the Bitz route itself consumes
- *     (already used by the post-success "View in Bitz" toast, PUB-013).
+ *   • `#bitz=<hex>` — the in-app deep link the Bitz route itself consumes
+ *     (already used by the post-success "View in Bitz" toast, PUB-013). The
+ *     route also accepts the legacy `#reel=<hex>` spelling from links shared
+ *     before the keyword was renamed to match the feature name.
  *
  * Pure string/URL logic only — no DOM/browser APIs beyond origin injection —
  * so it is fully unit-testable in the server project.
@@ -48,9 +50,11 @@ export function shareWebLink(input: DeepLinkInput, origin: string): string {
 	)}`;
 }
 
-/** In-app player deep link consumed by the Bitz route hash handler. */
+/** In-app player deep link consumed by the Bitz route hash handler.
+ *  Canonical keyword is `bitz` (feature name); `reel` stays readable as a
+ *  legacy alias so previously shared links keep resolving. */
 export function bitzHashLink(eventId: string): string {
-	return `#reel=${eventId}`;
+	return `#bitz=${eventId}`;
 }
 
 /** Web Share API payload for published bitz — text carries the nostr entity

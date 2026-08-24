@@ -205,6 +205,24 @@ function interlaceRowOrder(height: number): number[] {
 	return out;
 }
 
+/** Parse a Graphic Control Extension body. `pos` points at the size byte
+ *  (always 4): [size][packed][delay lo][delay hi][transparentIdx][terminator].
+ *  The transparent index is at pos+4 — reading pos+3 (the delay high byte,
+ *  almost always 0) once painted see-through pixels with palette color 0,
+ *  turning transparent GIF frames into green garbage in exports. */
+export function parseGce(
+	bytes: Uint8Array,
+	pos: number
+): { delayCs: number; disposal: number; transparentIdx: number } {
+	const packed = bytes[pos + 1] ?? 0;
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	return {
+		delayCs: view.getUint16(pos + 2, true),
+		disposal: (packed >> 2) & 7,
+		transparentIdx: packed & 1 ? (bytes[pos + 4] ?? -1) : -1
+	};
+}
+
 async function decodeGifJs(data: ArrayBuffer): Promise<DecodedGif> {
 	const view = new DataView(data);
 	const bytes = new Uint8Array(data);
@@ -244,10 +262,10 @@ async function decodeGifJs(data: ArrayBuffer): Promise<DecodedGif> {
 			const label = bytes[pos + 1]!;
 			pos += 2;
 			if (label === 0xf9 && bytes[pos] === 4) {
-				const p = bytes[pos + 1]!;
-				gceDelayCs = view.getUint16(pos + 2, true);
-				gceDisposal = (p >> 2) & 7;
-				gceTransparent = p & 1 ? (bytes[pos + 3] ?? -1) : -1;
+				const gce = parseGce(bytes, pos);
+				gceDelayCs = gce.delayCs;
+				gceDisposal = gce.disposal;
+				gceTransparent = gce.transparentIdx;
 			}
 			// Skip the extension's sub-blocks (length-prefixed, 0-terminated).
 			while (pos < bytes.length && bytes[pos] !== 0) pos += bytes[pos]! + 1;
@@ -351,12 +369,14 @@ async function decodeGifJs(data: ArrayBuffer): Promise<DecodedGif> {
 	};
 }
 
-/** Paint the frame active at `timeSec` onto a 2D context (cover-fit). */
+/** Paint the frame active at `timeSec` onto a 2D context (cover-fit, with
+ *  optional crop/zoom framing so GIF bases frame like every other media). */
 export function paintGifFrameAt(
 	ctx: CanvasRenderingContext2D,
 	gif: DecodedGif,
 	timeSec: number,
-	canvas: { width: number; height: number }
+	canvas: { width: number; height: number },
+	transform?: { scale: number; x: number; y: number }
 ): void {
 	const clamped = Math.max(0, Math.min(timeSec, gif.duration));
 	let active = gif.frames[0];
@@ -371,10 +391,17 @@ export function paintGifFrameAt(
 	try {
 		const cw = canvas.width;
 		const ch = canvas.height;
-		const scale = Math.max(cw / active.frame.width, ch / active.frame.height);
-		const dw = active.frame.width * scale;
-		const dh = active.frame.height * scale;
-		ctx.drawImage(active.frame, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+		const fw = active.frame.width || 1;
+		const fh = active.frame.height || 1;
+		const zoom = Math.min(4, Math.max(1, transform?.scale ?? 1));
+		const scale = Math.max(cw / fw, ch / fh) * zoom;
+		const w = fw * scale;
+		const h = fh * scale;
+		const maxX = Math.max(0, (w - cw) / 2);
+		const maxY = Math.max(0, (h - ch) / 2);
+		const dx = Math.min(1, Math.max(-1, transform?.x ?? 0)) * maxX;
+		const dy = Math.min(1, Math.max(-1, transform?.y ?? 0)) * maxY;
+		ctx.drawImage(active.frame, (cw - w) / 2 + dx, (ch - h) / 2 + dy, w, h);
 	} catch {
 		/* frame invalidated mid-session — the next paint picks another */
 	}

@@ -65,6 +65,7 @@
 		renderImageMeme,
 		renderVideoMeme,
 		targetSize,
+		coverRect,
 		type AnimatedLayerPainter
 	} from '$lib/meme/render';
 	import {
@@ -93,6 +94,8 @@
 	import { buildCueMixBuffer } from '$lib/meme/cue-mix';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
 	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
+	import MemeArtboardCard from '$lib/components/bitz/MemeArtboardCard.svelte';
+	import MemeTrimPanel from '$lib/components/bitz/MemeTrimPanel.svelte';
 	import MemeLookPicker from '$lib/components/bitz/MemeLookPicker.svelte';
 	import MemeStickerPicker from '$lib/components/bitz/MemeStickerPicker.svelte';
 	import MemeSourceLibrary from '$lib/components/bitz/MemeSourceLibrary.svelte';
@@ -138,6 +141,7 @@
 	import { clientTag } from '$lib/nostr/client-tag';
 	import { queryOnce, publish } from '$lib/nostr/pool';
 	import { signMined } from '$lib/auth/signer';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
 
 	/**
 	 * Meme Studio — create video/image memes and publish them as standard
@@ -564,8 +568,8 @@
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
 		try {
-			const res = await fetch(url);
-			if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+			const res = await fetchMediaResponse(url);
+			if (!res) throw new Error('Could not fetch that image (CORS-blocked host)');
 			const type = res.headers.get('content-type') ?? '';
 			if (!type.startsWith('image/')) throw new Error('That link is not an image');
 			const blob = await res.blob();
@@ -642,8 +646,8 @@
 		if (gifStageBusy) return false;
 		gifStageBusy = true;
 		try {
-			const res = await fetch(url);
-			if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+			const res = await fetchMediaResponse(url);
+			if (!res) throw new Error(`Could not load that ${label} (CORS-blocked host)`);
 			const blob = await res.blob();
 			if (blob.size > MAX_MEDIA_BYTES) throw new Error('That GIF is over the 200 MB cap');
 			await acceptFile(new File([blob], `gif-${Date.now()}.gif`, { type: 'image/gif' }), {
@@ -924,9 +928,10 @@
 		}
 	}
 
-	/** The media's natural frame (whatever is loaded), for `source`. */
+	/** The media's natural frame (whatever is loaded), for `source`. `meta`
+	 *  carries image dims too (onImageLoad) so framing reacts to loads. */
 	const sourceFrame = $derived.by(() => {
-		if (mediaKind === 'video' && meta?.width && meta?.height) {
+		if (mediaKind && meta?.width && meta?.height) {
 			return { width: meta.width, height: meta.height };
 		}
 		if (gif?.width && gif?.height) return { width: gif.width, height: gif.height };
@@ -951,6 +956,36 @@
 		}
 		const ab = ARTBOARDS.find((a) => a.id === artboardId) ?? ARTBOARDS[0]!;
 		return ab.w > 0 ? `${ab.w} / ${ab.h}` : '9 / 16';
+	});
+
+	// ---- crop & zoom (base-media framing) --------------------------------------
+	/** Zoom ≥1 multiplies the cover fit; pan −1…1 travels the overflow per
+	 *  axis. Layers/captions stay fixed to the artboard — only the media
+	 *  moves. Mirrors render.ts coverRect exactly (the preview computes the
+	 *  SAME rect in CSS, so the crop you see is the crop you export). */
+	let mediaZoom = $state(1);
+	let mediaPanX = $state(0);
+	let mediaPanY = $state(0);
+	const mediaTransform = $derived({ scale: mediaZoom, x: mediaPanX, y: mediaPanY });
+
+	function resetFraming() {
+		mediaZoom = 1;
+		mediaPanX = 0;
+		mediaPanY = 0;
+	}
+
+	/** The media's exact preview box (percent of the stage) — the same math
+	 *  coverRect applies at export, expressed as CSS. */
+	const mediaFrame = $derived.by(() => {
+		const frame = sourceFrame;
+		if (!frame) return null;
+		const rect = coverRect(frame.width, frame.height, 1000, 1000, mediaTransform);
+		return {
+			left: (rect.x / 10).toFixed(3),
+			top: (rect.y / 10).toFixed(3),
+			width: (rect.w / 10).toFixed(3),
+			height: (rect.h / 10).toFixed(3)
+		};
 	});
 
 	/** Same ratio as a number (w/h) — feeds the full-page stage width calc. */
@@ -1308,11 +1343,17 @@
 	 *  when both the direct request and the proxy fail. CDNs that withhold
 	 *  CORS (betterttv and friends — the "blocked by CORS policy" adds) are
 	 *  unreadable to the browser any other way; wsrv.nl is an open-source
-	 *  image proxy that sends ACAO:*. */
-	async function fetchMediaResponse(url: string): Promise<Response | null> {
-		const targets = /^https:\/\/wsrv\.nl\//i.test(url)
-			? [url]
-			: [url, `https://wsrv.nl/?url=${encodeURIComponent(url)}`];
+	 *  image proxy that sends ACAO:*. It only serves images, so video/audio
+	 *  callers pass `proxy: false` and stay direct-or-fail. */
+	async function fetchMediaResponse(
+		url: string,
+		opts: { proxy?: boolean } = {}
+	): Promise<Response | null> {
+		const proxy = opts.proxy !== false;
+		const targets =
+			/^https:\/\/wsrv\.nl\//i.test(url) || !proxy
+				? [url]
+				: [url, `https://wsrv.nl/?url=${encodeURIComponent(url)}`];
 		for (const target of targets) {
 			try {
 				const res = await fetch(target, { mode: 'cors' });
@@ -1361,7 +1402,10 @@
 
 	/** Decode (and cache) the bitmap for a src; resolves even on failure.
 	 *  Prefers the same-origin blob render source — only pure-URL layers
-	 *  (draft restore, failed fetch) touch the network, and those need CORS. */
+	 *  (draft restore, failed fetch) touch the network, and those need CORS.
+	 *  A CORS-blocked URL retries once through the image proxy so hostile
+	 *  hosts still render AND export (a skipped layer quietly vanishes from
+	 *  the meme instead). */
 	function cacheLayerBitmap(src: string): Promise<boolean> {
 		if (layerBitmaps.has(src)) return Promise.resolve(true);
 		return new Promise((resolve) => {
@@ -1373,7 +1417,27 @@
 				imageLayers = [...imageLayers];
 				resolve(true);
 			};
-			img.onerror = () => resolve(false);
+			img.onerror = () => {
+				if (local) {
+					resolve(false);
+					return;
+				}
+				void fetchLayerBlob(src).then((blob) => {
+					if (!blob) {
+						resolve(false);
+						return;
+					}
+					rememberLayerBytes(src, blob);
+					const retry = new Image();
+					retry.onload = () => {
+						layerBitmaps.set(src, retry);
+						imageLayers = [...imageLayers];
+						resolve(true);
+					};
+					retry.onerror = () => resolve(false);
+					retry.src = layerRenderSrcs.get(src) ?? '';
+				});
+			};
 			img.src = local ?? src;
 		});
 	}
@@ -1882,6 +1946,7 @@
 		trimStartSec = 0;
 		trimEndSec = null;
 		playbackRate = 1;
+		resetFraming();
 		clearPoster();
 		scrubSec = 0;
 		phase = 'idle';
@@ -1940,7 +2005,7 @@
 				stageSeconds = looped;
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, canvas.width, canvas.height);
-				paintGifFrameAt(ctx, decoded, looped, canvas);
+				paintGifFrameAt(ctx, decoded, looped, canvas, mediaTransform);
 				raf = requestAnimationFrame(paint);
 			};
 			raf = requestAnimationFrame(paint);
@@ -1949,7 +2014,7 @@
 		// Paused / scrubbing: paint the current playhead once per change.
 		ctx.fillStyle = '#000';
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		paintGifFrameAt(ctx, decoded, previewSeconds, canvas);
+		paintGifFrameAt(ctx, decoded, previewSeconds, canvas, mediaTransform);
 	});
 
 	async function acceptFile(
@@ -2076,8 +2141,11 @@
 	 *  the composer is already usable on the fallback “pick your own clip” path. */
 	async function consumeRemixHandoff(handoff: RemixHandoff) {
 		try {
-			const res = await fetch(handoff.mediaUrl);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			// wsrv.nl proxies images only — video remix sources stay direct-or-fail.
+			const res = await fetchMediaResponse(handoff.mediaUrl, {
+				proxy: handoff.mediaType !== 'video'
+			});
+			if (!res) throw new Error('CORS-blocked host');
 			const blob = await res.blob();
 			const name = handoff.mediaUrl.split('/').pop() || 'remix-source';
 			const asFile = new File([blob], name, {
@@ -2426,6 +2494,16 @@
 		if (percent !== undefined) progress = percent;
 	}
 
+	/** Tainted-canvas SecurityErrors read like alphabet soup ("The canvas has
+	 *  been tainted by cross-origin data") — translate them into the fix. */
+	function exportErrorMessage(e: unknown): string {
+		const message = (e as Error)?.message ?? 'Export failed';
+		if (e instanceof DOMException && e.name === 'SecurityError') {
+			return 'Export blocked by a cross-origin image — remove and re-add that sticker/layer, then retry';
+		}
+		return message;
+	}
+
 	/** Build the full cue schedule (synth + custom sounds) and render it to
 	 * an AudioBuffer ready to attach to a MediaRecorder stream. Returns null
 	 * when there is nothing audible to mix (silent export). */
@@ -2556,17 +2634,25 @@
 		ctx.fillRect(0, 0, a.width, a.height);
 		if (lookCss !== 'none') ctx.filter = lookCss;
 		if (mediaKind === 'video' && stageVideo) {
-			ctx.drawImage(stageVideo, 0, 0, a.width, a.height);
-		} else if (gif) {
-			paintGifFrameAt(ctx, gif, stageSeconds, a);
-		} else if (stageImg) {
-			const s = Math.max(
-				a.width / (stageImg.naturalWidth || a.width),
-				a.height / (stageImg.naturalHeight || a.height)
+			const rect = coverRect(
+				stageVideo.videoWidth || a.width,
+				stageVideo.videoHeight || a.height,
+				a.width,
+				a.height,
+				mediaTransform
 			);
-			const dw = (stageImg.naturalWidth || a.width) * s;
-			const dh = (stageImg.naturalHeight || a.height) * s;
-			ctx.drawImage(stageImg, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
+			ctx.drawImage(stageVideo, rect.x, rect.y, rect.w, rect.h);
+		} else if (gif) {
+			paintGifFrameAt(ctx, gif, stageSeconds, a, mediaTransform);
+		} else if (stageImg) {
+			const rect = coverRect(
+				stageImg.naturalWidth || a.width,
+				stageImg.naturalHeight || a.height,
+				a.width,
+				a.height,
+				mediaTransform
+			);
+			ctx.drawImage(stageImg, rect.x, rect.y, rect.w, rect.h);
 		} else {
 			throw new Error('The preview is still loading');
 		}
@@ -2619,15 +2705,16 @@
 			ctx.fillRect(0, 0, a.width, a.height);
 			if (lookCss !== 'none') ctx.filter = lookCss;
 			if (gif) {
-				paintGifFrameAt(ctx, gif, t, a);
+				paintGifFrameAt(ctx, gif, t, a, mediaTransform);
 			} else if (stageImg) {
-				const s = Math.max(
-					a.width / (stageImg.naturalWidth || a.width),
-					a.height / (stageImg.naturalHeight || a.height)
+				const rect = coverRect(
+					stageImg.naturalWidth || a.width,
+					stageImg.naturalHeight || a.height,
+					a.width,
+					a.height,
+					mediaTransform
 				);
-				const dw = (stageImg.naturalWidth || a.width) * s;
-				const dh = (stageImg.naturalHeight || a.height) * s;
-				ctx.drawImage(stageImg, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
+				ctx.drawImage(stageImg, rect.x, rect.y, rect.w, rect.h);
 			}
 			ctx.filter = 'none';
 			paintImageOverlays(
@@ -2714,7 +2801,8 @@
 				lookCss,
 				imageLayers,
 				bitmaps: layerBitmaps,
-				target: renderTarget
+				target: renderTarget,
+				mediaTransform
 			});
 			return new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' });
 		}
@@ -2752,6 +2840,7 @@
 			bitmaps: layerBitmaps,
 			animPainters: animatedLayerResolver,
 			target: renderTarget,
+			mediaTransform,
 			trimStartSec: mediaKind === 'video' ? trimStartSec : undefined,
 			trimEndSec: mediaKind === 'video' ? (trimEndSec ?? undefined) : undefined,
 			playbackRate: mediaKind === 'video' ? playbackRate : undefined,
@@ -2832,7 +2921,7 @@
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
-				paintGifFrameAt(ctx, decoded, elapsedMs / 1000, a);
+				paintGifFrameAt(ctx, decoded, elapsedMs / 1000, a, mediaTransform);
 				ctx.filter = 'none';
 				paintImageOverlays(
 					ctx,
@@ -2936,14 +3025,16 @@
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
 				// Cover-fit (not stretch) — a mismatched artboard crops like the
-				// stage preview instead of distorting the picture.
-				const scale = Math.max(
-					a.width / (img.naturalWidth || a.width),
-					a.height / (img.naturalHeight || a.height)
+				// stage preview instead of distorting the picture; the framing
+				// (crop/zoom) rides the same rect.
+				const rect = coverRect(
+					img.naturalWidth || a.width,
+					img.naturalHeight || a.height,
+					a.width,
+					a.height,
+					mediaTransform
 				);
-				const dw = (img.naturalWidth || a.width) * scale;
-				const dh = (img.naturalHeight || a.height) * scale;
-				ctx.drawImage(img, (a.width - dw) / 2, (a.height - dh) / 2, dw, dh);
+				ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h);
 				ctx.filter = 'none';
 				paintImageOverlays(
 					ctx,
@@ -3131,7 +3222,7 @@
 			setTimeout(() => URL.revokeObjectURL(url), 30_000);
 			toasts.success(`Exported ${rendered.name} · ${humanBytes(rendered.size)}`);
 		} catch (e) {
-			const message = (e as Error).message;
+			const message = exportErrorMessage(e);
 			if (/cancelled/i.test(message)) toasts.info('Export cancelled');
 			else toasts.error(message);
 		} finally {
@@ -3169,7 +3260,7 @@
 				6000,
 				destination === 'note'
 					? { label: 'View note', run: () => goto(`/note/${eventId}`) }
-					: { label: 'View in Bitz', run: () => goto(`/bitz#reel=${eventId}`) }
+					: { label: 'View in Bitz', run: () => goto(`/bitz${bitzHashLink(eventId)}`) }
 			);
 			onposted(eventId);
 			reset();
@@ -3184,7 +3275,7 @@
 			queueIndex = 0;
 			open = false;
 		} catch (e) {
-			const message = (e as Error).message;
+			const message = exportErrorMessage(e);
 			if (/cancelled/i.test(message)) toasts.info('Meme export cancelled — nothing posted');
 			else toasts.error(message);
 		} finally {
@@ -3375,6 +3466,11 @@
 				sensitive = draft.sensitive;
 				destination = draft.destination;
 				lookId = memeLookOf(draft.lookId);
+				if (draft.mediaTransform) {
+					mediaZoom = Math.min(4, Math.max(1, draft.mediaTransform.scale || 1));
+					mediaPanX = Math.min(1, Math.max(-1, draft.mediaTransform.x || 0));
+					mediaPanY = Math.min(1, Math.max(-1, draft.mediaTransform.y || 0));
+				}
 				if (restored || overlays.length > 0 || caption.trim()) {
 					toasts.info('Draft restored — welcome back', 4000);
 				}
@@ -3397,6 +3493,9 @@
 		void destination;
 		void selectedId;
 		void lookId;
+		void mediaZoom;
+		void mediaPanX;
+		void mediaPanY;
 		if (!dirty) return; // nothing worth saving
 
 		// Snapshot synchronously; serialize the media bytes untracked so a slow
@@ -3408,6 +3507,7 @@
 			destination,
 			selectedId,
 			lookId,
+			framing: { scale: mediaZoom, x: mediaPanX, y: mediaPanY },
 			pendingFile: file
 		};
 		queueMicrotask(() => {
@@ -3422,7 +3522,10 @@
 					sensitive: snapshot.sensitive,
 					destination: snapshot.destination,
 					selectedId: snapshot.selectedId,
-					lookId: snapshot.lookId
+					lookId: snapshot.lookId,
+					...(snapshot.framing.scale !== 1 || snapshot.framing.x !== 0 || snapshot.framing.y !== 0
+						? { mediaTransform: snapshot.framing }
+						: {})
 				});
 			})();
 		});
@@ -3816,12 +3919,16 @@
 								onpointercancel={endDrag}
 							>
 								{#if mediaKind === 'video'}
-									<!-- object-cover mirrors the export's drawCover — what you
-									     see (including the crop on a mismatched artboard) is the file. -->
+									<!-- The media box is the EXACT coverRect the export draws
+									     (artboard cover-fit + crop/zoom framing) — WYSIWYG. -->
 									<video
 										src={previewUrl}
 										bind:this={stageVideo}
-										class="absolute inset-0 size-full object-cover"
+										crossOrigin="anonymous"
+										class="absolute object-cover"
+										style={mediaFrame
+											? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
+											: `filter:${lookCss};`}
 										autoplay
 										muted
 										loop
@@ -3864,8 +3971,11 @@
 										src={previewUrl}
 										alt="Meme preview"
 										bind:this={stageImg}
-										class="absolute inset-0 size-full object-cover"
-										style="filter:{lookCss};"
+										crossOrigin="anonymous"
+										class="absolute object-cover"
+										style={mediaFrame
+											? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
+											: `filter:${lookCss};`}
 										onload={onImageLoad}
 									/>
 								{/if}
@@ -5296,87 +5406,27 @@
 								{/if}
 							</div>
 
-							<!-- Artboard: the output canvas. `source` keeps the media's own
-							     frame; presets cover-fit (crop to fill) — the stage preview
-							     mirrors the choice live, overlays land identically on any. -->
+							<!-- Artboard (extracted component): size presets, background colors and
+							     crop & zoom framing for the base media. -->
 							{#if mediaKind}
-								<div
-									class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-border-muted)] px-3.5 py-3"
-								>
-									<div class="flex items-center justify-between gap-2">
-										<p
-											class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
-										>
-											<Icon name="i-lucide-frame" class="size-3.5" />
-											Artboard
-										</p>
-										<p class="font-mono text-[11px] font-bold text-warm-600 tabular-nums">
-											{renderTarget.width}×{renderTarget.height}
-										</p>
-									</div>
-									<div class="mt-2 flex flex-wrap items-center gap-1.5">
-										{#each ARTBOARDS as ab (ab.id)}
-											<button
-												type="button"
-												disabled={busy}
-												onclick={() => setArtboard(ab.id)}
-												aria-pressed={artboardId === ab.id}
-												title={ab.hint}
-												class="h-7 rounded-full px-2.5 font-mono text-[11px] font-bold tabular-nums transition {artboardId ===
-												ab.id
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
-											>
-												{ab.label}
-											</button>
-										{/each}
-									</div>
-									{#if artboardId !== 'source'}
-										<p class="mt-1.5 text-[10.5px] leading-snug text-[var(--ui-text-dimmed)]">
-											Media cover-fits the {artboardId} canvas — the preview's crop is the export's crop.
-										</p>
-									{/if}
-									<!-- Background: swap the base media to a solid-color canvas at
-									     the artboard's size. Swatches + a native custom color picker;
-									     captions/layers/sounds survive the swap (keepLayout). -->
-									<div class="mt-2 flex flex-wrap items-center gap-1.5">
-										<span class="text-[10.5px] font-bold text-[var(--ui-text-muted)]">Bg</span>
-										{#each BLANK_CANVAS_COLORS as color (color)}
-											<button
-												type="button"
-												disabled={busy || gifStageBusy}
-												aria-label={`Set the background to ${color}`}
-												title={color}
-												onclick={() => void applyBackgroundColor(color)}
-												class="size-6 rounded-full border transition hover:scale-110 active:scale-95 {blankBg ===
-												color
-													? 'ring-2 ring-warm-500 ring-offset-1'
-													: ''} border-black/10 disabled:opacity-40 dark:border-white/20"
-												style="background:{color};"
-											></button>
-										{/each}
-										<label
-											class="relative grid size-6 cursor-pointer place-items-center overflow-hidden rounded-full border border-dashed border-[var(--ui-border-accented)] transition hover:scale-110"
-											title="Custom background color"
-										>
-											<Icon name="i-lucide-pipette" class="size-3 text-[var(--ui-text-muted)]" />
-											<input
-												type="color"
-												class="absolute inset-0 size-full cursor-pointer opacity-0"
-												aria-label="Custom background color"
-												disabled={busy || gifStageBusy}
-												oninput={(e) => {
-													const color = (e.currentTarget as HTMLInputElement).value;
-													if (/^#[0-9a-f]{6}$/i.test(color)) void applyBackgroundColor(color);
-												}}
-											/>
-										</label>
-									</div>
-									<p class="mt-1.5 text-[10px] leading-snug text-[var(--ui-text-dimmed)]">
-										A color replaces the media with a blank canvas — captions, layers and sounds
-										stay.
-									</p>
-								</div>
+								<MemeArtboardCard
+									{artboardId}
+									width={renderTarget.width}
+									height={renderTarget.height}
+									{busy}
+									staging={gifStageBusy}
+									{blankBg}
+									zoom={mediaZoom}
+									panX={mediaPanX}
+									panY={mediaPanY}
+									onArtboard={(id) => setArtboard(id)}
+									onBackground={(color) => void applyBackgroundColor(color)}
+									onFraming={(patch) => {
+										if (patch.zoom !== undefined) mediaZoom = patch.zoom;
+										if (patch.panX !== undefined) mediaPanX = patch.panX;
+										if (patch.panY !== undefined) mediaPanY = patch.panY;
+									}}
+								/>
 							{/if}
 
 							<!-- Frame strip (dialog mode — the full layout shows it in the
@@ -5396,185 +5446,36 @@
 								/>
 							{/if}
 
-							<!-- Trim + speed (video sources): export window + rate. Playhead buttons scrub the preview to set marks precisely. -->
+							<!-- Trim + speed (extracted component). -->
 							{#if mediaKind === 'video' && meta?.duration}
-								<div
-									class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-border-muted)] px-3.5 py-3"
-								>
-									<div class="flex items-center justify-between gap-2">
-										<p
-											class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
-										>
-											<Icon name="i-lucide-scissors" class="size-3.5" />
-											Trim &amp; speed
-										</p>
-										<p class="text-[11px] font-bold text-warm-600 tabular-nums">
-											{formatDuration(trimDuration)} @ {playbackRate}× → {formatDuration(
-												exportDurationSec
-											)}
-										</p>
-									</div>
-									<div class="mt-2 flex flex-wrap items-center gap-1.5">
-										<input
-											type="number"
-											min="0"
-											max={meta.duration}
-											step="0.1"
-											value={trimStartSec.toFixed(1)}
-											oninput={(e) => {
-												const v = Number((e.currentTarget as HTMLInputElement).value);
-												trimStartSec = Number.isFinite(v)
-													? Math.min(Math.max(0, v), meta?.duration ?? 0)
-													: 0;
-											}}
-											disabled={busy}
-											aria-label="Trim start seconds"
-											class="h-8 w-20 rounded-lg border border-[var(--ui-border-muted)] bg-transparent px-2 text-[11.5px] tabular-nums outline-none focus:border-warm-500"
-										/>
-										<input
-											type="number"
-											min="0"
-											max={meta.duration}
-											step="0.1"
-											value={(trimEndSec ?? meta.duration).toFixed(1)}
-											oninput={(e) => {
-												const v = Number((e.currentTarget as HTMLInputElement).value);
-												trimEndSec =
-													Number.isFinite(v) && v > 0 ? Math.min(v, meta?.duration ?? v) : null;
-											}}
-											disabled={busy}
-											aria-label="Trim end seconds"
-											class="h-8 w-20 rounded-lg border border-[var(--ui-border-muted)] bg-transparent px-2 text-[11.5px] tabular-nums outline-none focus:border-warm-500"
-										/>
-										<button
-											type="button"
-											disabled={busy}
-											onclick={() => {
-												trimStartSec = Math.max(
-													0,
-													Math.min(
-														stageSeconds,
-														(trimEndSec ?? meta?.duration ?? stageSeconds) - 0.1
-													)
-												);
-											}}
-											title="Set the start mark at the playhead"
-											class="h-8 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-										>
-											Start = playhead
-										</button>
-										<button
-											type="button"
-											disabled={busy}
-											onclick={() => {
-												trimEndSec = Math.max(stageSeconds, trimStartSec + 0.1);
-											}}
-											title="Set the end mark at the playhead"
-											class="h-8 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-										>
-											End = playhead
-										</button>
-										<select
-											bind:value={playbackRate}
-											disabled={busy}
-											aria-label="Playback speed"
-											class="h-8 rounded-lg border border-[var(--ui-border-muted)] bg-transparent px-2 text-[11.5px] font-bold outline-none focus:border-warm-500"
-										>
-											{#each [0.5, 0.75, 1, 1.25, 1.5, 2] as rate (rate)}
-												<option value={rate}>{rate}×</option>
-											{/each}
-										</select>
-										<button
-											type="button"
-											disabled={busy}
-											onclick={() => {
-												trimStartSec = 0;
-												trimEndSec = null;
-												playbackRate = 1;
-											}}
-											class="h-8 rounded-lg px-2.5 text-[11px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-										>
-											Reset
-										</button>
-										{#if stageVideo}
-											<button
-												type="button"
-												disabled={busy}
-												onclick={() => {
-													stageVideo!.currentTime = trimStartSec;
-													stageVideo!.playbackRate = playbackRate;
-													void stageVideo!.play();
-												}}
-												title="Preview the trimmed window at speed"
-												class="h-8 rounded-lg bg-warm-500/10 px-2.5 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-40"
-											>
-												<Icon name="i-lucide-play" class="mr-1 inline size-3" />
-												Preview cut
-											</button>
-										{/if}
-									</div>
-									<!-- Length presets (user request: “set time 5s / 10s / 30s…”): set
-									     the window's length from the current start mark; caps at the
-									     source's remaining time and the 90s video-meme limit. -->
-									<div class="mt-2 flex flex-wrap items-center gap-1.5">
-										<span class="text-[10.5px] font-bold text-[var(--ui-text-dimmed)]">
-											Length
-										</span>
-										{#each [5, 10, 15, 30, 60] as n (n)}
-											<button
-												type="button"
-												disabled={busy}
-												onclick={() => setTrimLength(n)}
-												aria-pressed={Math.abs(trimDuration - n) < 0.05}
-												title={`Make the export window ${n}s long from the start mark`}
-												class="h-7 rounded-full px-2.5 text-[11px] font-bold tabular-nums transition {Math.abs(
-													trimDuration - n
-												) < 0.05
-													? 'bg-warm-500 text-white'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
-											>
-												{n}s
-											</button>
-										{/each}
-										<label
-											class="flex items-center gap-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)]"
-										>
-											custom
-											<input
-												type="number"
-												min="0.5"
-												step="0.5"
-												value={trimDuration.toFixed(1)}
-												disabled={busy}
-												aria-label="Custom window length in seconds"
-												onkeydown={(e) => {
-													if (e.key === 'Enter') {
-														e.preventDefault();
-														(e.currentTarget as HTMLInputElement).blur();
-													}
-												}}
-												onchange={(e) =>
-													setTrimLength(Number((e.currentTarget as HTMLInputElement).value))}
-												class="h-7 w-16 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 text-center font-mono text-[11px] tabular-nums outline-none focus:border-warm-500"
-											/>
-											s
-										</label>
-										<span
-											class="ml-auto text-[10px] font-semibold text-[var(--ui-text-dimmed)] tabular-nums"
-										>
-											source {formatDuration(meta.duration)}
-										</span>
-									</div>
-									{#if exportDurationSec > MAX_VIDEO_MEME_SECONDS}
-										<p
-											class="mt-2 flex items-center gap-1 text-[11px] font-bold text-[var(--tone-error-text)]"
-										>
-											<Icon name="i-lucide-triangle-alert" class="size-3.5" />
-											Cut is {formatDuration(exportDurationSec)} — over the {MAX_VIDEO_MEME_SECONDS}s
-											cap
-										</p>
-									{/if}
-								</div>
+								<MemeTrimPanel
+									durationSec={meta.duration}
+									trimStart={trimStartSec}
+									trimEnd={trimEndSec}
+									trimDurationSec={trimDuration}
+									{exportDurationSec}
+									rate={playbackRate}
+									playheadSec={stageSeconds}
+									{busy}
+									canPreview={!!stageVideo}
+									onTrim={(patch) => {
+										if (patch.start !== undefined) trimStartSec = patch.start;
+										if (patch.end !== undefined) trimEndSec = patch.end;
+									}}
+									onRate={(rate) => (playbackRate = rate)}
+									onSetLength={(sec) => setTrimLength(sec)}
+									onReset={() => {
+										trimStartSec = 0;
+										trimEndSec = null;
+										playbackRate = 1;
+									}}
+									onPreviewCut={() => {
+										if (!stageVideo) return;
+										stageVideo.currentTime = trimStartSec;
+										stageVideo.playbackRate = playbackRate;
+										void stageVideo.play();
+									}}
+								/>
 							{/if}
 
 							<!-- Sound effects (animated sources, or static once a cue exists) -->

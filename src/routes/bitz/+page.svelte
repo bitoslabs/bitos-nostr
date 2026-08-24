@@ -1419,7 +1419,7 @@
 		});
 	}
 
-	// --- Deep link: /bitz#reel=<event id> opens that bitz in the player -------
+	// --- Deep link: /bitz#bitz=<event id> opens that bitz in the player -------
 	// “View in Bitz” in the post-success toast lands here. The just-published
 	// event may take a moment to come back from the relays, so the pending id
 	// waits (bounded) for any reels refresh to deliver it.
@@ -1428,10 +1428,11 @@
 
 	function deepLinkReelIdFromHash() {
 		const hash = window.location.hash;
-		// #reel=<hex> (in-app) or #reel=<nevent1…> (portable inbound, PUB-014)
-		const match = /^#reel=([0-9a-f]{64})$/i.exec(hash);
+		// #bitz=<hex> is the canonical keyword (feature name); #reel=<hex> stays
+		// readable as a legacy alias for links shared before the rename.
+		const match = /^#(?:bitz|reel)=([0-9a-f]{64})$/i.exec(hash);
 		if (match) return match[1].toLowerCase();
-		const entity = /^#reel=(nevent1[02-9a-z]+)$/i.exec(hash);
+		const entity = /^#(?:bitz|reel)=(nevent1[02-9a-z]+)$/i.exec(hash);
 		if (entity) {
 			try {
 				const decoded = nip19Decode(entity[1].toLowerCase());
@@ -2165,7 +2166,7 @@
 								<!-- Remix lineage chip (§17 creator economy): links the derivative to
 								     its source. Protocol provenance only — rights live upstream. -->
 								<a
-									href={`/note/${remixOf(reel.tags)!.eventId}?from=reels`}
+									href={`/note/${remixOf(reel.tags)!.eventId}?from=bitz`}
 									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-white/25"
 								>
 									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
@@ -2499,7 +2500,7 @@
 												<PowBadge bits={comment.pow} micro id={comment.id} />
 											{/if}
 											<a
-												href={`/note/${comment.id}?from=reels`}
+												href={`/note/${comment.id}?from=bitz`}
 												class="ml-auto shrink-0 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)] hover:text-primary-500"
 											>
 												{timeAgo(comment.createdAt)}
