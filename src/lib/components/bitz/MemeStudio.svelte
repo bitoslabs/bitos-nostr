@@ -84,6 +84,7 @@
 		paintGifFrameAt,
 		type DecodedGif
 	} from '$lib/meme/gif';
+	import { planGifExport } from '$lib/meme/gif-export';
 	import {
 		CUSTOM_SOUND_KEY,
 		MEME_SFX_IDS,
@@ -2893,29 +2894,37 @@
 			throw new Error('GIF export starts from an image or GIF base — pick Image or Video');
 		}
 		if (!stageImg && !gif) throw new Error('The preview is still loading');
-		// A shorter Length pick caps the loop; longer picks can't extend a GIF
-		// (the NETSCAPE loop tag handles repetition) or an image cue track.
-		const durationSec = gif
-			? Math.min(pinnedLengthSec ?? Infinity, gif.duration)
-			: sfxCues.length
-				? Math.min(pinnedLengthSec ?? Infinity, cueTrackDurationSec(sfxCues))
-				: 0;
-		const fps = 12;
-		// GIFs stay light: ≤640px long edge, ≤360 frames (30s at 12fps).
+		// The loop runs as long as the LONGEST moving part — base GIF, sound
+		// cues, or an animated LAYER (the old base/cue-only derivation froze a
+		// GIF layer placed over a static base into a single-frame export).
+		// Steps ride the source's real frame boundaries, so the encoded loop
+		// plays the original frames at their original holds; a shorter Length
+		// pick still trims (longer picks can't extend — the NETSCAPE loop tag
+		// handles repetition).
+		const layerFrameSets = imageLayers
+			.map((layer) => layerGifs.get(layer.src)?.frames)
+			.filter((f): f is NonNullable<typeof f> => !!f && f.length > 0);
+		const plan = planGifExport(
+			gif?.frames,
+			layerFrameSets,
+			sfxCues.length ? cueTrackDurationSec(sfxCues) : 0,
+			pinnedLengthSec
+		);
+		// GIFs stay light: ≤640px long edge, ≤360 frames.
 		const scale = Math.min(1, 640 / Math.max(renderTarget.width, renderTarget.height));
 		const a = document.createElement('canvas');
 		a.width = Math.max(2, Math.round(renderTarget.width * scale) & ~1);
 		a.height = Math.max(2, Math.round(renderTarget.height * scale) & ~1);
 		const ctx = a.getContext('2d');
 		if (!ctx) throw new Error('Canvas is not available in this browser');
-		let frameCount = Math.max(1, Math.round(durationSec * fps));
-		if (frameCount > 360) {
-			frameCount = 360;
-			toasts.info('GIF capped at 30 seconds — trim or drop cues for a shorter loop');
+		const frameCount = plan.steps.length;
+		if (plan.capped) {
+			toasts.info('GIF capped at 360 frames — trim or drop cues for a shorter loop');
 		}
 		const frames: GifEncodeFrame[] = [];
 		for (let i = 0; i < frameCount; i++) {
-			const t = i / fps;
+			const step = plan.steps[i]!;
+			const t = step.atSec;
 			track(
 				'rendering',
 				`Painting GIF frame ${i + 1}/${frameCount}…`,
@@ -2925,7 +2934,10 @@
 			ctx.fillRect(0, 0, a.width, a.height);
 			if (lookCss !== 'none') ctx.filter = lookCss;
 			if (gif) {
-				paintGifFrameAt(ctx, gif, t, a, mediaTransform);
+				// Mod so the base LOOPS when a layer/cue extends past one pass
+				// (mirrors the recorder path) instead of freezing on its last
+				// frame for the rest of the window.
+				paintGifFrameAt(ctx, gif, gif.duration > 0 ? t % gif.duration : t, a, mediaTransform);
 			} else if (stageImg) {
 				const rect = coverRect(
 					stageImg.naturalWidth || a.width,
@@ -2946,7 +2958,7 @@
 				animatedLayerResolver
 			);
 			paintAll(ctx, overlays, a, t * 1000);
-			frames.push({ source: await createImageBitmap(a), delayMs: 1000 / fps });
+			frames.push({ source: await createImageBitmap(a), delayMs: step.delayMs });
 		}
 		track('rendering', 'Encoding GIF…', 85);
 		const blob = await encodeAnimatedGif(frames, { width: a.width, height: a.height });
