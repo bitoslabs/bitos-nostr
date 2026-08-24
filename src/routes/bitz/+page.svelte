@@ -219,9 +219,29 @@
 			/* best-effort persistence */
 		}
 	}
+	/** Reel sound preference: once the user turns sound ON it stays on across
+	 *  reel swipes, tab switches and app restarts — nothing is more annoying
+	 *  than re-tapping the speaker on every page (TikTok/IG both remember it).
+	 *  Default remains muted — the polite default for public feeds. */
+	const REEL_MUTED_KEY = 'bitos:reel-muted';
+	function loadReelMuted(): boolean {
+		try {
+			return localStorage.getItem(REEL_MUTED_KEY) !== '0';
+		} catch {
+			return true;
+		}
+	}
+	function setReelMuted(next: boolean) {
+		activeReelMuted = next;
+		try {
+			localStorage.setItem(REEL_MUTED_KEY, next ? '1' : '0');
+		} catch {
+			/* best-effort persistence */
+		}
+	}
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let activeReelId = $state('');
-	let activeReelMuted = $state(true);
+	let activeReelMuted = $state(loadReelMuted());
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
@@ -936,7 +956,17 @@
 			try {
 				await video.play();
 			} catch {
-				/* Autoplay can be blocked until the browser allows playback. */
+				// Autoplay WITH sound can be blocked before the first user gesture
+				// (fresh tab, strict browser). Fall back to muted playback instead of
+				// freezing the reel — the stored preference still applies next mount.
+				if (!video.muted) {
+					video.muted = true;
+					try {
+						await video.play();
+					} catch {
+						/* blocked entirely — the tap-to-play overlay stays usable */
+					}
+				}
 			}
 		}
 	}
@@ -1030,7 +1060,7 @@
 				break;
 			case 'm':
 			case 'M':
-				activeReelMuted = !activeReelMuted;
+				setReelMuted(!activeReelMuted);
 				break;
 			case 'f':
 			case 'F':
@@ -1819,7 +1849,7 @@
 									return () => registerReelVideo(reel.id, null);
 								}}
 								onMutedChange={(nextMuted) => {
-									if (reel.id === activeReelId) activeReelMuted = nextMuted;
+									if (reel.id === activeReelId) setReelMuted(nextMuted);
 								}}
 								onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
 							/>
@@ -1933,6 +1963,20 @@
 								</span>
 								<span class="text-[11px] font-semibold">Save</span>
 							</button>
+							<!-- Remix chain (§17 creator economy): promoted to the main rail —
+								     one tap to riff on a bitz in the Meme Studio. The violet
+								     accent separates the create action from the engagement cluster. -->
+							<button
+								type="button"
+								onclick={() => remixReel(reel)}
+								class="reel-action"
+								aria-label="Remix this bitz in the Meme Studio"
+							>
+								<span class="icon-circle is-remix">
+									<Icon name="i-lucide-wand-sparkles" class="size-5" />
+								</span>
+								<span class="text-[11px] font-semibold">Remix</span>
+							</button>
 							<a href={`/profile/${reel.pubkey}`} class="mt-2" aria-label="Open profile">
 								<Avatar
 									pubkey={reel.pubkey}
@@ -2005,9 +2049,6 @@
 											</MenuItem>
 											<!-- Remix chain (§17): open the meme studio with this bitz's
 											     layout + media pre-loaded — one tap to riff on a meme. -->
-											<MenuItem icon="i-lucide-repeat" onclick={() => remixReel(reel)}>
-												Remix this meme
-											</MenuItem>
 											{#if reel.mediaType === 'video'}
 												<!-- Whole-video view vs the default crop-to-fill. Global:
 												     applies to every reel while swiping, and persists. -->

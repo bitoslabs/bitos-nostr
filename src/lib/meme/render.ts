@@ -62,6 +62,8 @@ export interface VideoRenderOptions extends RenderOptions {
 	signal?: AbortSignal;
 	/** Extra audio tracks to mix into the recorded stream (e.g. the cue mix). */
 	extraTracks?: MediaStreamTrack[];
+	/** Include the source clip's own audio (default true). */
+	sourceAudio?: boolean;
 	/** Export window: play from trimStartSec (default 0). */
 	trimStartSec?: number;
 	/** Export window: stop at trimEndSec (default = source duration). */
@@ -358,6 +360,45 @@ function clampNum(value: number, min: number, max: number): number {
 	return Math.min(max, Math.max(min, value));
 }
 
+// ---- export audio graph -----------------------------------------------------
+// One AudioContext per page, reused across exports: a MediaElementSource can
+// only be created ONCE per element (a second call throws), and closing the
+// context would strand the element's audio routing. Destinations are created
+// per export and disconnected after.
+//
+// Routing the element through WebAudio takes its audio AWAY from the default
+// output — a monitor branch (element → gain → destination) hands it back so
+// the stage preview's sound toggle keeps working between exports. The gain
+// ducks to 0 only while an export records (speakers quiet, graph full).
+let exportCtx: AudioContext | null = null;
+const elementRoutes = new WeakMap<
+	HTMLMediaElement,
+	{ node: MediaElementAudioSourceNode; monitor: GainNode }
+>();
+
+function exportAudioGraph(): [AudioContext, MediaStreamAudioDestinationNode] {
+	if (!exportCtx) exportCtx = new AudioContext();
+	void exportCtx.resume().catch(() => undefined);
+	return [exportCtx, exportCtx.createMediaStreamDestination()];
+}
+
+/** The element's audio route — cached because a second createMediaElementSource
+ *  on the same element throws InvalidStateError. */
+function elementAudioNode(
+	ctx: AudioContext,
+	el: HTMLMediaElement
+): { node: MediaElementAudioSourceNode; monitor: GainNode } {
+	let route = elementRoutes.get(el);
+	if (!route) {
+		const node = ctx.createMediaElementSource(el);
+		const monitor = ctx.createGain();
+		node.connect(monitor).connect(ctx.destination);
+		route = { node, monitor };
+		elementRoutes.set(el, route);
+	}
+	return route;
+}
+
 /** Export an image meme (or a single video frame poster) as a JPEG blob. */
 export async function renderImageMeme(
 	media: HTMLImageElement | HTMLVideoElement,
@@ -472,28 +513,68 @@ export async function renderVideoMeme(
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');
 	const mimeType = pickVideoMimeType();
+	// Unmute the element before touching its audio: both muted and volume=0
+	// silence element-captured audio in Chromium, and the studio stage runs
+	// muted by default — which used to strip the clip's own sound from every
+	// export. Speakers stay quiet because the element's audio is REROUTED
+	// through the WebAudio graph below (MediaElementSource takes the element's
+	// output away from the default output).
+	const wasMuted = source.muted;
+	const wasVolume = source.volume;
+	source.muted = false;
+	source.volume = 1;
 	const stream = canvas.captureStream(30);
-	// Carry the source audio into the export when present. (`captureStream` on
-	// media elements is typed loosely because older TS lib.dom versions miss it.)
-	const captureSource = (source as HTMLVideoElement & { captureStream?: () => MediaStream })
-		.captureStream;
-	if (captureSource) {
+	// Assemble the ENTIRE audio plan BEFORE constructing the recorder — tracks
+	// added to a stream after `new MediaRecorder(stream)` are never recorded
+	// (the cue-meme "sound missing from the export" bug).
+	const extra = options.extraTracks ?? [];
+	let mixDest: MediaStreamAudioDestinationNode | null = null;
+	let monitor: GainNode | null = null;
+	let audioTracks: MediaStreamTrack[] = [];
+	if (options.sourceAudio === false && !extra.length) {
+		// nothing audible — pure video export
+	} else {
 		try {
-			for (const track of captureSource.call(source).getAudioTracks()) stream.addTrack(track);
+			const [ctx, dest] = exportAudioGraph();
+			mixDest = dest;
+			if (options.sourceAudio !== false) {
+				// element → graph (cached route: a second createMediaElementSource
+				// on the same element throws, so the first node is reused forever)
+				const route = elementAudioNode(ctx, source);
+				route.node.connect(dest);
+				monitor = route.monitor;
+			}
+			for (const track of extra) {
+				if (track.readyState === 'ended') continue;
+				ctx.createMediaStreamSource(new MediaStream([track])).connect(dest);
+			}
+			audioTracks = dest.stream.getAudioTracks();
 		} catch {
-			/* silent source — video-only export */
+			/* WebAudio unavailable — fall back to appending the raw tracks */
+			mixDest?.disconnect();
+			mixDest = null;
+			if (options.sourceAudio !== false) {
+				const captureSource = (source as HTMLVideoElement & { captureStream?: () => MediaStream })
+					.captureStream;
+				if (captureSource) {
+					try {
+						audioTracks.push(...captureSource.call(source).getAudioTracks());
+					} catch {
+						/* silent source — continue without it */
+					}
+				}
+			}
+			audioTracks.push(...extra);
 		}
 	}
-	const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
-	// The cue mix (synth + custom sounds) rides alongside any source audio;
-	// callers pass it via extraTracks so GIF and video exports share one path.
-	for (const track of options.extraTracks ?? []) {
+	for (const track of audioTracks) {
 		try {
 			stream.addTrack(track);
 		} catch {
-			/* track already ended — export continues video-only */
+			/* track already ended — export continues without it */
 		}
 	}
+	const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
 	const chunks: Blob[] = [];
 	recorder.ondataavailable = (e) => {
 		if (e.data.size) chunks.push(e.data);
@@ -503,8 +584,7 @@ export async function renderVideoMeme(
 		recorder.onerror = () => reject(new Error('Recording the meme failed'));
 	});
 
-	const wasMuted = source.muted;
-	source.muted = true;
+	// (Mute/volume were already ducked above, before stream capture.)
 	const rate = clampNum(options.playbackRate ?? 1, 0.5, 2);
 	source.playbackRate = rate;
 	const startSec = Math.max(0, options.trimStartSec ?? 0);
@@ -512,9 +592,13 @@ export async function renderVideoMeme(
 		options.trimEndSec !== undefined && Number.isFinite(options.trimEndSec)
 			? Math.min(options.trimEndSec, Number.isFinite(source.duration) ? source.duration : Infinity)
 			: Infinity;
+	// Duck the speaker monitor while the pass runs (graph audio unaffected).
+	if (monitor) monitor.gain.value = 0;
 	const restore = () => {
 		source.muted = wasMuted;
+		source.volume = wasVolume;
 		source.playbackRate = 1;
+		if (monitor) monitor.gain.value = 1; // preview sound works again
 	};
 	const paint = () => {
 		drawCover(ctx, source, canvas, options.lookCss, options.mediaTransform);
@@ -550,9 +634,13 @@ export async function renderVideoMeme(
 	recorder.start(250);
 	paint();
 	await new Promise<void>((resolve) => {
+		let settled = false;
 		const finish = () => {
+			if (settled) return;
+			settled = true;
 			source.removeEventListener('ended', finish);
 			source.removeEventListener('timeupdate', onTick);
+			clearTimeout(watchdog);
 			resolve();
 		};
 		const onTick = () => {
@@ -569,11 +657,36 @@ export async function renderVideoMeme(
 			finish();
 		};
 		options.signal?.addEventListener('abort', abort);
+		// Wall-clock watchdog: hidden/background renderers throttle video
+		// decode, so 'ended'/'timeupdate' can stall forever — the export must
+		// still terminate (expected window + 5s, capped at 2 minutes).
+		const spanSec =
+			(endSec === Infinity ? (Number.isFinite(source.duration) ? source.duration : 30) : endSec) -
+			startSec;
+		const watchdog = setTimeout(finish, Math.min((spanSec / rate) * 1000 + 5000, 120_000));
 	});
 	recorder.stop();
-	await done;
+	// Same muxer hazard as the in-studio paths: onstop may never fire on
+	// background renderers — race a force-flush instead of wedging forever.
+	await Promise.race([
+		done,
+		new Promise<void>((resolve) =>
+			setTimeout(() => {
+				try {
+					recorder.stop();
+				} catch {
+					/* already inactive */
+				}
+				stream.getTracks().forEach((t) => t.stop());
+				resolve();
+			}, 10_000)
+		)
+	]);
 	restore();
 	stream.getTracks().forEach((t) => t.stop());
+	// Per-export destination teardown — the shared context and the element's
+	// cached source node stay alive for the next export.
+	mixDest?.disconnect();
 	if (options.signal?.aborted) throw new Error('Meme export cancelled');
 	const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
 	if (!blob.size) throw new Error('The meme export produced an empty video');

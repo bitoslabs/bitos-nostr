@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { decode } from 'nostr-tools/nip19';
+	import { goto } from '$app/navigation';
+	import { decode, npubEncode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import PostCard from '$lib/components/feed/PostCard.svelte';
@@ -8,6 +9,8 @@
 	import { queryPrimaryFirst } from '$lib/nostr/pool';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { BITZ_MEDIA_KINDS } from '$lib/nostr/bitz-codec';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { identity } from '$lib/nostr/identity.svelte';
@@ -168,6 +171,22 @@
 
 	$effect(() => {
 		if (noteId) void loadNote(noteId);
+	});
+
+	// Bitz media resolution: a PLAIN note link to a NIP-68/71 media event (no
+	// explicit source / returnTo) opens in the shared Bitz player — the
+	// canonical video surface with swipe, comments, zap and remix. Explicit
+	// sources (`from=bitz|discover`, `returnTo`) keep the note view: that is a
+	// deliberate thread visit (e.g. the player's own “Open note”). replaceState
+	// swaps the history entry so Back returns to where the link was opened,
+	// never into a redirect loop.
+	$effect(() => {
+		const raw = note?.raw;
+		if (!raw || !noteId || noteSource || safeReturnTo) return;
+		if (!BITZ_MEDIA_KINDS.includes(raw.kind)) return;
+		goto(`/bitz?author=${npubEncode(raw.pubkey)}${bitzHashLink(noteId)}`, {
+			replaceState: true
+		});
 	});
 </script>
 

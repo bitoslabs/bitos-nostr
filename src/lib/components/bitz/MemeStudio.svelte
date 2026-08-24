@@ -568,21 +568,29 @@
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
 		try {
-			const res = await fetchMediaResponse(url);
-			if (!res) throw new Error('Could not fetch that image (CORS-blocked host)');
-			const type = res.headers.get('content-type') ?? '';
-			if (!type.startsWith('image/')) throw new Error('That link is not an image');
+			const res = await fetchMediaResponse(url, { proxy: false }); // videos can't ride wsrv
+			if (!res) throw new Error('Could not fetch that media (CORS-blocked host)');
+			const mime = (res.headers.get('content-type') ?? '').split(';')[0] ?? '';
+			const isVideo = mime.startsWith('video/');
+			if (!isVideo && !mime.startsWith('image/')) {
+				throw new Error('That link is not a picture or video');
+			}
 			const blob = await res.blob();
-			if (blob.size > 50 * 1024 * 1024) throw new Error('Over 50 MB — too big');
-			const mime = type.split(';')[0]!;
-			const name = `gif-${Date.now()}.${mime === 'image/gif' ? 'gif' : (mime.split('/')[1] ?? 'img')}`;
+			const cap = isVideo ? MAX_MEDIA_BYTES : 50 * 1024 * 1024;
+			if (blob.size > cap) throw new Error(`Over ${humanBytes(cap)} — too big`);
+			const ext = isVideo
+				? (mime.split('/')[1]?.replace('quicktime', 'mov') ?? 'mp4')
+				: mime === 'image/gif'
+					? 'gif'
+					: (mime.split('/')[1] ?? 'img');
+			const name = `url-${Date.now()}.${ext}`;
 			await acceptFile(new File([blob], name, { type: mime }), {
 				keepRemix: true,
 				keepLayout: keepLayoutOnSwap
 			});
 			showSwapUrlForm = false;
 		} catch (e) {
-			toasts.error(e instanceof Error ? e.message : 'Could not load that image URL');
+			toasts.error(e instanceof Error ? e.message : 'Could not load that media URL');
 		} finally {
 			gifUrlBusy = false;
 		}
@@ -1004,6 +1012,9 @@
 	/** Sound toggle for the preview: unmutes the stage video AND fires every
 	 *  cue the playhead crosses — the timeline sounds like the export. */
 	let previewSoundOn = $state(false);
+	/** Carry the clip's own audio into video exports (video bases). Off = the
+	 *  export keeps only the sound cues' mix. */
+	let includeSourceAudio = $state(true);
 	/** Last playhead the cue scheduler saw (ms) — crossing windows only fire
 	 *  on small forward deltas, so scrubs/seeks/media swaps never blip. */
 	let lastCueFireMs = 0;
@@ -1184,6 +1195,12 @@
 
 	// ---- trim + speed (video sources; export-time window, preview plays it) --
 	let trimStartSec = $state(0);
+	// ---- pinned export length (user request: “set 3s, 5s, 10s…”) --------------
+	/** Chosen export length for GIF and sound-cue meme bases (null = auto:
+	 *  the GIF's own duration / the cue track). Shorter trims; longer loops a
+	 *  GIF to fill (the base painter modulo-repeats) or pads a cue meme with
+	 *  silence. */
+	let pinnedLengthSec = $state<number | null>(null);
 	let trimEndSec = $state<number | null>(null); // null = through the end
 	let playbackRate = $state(1);
 	/** Trim window in export seconds (media time − trimStart). */
@@ -1195,10 +1212,52 @@
 	/** Preview + export duration after speed — the number creators care about. */
 	const exportDurationSec = $derived(trimDuration / (playbackRate || 1));
 
+	/** The base media as the timeline's first row: the video's trim window
+	 *  (draggable) or the GIF loop with its pinned-length badge. Static images
+	 *  have no clock row — their cue track already renders. */
+	const baseTrack = $derived(
+		mediaKind === 'video' && meta?.duration
+			? {
+					label: 'Video',
+					startSec: trimStartSec,
+					endSec: trimEndSec ?? meta.duration,
+					draggable: true
+				}
+			: gif
+				? {
+						label: 'GIF',
+						startSec: 0,
+						endSec: pinnedLengthSec ?? gif.duration,
+						badge:
+							(pinnedLengthSec ?? gif.duration) > gif.duration + 0.05
+								? `loops ×${Math.ceil((pinnedLengthSec ?? gif.duration) / gif.duration)}`
+								: undefined
+					}
+				: null
+	);
+
+	/** Timeline drag on the base video row = the trim window (same grammar as
+	 *  the Trim & speed card: move slides, edges resize, 0.1s floor). */
+	function patchBaseWindow(patch: { startMs?: number; endMs?: number }): void {
+		const dur = meta?.duration ?? 0;
+		if (mediaKind !== 'video' || !dur) return;
+		const start = patch.startMs !== undefined ? patch.startMs / 1000 : trimStartSec;
+		let end = patch.endMs !== undefined ? patch.endMs / 1000 : (trimEndSec ?? dur);
+		// end == dur renders as "through the end" (null) so later duration
+		// metadata changes don't leave a stale hard mark.
+		if (Math.abs(end - dur) < 0.05) end = dur;
+		if (end - start < 0.1) return; // dragging into itself — ignore
+		trimStartSec = Math.max(0, Math.min(start, dur - 0.1));
+		trimEndSec = end >= dur - 0.001 ? null : Math.min(end, dur);
+	}
+
 	/** Set the export window's LENGTH (user request: “set time 5s, 10s, 30s…”):
 	 *  keeps the current start mark, caps at the source's remaining time and
 	 *  the 90s video-meme limit — and says so when a preset doesn't fit. */
-	function setTrimLength(sec: number): void {
+	function setTrimLength(sec: number | null): void {
+		// null arrives from the GIF variant's "Full" chip — the video window has
+		// no such control, so treat it as a no-op guard rather than a reset.
+		if (sec === null) return;
 		const dur = meta?.duration ?? 0;
 		if (!Number.isFinite(sec) || sec <= 0 || !dur) return;
 		const avail = Math.max(0, dur - trimStartSec);
@@ -1752,7 +1811,10 @@
 			splitCheck.ok
 	);
 	const overSoft = $derived(caption.length > SOFT_CAP);
-	const portrait = $derived(meta ? meta.height >= meta.width : true);
+	/** Orientation of the EXPORTED file (artboard or source frame), not the
+	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
+	 *  kind 21 (landscape), matching what clients actually play. */
+	const portrait = $derived(renderTarget.height >= renderTarget.width);
 	const writeRelayCount = $derived(relays.list.filter((r) => r.write).length);
 	const videoMemeSupported = $derived(
 		(mediaKind !== 'video' && !(mediaKind === 'image' && sfxCues.length > 0)) ||
@@ -1946,6 +2008,7 @@
 		trimStartSec = 0;
 		trimEndSec = null;
 		playbackRate = 1;
+		pinnedLengthSec = null;
 		resetFraming();
 		clearPoster();
 		scrubSec = 0;
@@ -2044,6 +2107,8 @@
 		// Poster frames belong to the previous clip — drop them on any media change.
 		clearPoster();
 		scrubSec = 0;
+		// A length preset belongs to the previous GIF's duration.
+		pinnedLengthSec = null;
 		// Fresh media breaks the remix lineage (the remix handoff opts back in
 		// via keepRemix — e.g. when the source media failed to fetch and the
 		// creator picks their own clip for the remixed layout).
@@ -2679,7 +2744,13 @@
 			throw new Error('GIF export starts from an image or GIF base — pick Image or Video');
 		}
 		if (!stageImg && !gif) throw new Error('The preview is still loading');
-		const durationSec = gif ? gif.duration : sfxCues.length ? cueTrackDurationSec(sfxCues) : 0;
+		// A shorter Length pick caps the loop; longer picks can't extend a GIF
+		// (the NETSCAPE loop tag handles repetition) or an image cue track.
+		const durationSec = gif
+			? Math.min(pinnedLengthSec ?? Infinity, gif.duration)
+			: sfxCues.length
+				? Math.min(pinnedLengthSec ?? Infinity, cueTrackDurationSec(sfxCues))
+				: 0;
 		const fps = 12;
 		// GIFs stay light: ≤640px long edge, ≤360 frames (30s at 12fps).
 		const scale = Math.min(1, 640 / Math.max(renderTarget.width, renderTarget.height));
@@ -2835,6 +2906,7 @@
 		const { blob, mimeType } = await renderVideoMeme(stageVideo, overlays, {
 			signal: mineController?.signal,
 			extraTracks,
+			sourceAudio: includeSourceAudio,
 			lookCss,
 			imageLayers,
 			bitmaps: layerBitmaps,
@@ -2875,9 +2947,16 @@
 		if (!ctx) throw new Error('Canvas is not available in this browser');
 		track('rendering', 'Recording meme…', 0);
 		const stream = a.captureStream(30);
+		// Export length: the GIF's own duration, or the creator's Length pick
+		// (shorter trims the loop, longer repeats the GIF). Cue audio is built
+		// on the same clock so sounds fire inside the exported window.
+		const exportLengthSec = Math.min(
+			Math.max(pinnedLengthSec ?? decoded.duration, 0.2),
+			MAX_VIDEO_MEME_SECONDS
+		);
 		// Synthesized + custom cue mix (if any cues exist) becomes the audio track.
 		{
-			const buffer = await renderCueMix(decoded.duration);
+			const buffer = await renderCueMix(exportLengthSec);
 			if (buffer) {
 				const cueTrack = safeCueTrack(buffer);
 				if (cueTrack) stream.addTrack(cueTrack);
@@ -2913,7 +2992,9 @@
 		mineController?.signal.addEventListener('abort', onAbort);
 		try {
 			// Real-time single pass: paint each frame for its own duration. GIF
-			// timestamps are wall-clock aligned so SFX cues stay in sync.
+			// timestamps are wall-clock aligned so SFX cues stay in sync; the
+			// base painter loops (mod duration) so a longer Length pick
+			// repeats the GIF instead of freezing on its last frame.
 			let cursor = 0; // ms into the timeline
 			const startedAt = performance.now();
 			const paint = () => {
@@ -2921,7 +3002,13 @@
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
 				if (lookCss !== 'none') ctx.filter = lookCss;
-				paintGifFrameAt(ctx, decoded, elapsedMs / 1000, a, mediaTransform);
+				paintGifFrameAt(
+					ctx,
+					decoded,
+					(elapsedMs / 1000) % Math.max(decoded.duration, 0.01),
+					a,
+					mediaTransform
+				);
 				ctx.filter = 'none';
 				paintImageOverlays(
 					ctx,
@@ -2932,8 +3019,8 @@
 					animatedLayerResolver
 				);
 				paintAll(ctx, overlays, a, elapsedMs);
-				if (elapsedMs / 1000 >= decoded.duration) cursor = 1;
-				if (optionsProgress(elapsedMs, (decoded.duration || 1) * 1000)) return;
+				if (elapsedMs / 1000 >= exportLengthSec) cursor = 1;
+				if (optionsProgress(elapsedMs, exportLengthSec * 1000)) return;
 				if (cancelled) return;
 				requestAnimationFrame(paint);
 			};
@@ -2950,7 +3037,24 @@
 			mineController?.signal.removeEventListener('abort', onAbort);
 		}
 		recorder.stop();
-		await done;
+		// Hidden/background renderers sometimes never flush the WebM muxer —
+		// onstop hangs and the studio stays busy forever. Race a force-flush:
+		// re-stop + close the tracks so pending data events land (better a
+		// possibly-short file than a wedged export).
+		await Promise.race([
+			done,
+			new Promise<void>((resolve) =>
+				setTimeout(() => {
+					try {
+						recorder.stop();
+					} catch {
+						/* already inactive */
+					}
+					stream.getTracks().forEach((t) => t.stop());
+					resolve();
+				}, 10_000)
+			)
+		]);
 		stream.getTracks().forEach((t) => t.stop());
 		if (cancelled) throw new Error('Meme export cancelled');
 		const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
@@ -2975,8 +3079,12 @@
 		const ctx = a.getContext('2d');
 		if (!ctx) throw new Error('Canvas is not available in this browser');
 		// Duration: last cue end + tail, clamped to the video-meme cap (shared
-		// with the suggestion path via cue-track).
-		const durationSec = cueTrackDurationSec(sfxCues);
+		// with the suggestion path via cue-track). A pinned Length overrides —
+		// shorter drops late cues, longer holds the last frame in silence.
+		const durationSec = Math.min(
+			Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
+			MAX_VIDEO_MEME_SECONDS
+		);
 		track('rendering', 'Recording sound meme…', 0);
 		const stream = a.captureStream(30);
 		const cueBuffer = await renderCueMix(durationSec, sfxCues);
@@ -3062,7 +3170,24 @@
 			mineController?.signal.removeEventListener('abort', onAbort);
 		}
 		recorder.stop();
-		await done;
+		// Hidden/background renderers sometimes never flush the WebM muxer —
+		// onstop hangs and the studio stays busy forever. Race a force-flush:
+		// re-stop + close the tracks so pending data events land (better a
+		// possibly-short file than a wedged export).
+		await Promise.race([
+			done,
+			new Promise<void>((resolve) =>
+				setTimeout(() => {
+					try {
+						recorder.stop();
+					} catch {
+						/* already inactive */
+					}
+					stream.getTracks().forEach((t) => t.stop());
+					resolve();
+				}, 10_000)
+			)
+		]);
 		stream.getTracks().forEach((t) => t.stop());
 		if (cancelled) throw new Error('Meme export cancelled');
 		const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
@@ -3117,17 +3242,41 @@
 
 	async function publishBitz(uploaded: UploadedMediaLike): Promise<string> {
 		const thumb = await posterThumbUrl();
+		// §6.4 imeta enrichment: the exported FILE's duration (only when it's a
+		// actually a video) + the average bitrate from the uploaded bytes.
+		const durationSec =
+			uploaded.kind === 'video'
+				? mediaKind === 'video'
+					? exportDurationSec || undefined
+					: gif
+						? exportFormat === 'gif'
+							? Math.min(pinnedLengthSec ?? Infinity, gif.duration)
+							: (pinnedLengthSec ?? gif.duration)
+						: sfxCues.length
+							? Math.min(
+									Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
+									MAX_VIDEO_MEME_SECONDS
+								)
+							: undefined
+				: undefined;
+		const bitrate =
+			durationSec && durationSec > 0.2 && uploaded.bytes > 0
+				? (uploaded.bytes * 8) / durationSec
+				: undefined;
 		return feed.postBitz(
 			{
 				url: uploaded.url,
 				kind: uploaded.kind as 'image' | 'video',
 				mimeType: uploaded.mimeType,
-				bytes: uploaded.bytes
+				bytes: uploaded.bytes,
+				sha256: uploaded.sha256
 			},
 			{
 				caption,
 				sensitive,
 				portrait,
+				duration: durationSec,
+				bitrate,
 				dim: mediaKind
 					? `${renderTarget.width}x${renderTarget.height}`
 					: meta
@@ -3184,7 +3333,8 @@
 					url: uploaded.url,
 					kind: uploaded.kind as 'image' | 'video',
 					mimeType: uploaded.mimeType,
-					bytes: uploaded.bytes
+					bytes: uploaded.bytes,
+					sha256: uploaded.sha256
 				}
 			],
 			pow: showPow ? pow : 0,
@@ -3833,7 +3983,7 @@
 									id="meme-gif-url"
 									type="url"
 									bind:value={gifUrl}
-									placeholder="Paste an image / GIF URL"
+									placeholder="Paste an image / GIF / video URL"
 									class="h-9 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3.5 text-[12.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
 									disabled={gifUrlBusy}
 								/>
@@ -4247,6 +4397,8 @@
 							{overlays}
 							layers={imageLayers}
 							cues={sfxCues}
+							{baseTrack}
+							onPatchBase={patchBaseWindow}
 							{busy}
 							selectedOverlayId={selectedId}
 							{selectedLayerId}
@@ -4260,6 +4412,8 @@
 							}}
 							onPatchOverlay={patchOverlay}
 							onPatchLayer={(id, patch) => patchLayer(id, patch)}
+							onRemoveLayer={removeLayer}
+							onReorderLayer={moveLayerRow}
 							onPatchCue={retimeSfxCue}
 							cueMetaFor={cueMeta}
 						/>
@@ -5476,6 +5630,29 @@
 										void stageVideo.play();
 									}}
 								/>
+							{:else if gif}
+								<!-- GIF base: no trim window, but the export LENGTH is settable —
+								     shorter trims the loop, longer loops the GIF to fill. -->
+								<MemeTrimPanel
+									variant="gif"
+									durationSec={gif.duration}
+									lengthSec={pinnedLengthSec}
+									{busy}
+									onSetLength={(sec) => (pinnedLengthSec = sec)}
+									onReset={() => (pinnedLengthSec = null)}
+								/>
+							{:else if mediaKind === 'image' && sfxCues.length && !gif}
+								<!-- Static image + sound cues: the cue track IS the duration —
+								     the Length card pins it (shorter cuts late cues, longer adds
+								     a silent tail so memes can breathe past the last sound). -->
+								<MemeTrimPanel
+									variant="cues"
+									durationSec={cueTrackDurationSec(sfxCues)}
+									lengthSec={pinnedLengthSec}
+									{busy}
+									onSetLength={(sec) => (pinnedLengthSec = sec)}
+									onReset={() => (pinnedLengthSec = null)}
+								/>
 							{/if}
 
 							<!-- Sound effects (animated sources, or static once a cue exists) -->
@@ -5519,6 +5696,28 @@
 											<Icon name="i-lucide-audio-lines" class="size-3.5" />
 											Sound studio
 										</button>
+										{#if mediaKind === 'video'}
+											<!-- Export-time source audio: off = the clip's own sound is
+											     dropped, only the sound cues ride the export. -->
+											<button
+												type="button"
+												disabled={busy}
+												onclick={() => (includeSourceAudio = !includeSourceAudio)}
+												aria-pressed={includeSourceAudio}
+												title={includeSourceAudio
+													? 'The clip\u2019s own audio is included in the export'
+													: 'The clip\u2019s own audio is dropped — only sound cues export'}
+												class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-40 {includeSourceAudio
+													? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20'
+													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)]'}"
+											>
+												<Icon
+													name={includeSourceAudio ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
+													class="size-3.5"
+												/>
+												Video audio {includeSourceAudio ? 'on' : 'off'}
+											</button>
+										{/if}
 										<Popover
 											id={sfxMenuId}
 											float

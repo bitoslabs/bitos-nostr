@@ -26,6 +26,7 @@
 		overlays = [],
 		layers = [],
 		cues = [],
+		baseTrack = null,
 		busy = false,
 		soundOn = false,
 		selectedOverlayId = null,
@@ -35,6 +36,9 @@
 		onScrub,
 		onPatchOverlay,
 		onPatchLayer,
+		onPatchBase,
+		onRemoveLayer,
+		onReorderLayer,
 		onPatchCue,
 		cueMetaFor,
 		onSelectOverlay,
@@ -47,6 +51,16 @@
 		overlays?: MemeTextOverlay[];
 		layers?: MemeImageOverlay[];
 		cues?: MemeSfxCue[];
+		/** The base media as the timeline's first row: the video's trim window
+		 *  (draggable) or a GIF loop badge (display-only). */
+		baseTrack?: {
+			label: string;
+			startSec: number;
+			endSec: number;
+			/** e.g. "loops ×2" — right-side hint chip. */
+			badge?: string;
+			draggable?: boolean;
+		} | null;
 		busy?: boolean;
 		/** Preview sound (source audio + live cue firing) — parent owns the audio. */
 		soundOn?: boolean;
@@ -59,6 +73,11 @@
 		onPatchOverlay?: (id: string, patch: { startMs?: number; endMs?: number }) => void;
 		/** Drag-edit an image layer's visibility window. */
 		onPatchLayer?: (id: string, patch: { startMs?: number; endMs?: number }) => void;
+		/** Drag-edit the base video's trim window (video bases only). */
+		onPatchBase?: (patch: { startMs?: number; endMs?: number }) => void;
+		/** Row actions on image layers: remove + z-order moves. */
+		onRemoveLayer?: (id: string) => void;
+		onReorderLayer?: (id: string, dir: -1 | 1) => void;
 		/** Drag a cue tick to a new time (ms). */
 		onPatchCue?: (id: string, atMs: number) => void;
 		/** Sound blocks: label + play length per cue — turns cue ticks into
@@ -203,7 +222,7 @@
 		endMs?: number;
 	}
 	interface SpanDrag {
-		kind: 'overlay' | 'layer';
+		kind: 'overlay' | 'layer' | 'base';
 		id: string;
 		mode: 'move' | 'start' | 'end';
 		/** Pointer time − window start, so the grab point stays put. */
@@ -239,21 +258,23 @@
 
 	function emitSpanPatch(d: SpanDrag, patch: { startMs?: number; endMs?: number }) {
 		if (d.kind === 'overlay') onPatchOverlay?.(d.id, patch);
-		else onPatchLayer?.(d.id, patch);
+		else if (d.kind === 'layer') onPatchLayer?.(d.id, patch);
+		else onPatchBase?.(patch);
 	}
 
 	function onSpanPointerDown(
 		e: PointerEvent,
-		kind: 'overlay' | 'layer',
+		kind: 'overlay' | 'layer' | 'base',
 		item: WindowItem,
 		mode: 'move' | 'start' | 'end'
 	) {
 		if (busy) return;
-		if (kind === 'overlay' ? !onPatchOverlay : !onPatchLayer) return;
+		if (kind === 'overlay' ? !onPatchOverlay : kind === 'layer' ? !onPatchLayer : !onPatchBase)
+			return;
 		e.stopPropagation(); // a span grab never scrubs
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		if (kind === 'overlay') onSelectOverlay?.(item.id);
-		else onSelectLayer?.(item.id);
+		else if (kind === 'layer') onSelectLayer?.(item.id);
 		dragFrozenPx = pxPerSec;
 		const w = windowOf(item);
 		spanDrag = {
@@ -473,6 +494,87 @@
 			<!-- Rows: every caption/layer gets its own row; past ~9 rows they
 			     scroll vertically (Alt+wheel or the scrollbar). -->
 			<div class="relative max-h-[168px] scrollbar-thin overflow-y-auto">
+				{#if baseTrack}
+					<!-- Base media row: the video's trim window (draggable — same
+					     move/resize grammar as captions) or the GIF loop (badge). -->
+					{@const w = { start: baseTrack.startSec, end: Math.min(baseTrack.endSec, duration) }}
+					<div class="relative" style="height:{ROW_HEIGHT}px">
+						<span
+							class="absolute top-px h-3.5 rounded-md bg-sky-500/40 {baseTrack.draggable &&
+							onPatchBase
+								? 'cursor-grab hover:brightness-125'
+								: ''}"
+							style="left:{w.start * pxPerSec}px; width:{Math.max(
+								6,
+								(w.end - w.start) * pxPerSec
+							)}px;"
+							title="{baseTrack.label} · {w.start.toFixed(1)}s–{baseTrack.endSec.toFixed(
+								1
+							)}s{baseTrack.badge ? ` · ${baseTrack.badge}` : ''}{baseTrack.draggable && onPatchBase
+								? ' · drag to move, edges to resize (trim)'
+								: ''}"
+							aria-label={`${baseTrack.label} track`}
+							onpointerdown={(e) => {
+								if (!baseTrack.draggable || !onPatchBase) return;
+								onSpanPointerDown(
+									e,
+									'base',
+									{
+										id: 'base',
+										startMs: baseTrack.startSec * 1000,
+										endMs: baseTrack.endSec * 1000
+									},
+									'move'
+								);
+							}}
+							{...spanHandlers}
+						>
+							<span
+								class="pointer-events-none absolute inset-y-0 left-1 flex items-center overflow-hidden text-[9px] font-bold whitespace-nowrap text-white/80"
+								style="max-width:calc(100% - 4px)"
+							>
+								{baseTrack.label}
+								{#if baseTrack.badge}
+									<span class="ml-1 rounded bg-white/25 px-1">{baseTrack.badge}</span>
+								{/if}
+							</span>
+							{#if baseTrack.draggable && onPatchBase}
+								<span
+									class="absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md hover:bg-white/50"
+									title="Trim start"
+									onpointerdown={(e) =>
+										onSpanPointerDown(
+											e,
+											'base',
+											{
+												id: 'base',
+												startMs: baseTrack.startSec * 1000,
+												endMs: baseTrack.endSec * 1000
+											},
+											'start'
+										)}
+									{...spanHandlers}
+								></span>
+								<span
+									class="absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md hover:bg-white/50"
+									title="Trim end"
+									onpointerdown={(e) =>
+										onSpanPointerDown(
+											e,
+											'base',
+											{
+												id: 'base',
+												startMs: baseTrack.startSec * 1000,
+												endMs: baseTrack.endSec * 1000
+											},
+											'end'
+										)}
+									{...spanHandlers}
+								></span>
+							{/if}
+						</span>
+					</div>
+				{/if}
 				{#each overlays as overlay, i (overlay.id)}
 					{@const w = windowOf(overlay)}
 					{@const selected = selectedOverlayId === overlay.id}
@@ -522,7 +624,8 @@
 				{#each layers as layer, i (layer.id)}
 					{@const w = windowOf(layer)}
 					{@const selected = selectedLayerId === layer.id}
-					<div class="relative" style="height:{ROW_HEIGHT}px">
+					{@const canRow = !busy && (onRemoveLayer || onReorderLayer)}
+					<div class="group relative" style="height:{ROW_HEIGHT}px">
 						<span
 							class="absolute top-px h-3.5 rounded-md bg-emerald-500/35 {selected
 								? 'ring-1 ring-warm-500'
@@ -557,6 +660,45 @@
 								></span>
 							{/if}
 						</span>
+						<!-- Row actions (hover): z-order up/down + remove — the same
+						     controls as the layers list, right on the timeline row. -->
+						{#if canRow}
+							<div
+								class="absolute top-0 right-0 z-10 hidden h-3.5 items-center gap-px rounded bg-[var(--ui-bg)]/95 pl-0.5 shadow group-hover:flex"
+							>
+								{#if onReorderLayer}
+									<button
+										type="button"
+										aria-label={`Bring layer ${i + 1} forward`}
+										title="Bring layer forward (paints on top)"
+										onclick={() => onReorderLayer(layer.id, 1)}
+										class="grid size-3.5 place-items-center text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+									>
+										<Icon name="i-lucide-arrow-up" class="size-2.5" />
+									</button>
+									<button
+										type="button"
+										aria-label={`Send layer ${i + 1} backward`}
+										title="Send layer backward"
+										onclick={() => onReorderLayer(layer.id, -1)}
+										class="grid size-3.5 place-items-center text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+									>
+										<Icon name="i-lucide-arrow-down" class="size-2.5" />
+									</button>
+								{/if}
+								{#if onRemoveLayer}
+									<button
+										type="button"
+										aria-label={`Remove layer ${i + 1}`}
+										title="Remove this layer"
+										onclick={() => onRemoveLayer(layer.id)}
+										class="grid size-3.5 place-items-center text-[var(--ui-text-muted)] hover:text-red-500"
+									>
+										<Icon name="i-lucide-x" class="size-3" />
+									</button>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				{/each}
 

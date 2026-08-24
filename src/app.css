@@ -729,6 +729,18 @@
 	.reel-action .icon-circle.is-zap:hover {
 		background: rgba(247, 147, 26, 0.34);
 	}
+	/* Violet remix circle — the create action on the reel rail (§17 creator
+	   economy), visually distinct from the orange sats action and the neutral
+	   engagement circles. */
+	.reel-action .icon-circle.is-remix {
+		background: rgba(139, 92, 246, 0.24);
+		color: #c4b5fd;
+		box-shadow: 0 8px 26px rgba(139, 92, 246, 0.32);
+	}
+	.reel-action .icon-circle.is-remix:hover {
+		background: rgba(139, 92, 246, 0.38);
+		color: #ddd6fe;
+	}
 
 	/* Double-tap / zap burst particles floating up from the tap point. */
 	.reel-burst {

@@ -775,11 +775,15 @@ class FeedStore {
 		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
 		const tags: string[][] = [...clientTag(), ...extractHashtagTags(body)];
 		if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
+		// NIP-31 alt (screen readers read this instead of the picture/video).
+		const alt = text.trim().slice(0, 200);
+		if (alt) tags.push(['alt', alt]);
 		for (const attachment of attachments) {
 			if (attachment.kind === 'image' || attachment.kind === 'video') {
 				const imeta = [`url ${attachment.url}`];
 				if (attachment.mimeType) imeta.push(`m ${attachment.mimeType}`);
 				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
+				if (attachment.sha256) imeta.push(`x ${attachment.sha256}`);
 				tags.push(['imeta', ...imeta]);
 			}
 		}
@@ -841,6 +845,9 @@ class FeedStore {
 			duration?: number;
 			/** Average bitrate in bits/second for the imeta `bitrate` segment. */
 			bitrate?: number;
+			/** Accessibility text (NIP-31) — defaults to the caption's first 200
+			 *  chars so screen readers and picky clients always find an alt. */
+			alt?: string;
 			pow?: number;
 			/** Live stats while the NIP-13 worker mines. */
 			onPowProgress?: (progress: PowProgress) => void;
@@ -878,6 +885,10 @@ class FeedStore {
 			...clientTag(),
 			...(options.extraTags ?? [])
 		];
+		// NIP-31 alt: screen readers and preview-deprived clients read this
+		// instead of the burned-in caption. Never empty when a caption exists.
+		const alt = (options.alt ?? caption).trim().slice(0, 200);
+		if (alt) prefixTags.push(['alt', alt]);
 		let unsignedBody: {
 			pubkey: string;
 			kind: number;

@@ -272,6 +272,35 @@ describe('buildKind22', () => {
 		expect(event.tags[1]).toEqual(['content-warning', 'Sensitive content']);
 	});
 
+	it('carries hash/duration/bitrate imeta segments when provided (§6.4 enrichment)', () => {
+		const event = buildKind22({
+			pubkey: 'pk'.padEnd(64, 'x'),
+			caption: 'timed reel',
+			media: {
+				...baseMedia,
+				hash: 'a'.repeat(64),
+				duration: 5.9123,
+				bitrate: 1_234_567.8
+			},
+			sensitive: false
+		});
+		const imeta = event.tags.find((t) => t[0] === 'imeta')!;
+		expect(imeta).toContain('x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+		expect(imeta).toContain('duration 5.912');
+		expect(imeta).toContain('bitrate 1234568');
+	});
+
+	it('drops non-positive durations instead of emitting garbage segments', () => {
+		const event = buildKind22({
+			pubkey: 'pk'.padEnd(64, 'x'),
+			caption: '',
+			media: { ...baseMedia, duration: 0 },
+			sensitive: false
+		});
+		const imeta = event.tags.find((t) => t[0] === 'imeta')!;
+		expect(imeta.some((seg) => seg.startsWith('duration'))).toBe(false);
+	});
+
 	it('places prefixTags (client/hashtag tags) ahead of the imeta tag', () => {
 		const event = buildKind22({
 			pubkey: 'pk'.padEnd(64, 'x'),
