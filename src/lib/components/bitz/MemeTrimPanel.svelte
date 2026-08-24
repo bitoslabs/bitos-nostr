@@ -57,6 +57,26 @@
 	const lengthOnly = $derived(variant === 'gif' || variant === 'cues');
 	const activeLength = $derived(lengthOnly ? (lengthSec ?? durationSec) : (trimDurationSec ?? 0));
 	const loops = $derived(variant === 'gif' && activeLength > durationSec + 0.05);
+	const MIN_TRIM_SEC = 0.1;
+
+	/** Keep the two number fields a usable window at every keystroke. The old
+	 * direct assignment allowed start >= end, producing a zero-length export
+	 * until the creator happened to repair the other field. */
+	function patchTrim(patch: { start?: number; end?: number | null }) {
+		const currentEnd = trimEnd ?? durationSec;
+		if (patch.start !== undefined) {
+			const start = Math.max(0, Math.min(patch.start, Math.max(0, currentEnd - MIN_TRIM_SEC)));
+			onTrim({ start });
+			return;
+		}
+		if (patch.end !== undefined) {
+			if (patch.end === null) {
+				onTrim({ end: null });
+				return;
+			}
+			onTrim({ end: Math.min(durationSec, Math.max(trimStart + MIN_TRIM_SEC, patch.end)) });
+		}
+	}
 </script>
 
 {#if lengthOnly}
@@ -168,7 +188,7 @@
 				value={trimStart.toFixed(1)}
 				oninput={(e) => {
 					const v = Number((e.currentTarget as HTMLInputElement).value);
-					onTrim({
+					patchTrim({
 						start: Number.isFinite(v) ? Math.min(Math.max(0, v), durationSec) : 0
 					});
 				}}
@@ -185,7 +205,7 @@
 				oninput={(e) => {
 					const raw = (e.currentTarget as HTMLInputElement).value;
 					const v = Number(raw);
-					onTrim({
+					patchTrim({
 						end: raw !== '' && Number.isFinite(v) && v > 0 ? Math.min(v, durationSec) : null
 					});
 				}}
@@ -197,7 +217,7 @@
 				type="button"
 				disabled={busy}
 				onclick={() =>
-					onTrim({ start: Math.max(0, Math.min(playheadSec, (trimEnd ?? durationSec) - 0.1)) })}
+					patchTrim({ start: Math.max(0, Math.min(playheadSec, (trimEnd ?? durationSec) - 0.1)) })}
 				title="Set the start mark at the playhead"
 				class="h-8 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
 			>
@@ -206,7 +226,7 @@
 			<button
 				type="button"
 				disabled={busy}
-				onclick={() => onTrim({ end: Math.max(playheadSec, trimStart + 0.1) })}
+				onclick={() => patchTrim({ end: Math.max(playheadSec, trimStart + 0.1) })}
 				title="Set the end mark at the playhead"
 				class="h-8 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
 			>

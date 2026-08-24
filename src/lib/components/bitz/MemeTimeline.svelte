@@ -31,6 +31,7 @@
 		soundOn = false,
 		selectedOverlayId = null,
 		selectedLayerId = null,
+		selectedCueId = null,
 		selectedBase = false,
 		onToggleSound,
 		onPlayPause,
@@ -45,6 +46,7 @@
 		cueMetaFor,
 		onSelectOverlay,
 		onSelectLayer,
+		onSelectCue,
 		onSelectBase
 	}: {
 		durationSec: number;
@@ -69,6 +71,8 @@
 		soundOn?: boolean;
 		selectedOverlayId?: string | null;
 		selectedLayerId?: string | null;
+		/** The selected sound cue, highlighted independently of visual layers. */
+		selectedCueId?: string | null;
 		selectedBase?: boolean;
 		onToggleSound?: () => void;
 		onPlayPause: () => void;
@@ -91,6 +95,7 @@
 		cueMetaFor?: (cue: MemeSfxCue) => { label: string; durationSec: number } | null;
 		onSelectOverlay?: (id: string) => void;
 		onSelectLayer?: (id: string) => void;
+		onSelectCue?: (id: string) => void;
 		onSelectBase?: () => void;
 	} = $props();
 
@@ -197,7 +202,13 @@
 	function timeAtClientX(clientX: number): number {
 		const box = trackEl?.getBoundingClientRect();
 		if (!box) return 0;
-		return Math.max(0, Math.min(duration, ((clientX - box.left) / (box.width || 1)) * duration));
+		// Positions are laid out directly in px-per-second. Do not convert via
+		// the rendered track width: it deliberately has a 24px right gutter (and
+		// can be widened to the viewport), so that ratio puts the cursor and
+		// playhead progressively farther apart — especially after zooming.
+		// `box.left` already includes horizontal scrolling, while `pxPerSec` is
+		// frozen during a drag, keeping the item directly under the pointer.
+		return Math.max(0, Math.min(duration, (clientX - box.left) / pxPerSec));
 	}
 
 	/** Zoom buttons anchor the viewport's center time. */
@@ -342,6 +353,7 @@
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		dragFrozenPx = pxPerSec;
 		cueDragId = cue.id;
+		onSelectCue?.(cue.id);
 	}
 
 	function onCuePointerMove(e: PointerEvent) {
@@ -756,15 +768,16 @@
 							>
 							{#each cues.filter((cue) => (cue.lane ?? 0) === lane) as cue (cue.id)}
 								{@const meta = cueMetaFor?.(cue) ?? null}
+								{@const selected = selectedCueId === cue.id}
 								{#if meta && meta.durationSec > 0}
 									<!-- Sound block: a span as long as the sound plays, labeled
 								     when there's room — reads like a real editor's audio row. -->
 									<span
 										role="button"
 										tabindex="-1"
-										class="absolute top-0 h-3.5 rounded-sm bg-warm-500/80 {onPatchCue
-											? 'cursor-ew-resize hover:brightness-110'
-											: ''}"
+										class="absolute top-0 h-3.5 rounded-sm bg-warm-500/80 {selected
+											? 'ring-1 ring-white ring-offset-1 ring-offset-warm-500'
+											: ''} {onPatchCue ? 'cursor-ew-resize hover:brightness-110' : ''}"
 										style="left:{(cue.atMs / 1000) * pxPerSec}px; width:{Math.max(
 											8,
 											meta.durationSec * pxPerSec
@@ -821,9 +834,9 @@
 									<span
 										role="button"
 										tabindex="-1"
-										class="absolute top-0 h-3.5 w-1.5 rounded-sm bg-warm-500 {onPatchCue
-											? 'cursor-ew-resize hover:brightness-125'
-											: ''}"
+										class="absolute top-0 h-3.5 w-1.5 rounded-sm bg-warm-500 {selected
+											? 'ring-1 ring-white ring-offset-1 ring-offset-warm-500'
+											: ''} {onPatchCue ? 'cursor-ew-resize hover:brightness-125' : ''}"
 										style="left:{(cue.atMs / 1000) * pxPerSec}px;"
 										title="Sound cue at {(cue.atMs / 1000).toFixed(1)}s{onPatchCue
 											? ' · drag to retime'

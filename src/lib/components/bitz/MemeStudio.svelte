@@ -523,7 +523,13 @@
 			atMs: Math.round(stageSeconds * 1000),
 			gain: 1
 		});
-		if (cue) sfxCues = [...sfxCues, cue];
+		if (cue) {
+			sfxCues = [...sfxCues, cue];
+			selectedCueId = cue.id;
+			selectedId = null;
+			selectedLayerId = null;
+			selectedBaseTrack = false;
+		}
 	}
 
 	function removeSoundFromLibrary(id: string) {
@@ -535,6 +541,7 @@
 	// ---- overlays ------------------------------------------------------------
 	let overlays = $state<MemeTextOverlay[]>([]);
 	let selectedId = $state<string | null>(null);
+	let selectedCueId = $state<string | null>(null);
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
 
@@ -654,6 +661,9 @@
 	let expertTimeline = $state(false);
 	let videoClips = $state<VideoClip[]>([]);
 	let selectedClipId = $state<string | null>(null);
+	/** The base strip is selectable even before Expert mode, so its trim
+	 * handles have the same clear selected state as captions and layers. */
+	let selectedBaseTrack = $state(false);
 	// ---- preview sound: source audio + live cue firing -----------------------
 	/** Sound toggle for the preview: unmutes the stage video AND fires every
 	 *  cue the playhead crosses — the timeline sounds like the export. */
@@ -734,8 +744,15 @@
 		if (mediaKind === 'video') {
 			const video = stageVideo;
 			if (!video) return;
-			if (video.paused) void video.play();
-			else video.pause();
+			if (video.paused) {
+				// Native `loop` only knows the whole source. Start playback at the
+				// active trim window so transport and the 5s/10s ruler agree.
+				const end = trimEndSec ?? meta?.duration ?? 0;
+				if (!expertTimeline && (video.currentTime < trimStartSec || video.currentTime >= end)) {
+					video.currentTime = trimStartSec;
+				}
+				void video.play();
+			} else video.pause();
 			// `onplay` / `onpause` on the element below update previewPlaying once
 			// the browser has actually changed state.
 			return;
@@ -829,6 +846,66 @@
 				: null
 	);
 
+	/** The normal video editor works on the selected export window, not the
+	 * whole source. Keep source timestamps in project state, but project them
+	 * into a zero-based timeline so choosing “5s” immediately becomes a 5s
+	 * ruler/playhead. Expert mode owns its own concatenated timeline. */
+	const usesTrimmedTimeline = $derived(mediaKind === 'video' && !expertTimeline);
+	const editorTimelineDurationSec = $derived(
+		usesTrimmedTimeline ? trimDuration : timelineDurationSec
+	);
+	const editorTimelineSeconds = $derived(
+		usesTrimmedTimeline
+			? Math.max(0, Math.min(trimDuration, stageSeconds - trimStartSec))
+			: stageSeconds
+	);
+	const timelineBaseTrack = $derived(
+		usesTrimmedTimeline && baseTrack
+			? { ...baseTrack, startSec: 0, endSec: trimDuration }
+			: baseTrack
+	);
+
+	function projectTimedItem<T extends { startMs?: number; endMs?: number }>(item: T): T | null {
+		if (!usesTrimmedTimeline) return item;
+		const sourceDurationMs = (meta?.duration ?? 0) * 1000;
+		const offsetMs = trimStartSec * 1000;
+		const windowMs = trimDuration * 1000;
+		const start = Math.max(0, (item.startMs ?? 0) - offsetMs);
+		const end = Math.min(windowMs, (item.endMs ?? sourceDurationMs) - offsetMs);
+		return end > start ? { ...item, startMs: Math.round(start), endMs: Math.round(end) } : null;
+	}
+	const timelineOverlays = $derived.by(() =>
+		overlays.map(projectTimedItem).filter((item): item is MemeTextOverlay => item !== null)
+	);
+	const timelineLayers = $derived.by(() =>
+		imageLayers.map(projectTimedItem).filter((item): item is MemeImageOverlay => item !== null)
+	);
+	const timelineCues = $derived.by(() =>
+		usesTrimmedTimeline
+			? sfxCues
+					.filter(
+						(cue) =>
+							cue.atMs >= trimStartSec * 1000 &&
+							cue.atMs <= (trimEndSec ?? meta?.duration ?? 0) * 1000
+					)
+					.map((cue) => ({ ...cue, atMs: Math.round(cue.atMs - trimStartSec * 1000) }))
+			: sfxCues
+	);
+	function patchFromTimeline(patch: { startMs?: number; endMs?: number }) {
+		if (!usesTrimmedTimeline) return patch;
+		const offsetMs = Math.round(trimStartSec * 1000);
+		return {
+			...(patch.startMs !== undefined ? { startMs: patch.startMs + offsetMs } : {}),
+			...(patch.endMs !== undefined ? { endMs: patch.endMs + offsetMs } : {})
+		};
+	}
+	function scrubTimeline(sec: number) {
+		scrubPreview(usesTrimmedTimeline ? sec + trimStartSec : sec);
+	}
+	function patchTimelineBase(patch: { startMs?: number; endMs?: number }) {
+		patchBaseWindow(patchFromTimeline(patch));
+	}
+
 	/** Timeline drag on the base video row = the trim window (same grammar as
 	 *  the Trim & speed card: move slides, edges resize, 0.1s floor). */
 	function patchBaseWindow(patch: { startMs?: number; endMs?: number }): void {
@@ -875,15 +952,20 @@
 	}
 
 	function splitVideoClipAtPlayhead(): void {
-		if (!expertTimeline) enableExpertTimeline();
-		const next = splitClipAt(videoClips, stageSeconds);
+		const wasExpert = expertTimeline;
+		if (!wasExpert) enableExpertTimeline();
+		// Before Expert mode the playhead is source time; after it, it is the
+		// concatenated clip timeline. Convert exactly once for the first split.
+		const timelineSec = wasExpert ? stageSeconds : stageSeconds - trimStartSec;
+		const next = splitClipAt(videoClips, timelineSec);
 		if (next === videoClips) {
 			toasts.info('Move the playhead inside a video clip to split it');
 			return;
 		}
 		videoClips = next;
-		const mapped = sourceTimeAt(videoClips, stageSeconds);
+		const mapped = sourceTimeAt(videoClips, timelineSec);
 		selectedClipId = mapped ? (videoClips[mapped.clipIndex]?.id ?? null) : null;
+		stageSeconds = Math.max(0, timelineSec);
 		toasts.success('Video clip split at playhead');
 	}
 
@@ -1127,6 +1209,9 @@
 		}
 		imageLayers = [...imageLayers, layer];
 		selectedLayerId = layer.id;
+		selectedId = null;
+		selectedCueId = null;
+		selectedBaseTrack = false;
 		if (bytes) layerAssets.rememberBytes(layer.src, bytes);
 		mediaLibrary.remember(layer.src, source.name ?? '', bytes?.type);
 		const ok = await cacheLayerBitmap(layer.src);
@@ -1280,6 +1365,8 @@
 		if (!box) return;
 		selectedLayerId = layer.id;
 		selectedId = null;
+		selectedCueId = null;
+		selectedBaseTrack = false;
 		timingId = null;
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 		layerDrag = {
@@ -1365,6 +1452,9 @@
 		const box = stageBox?.getBoundingClientRect();
 		if (!box) return;
 		selectedId = overlay.id;
+		selectedLayerId = null;
+		selectedCueId = null;
+		selectedBaseTrack = false;
 		timingId = null;
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 		dragState = {
@@ -1939,7 +2029,13 @@
 			return;
 		}
 		const cue = normalizeSfxCue({ sfx, atMs: Math.round(stageSeconds * 1000), gain: 1 });
-		if (cue) sfxCues = [...sfxCues, cue];
+		if (cue) {
+			sfxCues = [...sfxCues, cue];
+			selectedCueId = cue.id;
+			selectedId = null;
+			selectedLayerId = null;
+			selectedBaseTrack = false;
+		}
 	}
 
 	/** Timeline tick drag: move a cue to a new time (wire ms model). */
@@ -1995,6 +2091,7 @@
 
 	function removeSfxCue(id: string) {
 		sfxCues = sfxCues.filter((c) => c.id !== id);
+		if (selectedCueId === id) selectedCueId = null;
 	}
 
 	/** Audition one recipe immediately so placement isn't guesswork. */
@@ -3095,7 +3192,15 @@
 											}
 										}}
 										ontimeupdate={(e) => {
-											stageSeconds = (e.currentTarget as HTMLVideoElement).currentTime;
+											const video = e.currentTarget as HTMLVideoElement;
+											const end = trimEndSec ?? meta?.duration ?? 0;
+											if (!expertTimeline && end > trimStartSec && video.currentTime >= end) {
+												// Loop the selected edit window rather than the whole source.
+												video.currentTime = trimStartSec;
+												stageSeconds = trimStartSec;
+												return;
+											}
+											stageSeconds = video.currentTime;
 										}}
 									>
 										<track kind="captions" />
@@ -3284,42 +3389,60 @@
 
 					{#snippet timelinePane()}
 						<MemeTimeline
-							durationSec={timelineDurationSec}
-							seconds={stageSeconds}
+							durationSec={editorTimelineDurationSec}
+							seconds={editorTimelineSeconds}
 							playing={previewPlaying}
 							onPlayPause={togglePreview}
-							onScrub={(s) => scrubPreview(s)}
+							onScrub={scrubTimeline}
 							soundOn={previewSoundOn}
 							onToggleSound={togglePreviewSound}
-							{overlays}
-							layers={imageLayers}
-							cues={sfxCues}
-							{baseTrack}
-							onPatchBase={patchBaseWindow}
-							selectedBase={expertTimeline && !!selectedClipId}
+							overlays={timelineOverlays}
+							layers={timelineLayers}
+							cues={timelineCues}
+							baseTrack={timelineBaseTrack}
+							onPatchBase={patchTimelineBase}
+							selectedBase={selectedBaseTrack}
 							onSelectBase={() => {
-								if (!expertTimeline) return;
-								const mapped = sourceTimeAt(videoClips, stageSeconds);
-								selectedClipId = mapped ? (videoClips[mapped.clipIndex]?.id ?? null) : null;
+								selectedBaseTrack = true;
+								if (expertTimeline) {
+									const mapped = sourceTimeAt(videoClips, stageSeconds);
+									selectedClipId = mapped ? (videoClips[mapped.clipIndex]?.id ?? null) : null;
+								}
 								selectedId = null;
 								selectedLayerId = null;
+								selectedCueId = null;
 							}}
 							{busy}
 							selectedOverlayId={selectedId}
 							{selectedLayerId}
+							{selectedCueId}
 							onSelectOverlay={(id) => {
 								selectedId = id;
 								selectedLayerId = null;
+								selectedCueId = null;
+								selectedBaseTrack = false;
 							}}
 							onSelectLayer={(id) => {
 								selectedLayerId = id;
 								selectedId = null;
+								selectedCueId = null;
+								selectedBaseTrack = false;
 							}}
-							onPatchOverlay={patchOverlay}
-							onPatchLayer={(id, patch) => patchLayer(id, patch)}
+							onSelectCue={(id) => {
+								selectedCueId = id;
+								selectedId = null;
+								selectedLayerId = null;
+								selectedBaseTrack = false;
+							}}
+							onPatchOverlay={(id, patch) => patchOverlay(id, patchFromTimeline(patch))}
+							onPatchLayer={(id, patch) => patchLayer(id, patchFromTimeline(patch))}
 							onRemoveLayer={removeLayer}
 							onReorderLayer={moveLayerRow}
-							onPatchCue={retimeSfxCue}
+							onPatchCue={(id, atMs) =>
+								retimeSfxCue(
+									id,
+									atMs + (usesTrimmedTimeline ? Math.round(trimStartSec * 1000) : 0)
+								)}
 							onPatchCueLane={moveSfxCueLane}
 							cueMetaFor={cueMeta}
 						/>
