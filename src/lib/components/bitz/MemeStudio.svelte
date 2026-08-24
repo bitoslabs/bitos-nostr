@@ -134,6 +134,7 @@
 		normalizeDrawingGroups,
 		paintDrawingGroups,
 		type DrawingGroup,
+		type DrawingSmoothing,
 		type DrawingStroke,
 		type DrawingTool
 	} from '$lib/meme/drawing';
@@ -220,6 +221,131 @@
 	let sfxMenuId = `meme-sfx-${Math.random().toString(36).slice(2, 8)}`;
 	/** Sound studio dialog (picker + cue-sheet editor). */
 	let soundDialogOpen = $state(false);
+	let recordingPreflightOpen = $state(false);
+	let recordingCapabilities = $state<{
+		pointer: boolean;
+		microphone: boolean;
+		canvasCapture: boolean;
+		mediaRecorder: boolean;
+	} | null>(null);
+	let performanceRecording = $state(false);
+	let performanceCountdown = $state<number | null>(null);
+	let performanceElapsedMs = $state(0);
+	let performanceStartedAt = 0;
+	let performanceFrame = 0;
+	let performanceCountdownTimer: ReturnType<typeof setTimeout> | undefined;
+	let performanceInitialDrawingIds = $state<string[]>([]);
+	let performanceInitialCueIds = $state<string[]>([]);
+	type PerformanceTake = {
+		id: string;
+		durationMs: number;
+		drawingGroupIds: string[];
+		cueIds: string[];
+	};
+	let performanceTakes = $state<PerformanceTake[]>([]);
+	let performanceReviewId = $state<string | null>(null);
+	const performanceReview = $derived(
+		performanceTakes.find((take) => take.id === performanceReviewId) ?? null
+	);
+	function performanceClockMs(): number {
+		return performanceRecording ? performanceElapsedMs : Math.max(0, Math.round(stageSeconds * 1000));
+	}
+	function stopPerformanceRecording() {
+		if (performanceCountdownTimer !== undefined) {
+			clearTimeout(performanceCountdownTimer);
+			performanceCountdownTimer = undefined;
+		}
+		if (performanceFrame) cancelAnimationFrame(performanceFrame);
+		performanceFrame = 0;
+		performanceCountdown = null;
+		if (!performanceRecording) return;
+		performanceRecording = false;
+		const take: PerformanceTake = {
+			id: drawingId(),
+			durationMs: performanceElapsedMs,
+			drawingGroupIds: drawingGroups
+				.filter((group) => !performanceInitialDrawingIds.includes(group.id))
+				.map((group) => group.id),
+			cueIds: sfxCues.filter((cue) => !performanceInitialCueIds.includes(cue.id)).map((cue) => cue.id)
+		};
+		performanceTakes = [
+			...performanceTakes,
+			take
+		];
+		performanceReviewId = take.id;
+		toasts.success(`Performance take saved (${formatDuration(performanceElapsedMs / 1000)})`);
+	}
+	function discardPerformanceTake(id: string) {
+		const take = performanceTakes.find((item) => item.id === id);
+		if (!take) return;
+		if (take.drawingGroupIds.length) snapshotDrawings();
+		drawingGroups = drawingGroups.filter((group) => !take.drawingGroupIds.includes(group.id));
+		sfxCues = sfxCues.filter((cue) => !take.cueIds.includes(cue.id));
+		if (selectedDrawingGroupId && take.drawingGroupIds.includes(selectedDrawingGroupId)) {
+			selectedDrawingGroupId = drawingGroups[0]?.id ?? null;
+		}
+		if (selectedCueId && take.cueIds.includes(selectedCueId)) selectedCueId = null;
+		performanceTakes = performanceTakes.filter((item) => item.id !== id);
+		if (performanceReviewId === id) performanceReviewId = null;
+	}
+	function retryPerformanceTake(id: string) {
+		discardPerformanceTake(id);
+		beginPerformanceCountdown();
+	}
+	function startPerformanceRecording() {
+		performanceStartedAt = performance.now();
+		performanceElapsedMs = 0;
+		performanceInitialDrawingIds = drawingGroups.map((group) => group.id);
+		performanceInitialCueIds = sfxCues.map((cue) => cue.id);
+		stageSeconds = 0;
+		previewSeconds = 0;
+		if (stageVideo) {
+			stageVideo.pause();
+			stageVideo.currentTime = 0;
+		}
+		previewPlaying = false;
+		performanceRecording = true;
+		drawActive = true;
+		const tick = () => {
+			performanceElapsedMs = Math.max(0, Math.round(performance.now() - performanceStartedAt));
+			stageSeconds = performanceElapsedMs / 1000;
+			performanceFrame = requestAnimationFrame(tick);
+		};
+		performanceFrame = requestAnimationFrame(tick);
+	}
+	function beginPerformanceCountdown() {
+		if (!recordingCapabilities?.pointer) {
+			toasts.error('Pointer drawing is required to record a performance');
+			return;
+		}
+		recordingPreflightOpen = false;
+		performanceCountdown = 3;
+		const next = () => {
+			if (performanceCountdown === null) return;
+			if (performanceCountdown <= 1) {
+				performanceCountdownTimer = undefined;
+				performanceCountdown = null;
+				startPerformanceRecording();
+				return;
+			}
+			performanceCountdown -= 1;
+			performanceCountdownTimer = setTimeout(next, 1000);
+		};
+		performanceCountdownTimer = setTimeout(next, 1000);
+	}
+	function openRecordingPreflight() {
+		// Capability inspection is permission-free. Microphone permission is only
+		// requested later by the explicit Record action in Sound Studio.
+		recordingCapabilities = {
+			pointer: typeof PointerEvent !== 'undefined',
+			microphone: !!navigator.mediaDevices?.getUserMedia,
+			canvasCapture:
+				typeof HTMLCanvasElement !== 'undefined' &&
+				typeof HTMLCanvasElement.prototype.captureStream === 'function',
+			mediaRecorder: typeof MediaRecorder !== 'undefined'
+		};
+		recordingPreflightOpen = true;
+	}
 	// --- AI-002 suggestion ladder (Mild/Funny/Chaos) -------------------------
 	let suggestBusy = $state(false);
 	let suggestionGroups = $state<MemeSuggestion[]>([]);
@@ -530,7 +656,7 @@
 		const cue = normalizeSfxCue({
 			sfx: CUSTOM_SOUND_KEY,
 			soundId: sound.id,
-			atMs: Math.round(stageSeconds * 1000),
+			atMs: performanceClockMs(),
 			gain: 1
 		});
 		if (cue) {
@@ -538,6 +664,7 @@
 			selectedCueId = cue.id;
 			selectedId = null;
 			selectedLayerId = null;
+			selectedDrawingGroupId = null;
 			selectedBaseTrack = false;
 		}
 	}
@@ -559,12 +686,16 @@
 	let drawingColor = $state('#ffffff');
 	let drawingWidth = $state(0.012);
 	let drawingOpacity = $state(1);
+	let drawingPressureEnabled = $state(true);
+	let drawWithFinger = $state(true);
+	let drawingSmoothing = $state<DrawingSmoothing>('off');
 	let drawingUndo = $state<DrawingGroup[][]>([]);
 	let drawingRedo = $state<DrawingGroup[][]>([]);
 	let selectedDrawingGroupId = $state<string | null>(null);
 	const selectedDrawingGroup = $derived(
 		drawingGroups.find((group) => group.id === selectedDrawingGroupId) ?? drawingGroups[0] ?? null
 	);
+	const selectedDrawingStroke = $derived(selectedDrawingGroup?.strokes[0] ?? null);
 	function drawingId(): string {
 		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 			? crypto.randomUUID()
@@ -585,7 +716,7 @@
 			return;
 		}
 		snapshotDrawings();
-		const atMs = Math.max(0, Math.round(stageSeconds * 1000));
+		const atMs = performanceClockMs();
 		const group: DrawingGroup = {
 			id: drawingId(),
 			label: `Drawing ${drawingGroups.length + 1}`,
@@ -596,6 +727,10 @@
 		};
 		drawingGroups = [...drawingGroups, group];
 		selectedDrawingGroupId = group.id;
+		selectedCueId = null;
+		selectedId = null;
+		selectedLayerId = null;
+		selectedBaseTrack = false;
 	}
 	function undoDrawing() {
 		const previous = drawingUndo[drawingUndo.length - 1];
@@ -625,16 +760,38 @@
 			item.id === group.id ? { ...item, playback } : item
 		);
 	}
+	function patchSelectedDrawingStyle(patch: Pick<DrawingStroke, 'color' | 'width' | 'opacity'>) {
+		const group = selectedDrawingGroup;
+		if (!group) return;
+		snapshotDrawings();
+		drawingGroups = drawingGroups.map((item) =>
+			item.id === group.id
+				? { ...item, strokes: item.strokes.map((stroke) => ({ ...stroke, ...patch })) }
+				: item
+		);
+	}
 	function patchDrawingGroup(id: string, patch: Partial<DrawingGroup>) {
 		drawingGroups = drawingGroups.map((group) =>
 			group.id === id ? { ...group, ...patch } : group
 		);
 	}
+	/** Inspector edits are discrete operations, unlike a timeline drag. Keep them
+	 * reversible without creating one undo step for every pointer-move event. */
+	function commitDrawingGroupPatch(id: string, patch: Partial<DrawingGroup>) {
+		const group = drawingGroups.find((item) => item.id === id);
+		if (!group || !Object.entries(patch).some(([key, value]) => group[key as keyof DrawingGroup] !== value))
+			return;
+		snapshotDrawings();
+		patchDrawingGroup(id, patch);
+	}
+	function beginDrawingTimelineEdit(id: string) {
+		if (drawingGroups.some((group) => group.id === id)) snapshotDrawings();
+	}
 	function setDrawingVisibleFrom(seconds: number) {
 		const group = selectedDrawingGroup;
 		if (!group || !Number.isFinite(seconds)) return;
 		const ms = Math.round(Math.max(0, Math.min(seconds, timelineDurationSec || seconds)) * 1000);
-		patchDrawingGroup(group.id, {
+		commitDrawingGroupPatch(group.id, {
 			startMs: ms,
 			visibleFromMs: ms,
 			...(group.visibleUntilMs !== undefined && group.visibleUntilMs < ms
@@ -646,13 +803,13 @@
 		const group = selectedDrawingGroup;
 		if (!group) return;
 		if (seconds === null || !Number.isFinite(seconds)) {
-			patchDrawingGroup(group.id, { visibleUntilMs: undefined });
+			commitDrawingGroupPatch(group.id, { visibleUntilMs: undefined });
 			return;
 		}
 		const ms = Math.round(
 			Math.max(group.visibleFromMs, Math.min(seconds, timelineDurationSec || seconds)) * 1000
 		);
-		patchDrawingGroup(group.id, { visibleUntilMs: ms });
+		commitDrawingGroupPatch(group.id, { visibleUntilMs: ms });
 	}
 	function placeDrawingAtPlayhead() {
 		setDrawingVisibleFrom(stageSeconds);
@@ -662,6 +819,50 @@
 		const remaining = drawingGroups.filter((group) => group.id !== id);
 		drawingGroups = remaining;
 		selectedDrawingGroupId = remaining[0]?.id ?? null;
+	}
+	function moveDrawingGroup(id: string, direction: -1 | 1) {
+		const index = drawingGroups.findIndex((group) => group.id === id);
+		const nextIndex = index + direction;
+		if (index < 0 || nextIndex < 0 || nextIndex >= drawingGroups.length) return;
+		snapshotDrawings();
+		const next = [...drawingGroups];
+		[next[index]!, next[nextIndex]!] = [next[nextIndex]!, next[index]!];
+		drawingGroups = next;
+	}
+	function splitDrawingAtPlayhead() {
+		const group = selectedDrawingGroup;
+		const atMs = Math.round(stageSeconds * 1000);
+		if (!group) return;
+		const endMs =
+			group.visibleUntilMs ?? Math.round((meta?.duration ?? timelineDurationSec) * 1000);
+		if (atMs <= group.visibleFromMs || atMs >= endMs) {
+			toasts.info('Move the playhead inside the drawing clip to split it');
+			return;
+		}
+		snapshotDrawings();
+		const first: DrawingGroup = {
+			...group,
+			id: drawingId(),
+			label: `${group.label} A`,
+			// End one millisecond before the second window so translucent marker
+			// strokes never double-paint at the split boundary.
+			visibleUntilMs: atMs - 1
+		};
+		const second: DrawingGroup = {
+			...group,
+			id: drawingId(),
+			label: `${group.label} B`,
+			visibleFromMs: atMs,
+			...(group.visibleUntilMs === undefined ? { visibleUntilMs: undefined } : {})
+		};
+		const index = drawingGroups.findIndex((item) => item.id === group.id);
+		drawingGroups = [
+			...drawingGroups.slice(0, index),
+			first,
+			second,
+			...drawingGroups.slice(index + 1)
+		];
+		selectedDrawingGroupId = second.id;
 	}
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
@@ -855,15 +1056,18 @@
 		}
 	});
 
-	/** Total timeline length the playhead scrubs over, per media kind:
-	 *  video → trimmed export window; gif → gif duration; static → cue track. */
+	/** Total timeline length the playhead scrubs over, per media kind. A pinned
+	 * Length is the project clock for GIF and image+sound projects as well as
+	 * export — selecting 10s must produce a 10s ruler, not the raw cue length. */
 	const timelineDurationSec = $derived(
 		mediaKind === 'video'
 			? expertTimeline && videoClips.length
 				? clipsDuration(videoClips)
 				: (meta?.duration ?? 0)
 			: mediaKind === 'image'
-				? (gif?.duration ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0))
+				? (gif
+						? (pinnedLengthSec ?? gif.duration)
+						: (pinnedLengthSec ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0)))
 				: 0
 	);
 	/** True when the timeline has a real clock (video trim duration, GIF, or
@@ -991,6 +1195,18 @@
 			? Math.max(0, Math.min(trimDuration, stageSeconds - trimStartSec))
 			: stageSeconds
 	);
+	/** A Length change may make the current source-time playhead invalid. Keep
+	 * the video element and the zero-based timeline ruler on the same window. */
+	function clampPlayheadToTrimWindow(): void {
+		if (mediaKind !== 'video') return;
+		const end = trimEndSec ?? meta?.duration ?? 0;
+		if (!end) return;
+		const next = Math.max(trimStartSec, Math.min(stageSeconds, Math.max(trimStartSec, end - 0.001)));
+		if (Math.abs(next - stageSeconds) < 0.0005) return;
+		stageSeconds = next;
+		previewSeconds = next;
+		if (stageVideo) stageVideo.currentTime = next;
+	}
 	const timelineBaseTrack = $derived(
 		usesTrimmedTimeline && baseTrack
 			? { ...baseTrack, startSec: 0, endSec: trimDuration }
@@ -1012,6 +1228,25 @@
 	const timelineLayers = $derived.by(() =>
 		imageLayers.map(projectTimedItem).filter((item): item is MemeImageOverlay => item !== null)
 	);
+	const timelineDrawings = $derived.by(() => {
+		if (!usesTrimmedTimeline) return drawingGroups;
+		const offsetMs = trimStartSec * 1000;
+		const windowMs = trimDuration * 1000;
+		return drawingGroups.flatMap((group) => {
+			const endMs = group.visibleUntilMs ?? (meta?.duration ?? 0) * 1000;
+			const visibleFromMs = Math.max(0, group.visibleFromMs - offsetMs);
+			const visibleUntilMs = Math.min(windowMs, endMs - offsetMs);
+			if (visibleUntilMs <= visibleFromMs) return [];
+			return [
+				{
+					...group,
+					startMs: Math.max(0, group.startMs - offsetMs),
+					visibleFromMs: Math.round(visibleFromMs),
+					visibleUntilMs: Math.round(visibleUntilMs)
+				}
+			];
+		});
+	});
 	const timelineCues = $derived.by(() =>
 		usesTrimmedTimeline
 			? sfxCues
@@ -1021,7 +1256,7 @@
 							cue.atMs <= (trimEndSec ?? meta?.duration ?? 0) * 1000
 					)
 					.map((cue) => ({ ...cue, atMs: Math.round(cue.atMs - trimStartSec * 1000) }))
-			: sfxCues
+			: sfxCues.filter((cue) => cue.atMs <= timelineDurationSec * 1000)
 	);
 	function patchFromTimeline(patch: { startMs?: number; endMs?: number }) {
 		if (!usesTrimmedTimeline) return patch;
@@ -1169,6 +1404,8 @@
 		const avail = Math.max(0, dur - trimStartSec);
 		const capped = Math.min(sec, avail, MAX_VIDEO_MEME_SECONDS);
 		trimEndSec = trimStartSec + capped;
+		clampPlayheadToTrimWindow();
+		toasts.info(`Timeline length set to ${formatDuration(capped)}`);
 		if (sec > avail) {
 			toasts.info(`Only ${formatDuration(avail)} left after the start mark — window capped`);
 		} else if (sec > MAX_VIDEO_MEME_SECONDS) {
@@ -1658,6 +1895,7 @@
 		previewUrl = '';
 	}
 	function reset() {
+		stopPerformanceRecording();
 		revokePreview();
 		file = null;
 		mediaKind = null;
@@ -1668,6 +1906,8 @@
 		drawingGroups = [];
 		drawingUndo = [];
 		drawingRedo = [];
+		performanceTakes = [];
+		performanceReviewId = null;
 		selectedDrawingGroupId = null;
 		for (const layer of imageLayers) layerAssets.release(layer.src);
 		imageLayers = [];
@@ -2170,14 +2410,21 @@
 			toasts.error('Sound cues cap out at 16');
 			return;
 		}
-		const cue = normalizeSfxCue({ sfx, atMs: Math.round(stageSeconds * 1000), gain: 1 });
+		const cue = normalizeSfxCue({ sfx, atMs: performanceClockMs(), gain: 1 });
 		if (cue) {
 			sfxCues = [...sfxCues, cue];
 			selectedCueId = cue.id;
 			selectedId = null;
 			selectedLayerId = null;
+			selectedDrawingGroupId = null;
 			selectedBaseTrack = false;
 		}
+	}
+	/** One-tap sound-pad action for drawing/performance mode: audition and
+	 * commit the same movable cue at the current project clock. */
+	function addLiveSfxCue(sfx: MemeSfxId) {
+		previewSfx(sfx);
+		addSfxCue(sfx);
 	}
 
 	/** Timeline tick drag: move a cue to a new time (wire ms model). */
@@ -3028,7 +3275,28 @@
 			void submit();
 			return;
 		}
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+			event.preventDefault();
+			if (event.shiftKey) redoDrawing();
+			else undoDrawing();
+			return;
+		}
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+			event.preventDefault();
+			redoDrawing();
+			return;
+		}
 		if (busy) return;
+		if ((event.key === 'Delete' || event.key === 'Backspace') && selectedDrawingGroup) {
+			event.preventDefault();
+			removeDrawingGroup(selectedDrawingGroup.id);
+			return;
+		}
+		if (event.key.toLowerCase() === 'x' && selectedDrawingGroup && timelineActive) {
+			event.preventDefault();
+			splitDrawingAtPlayhead();
+			return;
+		}
 		if (event.key === ' ') {
 			// Space also activates a focused control — leave that to the browser.
 			if (event.target instanceof Element && event.target.closest('button, a, [role="button"]'))
@@ -3144,6 +3412,7 @@
 		}
 
 		return () => {
+			stopPerformanceRecording();
 			revokePreview();
 			mineController?.abort();
 		};
@@ -3400,7 +3669,9 @@
 											color={drawingColor}
 											width={drawingWidth}
 											opacity={drawingOpacity}
-											atMs={Math.round(stageSeconds * 1000)}
+											pressureEnabled={drawingPressureEnabled}
+											{drawWithFinger}
+											smoothing={drawingSmoothing}
 											onAddStroke={addDrawingStroke}
 										/>
 
@@ -3576,6 +3847,7 @@
 							onToggleSound={togglePreviewSound}
 							overlays={timelineOverlays}
 							layers={timelineLayers}
+							drawings={timelineDrawings}
 							cues={timelineCues}
 							baseTrack={timelineBaseTrack}
 							onPatchBase={patchTimelineBase}
@@ -3589,20 +3861,31 @@
 								selectedId = null;
 								selectedLayerId = null;
 								selectedCueId = null;
+								selectedDrawingGroupId = null;
 							}}
 							{busy}
 							selectedOverlayId={selectedId}
 							{selectedLayerId}
+							selectedDrawingId={selectedDrawingGroupId}
 							{selectedCueId}
 							onSelectOverlay={(id) => {
 								selectedId = id;
 								selectedLayerId = null;
 								selectedCueId = null;
+								selectedDrawingGroupId = null;
 								selectedBaseTrack = false;
 							}}
 							onSelectLayer={(id) => {
 								selectedLayerId = id;
 								selectedId = null;
+								selectedCueId = null;
+								selectedDrawingGroupId = null;
+								selectedBaseTrack = false;
+							}}
+							onSelectDrawing={(id) => {
+								selectedDrawingGroupId = id;
+								selectedId = null;
+								selectedLayerId = null;
 								selectedCueId = null;
 								selectedBaseTrack = false;
 							}}
@@ -3614,6 +3897,19 @@
 							}}
 							onPatchOverlay={(id, patch) => patchOverlay(id, patchFromTimeline(patch))}
 							onPatchLayer={(id, patch) => patchLayer(id, patchFromTimeline(patch))}
+							onPatchDrawing={(id, patch) => {
+								const offset = usesTrimmedTimeline ? Math.round(trimStartSec * 1000) : 0;
+								patchDrawingGroup(id, {
+									...(patch.startMs !== undefined ? { startMs: patch.startMs + offset } : {}),
+									...(patch.visibleFromMs !== undefined
+										? { visibleFromMs: patch.visibleFromMs + offset }
+										: {}),
+									...(patch.visibleUntilMs !== undefined
+										? { visibleUntilMs: patch.visibleUntilMs + offset }
+										: {})
+								});
+							}}
+							onStartDrawingEdit={beginDrawingTimelineEdit}
 							onRemoveLayer={removeLayer}
 							onReorderLayer={moveLayerRow}
 							onPatchCue={(id, atMs) =>
@@ -3720,9 +4016,83 @@
 										>{drawActive ? 'Drawing on' : 'Draw'}</button
 									>
 								</div>
+								<button
+									type="button"
+									disabled={busy}
+									onclick={openRecordingPreflight}
+									class="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2 py-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)] transition hover:border-warm-500/40 hover:text-warm-600 disabled:opacity-40"
+								>
+									<Icon name="i-lucide-circle-dot" class="size-3.5 text-red-500" /> Record performance
+								</button>
+								{#if recordingPreflightOpen && recordingCapabilities}
+									<div
+										class="mt-2 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] p-2"
+									>
+										<div class="flex items-center justify-between gap-2">
+											<span class="text-[10px] font-bold text-[var(--ui-text)]"
+												>Performance check</span
+											>
+											<button
+												type="button"
+												onclick={() => (recordingPreflightOpen = false)}
+												aria-label="Close performance check"
+												class="text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]"
+												><Icon name="i-lucide-x" class="size-3" /></button
+											>
+										</div>
+										<div class="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[9.5px]">
+											{#each [['Pointer drawing', recordingCapabilities?.pointer], ['Microphone', recordingCapabilities?.microphone], ['Canvas capture', recordingCapabilities?.canvasCapture], ['Video recorder', recordingCapabilities?.mediaRecorder]] as capability}
+												<span class={capability[1] ? 'text-emerald-600' : 'text-red-500'}
+													>● {capability[0]}</span
+												>
+										{/each}
+									</div>
+									<button
+										type="button"
+										disabled={!recordingCapabilities?.pointer}
+										onclick={beginPerformanceCountdown}
+										class="mt-2 w-full rounded-full bg-warm-500 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-40"
+										>Start drawing take</button
+									>
+									<button
+											type="button"
+											disabled={!recordingCapabilities?.microphone}
+											onclick={() => {
+												recordingPreflightOpen = false;
+												soundDialogOpen = true;
+											}}
+											class="mt-2 w-full rounded-full bg-warm-500 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-40"
+										>Continue to microphone</button
+									>
+								</div>
+								{/if}
+								{#if performanceCountdown !== null || performanceRecording}
+									<div class="mt-2 rounded-lg border border-red-500/35 bg-red-500/10 px-2 py-1.5 text-[10px] font-bold text-red-500" role="status">
+										{#if performanceCountdown !== null}
+											Starting performance in {performanceCountdown}…
+											<button type="button" onclick={stopPerformanceRecording} class="ml-2 rounded border border-red-500/35 px-1.5 py-0.5 text-[9px]">Cancel</button>
+										{:else}
+											<span class="inline-flex items-center gap-1"><span class="size-1.5 animate-pulse rounded-full bg-red-500"></span>Recording {formatDuration(performanceElapsedMs / 1000)}</span>
+											<button type="button" onclick={stopPerformanceRecording} class="ml-2 rounded bg-red-500 px-1.5 py-0.5 text-[9px] text-white">Stop</button>
+										{/if}
+									</div>
+								{/if}
+								{#if performanceReview}
+									<div class="mt-2 rounded-lg border border-warm-500/30 bg-warm-500/10 p-2 text-[10px]">
+										<div class="font-bold text-[var(--ui-text)]">Review latest take</div>
+										<p class="mt-0.5 text-[var(--ui-text-muted)]">
+											{formatDuration(performanceReview.durationMs / 1000)} · {performanceReview.drawingGroupIds.length} drawing{performanceReview.drawingGroupIds.length === 1 ? '' : 's'} · {performanceReview.cueIds.length} cue{performanceReview.cueIds.length === 1 ? '' : 's'}
+										</p>
+										<div class="mt-1.5 flex gap-1">
+											<button type="button" onclick={() => (performanceReviewId = null)} class="rounded-full bg-warm-500 px-2 py-1 text-[9px] font-bold text-white">Keep</button>
+											<button type="button" onclick={() => retryPerformanceTake(performanceReview!.id)} class="rounded-full px-2 py-1 text-[9px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]">Retry</button>
+											<button type="button" onclick={() => discardPerformanceTake(performanceReview!.id)} class="rounded-full px-2 py-1 text-[9px] font-bold text-red-500 hover:bg-red-500/10">Discard</button>
+										</div>
+									</div>
+								{/if}
 								{#if drawActive}
 									<div class="mt-2 flex flex-wrap items-center gap-1">
-										{#each ['pen', 'marker', 'eraser'] as tool}
+										{#each ['pen', 'marker', 'eraser', 'line', 'arrow', 'rectangle', 'ellipse'] as tool}
 											<button
 												type="button"
 												onclick={() => (drawingTool = tool as DrawingTool)}
@@ -3753,9 +4123,81 @@
 											class="h-1 flex-1 accent-warm-500"
 										/></label
 									>
+									<label
+										class="mt-1.5 flex items-center gap-2 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
+										>Opacity <input
+											type="range"
+											min="10"
+											max="100"
+											step="5"
+											value={drawingOpacity * 100}
+											oninput={(event) =>
+												(drawingOpacity =
+													Number((event.currentTarget as HTMLInputElement).value) / 100)}
+											class="h-1 flex-1 accent-warm-500"
+										/></label
+									>
+									<div class="mt-1.5 flex flex-wrap items-center gap-1">
+										<button
+											type="button"
+											onclick={() => (drawingPressureEnabled = !drawingPressureEnabled)}
+											aria-pressed={drawingPressureEnabled}
+											class="rounded-full px-2 py-1 text-[10px] font-bold {drawingPressureEnabled
+												? 'bg-warm-500/15 text-warm-600'
+												: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
+											>Pressure</button
+										>
+										<button
+											type="button"
+											onclick={() => (drawWithFinger = !drawWithFinger)}
+											aria-pressed={drawWithFinger}
+											class="rounded-full px-2 py-1 text-[10px] font-bold {drawWithFinger
+												? 'bg-warm-500/15 text-warm-600'
+												: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
+											>Finger</button
+										>
+									</div>
+									<div class="mt-1.5 flex flex-wrap items-center gap-1">
+										<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
+											>Smooth</span
+										>
+										{#each ['off', 'smooth', 'strong'] as smoothing}
+											<button
+												type="button"
+												onclick={() => (drawingSmoothing = smoothing as DrawingSmoothing)}
+												aria-pressed={drawingSmoothing === smoothing}
+												class="rounded-full px-2 py-1 text-[10px] font-bold {drawingSmoothing ===
+												smoothing
+													? 'bg-warm-500/15 text-warm-600'
+													: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
+												>{smoothing}</button
+											>
+										{/each}
+									</div>
+									<div class="mt-2 border-t border-[var(--ui-border-muted)] pt-2">
+										<div class="mb-1 flex items-center justify-between">
+											<span class="text-[10px] font-bold text-[var(--ui-text-muted)]"
+												>Live sound pad</span
+											>
+											<span class="font-mono text-[9px] text-[var(--ui-text-dimmed)]"
+											>@ {formatDuration(performanceClockMs() / 1000)}</span
+											>
+										</div>
+										<div class="grid grid-cols-3 gap-1">
+											{#each ['pop', 'boom', 'ding', 'whoosh', 'laugh', 'bruh'] as sfx}
+												<button
+													type="button"
+													disabled={busy || sfxCues.length >= 16}
+													onclick={() => addLiveSfxCue(sfx as MemeSfxId)}
+													class="rounded-md bg-[var(--ui-bg)] px-1.5 py-1.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-600 disabled:opacity-30"
+													>{sfxLabels[sfx as MemeSfxId]}</button
+												>
+											{/each}
+										</div>
+									</div>
 									{#if drawingGroups.length}
 										<div class="mt-2 space-y-1">
-											{#each drawingGroups as group (group.id)}
+											{#each drawingGroups as group, index (group.id)}
 												<div
 													class="flex items-center gap-1 rounded-lg px-1.5 py-1 {selectedDrawingGroup?.id ===
 													group.id
@@ -3764,13 +4206,19 @@
 												>
 													<button
 														type="button"
-														onclick={() => (selectedDrawingGroupId = group.id)}
+									onclick={() => {
+										selectedDrawingGroupId = group.id;
+										selectedCueId = null;
+										selectedId = null;
+										selectedLayerId = null;
+										selectedBaseTrack = false;
+									}}
 														class="min-w-0 flex-1 truncate text-left text-[10px] font-bold text-[var(--ui-text)]"
 														>{group.label}</button
 													>
 													<button
 														type="button"
-														onclick={() => patchDrawingGroup(group.id, { hidden: !group.hidden })}
+								onclick={() => commitDrawingGroupPatch(group.id, { hidden: !group.hidden })}
 														aria-label={group.hidden
 															? `Show ${group.label}`
 															: `Hide ${group.label}`}
@@ -3782,7 +4230,7 @@
 													>
 													<button
 														type="button"
-														onclick={() => patchDrawingGroup(group.id, { locked: !group.locked })}
+								onclick={() => commitDrawingGroupPatch(group.id, { locked: !group.locked })}
 														aria-label={group.locked
 															? `Unlock ${group.label}`
 															: `Lock ${group.label}`}
@@ -3791,6 +4239,22 @@
 															name={group.locked ? 'i-lucide-lock' : 'i-lucide-lock-open'}
 															class="size-3"
 														/></button
+													>
+													<button
+														type="button"
+														disabled={index === drawingGroups.length - 1}
+														onclick={() => moveDrawingGroup(group.id, 1)}
+														aria-label={`Bring ${group.label} forward`}
+														class="rounded p-0.5 text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)] disabled:opacity-30"
+														><Icon name="i-lucide-arrow-up" class="size-3" /></button
+													>
+													<button
+														type="button"
+														disabled={index === 0}
+														onclick={() => moveDrawingGroup(group.id, -1)}
+														aria-label={`Send ${group.label} backward`}
+														class="rounded p-0.5 text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)] disabled:opacity-30"
+														><Icon name="i-lucide-arrow-down" class="size-3" /></button
 													>
 													<button
 														type="button"
@@ -3807,16 +4271,73 @@
 											>Name <input
 												value={selectedDrawingGroup?.label ?? ''}
 												disabled={!selectedDrawingGroup}
-												oninput={(event) => {
+								onchange={(event) => {
 													const group = selectedDrawingGroup;
 													if (group)
-														patchDrawingGroup(group.id, {
+										commitDrawingGroupPatch(group.id, {
 															label: (event.currentTarget as HTMLInputElement).value.slice(0, 40)
 														});
 												}}
 												class="min-w-0 flex-1 rounded bg-[var(--ui-bg)] px-1.5 py-1 text-[10px] text-[var(--ui-text)] outline-none"
 											/></label
 										>
+										{#if selectedDrawingStroke}
+											<div class="mt-2 border-t border-[var(--ui-border-muted)] pt-2">
+												<div class="flex items-center justify-between gap-2">
+													<span class="text-[10px] font-bold text-[var(--ui-text-muted)]"
+														>Selected style</span
+													>
+													<input
+														type="color"
+														value={selectedDrawingStroke.color}
+														onchange={(event) =>
+															patchSelectedDrawingStyle({
+																color: (event.currentTarget as HTMLInputElement).value,
+																width: selectedDrawingStroke.width,
+																opacity: selectedDrawingStroke.opacity
+															})}
+														aria-label="Selected drawing color"
+														class="size-5 cursor-pointer rounded border-0 bg-transparent p-0"
+													/>
+												</div>
+												<label
+													class="mt-1 flex items-center gap-2 text-[10px] font-bold text-[var(--ui-text-muted)]"
+													>Width <input
+														type="range"
+														min="0.3"
+														max="6"
+														step="0.1"
+														value={selectedDrawingStroke.width * 100}
+														onchange={(event) =>
+															patchSelectedDrawingStyle({
+																color: selectedDrawingStroke.color,
+																width:
+																	Number((event.currentTarget as HTMLInputElement).value) / 100,
+																opacity: selectedDrawingStroke.opacity
+															})}
+														class="h-1 flex-1 accent-warm-500"
+													/></label
+												>
+												<label
+													class="mt-1 flex items-center gap-2 text-[10px] font-bold text-[var(--ui-text-muted)]"
+													>Opacity <input
+														type="range"
+														min="10"
+														max="100"
+														step="5"
+														value={selectedDrawingStroke.opacity * 100}
+														onchange={(event) =>
+															patchSelectedDrawingStyle({
+																color: selectedDrawingStroke.color,
+																width: selectedDrawingStroke.width,
+																opacity:
+																	Number((event.currentTarget as HTMLInputElement).value) / 100
+															})}
+														class="h-1 flex-1 accent-warm-500"
+													/></label
+												>
+											</div>
+										{/if}
 										<div class="mt-2 flex flex-wrap items-center gap-1">
 											<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
 												>Playback</span
@@ -3876,6 +4397,13 @@
 												>Use playhead</button
 											>
 										</div>
+										<button
+											type="button"
+											disabled={!selectedDrawingGroup || !timelineActive}
+											onclick={splitDrawingAtPlayhead}
+											class="mt-1.5 rounded-full px-2 py-1 text-[10px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text)] disabled:opacity-30"
+											>Split at playhead</button
+										>
 									{/if}
 									<div class="mt-2 flex items-center gap-1">
 										<button

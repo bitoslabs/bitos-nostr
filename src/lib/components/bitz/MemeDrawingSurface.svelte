@@ -3,8 +3,10 @@
 	import {
 		makeDrawingStroke,
 		paintDrawingGroups,
+		simplifyDrawingPoints,
 		type DrawingGroup,
 		type DrawingPoint,
+		type DrawingSmoothing,
 		type DrawingTool
 	} from '$lib/meme/drawing';
 
@@ -15,7 +17,9 @@
 		color = '#ffffff',
 		width = 0.012,
 		opacity = 1,
-		atMs = 0,
+		pressureEnabled = true,
+		drawWithFinger = true,
+		smoothing = 'off',
 		onAddStroke
 	}: {
 		active?: boolean;
@@ -24,13 +28,16 @@
 		color?: string;
 		width?: number;
 		opacity?: number;
-		atMs?: number;
+		pressureEnabled?: boolean;
+		drawWithFinger?: boolean;
+		smoothing?: DrawingSmoothing;
 		onAddStroke: (stroke: ReturnType<typeof makeDrawingStroke>) => void;
 	} = $props();
 
 	let canvas = $state<HTMLCanvasElement | null>(null);
 	let activePoints = $state<DrawingPoint[]>([]);
 	let strokeStartedAt = 0;
+	let activePointerId: number | null = null;
 
 	function redraw() {
 		const el = canvas;
@@ -84,30 +91,67 @@
 			// Stroke times are relative to their group. This lets Replay reveal the
 			// gesture at its recorded pace while the group itself starts on the timeline.
 			atMs: Math.max(0, Math.round(performance.now() - strokeStartedAt)),
-			...(event.pressure > 0 ? { pressure: Math.min(1, event.pressure) } : {})
+			...(pressureEnabled && event.pointerType === 'pen' && event.pressure > 0
+				? { pressure: Math.min(1, event.pressure) }
+				: {})
 		};
 	}
 	function start(event: PointerEvent) {
-		if (!active || (event.pointerType === 'touch' && event.isPrimary === false)) return;
+		if (
+			!active ||
+			(event.pointerType === 'touch' && (!drawWithFinger || event.isPrimary === false))
+		)
+			return;
 		const next = point(event);
 		if (!next) return;
 		event.preventDefault();
 		(event.currentTarget as HTMLCanvasElement).setPointerCapture(event.pointerId);
 		strokeStartedAt = performance.now();
+		activePointerId = event.pointerId;
 		activePoints = [{ ...next, atMs: 0 }];
 	}
 	function move(event: PointerEvent) {
-		if (!activePoints.length) return;
-		const next = point(event);
+		if (!activePoints.length || event.pointerId !== activePointerId) return;
+		let next = point(event);
 		if (!next) return;
+		const start = activePoints[0]!;
+		if (event.shiftKey && ['line', 'arrow', 'rectangle', 'ellipse'].includes(tool)) {
+			const dx = next.x - start.x;
+			const dy = next.y - start.y;
+			if (tool === 'line' || tool === 'arrow') {
+				const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+				const length = Math.hypot(dx, dy);
+				next = {
+					...next,
+					x: Math.max(0, Math.min(1, start.x + Math.cos(angle) * length)),
+					y: Math.max(0, Math.min(1, start.y + Math.sin(angle) * length))
+				};
+			} else {
+				const side = Math.max(Math.abs(dx), Math.abs(dy));
+				next = {
+					...next,
+					x: Math.max(0, Math.min(1, start.x + Math.sign(dx || 1) * side)),
+					y: Math.max(0, Math.min(1, start.y + Math.sign(dy || 1) * side))
+				};
+			}
+		}
 		const last = activePoints[activePoints.length - 1]!;
 		if (Math.hypot(next.x - last.x, next.y - last.y) < 0.0015) return;
 		activePoints = [...activePoints, next];
 	}
 	function finish() {
 		if (!activePoints.length) return;
-		onAddStroke(makeDrawingStroke({ tool, color, width, opacity, points: activePoints }));
+		onAddStroke(
+			makeDrawingStroke({
+				tool,
+				color,
+				width,
+				opacity,
+				points: simplifyDrawingPoints(activePoints, smoothing)
+			})
+		);
 		activePoints = [];
+		activePointerId = null;
 	}
 </script>
 

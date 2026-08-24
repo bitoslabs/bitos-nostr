@@ -2,6 +2,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { MemeTextOverlay, MemeSfxCue } from '$lib/meme/schema';
 	import type { MemeImageOverlay } from '$lib/meme/image-overlay';
+	import type { DrawingGroup } from '$lib/meme/drawing';
 
 	/**
 	 * MemeTimeline — the studio's scrub surface: a playhead over per-layer
@@ -25,12 +26,14 @@
 		playing,
 		overlays = [],
 		layers = [],
+		drawings = [],
 		cues = [],
 		baseTrack = null,
 		busy = false,
 		soundOn = false,
 		selectedOverlayId = null,
 		selectedLayerId = null,
+		selectedDrawingId = null,
 		selectedCueId = null,
 		selectedBase = false,
 		onToggleSound,
@@ -38,6 +41,8 @@
 		onScrub,
 		onPatchOverlay,
 		onPatchLayer,
+		onPatchDrawing,
+		onStartDrawingEdit,
 		onPatchBase,
 		onRemoveLayer,
 		onReorderLayer,
@@ -46,6 +51,7 @@
 		cueMetaFor,
 		onSelectOverlay,
 		onSelectLayer,
+		onSelectDrawing,
 		onSelectCue,
 		onSelectBase
 	}: {
@@ -55,6 +61,7 @@
 		playing: boolean;
 		overlays?: MemeTextOverlay[];
 		layers?: MemeImageOverlay[];
+		drawings?: DrawingGroup[];
 		cues?: MemeSfxCue[];
 		/** The base media as the timeline's first row: the video's trim window
 		 *  (draggable) or a GIF loop badge (display-only). */
@@ -71,6 +78,7 @@
 		soundOn?: boolean;
 		selectedOverlayId?: string | null;
 		selectedLayerId?: string | null;
+		selectedDrawingId?: string | null;
 		/** The selected sound cue, highlighted independently of visual layers. */
 		selectedCueId?: string | null;
 		selectedBase?: boolean;
@@ -81,6 +89,12 @@
 		onPatchOverlay?: (id: string, patch: { startMs?: number; endMs?: number }) => void;
 		/** Drag-edit an image layer's visibility window. */
 		onPatchLayer?: (id: string, patch: { startMs?: number; endMs?: number }) => void;
+		onPatchDrawing?: (
+			id: string,
+			patch: { startMs?: number; visibleFromMs?: number; visibleUntilMs?: number }
+		) => void;
+		/** Fires once at drag start, allowing a single undo checkpoint per drawing drag. */
+		onStartDrawingEdit?: (id: string) => void;
 		/** Drag-edit the base video's trim window (video bases only). */
 		onPatchBase?: (patch: { startMs?: number; endMs?: number }) => void;
 		/** Row actions on image layers: remove + z-order moves. */
@@ -95,6 +109,7 @@
 		cueMetaFor?: (cue: MemeSfxCue) => { label: string; durationSec: number } | null;
 		onSelectOverlay?: (id: string) => void;
 		onSelectLayer?: (id: string) => void;
+		onSelectDrawing?: (id: string) => void;
 		onSelectCue?: (id: string) => void;
 		onSelectBase?: () => void;
 	} = $props();
@@ -249,7 +264,7 @@
 		endMs?: number;
 	}
 	interface SpanDrag {
-		kind: 'overlay' | 'layer' | 'base';
+		kind: 'overlay' | 'layer' | 'drawing' | 'base';
 		id: string;
 		mode: 'move' | 'start' | 'end';
 		/** Pointer time − window start, so the grab point stays put. */
@@ -270,7 +285,25 @@
 	/** Snap points: clip edges, the playhead and the nearest whole second. */
 	function snapSec(t: number): number {
 		const threshold = SNAP_PX / pxPerSec;
-		const cands = [0, duration, seconds, Math.round(t)];
+		const cands = [
+			0,
+			duration,
+			seconds,
+			Math.round(t),
+			...cues.map((cue) => cue.atMs / 1000),
+			...overlays.flatMap((overlay) => {
+				const window = windowOf(overlay);
+				return [window.start, window.end];
+			}),
+			...layers.flatMap((layer) => {
+				const window = windowOf(layer);
+				return [window.start, window.end];
+			}),
+			...drawings.flatMap((drawing) => [
+				drawing.visibleFromMs / 1000,
+				(drawing.visibleUntilMs ?? duration * 1000) / 1000
+			])
+		];
 		let best = t;
 		let bestD = threshold;
 		for (const c of cands) {
@@ -286,22 +319,40 @@
 	function emitSpanPatch(d: SpanDrag, patch: { startMs?: number; endMs?: number }) {
 		if (d.kind === 'overlay') onPatchOverlay?.(d.id, patch);
 		else if (d.kind === 'layer') onPatchLayer?.(d.id, patch);
+		else if (d.kind === 'drawing')
+			onPatchDrawing?.(d.id, {
+				startMs: patch.startMs,
+				visibleFromMs: patch.startMs,
+				visibleUntilMs: patch.endMs
+			});
 		else onPatchBase?.(patch);
 	}
 
 	function onSpanPointerDown(
 		e: PointerEvent,
-		kind: 'overlay' | 'layer' | 'base',
+		kind: 'overlay' | 'layer' | 'drawing' | 'base',
 		item: WindowItem,
 		mode: 'move' | 'start' | 'end'
 	) {
 		if (busy) return;
-		if (kind === 'overlay' ? !onPatchOverlay : kind === 'layer' ? !onPatchLayer : !onPatchBase)
+		if (
+			kind === 'overlay'
+				? !onPatchOverlay
+				: kind === 'layer'
+					? !onPatchLayer
+					: kind === 'drawing'
+						? !onPatchDrawing
+						: !onPatchBase
+		)
 			return;
 		e.stopPropagation(); // a span grab never scrubs
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		if (kind === 'overlay') onSelectOverlay?.(item.id);
 		else if (kind === 'layer') onSelectLayer?.(item.id);
+		else if (kind === 'drawing') {
+			onSelectDrawing?.(item.id);
+			onStartDrawingEdit?.(item.id);
+		}
 		dragFrozenPx = pxPerSec;
 		const w = windowOf(item);
 		spanDrag = {
@@ -754,6 +805,50 @@
 								{/if}
 							</div>
 						{/if}
+					</div>
+				{/each}
+
+				{#each drawings as drawing, i (drawing.id)}
+					{@const window = {
+						id: drawing.id,
+						startMs: drawing.visibleFromMs,
+						endMs: drawing.visibleUntilMs
+					}}
+					{@const w = windowOf(window)}
+					{@const selected = selectedDrawingId === drawing.id}
+					<div class="relative" style="height:{ROW_HEIGHT}px">
+						<span
+							class="absolute top-px h-3.5 rounded-md bg-violet-500/35 {selected
+								? 'ring-1 ring-warm-500'
+								: ''} {onPatchDrawing ? 'cursor-grab hover:brightness-125' : ''}"
+							style="left:{w.start * pxPerSec}px; width:{Math.max(
+								6,
+								(w.end - w.start) * pxPerSec
+							)}px;"
+							title={`${drawing.label} · ${drawing.playback} · drag to move, edges to resize`}
+							aria-label={`Drawing ${i + 1} window`}
+							onpointerdown={(e) => onSpanPointerDown(e, 'drawing', window, 'move')}
+							{...spanHandlers}
+						>
+							<span
+								class="pointer-events-none absolute inset-y-0 left-1 flex items-center overflow-hidden text-[9px] font-bold whitespace-nowrap text-white/80"
+								style="max-width:calc(100% - 4px)">✎ {drawing.label}</span
+							>
+							{#if onPatchDrawing}
+								<span
+									class="absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md hover:bg-white/50"
+									title="Resize drawing start"
+									onpointerdown={(e) => onSpanPointerDown(e, 'drawing', window, 'start')}
+									{...spanHandlers}
+								></span>
+								<span
+									class="absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md hover:bg-white/50"
+									title="Resize drawing end"
+									onpointerdown={(e) => onSpanPointerDown(e, 'drawing', window, 'end')}
+									{...spanHandlers}
+								></span>
+							{/if}
+						</span>
 					</div>
 				{/each}
 

@@ -5,9 +5,10 @@
  * paints deterministic paths for both preview and export.
  */
 
-export type DrawingTool = 'pen' | 'marker' | 'eraser';
+export type DrawingTool = 'pen' | 'marker' | 'eraser' | 'line' | 'arrow' | 'rectangle' | 'ellipse';
 export type StrokeBlendMode = 'source-over' | 'destination-out';
 export type DrawingPlayback = 'static' | 'replay' | 'hold';
+export type DrawingSmoothing = 'off' | 'smooth' | 'strong';
 
 export interface DrawingPoint {
 	x: number;
@@ -61,7 +62,14 @@ export function makeDrawingStroke(
 	partial: Partial<Omit<DrawingStroke, 'id' | 'points'>> & { points?: DrawingPoint[] } = {}
 ): DrawingStroke {
 	const tool: DrawingTool =
-		partial.tool === 'marker' || partial.tool === 'eraser' ? partial.tool : 'pen';
+		partial.tool === 'marker' ||
+		partial.tool === 'eraser' ||
+		partial.tool === 'line' ||
+		partial.tool === 'arrow' ||
+		partial.tool === 'rectangle' ||
+		partial.tool === 'ellipse'
+			? partial.tool
+			: 'pen';
 	return {
 		id: id('stroke'),
 		tool,
@@ -96,6 +104,51 @@ export function normalizeDrawingPoints(raw: unknown): DrawingPoint[] {
 		});
 	}
 	return points;
+}
+
+/**
+ * Ramer–Douglas–Peucker reduction for normalized pointer paths. It retains
+ * original point objects, so pressure and monotonic replay timestamps remain
+ * exact at every retained boundary.
+ */
+export function simplifyDrawingPoints(
+	points: DrawingPoint[],
+	smoothing: DrawingSmoothing
+): DrawingPoint[] {
+	if (smoothing === 'off' || points.length < 3) return points;
+	const tolerance = smoothing === 'strong' ? 0.012 : 0.005;
+	const keep = new Uint8Array(points.length);
+	keep[0] = 1;
+	keep[points.length - 1] = 1;
+	const stack: Array<[number, number]> = [[0, points.length - 1]];
+	while (stack.length) {
+		const [first, last] = stack.pop()!;
+		const start = points[first]!;
+		const end = points[last]!;
+		const dx = end.x - start.x;
+		const dy = end.y - start.y;
+		const lengthSquared = dx * dx + dy * dy;
+		let maxDistance = 0;
+		let index = -1;
+		for (let candidate = first + 1; candidate < last; candidate++) {
+			const point = points[candidate]!;
+			const ratio = lengthSquared
+				? clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1)
+				: 0;
+			const px = start.x + dx * ratio;
+			const py = start.y + dy * ratio;
+			const distance = Math.hypot(point.x - px, point.y - py);
+			if (distance > maxDistance) {
+				maxDistance = distance;
+				index = candidate;
+			}
+		}
+		if (index >= 0 && maxDistance > tolerance) {
+			keep[index] = 1;
+			stack.push([first, index], [index, last]);
+		}
+	}
+	return points.filter((_, index) => keep[index] === 1);
 }
 
 export function normalizeDrawingGroup(raw: unknown): DrawingGroup | null {
@@ -189,12 +242,36 @@ export function paintDrawingGroups(
 			ctx.strokeStyle = stroke.color;
 			ctx.lineCap = 'round';
 			ctx.lineJoin = 'round';
-			ctx.lineWidth = Math.max(1, stroke.width * canvas.height);
+			const averagePressure = stroke.points.some((point) => point.pressure !== undefined)
+				? stroke.points.reduce((sum, point) => sum + (point.pressure ?? 0.5), 0) /
+					stroke.points.length
+				: 1;
+			ctx.lineWidth = Math.max(1, stroke.width * canvas.height * (0.5 + averagePressure * 0.5));
+			const first = points[0]!;
+			const last = points[points.length - 1]!;
+			const x1 = first.x * canvas.width;
+			const y1 = first.y * canvas.height;
+			const x2 = last.x * canvas.width;
+			const y2 = last.y * canvas.height;
 			ctx.beginPath();
-			ctx.moveTo(points[0]!.x * canvas.width, points[0]!.y * canvas.height);
-			for (let index = 1; index < points.length; index++) {
-				const point = points[index]!;
-				ctx.lineTo(point.x * canvas.width, point.y * canvas.height);
+			ctx.moveTo(x1, y1);
+			if (stroke.tool === 'line' || stroke.tool === 'arrow') ctx.lineTo(x2, y2);
+			else if (stroke.tool === 'rectangle') ctx.rect(x1, y1, x2 - x1, y2 - y1);
+			else if (stroke.tool === 'ellipse') {
+				ctx.ellipse(
+					(x1 + x2) / 2,
+					(y1 + y2) / 2,
+					Math.abs(x2 - x1) / 2,
+					Math.abs(y2 - y1) / 2,
+					0,
+					0,
+					Math.PI * 2
+				);
+			} else {
+				for (let index = 1; index < points.length; index++) {
+					const point = points[index]!;
+					ctx.lineTo(point.x * canvas.width, point.y * canvas.height);
+				}
 			}
 			if (points.length === 1) {
 				ctx.fillStyle = stroke.color;
@@ -206,7 +283,25 @@ export function paintDrawingGroups(
 					Math.PI * 2
 				);
 				ctx.fill();
-			} else ctx.stroke();
+			} else {
+				ctx.stroke();
+				if (stroke.tool === 'arrow') {
+					const angle = Math.atan2(y2 - y1, x2 - x1);
+					const head = Math.max(6, ctx.lineWidth * 3);
+					ctx.beginPath();
+					ctx.moveTo(x2, y2);
+					ctx.lineTo(
+						x2 - head * Math.cos(angle - Math.PI / 6),
+						y2 - head * Math.sin(angle - Math.PI / 6)
+					);
+					ctx.moveTo(x2, y2);
+					ctx.lineTo(
+						x2 - head * Math.cos(angle + Math.PI / 6),
+						y2 - head * Math.sin(angle + Math.PI / 6)
+					);
+					ctx.stroke();
+				}
+			}
 			ctx.restore();
 		}
 	}
