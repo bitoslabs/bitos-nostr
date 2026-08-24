@@ -31,6 +31,7 @@
 		soundOn = false,
 		selectedOverlayId = null,
 		selectedLayerId = null,
+		selectedBase = false,
 		onToggleSound,
 		onPlayPause,
 		onScrub,
@@ -42,7 +43,8 @@
 		onPatchCue,
 		cueMetaFor,
 		onSelectOverlay,
-		onSelectLayer
+		onSelectLayer,
+		onSelectBase
 	}: {
 		durationSec: number;
 		/** Playhead position (media seconds). */
@@ -66,6 +68,7 @@
 		soundOn?: boolean;
 		selectedOverlayId?: string | null;
 		selectedLayerId?: string | null;
+		selectedBase?: boolean;
 		onToggleSound?: () => void;
 		onPlayPause: () => void;
 		onScrub: (sec: number) => void;
@@ -85,6 +88,7 @@
 		cueMetaFor?: (cue: MemeSfxCue) => { label: string; durationSec: number } | null;
 		onSelectOverlay?: (id: string) => void;
 		onSelectLayer?: (id: string) => void;
+		onSelectBase?: () => void;
 	} = $props();
 
 	const ROW_HEIGHT = 18;
@@ -511,8 +515,9 @@
 						baseTrack.draggable && w.start <= 0.05 && baseTrack.endSec >= duration - 0.05}
 					<div class="relative" style="height:{ROW_HEIGHT}px">
 						<span
-							class="absolute top-px h-3.5 rounded-md bg-sky-500/40 {baseTrack.draggable &&
-							onPatchBase
+							class="absolute top-px h-3.5 rounded-md bg-sky-500/40 {selectedBase
+								? 'ring-1 ring-warm-500'
+								: ''} {baseTrack.draggable && onPatchBase
 								? fullClip
 									? 'cursor-default'
 									: 'cursor-grab hover:brightness-125'
@@ -531,6 +536,7 @@
 							aria-label={`${baseTrack.label} track`}
 							onpointerdown={(e) => {
 								if (!baseTrack.draggable || !onPatchBase) return;
+								onSelectBase?.();
 								onSpanPointerDown(
 									e,
 									'base',

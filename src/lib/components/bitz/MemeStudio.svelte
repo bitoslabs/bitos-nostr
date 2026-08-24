@@ -40,8 +40,10 @@
 	import { suggestTimelines, type MemeSuggestion } from '$lib/ai/suggest';
 	import {
 		createMemeDraftWriter,
+		draftImageLayers,
 		draftMediaFile,
 		draftOverlays,
+		draftSfxCues,
 		mediaToDraftDataUrl,
 		readMemeDraft
 	} from '$lib/stores/meme-drafts';
@@ -91,6 +93,15 @@
 	} from '$lib/meme/schema';
 	import { createSfxAudioTrack, SFX_RECIPES, monoNormalize } from '$lib/meme/sfx';
 	import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
+	import {
+		clipsDuration,
+		makeVideoClip,
+		moveClip,
+		removeClip,
+		sourceTimeAt,
+		splitClipAt,
+		type VideoClip
+	} from '$lib/meme/video-clips';
 	import { buildCueMixBuffer } from '$lib/meme/cue-mix';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
 	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
@@ -1008,6 +1019,11 @@
 	// ---- preview transport + timeline ---------------------------------------
 	/** Preview play state for the stage clock (video element clocks itself). */
 	let previewPlaying = $state(false);
+	/** Expert mode upgrades the base video from one trim window to an ordered
+	 * sequence of non-destructive source clips. */
+	let expertTimeline = $state(false);
+	let videoClips = $state<VideoClip[]>([]);
+	let selectedClipId = $state<string | null>(null);
 	// ---- preview sound: source audio + live cue firing -----------------------
 	/** Sound toggle for the preview: unmutes the stage video AND fires every
 	 *  cue the playhead crosses — the timeline sounds like the export. */
@@ -1066,7 +1082,9 @@
 	 *  video → trimmed export window; gif → gif duration; static → cue track. */
 	const timelineDurationSec = $derived(
 		mediaKind === 'video'
-			? (meta?.duration ?? 0)
+			? expertTimeline && videoClips.length
+				? clipsDuration(videoClips)
+				: (meta?.duration ?? 0)
 			: mediaKind === 'image'
 				? (gif?.duration ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0))
 				: 0
@@ -1098,7 +1116,9 @@
 			// Hold the frame under the pointer. Leaving the looping video running
 			// made its native clock immediately fight a mouse drag of the playhead.
 			stageVideo.pause();
-			stageVideo.currentTime = clamped;
+			const mapped = expertTimeline ? sourceTimeAt(videoClips, clamped) : null;
+			if (mapped) selectedClipId = videoClips[mapped.clipIndex]?.id ?? null;
+			stageVideo.currentTime = mapped?.sourceSec ?? clamped;
 			stageSeconds = clamped;
 		} else {
 			previewSeconds = clamped;
@@ -1270,6 +1290,42 @@
 		if (keep === 'before') trimEndSec = at;
 		else trimStartSec = at;
 		toasts.success(`Kept the ${keep === 'before' ? 'start' : 'end'} of the video`);
+	}
+
+	function enableExpertTimeline(): void {
+		const duration = meta?.duration ?? 0;
+		if (mediaKind !== 'video' || !duration) return;
+		if (!videoClips.length) {
+			const clip = makeVideoClip(trimStartSec, trimEndSec ?? duration);
+			if (clip) {
+				videoClips = [clip];
+				selectedClipId = clip.id;
+			}
+		}
+		expertTimeline = true;
+	}
+
+	function splitVideoClipAtPlayhead(): void {
+		if (!expertTimeline) enableExpertTimeline();
+		const next = splitClipAt(videoClips, stageSeconds);
+		if (next === videoClips) {
+			toasts.info('Move the playhead inside a video clip to split it');
+			return;
+		}
+		videoClips = next;
+		const mapped = sourceTimeAt(videoClips, stageSeconds);
+		selectedClipId = mapped ? (videoClips[mapped.clipIndex]?.id ?? null) : null;
+		toasts.success('Video clip split at playhead');
+	}
+
+	function removeSelectedVideoClip(): void {
+		if (!selectedClipId || videoClips.length <= 1) {
+			toasts.info('Keep at least one video clip in the sequence');
+			return;
+		}
+		videoClips = removeClip(videoClips, selectedClipId);
+		selectedClipId = videoClips[0]?.id ?? null;
+		scrubPreview(Math.min(stageSeconds, clipsDuration(videoClips)));
 	}
 
 	/** Split the selected caption or image layer into two independent windows at
@@ -2075,6 +2131,9 @@
 		trimStartSec = 0;
 		trimEndSec = null;
 		playbackRate = 1;
+		expertTimeline = false;
+		videoClips = [];
+		selectedClipId = null;
 		pinnedLengthSec = null;
 		resetFraming();
 		clearPoster();
@@ -2185,6 +2244,9 @@
 		}
 		meta = null;
 		previewPlaying = false;
+		expertTimeline = false;
+		videoClips = [];
+		selectedClipId = null;
 		// Swaps may keep the caption layout + layers + cues (normalized coords
 		// make them media-agnostic); a fresh pick starts clean, as before.
 		if (!opts.keepLayout) {
@@ -3690,6 +3752,15 @@
 					restored = true;
 				}
 				overlays = draftOverlays(draft);
+				sfxCues = draftSfxCues(draft);
+				imageLayers = draftImageLayers(draft);
+				for (const layer of imageLayers) {
+					void cacheLayerBitmap(layer.src);
+					void cacheLayerGif(layer.src);
+				}
+				trimStartSec = Math.max(0, draft.trimStartSec ?? 0);
+				trimEndSec = draft.trimEndSec ?? null;
+				playbackRate = Math.min(2, Math.max(0.5, draft.playbackRate ?? 1));
 				selectedId =
 					draft.selectedId && overlays.some((o) => o.id === draft.selectedId)
 						? draft.selectedId
@@ -3703,7 +3774,13 @@
 					mediaPanX = Math.min(1, Math.max(-1, draft.mediaTransform.x || 0));
 					mediaPanY = Math.min(1, Math.max(-1, draft.mediaTransform.y || 0));
 				}
-				if (restored || overlays.length > 0 || caption.trim()) {
+				if (
+					restored ||
+					overlays.length > 0 ||
+					imageLayers.length > 0 ||
+					sfxCues.length > 0 ||
+					caption.trim()
+				) {
 					toasts.info('Draft restored — welcome back', 4000);
 				}
 			});
@@ -3724,6 +3801,11 @@
 		void sensitive;
 		void destination;
 		void selectedId;
+		void sfxCues;
+		void imageLayers;
+		void trimStartSec;
+		void trimEndSec;
+		void playbackRate;
 		void lookId;
 		void mediaZoom;
 		void mediaPanX;
@@ -3734,6 +3816,11 @@
 		// encode never keeps the effect re-running or blocks the UI thread.
 		const snapshot = {
 			overlays,
+			sfxCues,
+			imageLayers,
+			trimStartSec,
+			trimEndSec,
+			playbackRate,
 			caption,
 			sensitive,
 			destination,
@@ -4463,6 +4550,61 @@
 								</form>
 							{/if}
 						</div>
+						{#if expertTimeline && mediaKind === 'video'}
+							<div class="mt-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-2">
+								<div class="mb-1 flex items-center justify-between gap-2">
+									<p class="text-[10px] font-bold tracking-wider text-violet-700 uppercase">
+										Expert clips
+									</p>
+									<span class="text-[10px] text-[var(--ui-text-dimmed)]"
+										>{videoClips.length} clips · {formatDuration(clipsDuration(videoClips))}</span
+									>
+								</div>
+								<div class="flex flex-wrap gap-1">
+									{#each videoClips as clip, index (clip.id)}
+										<button
+											type="button"
+											onclick={() => {
+												selectedClipId = clip.id;
+												const before = videoClips
+													.slice(0, index)
+													.reduce((total, item) => total + (item.endSec - item.startSec), 0);
+												scrubPreview(before);
+											}}
+											class="rounded-md border px-2 py-1 text-left text-[10px] font-bold transition {selectedClipId ===
+											clip.id
+												? 'border-violet-500 bg-violet-500 text-white'
+												: 'border-violet-500/20 bg-[var(--ui-bg)] text-[var(--ui-text-muted)] hover:border-violet-500/50'}"
+											title="Select clip {index + 1}"
+										>
+											{index + 1} · {clip.startSec.toFixed(1)}–{clip.endSec.toFixed(1)}s
+										</button>
+									{/each}
+								</div>
+								{#if selectedClipId}
+									<div class="mt-1.5 flex gap-1">
+										<button
+											type="button"
+											onclick={() => (videoClips = moveClip(videoClips, selectedClipId!, -1))}
+											class="rounded px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-500/10"
+											><Icon
+												name="i-lucide-arrow-left"
+												class="mr-0.5 inline size-3"
+											/>Earlier</button
+										>
+										<button
+											type="button"
+											onclick={() => (videoClips = moveClip(videoClips, selectedClipId!, 1))}
+											class="rounded px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-500/10"
+											>Later<Icon
+												name="i-lucide-arrow-right"
+												class="ml-0.5 inline size-3"
+											/></button
+										>
+									</div>
+								{/if}
+							</div>
+						{/if}
 					{/snippet}
 
 					{#snippet timelinePane()}
@@ -4479,6 +4621,14 @@
 							cues={sfxCues}
 							{baseTrack}
 							onPatchBase={patchBaseWindow}
+							selectedBase={expertTimeline && !!selectedClipId}
+							onSelectBase={() => {
+								if (!expertTimeline) return;
+								const mapped = sourceTimeAt(videoClips, stageSeconds);
+								selectedClipId = mapped ? (videoClips[mapped.clipIndex]?.id ?? null) : null;
+								selectedId = null;
+								selectedLayerId = null;
+							}}
 							{busy}
 							selectedOverlayId={selectedId}
 							{selectedLayerId}
@@ -4511,6 +4661,34 @@
 								Other source
 							</button>
 							{#if mediaKind === 'video'}
+								<button
+									type="button"
+									onclick={enableExpertTimeline}
+									disabled={busy || expertTimeline}
+									title="Enable multi-clip video editing"
+									class="flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10.5px] font-bold text-violet-600 transition hover:bg-violet-500/20 disabled:opacity-40"
+								>
+									<Icon name="i-lucide-list-tree" class="size-3.5" />
+									{expertTimeline ? 'Expert timeline' : 'Expert'}
+								</button>
+								{#if expertTimeline}
+									<button
+										type="button"
+										onclick={splitVideoClipAtPlayhead}
+										disabled={busy}
+										class="flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10.5px] font-bold text-violet-600 transition hover:bg-violet-500/20 disabled:opacity-40"
+									>
+										<Icon name="i-lucide-scissors" class="size-3.5" /> Split video
+									</button>
+									<button
+										type="button"
+										onclick={removeSelectedVideoClip}
+										disabled={busy || !selectedClipId || videoClips.length <= 1}
+										class="flex items-center gap-1 rounded-full bg-red-500/10 px-2.5 py-1 text-[10.5px] font-bold text-red-600 transition hover:bg-red-500/20 disabled:opacity-40"
+									>
+										<Icon name="i-lucide-trash-2" class="size-3.5" /> Delete clip
+									</button>
+								{/if}
 								<button
 									type="button"
 									onclick={() => cutVideoAtPlayhead('before')}

@@ -13,7 +13,13 @@
  * Pure localStorage with debounced writes, mirroring `stores/drafts.ts`.
  */
 import { browser } from '$app/environment';
-import { normalizeOverlay, type MemeTextOverlay } from '$lib/meme/schema';
+import {
+	normalizeOverlay,
+	normalizeSfxCues,
+	type MemeSfxCue,
+	type MemeTextOverlay
+} from '$lib/meme/schema';
+import { normalizeImageOverlay, type MemeImageOverlay } from '$lib/meme/image-overlay';
 
 export type MemeDraftOverlay = MemeTextOverlay;
 
@@ -39,6 +45,12 @@ export interface MemeDraftData {
 	lookId?: string;
 	/** Base-media crop/zoom framing (render.ts MediaTransform). */
 	mediaTransform?: { scale: number; x: number; y: number };
+	/** Timeline state — optional for recovery of older drafts. */
+	sfxCues?: unknown[];
+	imageLayers?: unknown[];
+	trimStartSec?: number;
+	trimEndSec?: number | null;
+	playbackRate?: number;
 }
 
 /** Parse + validate localStorage contents; null when absent or foreign. */
@@ -60,6 +72,8 @@ export function readMemeDraft(): MemeDraftData | null {
 		const hasWork =
 			(parsed.media?.dataUrl && typeof parsed.media.dataUrl === 'string') ||
 			(Array.isArray(parsed.overlays) && parsed.overlays.length > 0) ||
+			(Array.isArray(parsed.sfxCues) && parsed.sfxCues.length > 0) ||
+			(Array.isArray(parsed.imageLayers) && parsed.imageLayers.length > 0) ||
 			parsed.caption.trim().length > 0;
 		if (!hasWork) return null;
 		return parsed;
@@ -143,6 +157,16 @@ export function draftOverlays(draft: MemeDraftData): MemeDraftOverlay[] {
 		}
 	}
 	return restored;
+}
+
+export function draftSfxCues(draft: MemeDraftData): MemeSfxCue[] {
+	return normalizeSfxCues(draft.sfxCues);
+}
+
+export function draftImageLayers(draft: MemeDraftData): MemeImageOverlay[] {
+	return (Array.isArray(draft.imageLayers) ? draft.imageLayers : [])
+		.map(normalizeImageOverlay)
+		.filter((layer): layer is MemeImageOverlay => layer !== null);
 }
 
 /** Restore the source media as a File (null when the draft skipped it). */
