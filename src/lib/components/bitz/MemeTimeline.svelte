@@ -498,11 +498,15 @@
 					<!-- Base media row: the video's trim window (draggable — same
 					     move/resize grammar as captions) or the GIF loop (badge). -->
 					{@const w = { start: baseTrack.startSec, end: Math.min(baseTrack.endSec, duration) }}
+					{@const fullClip =
+						baseTrack.draggable && w.start <= 0.05 && baseTrack.endSec >= duration - 0.05}
 					<div class="relative" style="height:{ROW_HEIGHT}px">
 						<span
 							class="absolute top-px h-3.5 rounded-md bg-sky-500/40 {baseTrack.draggable &&
 							onPatchBase
-								? 'cursor-grab hover:brightness-125'
+								? fullClip
+									? 'cursor-default'
+									: 'cursor-grab hover:brightness-125'
 								: ''}"
 							style="left:{w.start * pxPerSec}px; width:{Math.max(
 								6,
@@ -511,7 +515,9 @@
 							title="{baseTrack.label} · {w.start.toFixed(1)}s–{baseTrack.endSec.toFixed(
 								1
 							)}s{baseTrack.badge ? ` · ${baseTrack.badge}` : ''}{baseTrack.draggable && onPatchBase
-								? ' · drag to move, edges to resize (trim)'
+								? fullClip
+									? ' · drag an EDGE to trim first — the window fills the whole clip, so there is nowhere to slide it yet'
+									: ' · drag to move, edges to resize (trim)'
 								: ''}"
 							aria-label={`${baseTrack.label} track`}
 							onpointerdown={(e) => {
@@ -538,9 +544,18 @@
 									<span class="ml-1 rounded bg-white/25 px-1">{baseTrack.badge}</span>
 								{/if}
 							</span>
+							{#if fullClip}
+								<!-- Full-clip window: dragging the middle has nowhere to go —
+								     say so instead of feeling broken. -->
+								<span
+									class="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center gap-1 text-[8.5px] font-bold text-white/60"
+								>
+									⇔ drag the edges to trim — then the window slides
+								</span>
+							{/if}
 							{#if baseTrack.draggable && onPatchBase}
 								<span
-									class="absolute inset-y-0 left-0 w-2 cursor-ew-resize rounded-l-md hover:bg-white/50"
+									class="group/handle absolute inset-y-0 left-0 flex w-3 cursor-ew-resize items-center justify-center rounded-l-md hover:bg-white/40"
 									title="Trim start"
 									onpointerdown={(e) =>
 										onSpanPointerDown(
@@ -554,9 +569,12 @@
 											'start'
 										)}
 									{...spanHandlers}
-								></span>
+								>
+									<span class="h-2 w-0.5 rounded-full bg-white/0 group-hover/handle:bg-white/80"
+									></span>
+								</span>
 								<span
-									class="absolute inset-y-0 right-0 w-2 cursor-ew-resize rounded-r-md hover:bg-white/50"
+									class="group/handle absolute inset-y-0 right-0 flex w-3 cursor-ew-resize items-center justify-center rounded-r-md hover:bg-white/40"
 									title="Trim end"
 									onpointerdown={(e) =>
 										onSpanPointerDown(
@@ -570,7 +588,10 @@
 											'end'
 										)}
 									{...spanHandlers}
-								></span>
+								>
+									<span class="h-2 w-0.5 rounded-full bg-white/0 group-hover/handle:bg-white/80"
+									></span>
+								</span>
 							{/if}
 						</span>
 					</div>
