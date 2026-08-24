@@ -8,7 +8,7 @@ import type {
 export type MemeStudioPhase = 'idle' | 'rendering' | 'uploading' | 'mining' | 'publishing';
 export type MemeDestination = 'bitz' | 'story' | 'note';
 export type MemeExportFormat = 'auto' | 'image' | 'gif' | 'video';
-export type MemeArtboardId = 'source' | '9:16' | '16:9' | '1:1' | '4:5';
+export type MemeArtboardId = 'source' | '9:16' | '16:9' | '1:1' | '4:5' | 'custom';
 
 export interface MemeStudioTemplate {
 	id: string;

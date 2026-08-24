@@ -29,6 +29,7 @@
 		durations,
 		libraryLabel,
 		libraryDuration,
+		librarySounds = [],
 		sharedSounds = [],
 		stageSeconds = 0,
 		durationSec = 0,
@@ -37,8 +38,17 @@
 		waveform,
 		onPreviewSynth,
 		onPreviewLibrary,
+		onStopPreview,
 		onAddSynth,
-		onAddLibrary
+		onAddLibrary,
+		onRemoveLibrary,
+		onImportAudio,
+		onToggleMic,
+		onPauseResumeMic,
+		recording = false,
+		recordingPaused = false,
+		micDenied = false,
+		recordingElapsedSec = 0
 	}: {
 		open?: boolean;
 		cues?: MemeSfxCue[];
@@ -46,6 +56,9 @@
 		durations: Record<MemeSfxId, number>;
 		libraryLabel: (soundId: string) => string | undefined;
 		libraryDuration: (soundId: string) => number | undefined;
+		/** Personal library is supplied in full so sounds do not need an
+		 * existing cue before they can be added in this dialog. */
+		librarySounds?: { id: string; label: string; durationSec: number }[];
 		sharedSounds?: { id: string; label: string; durationSec: number; soundId?: string }[];
 		stageSeconds?: number;
 		durationSec?: number;
@@ -55,17 +68,38 @@
 		waveform?: Snippet;
 		onPreviewSynth: (sfx: MemeSfxId) => void;
 		onPreviewLibrary: (soundId: string) => void;
+		onStopPreview: () => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
 		onAddLibrary: (soundId: string) => void;
+		onRemoveLibrary: (soundId: string) => void;
+		/** Add a device audio file to the personal library. */
+		onImportAudio: () => void;
+		/** Start/stop a mic capture saved to the personal library. */
+		onToggleMic: (name?: string) => void;
+		onPauseResumeMic: () => void;
+		recording?: boolean;
+		recordingPaused?: boolean;
+		micDenied?: boolean;
+		recordingElapsedSec?: number;
 	} = $props();
 
 	let query = $state('');
+	let recordingName = $state('');
 	/** Entry id currently playing (for the equalizer indicator). */
 	let playingId = $state('');
 
 	const synth = $derived(synthEntries(labels, durations));
 	const library: SoundEntry[] = $derived.by(() => {
 		const seen = new SvelteMap<string, SoundEntry>();
+		for (const sound of librarySounds) {
+			seen.set(sound.id, {
+				id: `library:${sound.id}`,
+				source: 'library',
+				label: sound.label,
+				durationSec: sound.durationSec,
+				soundId: sound.id
+			});
+		}
 		for (const cue of cues) {
 			if (cue.sfx !== CUSTOM_SOUND_KEY || !cue.soundId) continue;
 			const label = libraryLabel(cue.soundId);
@@ -108,6 +142,11 @@
 	}
 
 	function preview(entry: SoundEntry) {
+		if (playingId === entry.id) {
+			onStopPreview();
+			playingId = '';
+			return;
+		}
 		playingId = entry.id;
 		window.setTimeout(
 			() => {
@@ -154,15 +193,79 @@
 	}
 </script>
 
-<Dialog bind:open title="Sound studio">
+<Dialog bind:open title="Add sounds & cue sheet">
 	<div class="flex flex-col gap-3">
-		<input
-			type="search"
-			bind:value={query}
-			placeholder="Search sounds…"
-			aria-label="Search sounds"
-			class="h-9 w-full rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-3 text-[12.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-		/>
+		<div class="flex gap-1.5">
+			<input
+				type="search"
+				bind:value={query}
+				placeholder="Search sounds…"
+				aria-label="Search sounds"
+				class="h-9 min-w-0 flex-1 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-3 text-[12.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
+			/>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={onImportAudio}
+				title="Import an audio file from this device"
+				class="flex shrink-0 items-center gap-1 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-600 disabled:opacity-40"
+			>
+				<Icon name="i-lucide-upload" class="size-3.5" />
+				<span class="hidden sm:inline">Device</span>
+			</button>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onToggleMic(recordingName)}
+				aria-pressed={recording}
+				title={recording
+					? 'Stop recording and save to My sounds'
+					: 'Record a sound with your microphone'}
+				class="grid size-9 shrink-0 place-items-center rounded-lg transition {recording
+					? 'animate-pulse bg-warm-500 text-white'
+					: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-warm-500/10 hover:text-warm-600'} disabled:opacity-40"
+			>
+				<Icon name={recording ? 'i-lucide-square' : 'i-lucide-mic'} class="size-3.5" />
+			</button>
+			{#if recording}
+				<button
+					type="button"
+					disabled={busy}
+					onclick={onPauseResumeMic}
+					title={recordingPaused ? 'Resume recording' : 'Pause recording'}
+					class="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-600 disabled:opacity-40"
+				>
+					<Icon name={recordingPaused ? 'i-lucide-play' : 'i-lucide-pause'} class="size-3.5" />
+				</button>
+			{/if}
+		</div>
+		<div class="flex items-center gap-2 rounded-lg bg-[var(--ui-bg-muted)] px-2.5 py-1.5">
+			{#if recording}
+				<span
+					class="flex shrink-0 items-center gap-1.5 font-mono text-[11px] font-bold text-warm-600 tabular-nums"
+				>
+					<span class="size-1.5 animate-pulse rounded-full bg-warm-500"></span>
+					{recordingPaused ? 'PAUSED' : 'REC'}
+					{fmt(recordingElapsedSec)}
+				</span>
+			{:else}
+				<span class="shrink-0 text-[10.5px] font-bold text-[var(--ui-text-dimmed)]">Mic name</span>
+			{/if}
+			<input
+				type="text"
+				bind:value={recordingName}
+				maxlength="40"
+				disabled={recording}
+				placeholder="My reaction (optional)"
+				aria-label="Name for the next microphone recording"
+				class="h-6 min-w-0 flex-1 bg-transparent text-[11px] font-medium outline-none placeholder:text-[var(--ui-text-dimmed)] disabled:opacity-60"
+			/>
+		</div>
+		{#if micDenied && !recording}
+			<p class="-mt-1 text-[10.5px] font-medium text-[var(--tone-error-text)]">
+				Microphone access is blocked — allow it in your browser settings to record.
+			</p>
+		{/if}
 
 		<!-- Cue sheet first: what's already staged (editable in place). -->
 		<div class="flex flex-col gap-3">
@@ -279,6 +382,9 @@
 		</div>
 		<!-- Catalog: browse by group or search flat. -->
 		<section aria-label="Sound library">
+			<p class="mb-2 text-[11px] font-semibold text-[var(--ui-text-muted)]">
+				Choose a sound to add at <span class="font-mono text-warm-600">{fmt(stageSeconds)}</span>
+			</p>
 			{#each groups as group (group.id)}
 				<div class="mb-2">
 					<p
@@ -307,10 +413,7 @@
 										onclick={() => preview(entry)}
 									>
 										{#if playingId === entry.id}
-											<Icon
-												name="i-lucide-audio-lines"
-												class="size-3.5 animate-pulse text-warm-500"
-											/>
+											<Icon name="i-lucide-square" class="size-3.5 text-warm-500" />
 										{:else}
 											<Icon name="i-lucide-play" class="size-3.5" />
 										{/if}
@@ -333,13 +436,25 @@
 									</button>
 									<button
 										type="button"
-										class="grid size-6 shrink-0 place-items-center rounded-full bg-warm-500/10 text-warm-600 opacity-0 transition group-hover:opacity-100 disabled:opacity-30"
+										class="grid size-6 shrink-0 place-items-center rounded-full bg-warm-500/10 text-warm-600 transition hover:bg-warm-500 hover:text-white disabled:opacity-30"
 										disabled={cueFull}
 										aria-label={`Add ${entry.label}`}
 										onclick={() => add(entry)}
 									>
 										<Icon name="i-lucide-plus" class="size-3.5" />
 									</button>
+									{#if entry.source === 'library' && entry.soundId}
+										<button
+											type="button"
+											disabled={busy}
+											aria-label={`Delete ${entry.label} from My sounds`}
+											title="Delete from My sounds"
+											onclick={() => onRemoveLibrary(entry.soundId!)}
+											class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-red-500/10 hover:text-red-500 disabled:opacity-30"
+										>
+											<Icon name="i-lucide-trash-2" class="size-3.5" />
+										</button>
+									{/if}
 								</div>
 							</li>
 						{/each}

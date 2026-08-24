@@ -42,12 +42,15 @@
 		artboardId,
 		artboardWidth,
 		artboardHeight,
+		customArtboardWidth,
+		customArtboardHeight,
 		staging,
 		blankBg,
 		mediaZoom,
 		mediaPanX,
 		mediaPanY,
 		onArtboard,
+		onCustomArtboard,
 		onBackground,
 		onFraming,
 		videoDuration,
@@ -118,12 +121,15 @@
 		artboardId: MemeArtboardId;
 		artboardWidth: number;
 		artboardHeight: number;
+		customArtboardWidth: number;
+		customArtboardHeight: number;
 		staging: boolean;
 		blankBg: string | null;
 		mediaZoom: number;
 		mediaPanX: number;
 		mediaPanY: number;
 		onArtboard: (id: MemeArtboardId) => void;
+		onCustomArtboard: (width: number, height: number) => void;
 		onBackground: (color: string) => void;
 		onFraming: (patch: { zoom?: number; panX?: number; panY?: number }) => void;
 		videoDuration: number | null;
@@ -220,6 +226,8 @@
 			{artboardId}
 			width={artboardWidth}
 			height={artboardHeight}
+			customWidth={customArtboardWidth}
+			customHeight={customArtboardHeight}
 			{busy}
 			{staging}
 			{blankBg}
@@ -227,6 +235,7 @@
 			panX={mediaPanX}
 			panY={mediaPanY}
 			{onArtboard}
+			onCustomSize={onCustomArtboard}
 			{onBackground}
 			{onFraming}
 		/>

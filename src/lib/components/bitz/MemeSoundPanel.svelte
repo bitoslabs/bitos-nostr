@@ -1,24 +1,15 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import Popover from '$lib/components/ui/Popover.svelte';
 	import MemeSharedSoundsPicker from './MemeSharedSoundsPicker.svelte';
 	import MemeSoundCueList from './MemeSoundCueList.svelte';
 	import MemeSoundSuggestions from './MemeSoundSuggestions.svelte';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import {
-		CUSTOM_SOUND_KEY,
-		MEME_SFX_IDS,
-		type MemeSfxCue,
-		type MemeSfxId
-	} from '$lib/meme/schema';
+	import { CUSTOM_SOUND_KEY, type MemeSfxCue, type MemeSfxId } from '$lib/meme/schema';
 	import { SFX_LABELS } from '$lib/meme/sound-catalog';
 	import { soundIO } from '$lib/stores/meme-sound-io.svelte';
 	import { sharedSoundsStore } from '$lib/stores/meme-shared-sounds.svelte';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
-	import { formatDuration } from '$lib/utils/format';
 
 	let {
 		mediaKind,
@@ -115,11 +106,11 @@
 			type="button"
 			disabled={busy}
 			onclick={onOpenStudio}
-			title="Browse, preview and fine-tune every sound cue"
-			class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+			title="Browse, preview and add sounds at the playhead"
+			class="flex items-center gap-1 rounded-full bg-warm-500 px-2.5 py-1 text-[11px] font-bold text-white transition hover:brightness-110 disabled:opacity-40"
 		>
-			<Icon name="i-lucide-audio-lines" class="size-3.5" />
-			Sound studio
+			<Icon name="i-lucide-music-plus" class="size-3.5" />
+			Add sound
 		</button>
 		{#if mediaKind === 'video'}
 			<button
@@ -141,107 +132,6 @@
 				Video audio {includeSourceAudio ? 'on' : 'off'}
 			</button>
 		{/if}
-		<Popover
-			id={menuId}
-			float
-			placement="top-start"
-			width="auto"
-			label="Add sound effect"
-			triggerClass="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20"
-			triggerActiveClass="bg-warm-500/20"
-		>
-			{#snippet trigger()}
-				<Icon name="i-lucide-music-plus" class="size-3.5" />
-				Add sound @ {formatDuration(stageSeconds)}
-			{/snippet}
-			<div class="max-h-80 scrollbar-thin overflow-y-auto">
-				{#each MEME_SFX_IDS as sfxId (sfxId)}
-					<MenuItem
-						onclick={() => {
-							onPreviewSynth(sfxId);
-							onAddSynth(sfxId);
-						}}
-					>
-						{SFX_LABELS[sfxId]}
-					</MenuItem>
-				{/each}
-				{#if soundLibrary.list.length}
-					<MenuDivider />
-					{#each soundLibrary.list as sound (sound.id)}
-						<MenuItem
-							onclick={() => {
-								void soundIO.preview(sound);
-								onAddCustom(sound);
-							}}
-						>
-							<span class="flex min-w-0 items-center gap-2">
-								<Icon
-									name={sound.source === 'mic' ? 'i-lucide-mic' : 'i-lucide-file-audio'}
-									class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
-								/>
-								<span class="min-w-0">
-									<span class="block truncate">{sound.label}</span>
-									<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-										{sound.durationSec.toFixed(1)}s · custom · cues at {formatDuration(
-											stageSeconds
-										)}
-									</span>
-								</span>
-							</span>
-							{#snippet trailing()}
-								<span class="flex items-center">
-									<button
-										type="button"
-										class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-600"
-										aria-label={`Share ${sound.label} with other creators`}
-										title="Publish as a kind-30078 shared sound"
-										disabled={sharedSoundsStore.sharingId === sound.id ||
-											!!sharedSoundsStore.sharingId}
-										onclick={(event) => {
-											event.stopPropagation();
-											void sharedSoundsStore.share(sound.id);
-										}}
-									>
-										<Icon
-											name={sharedSoundsStore.sharingId === sound.id
-												? 'i-lucide-loader-circle'
-												: 'i-lucide-share-2'}
-											class="size-3.5 {sharedSoundsStore.sharingId === sound.id
-												? 'animate-spin'
-												: ''}"
-										/>
-									</button>
-									<button
-										type="button"
-										class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
-										aria-label={`Delete ${sound.label} from this device`}
-										title="Delete from this device"
-										onclick={(event) => {
-											event.stopPropagation();
-											onRemoveLibrarySound(sound.id);
-										}}
-									>
-										<Icon name="i-lucide-trash-2" class="size-3.5" />
-									</button>
-								</span>
-							{/snippet}
-						</MenuItem>
-					{/each}
-				{/if}
-				<MenuDivider />
-				<MenuItem icon="i-lucide-upload" onclick={onImportAudio}>
-					Import audio from device…
-				</MenuItem>
-				<MenuItem icon="i-lucide-mic" onclick={() => void soundIO.toggleMic()}>
-					<span class="flex items-center gap-1">
-						{soundIO.recording ? 'Stop recording · save' : 'Record with mic…'}
-						{#if soundIO.micDenied && !soundIO.recording}
-							<Icon name="i-lucide-alert-circle" class="size-3 text-[var(--tone-error-text)]" />
-						{/if}
-					</span>
-				</MenuItem>
-			</div>
-		</Popover>
 		<MemeSharedSoundsPicker
 			sounds={sharedSoundsStore.list}
 			loading={sharedSoundsStore.loading}

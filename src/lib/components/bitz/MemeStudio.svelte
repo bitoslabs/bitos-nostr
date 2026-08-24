@@ -574,6 +574,7 @@
 	 *  Overlay coordinates are normalized, so they land identically on any
 	 *  artboard. Persisted per device. */
 	let artboardId = $state<ArtboardId>('source');
+	let customArtboard = $state({ width: 1080, height: 1920 });
 
 	function setArtboard(next: ArtboardId) {
 		artboardId = next;
@@ -582,6 +583,11 @@
 		} catch {
 			/* private mode — the choice just won't persist */
 		}
+	}
+
+	function setCustomArtboard(width: number, height: number) {
+		customArtboard = { width, height };
+		setArtboard('custom');
 	}
 
 	/** The media's natural frame (whatever is loaded), for `source`. `meta`
@@ -599,6 +605,7 @@
 
 	/** Export canvas dims — artboard preset or the source's own (capped). */
 	const renderTarget = $derived.by(() => {
+		if (artboardId === 'custom') return customArtboard;
 		const ab = ARTBOARDS.find((a) => a.id === artboardId);
 		if (ab && ab.w > 0) return { width: ab.w, height: ab.h };
 		if (sourceFrame) return targetSize(sourceFrame);
@@ -607,6 +614,7 @@
 
 	/** Stage aspect-ratio CSS — the preview mirrors the export canvas exactly. */
 	const stageAspect = $derived.by(() => {
+		if (artboardId === 'custom') return `${customArtboard.width} / ${customArtboard.height}`;
 		if (artboardId === 'source' && sourceFrame) {
 			return `${sourceFrame.width} / ${sourceFrame.height}`;
 		}
@@ -646,6 +654,9 @@
 
 	/** Same ratio as a number (w/h) — feeds the full-page stage width calc. */
 	const stageRatio = $derived.by(() => {
+		if (artboardId === 'custom' && customArtboard.height > 0) {
+			return customArtboard.width / customArtboard.height;
+		}
 		if (artboardId === 'source' && sourceFrame && sourceFrame.height > 0) {
 			return sourceFrame.width / sourceFrame.height;
 		}
@@ -3102,11 +3113,8 @@
 					     by the zoom control — overlay coords are normalized to the stage
 					     box, so zoom never disturbs them), fixed 260px in the dialog.
 					     The width calc uses the ARTBOARD ratio (was hardcoded 9:16). -->
-						<div
-							class="mx-auto w-full"
-							style={`width:calc(min(430px, (100dvh - 17.5rem) * ${stageRatio}) * ${stageZoom})`}
-						>
-							<div class="mb-1.5 flex items-center justify-between gap-2">
+						<div class="mx-auto flex h-full min-h-0 w-full max-w-[720px] flex-col">
+							<div class="flex shrink-0 items-center justify-between gap-2 pb-1.5">
 								<p
 									class="text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
 								>
@@ -3146,207 +3154,216 @@
 									</button>
 								</div>
 							</div>
-							<div
-								bind:this={stageBox}
-								role="application"
-								aria-label="Meme preview — drag captions to position them"
-								class="relative max-h-full touch-none overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-black select-none"
-								style="aspect-ratio:{stageAspect};"
-								onpointermove={onStagePointerMove}
-								onpointerup={endDrag}
-								onpointercancel={endDrag}
-							>
-								{#if mediaKind === 'video'}
-									<!-- The media box is the EXACT coverRect the export draws
-									     (artboard cover-fit + crop/zoom framing) — WYSIWYG. -->
-									<video
-										src={previewUrl}
-										bind:this={stageVideo}
-										crossOrigin="anonymous"
-										class="absolute object-cover"
-										style={mediaFrame
-											? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
-											: `filter:${lookCss};`}
-										autoplay
-										muted
-										loop
-										playsinline
-										aria-label="Meme video preview"
-										onplay={() => (previewPlaying = true)}
-										onpause={() => (previewPlaying = false)}
-										onloadedmetadata={onVideoMetadata}
-										ondurationchange={(e) => {
-											// Browser-recorded webm clips report duration=Infinity at
-											// loadedmetadata and resolve it later — adopt it when it lands.
-											const v = e.currentTarget as HTMLVideoElement;
-											if (
-												v.videoWidth &&
-												Number.isFinite(v.duration) &&
-												v.duration !== meta?.duration
-											) {
-												meta = {
-													width: v.videoWidth,
-													height: v.videoHeight,
-													duration: v.duration
-												};
-											}
-										}}
-										ontimeupdate={(e) => {
-											const video = e.currentTarget as HTMLVideoElement;
-											const end = trimEndSec ?? meta?.duration ?? 0;
-											if (!expertTimeline && end > trimStartSec && video.currentTime >= end) {
-												// Loop the selected edit window rather than the whole source.
-												video.currentTime = trimStartSec;
-												stageSeconds = trimStartSec;
-												return;
-											}
-											stageSeconds = video.currentTime;
-										}}
+							<!-- Keep the canvas at its readable artboard size while the
+							     preview header and source toolbar use the full center pane. -->
+							<div class="flex min-h-0 flex-1 items-center justify-center overflow-auto py-2">
+								<div
+									class="mx-auto shrink-0"
+									style={`width:calc(min(430px, (100dvh - 17.5rem) * ${stageRatio}) * ${stageZoom})`}
+								>
+									<div
+										bind:this={stageBox}
+										role="application"
+										aria-label="Meme preview — drag captions to position them"
+										class="relative max-h-full touch-none overflow-hidden rounded-2xl border border-[var(--ui-border-muted)] bg-black select-none"
+										style="aspect-ratio:{stageAspect};"
+										onpointermove={onStagePointerMove}
+										onpointerup={endDrag}
+										onpointercancel={endDrag}
 									>
-										<track kind="captions" />
-									</video>
-								{:else if gif}
-									<!-- Animated GIF: canvas preview on the stage clock so overlay
+										{#if mediaKind === 'video'}
+											<!-- The media box is the EXACT coverRect the export draws
+									     (artboard cover-fit + crop/zoom framing) — WYSIWYG. -->
+											<video
+												src={previewUrl}
+												bind:this={stageVideo}
+												crossOrigin="anonymous"
+												class="absolute object-cover"
+												style={mediaFrame
+													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
+													: `filter:${lookCss};`}
+												autoplay
+												muted
+												loop
+												playsinline
+												aria-label="Meme video preview"
+												onplay={() => (previewPlaying = true)}
+												onpause={() => (previewPlaying = false)}
+												onloadedmetadata={onVideoMetadata}
+												ondurationchange={(e) => {
+													// Browser-recorded webm clips report duration=Infinity at
+													// loadedmetadata and resolve it later — adopt it when it lands.
+													const v = e.currentTarget as HTMLVideoElement;
+													if (
+														v.videoWidth &&
+														Number.isFinite(v.duration) &&
+														v.duration !== meta?.duration
+													) {
+														meta = {
+															width: v.videoWidth,
+															height: v.videoHeight,
+															duration: v.duration
+														};
+													}
+												}}
+												ontimeupdate={(e) => {
+													const video = e.currentTarget as HTMLVideoElement;
+													const end = trimEndSec ?? meta?.duration ?? 0;
+													if (!expertTimeline && end > trimStartSec && video.currentTime >= end) {
+														// Loop the selected edit window rather than the whole source.
+														video.currentTime = trimStartSec;
+														stageSeconds = trimStartSec;
+														return;
+													}
+													stageSeconds = video.currentTime;
+												}}
+											>
+												<track kind="captions" />
+											</video>
+										{:else if gif}
+											<!-- Animated GIF: canvas preview on the stage clock so overlay
 								     timing windows + SFX cues render exactly like the export. -->
-									<canvas
-										bind:this={gifStageCanvas}
-										class="absolute inset-0 size-full"
-										style="filter:{lookCss};"
-										aria-label="Animated GIF preview"
-									></canvas>
-								{:else}
-									<img
-										src={previewUrl}
-										alt="Meme preview"
-										bind:this={stageImg}
-										crossOrigin="anonymous"
-										class="absolute object-cover"
-										style={mediaFrame
-											? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
-											: `filter:${lookCss};`}
-										onload={onImageLoad}
-									/>
-								{/if}
+											<canvas
+												bind:this={gifStageCanvas}
+												class="absolute inset-0 size-full"
+												style="filter:{lookCss};"
+												aria-label="Animated GIF preview"
+											></canvas>
+										{:else}
+											<img
+												src={previewUrl}
+												alt="Meme preview"
+												bind:this={stageImg}
+												crossOrigin="anonymous"
+												class="absolute object-cover"
+												style={mediaFrame
+													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
+													: `filter:${lookCss};`}
+												onload={onImageLoad}
+											/>
+										{/if}
 
-								<!-- Live draggable overlay previews (video overlays honor
+										<!-- Live draggable overlay previews (video overlays honor
 							     their timing windows via the stage clock above). -->
-								{#each overlays as overlay, i (overlay.id)}
-									{@const visible =
-										(mediaKind !== 'video' && !gif) ||
-										(overlay.startMs === undefined && overlay.endMs === undefined) ||
-										overlayVisibleAt(overlay, stageSeconds * 1000)}
-									{#if visible}
-										<button
-											type="button"
-											onpointerdown={(e) => onOverlayPointerDown(e, overlay)}
-											class="absolute max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-md px-1 text-center leading-[1.12] font-bold whitespace-pre-wrap {selectedId ===
-											overlay.id
-												? 'bg-warm-500/15 ring-1 ring-warm-500/60'
-												: 'hover:bg-white/5'}"
-											style="left:{overlay.x * 100}%; top:{overlay.y *
-												100}%; color:{overlay.color}; font-family:{fontStack(
-												overlay.font
-											)}; font-size:{overlayPx(overlay)}px; {overlay.stroke
-												? 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 6px rgba(0,0,0,0.8);'
-												: ''}{overlay.bar
-												? 'background: rgba(0,0,0,0.55); border-radius: 0.25em; padding: 0.1em 0.35em;'
-												: ''}{overlayFxStyle(overlay)}"
-											aria-label={`Caption ${i + 1}: ${overlay.text}`}
-										>
-											{overlay.caps ? overlay.text.toUpperCase() : overlay.text}
-										</button>
-									{/if}
-								{/each}
+										{#each overlays as overlay, i (overlay.id)}
+											{@const visible =
+												(mediaKind !== 'video' && !gif) ||
+												(overlay.startMs === undefined && overlay.endMs === undefined) ||
+												overlayVisibleAt(overlay, stageSeconds * 1000)}
+											{#if visible}
+												<button
+													type="button"
+													onpointerdown={(e) => onOverlayPointerDown(e, overlay)}
+													class="absolute max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-md px-1 text-center leading-[1.12] font-bold whitespace-pre-wrap {selectedId ===
+													overlay.id
+														? 'bg-warm-500/15 ring-1 ring-warm-500/60'
+														: 'hover:bg-white/5'}"
+													style="left:{overlay.x * 100}%; top:{overlay.y *
+														100}%; color:{overlay.color}; font-family:{fontStack(
+														overlay.font
+													)}; font-size:{overlayPx(overlay)}px; {overlay.stroke
+														? 'text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000, 0 0 6px rgba(0,0,0,0.8);'
+														: ''}{overlay.bar
+														? 'background: rgba(0,0,0,0.55); border-radius: 0.25em; padding: 0.1em 0.35em;'
+														: ''}{overlayFxStyle(overlay)}"
+													aria-label={`Caption ${i + 1}: ${overlay.text}`}
+												>
+													{overlay.caps ? overlay.text.toUpperCase() : overlay.text}
+												</button>
+											{/if}
+										{/each}
 
-								<!-- Live image layers: movable + resizable via the shared
+										<!-- Live image layers: movable + resizable via the shared
 							     stage pointer plumbing. Bitmap shows once decoded;
 							     unresolved srcs sit as a dashed placeholder. -->
-								{#each imageLayers as layer, li (layer.id)}
-									{@const layerOn =
-										(mediaKind !== 'video' && !gif) ||
-										(layer.startMs === undefined && layer.endMs === undefined) ||
-										imageOverlayVisibleAt(layer, stageSeconds * 1000)}
-									{#if layerOn}
-										<!-- Effects mirror paintImageOverlays exactly: center-anchored
+										{#each imageLayers as layer, li (layer.id)}
+											{@const layerOn =
+												(mediaKind !== 'video' && !gif) ||
+												(layer.startMs === undefined && layer.endMs === undefined) ||
+												imageOverlayVisibleAt(layer, stageSeconds * 1000)}
+											{#if layerOn}
+												<!-- Effects mirror paintImageOverlays exactly: center-anchored
 										     rotate + mirror flips, opacity, per-layer look (CSS filter
 										     both places = WYSIWYG). -->
-										<div
-											role="button"
-											tabindex="-1"
-											onpointerdown={(e) => onLayerPointerDown(e, layer)}
-											class="absolute flex cursor-grab items-center justify-center {selectedLayerId ===
-											layer.id
-												? 'ring-2 ring-warm-500/80'
-												: 'hover:ring-1 hover:ring-white/40'}"
-											style="left:{layer.x * 100}%; top:{layer.y * 100}%; height:{layer.size *
-												100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) rotate({layer.rotate ??
-												0}deg) scaleX({layer.flipH ? -1 : 1}) scaleY({layer.flipV
-												? -1
-												: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
-											aria-label={`Image layer ${li + 1}`}
-										>
-											{#if layerAssets.bitmaps.has(layer.src)}
-												<img
-													src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
-													alt=""
-													crossOrigin="anonymous"
-													class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
-														layer.src
-													)?.complete
-														? ''
-														: 'opacity-60'}"
-													draggable="false"
-												/>
-											{:else}
-												<span
-													class="grid size-full place-items-center rounded-lg border border-dashed border-white/40 bg-black/30 text-[10px] font-bold text-white/80"
+												<div
+													role="button"
+													tabindex="-1"
+													onpointerdown={(e) => onLayerPointerDown(e, layer)}
+													class="absolute flex cursor-grab items-center justify-center {selectedLayerId ===
+													layer.id
+														? 'ring-2 ring-warm-500/80'
+														: 'hover:ring-1 hover:ring-white/40'}"
+													style="left:{layer.x * 100}%; top:{layer.y * 100}%; height:{layer.size *
+														100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) rotate({layer.rotate ??
+														0}deg) scaleX({layer.flipH ? -1 : 1}) scaleY({layer.flipV
+														? -1
+														: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
+													aria-label={`Image layer ${li + 1}`}
 												>
-													{layerBusy ? 'loading…' : 'IMG'}
-												</span>
-											{/if}
-											{#if selectedLayerId === layer.id}
-												<!-- Resize handle: bottom-right corner, pointer-down starts
+													{#if layerAssets.bitmaps.has(layer.src)}
+														<img
+															src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
+															alt=""
+															crossOrigin="anonymous"
+															class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
+																layer.src
+															)?.complete
+																? ''
+																: 'opacity-60'}"
+															draggable="false"
+														/>
+													{:else}
+														<span
+															class="grid size-full place-items-center rounded-lg border border-dashed border-white/40 bg-black/30 text-[10px] font-bold text-white/80"
+														>
+															{layerBusy ? 'loading…' : 'IMG'}
+														</span>
+													{/if}
+													{#if selectedLayerId === layer.id}
+														<!-- Resize handle: bottom-right corner, pointer-down starts
 											     size mode (patched via the stage move handler).
 											     stopPropagation keeps the layer's own move-grab from
 											     overwriting the resize drag mode. -->
-												<span
-													role="button"
-													tabindex="-1"
-													onpointerdown={(e) => {
-														e.stopPropagation();
-														onLayerPointerDown(e, layer, 'resize');
-													}}
-													class="absolute -right-1.5 -bottom-1.5 grid size-5 cursor-nwse-resize place-items-center rounded-full border border-warm-500 bg-black/80 text-warm-500"
-													aria-label={`Resize image layer ${li + 1}`}
-												>
-													<Icon name="i-lucide-maximize-2" class="size-3" />
-												</span>
-											{/if}
-										</div>
-									{/if}
-								{/each}
-
-								{#if busy}
-									<div
-										class="absolute inset-0 z-20 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-									>
-										<div class="w-44 text-center">
-											<Icon
-												name="i-lucide-loader-circle"
-												class="mx-auto size-8 animate-spin text-warm-500"
-											/>
-											<p class="mt-2 text-[12px] font-bold text-white">{progressLabel}</p>
-											{#if phase === 'rendering' || phase === 'uploading'}
-												<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20">
-													<div
-														class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
-														style={`width:${progress}%`}
-													></div>
+														<span
+															role="button"
+															tabindex="-1"
+															onpointerdown={(e) => {
+																e.stopPropagation();
+																onLayerPointerDown(e, layer, 'resize');
+															}}
+															class="absolute -right-1.5 -bottom-1.5 grid size-5 cursor-nwse-resize place-items-center rounded-full border border-warm-500 bg-black/80 text-warm-500"
+															aria-label={`Resize image layer ${li + 1}`}
+														>
+															<Icon name="i-lucide-maximize-2" class="size-3" />
+														</span>
+													{/if}
 												</div>
 											{/if}
-										</div>
+										{/each}
+
+										{#if busy}
+											<div
+												class="absolute inset-0 z-20 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+											>
+												<div class="w-44 text-center">
+													<Icon
+														name="i-lucide-loader-circle"
+														class="mx-auto size-8 animate-spin text-warm-500"
+													/>
+													<p class="mt-2 text-[12px] font-bold text-white">{progressLabel}</p>
+													{#if phase === 'rendering' || phase === 'uploading'}
+														<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20">
+															<div
+																class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
+																style={`width:${progress}%`}
+															></div>
+														</div>
+													{/if}
+												</div>
+											</div>
+										{/if}
 									</div>
-								{/if}
+								</div>
 							</div>
 							<MemeStageMediaControls
 								{busy}
@@ -3600,12 +3617,15 @@
 							{artboardId}
 							artboardWidth={renderTarget.width}
 							artboardHeight={renderTarget.height}
+							customArtboardWidth={customArtboard.width}
+							customArtboardHeight={customArtboard.height}
 							staging={gifStageBusy}
 							{blankBg}
 							{mediaZoom}
 							{mediaPanX}
 							{mediaPanY}
 							onArtboard={setArtboard}
+							onCustomArtboard={setCustomArtboard}
 							onBackground={(color) => void applyBackgroundColor(color)}
 							onFraming={(patch) => {
 								if (patch.zoom !== undefined) mediaZoom = patch.zoom;
@@ -3782,6 +3802,11 @@
 	durations={sfxDurations}
 	libraryLabel={(soundId) => soundLibrary.list.find((s) => s.id === soundId)?.label}
 	libraryDuration={(soundId) => soundLibrary.list.find((s) => s.id === soundId)?.durationSec}
+	librarySounds={soundLibrary.list.map((sound) => ({
+		id: sound.id,
+		label: sound.label,
+		durationSec: sound.durationSec
+	}))}
 	sharedSounds={sharedSounds.map((s) => ({
 		id: s.eventId,
 		label: s.label,
@@ -3793,8 +3818,17 @@
 	{busy}
 	onPreviewSynth={(sfx) => previewSfx(sfx)}
 	onPreviewLibrary={(soundId) => previewSoundById(soundId)}
+	onStopPreview={() => soundIO.stopPreview()}
 	onAddSynth={(sfx) => addSfxCue(sfx)}
 	onAddLibrary={(soundId) => addCustomCueById(soundId)}
+	onRemoveLibrary={removeSoundFromLibrary}
+	onImportAudio={() => soundFileInput?.click()}
+	onToggleMic={(name) => void soundIO.toggleMic(name)}
+	onPauseResumeMic={() => soundIO.pauseResumeMic()}
+	recording={soundIO.recording}
+	recordingPaused={soundIO.recordingPaused}
+	micDenied={soundIO.micDenied}
+	recordingElapsedSec={soundIO.recordingElapsedSec}
 >
 	{#snippet waveform()}
 		{#if lastAnalysis && analysisWindows.length}

@@ -42,8 +42,10 @@
 	} = $props();
 </script>
 
-<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-	<div class="flex flex-wrap items-center gap-1">
+<div
+	class="mt-2 flex w-full flex-wrap items-center gap-1.5 rounded-xl border border-[var(--ui-border-muted)]/70 bg-[var(--ui-bg-muted)]/35 px-1.5 py-1"
+>
+	<div class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
 		<button
 			type="button"
 			onclick={onChooseFile}
@@ -107,21 +109,23 @@
 			{showUrlForm ? 'Hide URL' : 'URL'}
 		</button>
 	</div>
-	<button
-		type="button"
-		onclick={onRemove}
-		disabled={busy}
-		class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)] disabled:opacity-40"
-		><Icon name="i-lucide-trash-2" class="size-3" /> Remove</button
-	>
-	<button
-		type="button"
-		onclick={onNew}
-		disabled={busy}
-		title="Clear everything and start a new meme"
-		class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-warm-600 transition hover:bg-warm-500/15 disabled:opacity-40"
-		><Icon name="i-lucide-file-plus" class="size-3" /> New</button
-	>
+	<div class="ml-auto flex shrink-0 items-center gap-1">
+		<button
+			type="button"
+			onclick={onRemove}
+			disabled={busy}
+			class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)] disabled:opacity-40"
+			><Icon name="i-lucide-trash-2" class="size-3" /> Remove</button
+		>
+		<button
+			type="button"
+			onclick={onNew}
+			disabled={busy}
+			title="Clear everything and start a new meme"
+			class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-warm-600 transition hover:bg-warm-500/15 disabled:opacity-40"
+			><Icon name="i-lucide-file-plus" class="size-3" /> New</button
+		>
+	</div>
 </div>
 {#if showUrlForm}
 	<form
