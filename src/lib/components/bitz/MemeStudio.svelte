@@ -630,6 +630,33 @@
 			group.id === id ? { ...group, ...patch } : group
 		);
 	}
+	function setDrawingVisibleFrom(seconds: number) {
+		const group = selectedDrawingGroup;
+		if (!group || !Number.isFinite(seconds)) return;
+		const ms = Math.round(Math.max(0, Math.min(seconds, timelineDurationSec || seconds)) * 1000);
+		patchDrawingGroup(group.id, {
+			startMs: ms,
+			visibleFromMs: ms,
+			...(group.visibleUntilMs !== undefined && group.visibleUntilMs < ms
+				? { visibleUntilMs: ms }
+				: {})
+		});
+	}
+	function setDrawingVisibleUntil(seconds: number | null) {
+		const group = selectedDrawingGroup;
+		if (!group) return;
+		if (seconds === null || !Number.isFinite(seconds)) {
+			patchDrawingGroup(group.id, { visibleUntilMs: undefined });
+			return;
+		}
+		const ms = Math.round(
+			Math.max(group.visibleFromMs, Math.min(seconds, timelineDurationSec || seconds)) * 1000
+		);
+		patchDrawingGroup(group.id, { visibleUntilMs: ms });
+	}
+	function placeDrawingAtPlayhead() {
+		setDrawingVisibleFrom(stageSeconds);
+	}
 	function removeDrawingGroup(id: string) {
 		snapshotDrawings();
 		const remaining = drawingGroups.filter((group) => group.id !== id);
@@ -3806,6 +3833,48 @@
 													>{playback}</button
 												>
 											{/each}
+										</div>
+										<div class="mt-2 grid grid-cols-[1fr_1fr_auto] items-end gap-1.5">
+											<label class="min-w-0 text-[10px] font-bold text-[var(--ui-text-muted)]"
+												>Appear
+												<input
+													type="number"
+													min="0"
+													max={timelineDurationSec || undefined}
+													step="0.1"
+													value={((selectedDrawingGroup?.visibleFromMs ?? 0) / 1000).toFixed(1)}
+													onchange={(event) =>
+														setDrawingVisibleFrom(
+															Number((event.currentTarget as HTMLInputElement).value)
+														)}
+													class="mt-0.5 w-full rounded bg-[var(--ui-bg)] px-1.5 py-1 text-[10px] text-[var(--ui-text)] outline-none"
+												/>
+											</label>
+											<label class="min-w-0 text-[10px] font-bold text-[var(--ui-text-muted)]"
+												>End
+												<input
+													type="number"
+													min={selectedDrawingGroup ? selectedDrawingGroup.visibleFromMs / 1000 : 0}
+													max={timelineDurationSec || undefined}
+													step="0.1"
+													placeholder="Always"
+													value={selectedDrawingGroup?.visibleUntilMs === undefined
+														? ''
+														: (selectedDrawingGroup.visibleUntilMs / 1000).toFixed(1)}
+													onchange={(event) => {
+														const value = (event.currentTarget as HTMLInputElement).value;
+														setDrawingVisibleUntil(value === '' ? null : Number(value));
+													}}
+													class="mt-0.5 w-full rounded bg-[var(--ui-bg)] px-1.5 py-1 text-[10px] text-[var(--ui-text)] outline-none"
+												/>
+											</label>
+											<button
+												type="button"
+												onclick={placeDrawingAtPlayhead}
+												title="Set drawing start to the current playhead"
+												class="rounded-full px-2 py-1 text-[10px] font-bold text-warm-600 hover:bg-warm-500/10"
+												>Use playhead</button
+											>
 										</div>
 									{/if}
 									<div class="mt-2 flex items-center gap-1">
