@@ -170,6 +170,12 @@ export function paintDrawingGroups(
 ): void {
 	for (const group of groups) {
 		if (!groupVisible(group, atMs)) continue;
+		if (
+			atMs !== undefined &&
+			(group.playback === 'replay' || group.playback === 'hold') &&
+			atMs < group.startMs
+		)
+			continue;
 		for (const stroke of group.strokes) {
 			const limit =
 				atMs === undefined || group.playback === 'static' || group.playback === 'hold'

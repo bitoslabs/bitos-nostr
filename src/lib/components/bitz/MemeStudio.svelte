@@ -130,6 +130,7 @@
 	import { makeSticker } from '$lib/meme/stickers';
 	import { fxTransformAt } from '$lib/meme/fx';
 	import {
+		MAX_DRAWING_GROUPS,
 		normalizeDrawingGroups,
 		paintDrawingGroups,
 		type DrawingGroup,
@@ -560,6 +561,10 @@
 	let drawingOpacity = $state(1);
 	let drawingUndo = $state<DrawingGroup[][]>([]);
 	let drawingRedo = $state<DrawingGroup[][]>([]);
+	let selectedDrawingGroupId = $state<string | null>(null);
+	const selectedDrawingGroup = $derived(
+		drawingGroups.find((group) => group.id === selectedDrawingGroupId) ?? drawingGroups[0] ?? null
+	);
 	function drawingId(): string {
 		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
 			? crypto.randomUUID()
@@ -575,26 +580,22 @@
 		return normalizeDrawingGroups(drawingGroups);
 	}
 	function addDrawingStroke(stroke: DrawingStroke) {
+		if (drawingGroups.length >= MAX_DRAWING_GROUPS) {
+			toasts.warning(`You can add up to ${MAX_DRAWING_GROUPS} drawing layers`);
+			return;
+		}
 		snapshotDrawings();
 		const atMs = Math.max(0, Math.round(stageSeconds * 1000));
-		const first = drawingGroups[0];
-		if (first && !first.locked) {
-			drawingGroups = [
-				{ ...first, strokes: [...first.strokes, stroke] },
-				...drawingGroups.slice(1)
-			];
-		} else {
-			drawingGroups = [
-				{
-					id: drawingId(),
-					label: 'Drawing 1',
-					playback: 'static',
-					startMs: atMs,
-					visibleFromMs: 0,
-					strokes: [stroke]
-				}
-			];
-		}
+		const group: DrawingGroup = {
+			id: drawingId(),
+			label: `Drawing ${drawingGroups.length + 1}`,
+			playback: 'static',
+			startMs: atMs,
+			visibleFromMs: 0,
+			strokes: [stroke]
+		};
+		drawingGroups = [...drawingGroups, group];
+		selectedDrawingGroupId = group.id;
 	}
 	function undoDrawing() {
 		const previous = drawingUndo[drawingUndo.length - 1];
@@ -614,12 +615,26 @@
 		if (!drawingGroups.length) return;
 		snapshotDrawings();
 		drawingGroups = [];
+		selectedDrawingGroupId = null;
 	}
 	function setDrawingPlayback(playback: DrawingGroup['playback']) {
-		const first = drawingGroups[0];
-		if (!first || first.playback === playback) return;
+		const group = selectedDrawingGroup;
+		if (!group || group.playback === playback) return;
 		snapshotDrawings();
-		drawingGroups = [{ ...first, playback }, ...drawingGroups.slice(1)];
+		drawingGroups = drawingGroups.map((item) =>
+			item.id === group.id ? { ...item, playback } : item
+		);
+	}
+	function patchDrawingGroup(id: string, patch: Partial<DrawingGroup>) {
+		drawingGroups = drawingGroups.map((group) =>
+			group.id === id ? { ...group, ...patch } : group
+		);
+	}
+	function removeDrawingGroup(id: string) {
+		snapshotDrawings();
+		const remaining = drawingGroups.filter((group) => group.id !== id);
+		drawingGroups = remaining;
+		selectedDrawingGroupId = remaining[0]?.id ?? null;
 	}
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
@@ -1626,6 +1641,7 @@
 		drawingGroups = [];
 		drawingUndo = [];
 		drawingRedo = [];
+		selectedDrawingGroupId = null;
 		for (const layer of imageLayers) layerAssets.release(layer.src);
 		imageLayers = [];
 		selectedLayerId = null;
@@ -1840,6 +1856,7 @@
 		drawingGroups = [];
 		drawingUndo = [];
 		drawingRedo = [];
+		selectedDrawingGroupId = null;
 		selectedId = null;
 		timingId = null;
 		fxId = null;
@@ -3065,6 +3082,7 @@
 				sfxCues = draftSfxCues(draft);
 				imageLayers = draftImageLayers(draft);
 				drawingGroups = draftDrawingGroups(draft);
+				selectedDrawingGroupId = drawingGroups[0]?.id ?? null;
 				for (const layer of imageLayers) {
 					void cacheLayerBitmap(layer.src);
 					void layerAssets.cacheGif(layer.src);
@@ -3709,6 +3727,69 @@
 										/></label
 									>
 									{#if drawingGroups.length}
+										<div class="mt-2 space-y-1">
+											{#each drawingGroups as group (group.id)}
+												<div
+													class="flex items-center gap-1 rounded-lg px-1.5 py-1 {selectedDrawingGroup?.id ===
+													group.id
+														? 'bg-warm-500/10'
+														: 'bg-[var(--ui-bg)]/50'}"
+												>
+													<button
+														type="button"
+														onclick={() => (selectedDrawingGroupId = group.id)}
+														class="min-w-0 flex-1 truncate text-left text-[10px] font-bold text-[var(--ui-text)]"
+														>{group.label}</button
+													>
+													<button
+														type="button"
+														onclick={() => patchDrawingGroup(group.id, { hidden: !group.hidden })}
+														aria-label={group.hidden
+															? `Show ${group.label}`
+															: `Hide ${group.label}`}
+														class="rounded p-0.5 text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]"
+														><Icon
+															name={group.hidden ? 'i-lucide-eye-off' : 'i-lucide-eye'}
+															class="size-3"
+														/></button
+													>
+													<button
+														type="button"
+														onclick={() => patchDrawingGroup(group.id, { locked: !group.locked })}
+														aria-label={group.locked
+															? `Unlock ${group.label}`
+															: `Lock ${group.label}`}
+														class="rounded p-0.5 text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]"
+														><Icon
+															name={group.locked ? 'i-lucide-lock' : 'i-lucide-lock-open'}
+															class="size-3"
+														/></button
+													>
+													<button
+														type="button"
+														onclick={() => removeDrawingGroup(group.id)}
+														aria-label={`Delete ${group.label}`}
+														class="rounded p-0.5 text-red-500 hover:bg-red-500/10"
+														><Icon name="i-lucide-trash-2" class="size-3" /></button
+													>
+												</div>
+											{/each}
+										</div>
+										<label
+											class="mt-2 flex items-center gap-2 text-[10px] font-bold text-[var(--ui-text-muted)]"
+											>Name <input
+												value={selectedDrawingGroup?.label ?? ''}
+												disabled={!selectedDrawingGroup}
+												oninput={(event) => {
+													const group = selectedDrawingGroup;
+													if (group)
+														patchDrawingGroup(group.id, {
+															label: (event.currentTarget as HTMLInputElement).value.slice(0, 40)
+														});
+												}}
+												class="min-w-0 flex-1 rounded bg-[var(--ui-bg)] px-1.5 py-1 text-[10px] text-[var(--ui-text)] outline-none"
+											/></label
+										>
 										<div class="mt-2 flex flex-wrap items-center gap-1">
 											<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
 												>Playback</span
@@ -3717,9 +3798,9 @@
 												<button
 													type="button"
 													onclick={() => setDrawingPlayback(playback as DrawingGroup['playback'])}
-													aria-pressed={drawingGroups[0]?.playback === playback}
-													class="rounded-full px-2 py-1 text-[10px] font-bold {drawingGroups[0]
-														?.playback === playback
+													aria-pressed={selectedDrawingGroup?.playback === playback}
+													class="rounded-full px-2 py-1 text-[10px] font-bold {selectedDrawingGroup?.playback ===
+													playback
 														? 'bg-warm-500/15 text-warm-600'
 														: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
 													>{playback}</button
