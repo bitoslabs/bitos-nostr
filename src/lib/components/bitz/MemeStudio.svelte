@@ -154,6 +154,11 @@
 	import { queryOnce, publish } from '$lib/nostr/pool';
 	import { signMined } from '$lib/auth/signer';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
+	import { fetchRemoteMedia } from '$lib/meme/remote-media';
+	import MemeStudioDropZone, {
+		type MemeMediaFormat,
+		type MemeMediaFormatOption
+	} from '$lib/components/bitz/MemeStudioDropZone.svelte';
 
 	/**
 	 * Meme Studio — create video/image memes and publish them as standard
@@ -580,7 +585,7 @@
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
 		try {
-			const res = await fetchMediaResponse(url, { proxy: false }); // videos can't ride wsrv
+			const res = await fetchRemoteMedia(url, { proxy: false }); // videos can't ride wsrv
 			if (!res) throw new Error('Could not fetch that media (CORS-blocked host)');
 			const mime = (res.headers.get('content-type') ?? '').split(';')[0] ?? '';
 			const isVideo = mime.startsWith('video/');
@@ -666,7 +671,7 @@
 		if (gifStageBusy) return false;
 		gifStageBusy = true;
 		try {
-			const res = await fetchMediaResponse(url);
+			const res = await fetchRemoteMedia(url);
 			if (!res) throw new Error(`Could not load that ${label} (CORS-blocked host)`);
 			const blob = await res.blob();
 			if (blob.size > MAX_MEDIA_BYTES) throw new Error('That GIF is over the 200 MB cap');
@@ -691,7 +696,7 @@
 		gifStageBusy = true;
 		popovers.close();
 		try {
-			const res = await fetchMediaResponse(url);
+			const res = await fetchRemoteMedia(url);
 			if (!res) throw new Error('Could not fetch that source (CORS-blocked host)');
 			const type = (res.headers.get('content-type') ?? '').split(';')[0]!;
 			if (!type.startsWith('image/') && !type.startsWith('video/')) {
@@ -1425,18 +1430,11 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let otherSourceInput = $state<HTMLInputElement | null>(null);
 	let confirmDiscard = $state(false);
-	let dragOver = $state(false);
 	// ---- format-first start (user request: “select type meme”) --------------------
 	/** Which meme format the creator picked — filters the media chooser so the
 	 *  file dialog opens pre-scoped (image / GIF / video). `all` = unfiltered. */
-	let pickFormat = $state<'all' | 'image' | 'gif' | 'video'>('all');
-	const PICK_FORMATS: {
-		id: 'image' | 'gif' | 'video';
-		label: string;
-		hint: string;
-		icon: string;
-		accept: string;
-	}[] = [
+	let pickFormat = $state<'all' | MemeMediaFormat>('all');
+	const PICK_FORMATS: (MemeMediaFormatOption & { accept: string })[] = [
 		{
 			id: 'image',
 			label: 'Image meme',
@@ -1460,7 +1458,7 @@
 		}
 	];
 	/** Pick media pre-scoped to a format: filters the chooser, then opens it. */
-	async function pickMediaAs(format: 'image' | 'gif' | 'video') {
+	async function pickMediaAs(format: MemeMediaFormat) {
 		pickFormat = format;
 		await tick(); // let the accept attribute update before the dialog opens
 		fileInput?.click();
@@ -1527,36 +1525,10 @@
 	let layerUrl = $state('');
 	let layerUrlBusy = $state(false);
 
-	/** fetch() with a wsrv.nl retry for CORS-hostile CDNs — resolves null
-	 *  when both the direct request and the proxy fail. CDNs that withhold
-	 *  CORS (betterttv and friends — the "blocked by CORS policy" adds) are
-	 *  unreadable to the browser any other way; wsrv.nl is an open-source
-	 *  image proxy that sends ACAO:*. It only serves images, so video/audio
-	 *  callers pass `proxy: false` and stay direct-or-fail. */
-	async function fetchMediaResponse(
-		url: string,
-		opts: { proxy?: boolean } = {}
-	): Promise<Response | null> {
-		const proxy = opts.proxy !== false;
-		const targets =
-			/^https:\/\/wsrv\.nl\//i.test(url) || !proxy
-				? [url]
-				: [url, `https://wsrv.nl/?url=${encodeURIComponent(url)}`];
-		for (const target of targets) {
-			try {
-				const res = await fetch(target, { mode: 'cors' });
-				if (res.ok) return res;
-			} catch {
-				/* try the proxy */
-			}
-		}
-		return null;
-	}
-
 	/** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
 	 *  failure — callers fall back to the plain URL path). */
 	async function fetchLayerBlob(url: string): Promise<Blob | null> {
-		const res = await fetchMediaResponse(url);
+		const res = await fetchRemoteMedia(url);
 		if (!res) return null;
 		const blob = await res.blob();
 		if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
@@ -2297,11 +2269,6 @@
 		input.value = '';
 	}
 
-	function onDrop(e: DragEvent) {
-		e.preventDefault();
-		acceptFile(e.dataTransfer?.files?.[0] ?? null);
-	}
-
 	function onVideoMetadata(e: Event) {
 		const video = e.currentTarget as HTMLVideoElement;
 		if (video.videoWidth) {
@@ -2351,7 +2318,7 @@
 	async function consumeRemixHandoff(handoff: RemixHandoff) {
 		try {
 			// wsrv.nl proxies images only — video remix sources stay direct-or-fail.
-			const res = await fetchMediaResponse(handoff.mediaUrl, {
+			const res = await fetchRemoteMedia(handoff.mediaUrl, {
 				proxy: handoff.mediaType !== 'video'
 			});
 			if (!res) throw new Error('CORS-blocked host');
@@ -4017,75 +3984,12 @@
 								</div>
 							</div>
 						{/if}
-						<div
-							role="button"
-							tabindex="0"
-							aria-label="Choose a picture or video for your meme"
-							class="group flex w-full max-w-sm cursor-pointer flex-col items-center gap-3 rounded-3xl border-2 border-dashed px-6 py-10 text-center transition {dragOver
-								? 'border-warm-500 bg-warm-500/10'
-								: 'border-[var(--ui-border-accented)] hover:border-warm-500/60 hover:bg-[var(--ui-bg-muted)]'}"
-							onclick={() => fileInput?.click()}
-							onkeydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									fileInput?.click();
-								}
-							}}
-							ondragover={(e) => {
-								e.preventDefault();
-								dragOver = true;
-							}}
-							ondragleave={() => (dragOver = false)}
-							ondrop={onDrop}
-						>
-							<span
-								class="grid size-16 place-items-center rounded-2xl bg-warm-500/12 text-warm-500 transition group-hover:scale-105"
-							>
-								<Icon name="i-lucide-image-plus" class="size-8" />
-							</span>
-							<div>
-								<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">
-									Drop a picture or video
-								</p>
-								<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-									Caption it, drag captions anywhere, export once — up to 200 MB.
-								</p>
-							</div>
-							<span
-								class="mt-1 inline-flex items-center gap-1.5 rounded-full bg-warm-500 px-4 py-2 text-[12.5px] font-bold text-white transition group-hover:brightness-110 active:scale-95"
-							>
-								<Icon name="i-lucide-upload" class="size-4" />
-								Choose media
-							</span>
-							<p class="flex items-center gap-1 text-[11px] text-[var(--ui-text-dimmed)]">
-								<Icon name="i-lucide-globe" class="size-3.5" />
-								Captions are burned in — renders in every Nostr app
-							</p>
-							<!-- Format-first start: pick the meme type — the chooser opens
-							     pre-scoped to that format (image / GIF / video). -->
-							<div class="flex w-full flex-wrap items-stretch justify-center gap-2">
-								{#each PICK_FORMATS as format (format.id)}
-									<button
-										type="button"
-										onclick={() => void pickMediaAs(format.id)}
-										class="group/fmt flex min-w-[104px] flex-1 flex-col items-center gap-1 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 px-3 py-2.5 transition hover:border-warm-500/50 hover:bg-warm-500/10 active:scale-95"
-										title={`Start a ${format.label} — opens the ${format.id.toUpperCase()} picker`}
-									>
-										<span
-											class="grid size-8 place-items-center rounded-xl bg-warm-500/12 text-warm-500 transition group-hover/fmt:scale-110"
-										>
-											<Icon name={format.icon} class="size-4.5" />
-										</span>
-										<span class="text-[11.5px] font-bold text-[var(--ui-text)]">
-											{format.label}
-										</span>
-										<span class="text-[9.5px] leading-tight text-[var(--ui-text-dimmed)]">
-											{format.hint}
-										</span>
-									</button>
-								{/each}
-							</div>
-						</div>
+						<MemeStudioDropZone
+							formats={PICK_FORMATS}
+							onChooseMedia={() => fileInput?.click()}
+							onChooseFormat={pickMediaAs}
+							onDropFile={acceptFile}
+						/>
 						<div class="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-1.5">
 							<Popover
 								id={gifPickerMenuId}
