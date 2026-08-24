@@ -293,6 +293,12 @@
 		return `--video-cover-opacity: ${opacity};`;
 	}
 
+	function singleVideoStyle() {
+		// Keep the post-player stage consistently sized; the contained video still
+		// preserves its source proportions within this 500px default surface.
+		return 'width: 100%; height: 500px;';
+	}
+
 	function compactSats(count: number) {
 		if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
 		if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}K`;
@@ -921,8 +927,7 @@
 						<span>·</span>
 						<span
 							class="shrink-0 text-primary-500"
-							title="In your feed because you follow this hashtag"
-							>{followedTagLabel}</span
+							title="In your feed because you follow this hashtag">{followedTagLabel}</span
 						>
 					{/if}
 				</p>
@@ -1206,7 +1211,10 @@
 							</button>
 						{/if}
 					{:else if media.type === 'video'}
-						<div class="{tileClass} relative overflow-hidden bg-black">
+						<div
+							class="{tileClass} relative overflow-hidden bg-black"
+							style={singleVideoMedia ? singleVideoStyle() : undefined}
+						>
 							{#if singleVideoMedia && inlineVideoActive && !shouldHideVideo(media.url)}
 								<!-- Single-video note: the full player lives inline in the card
 									(X-style). Mounted on first tap so the feed stays light to scan. -->
@@ -1217,7 +1225,7 @@
 									variant="reel"
 									autoplay
 									class="absolute inset-0"
-									mediaClass="size-full object-cover"
+									mediaClass="size-full object-contain"
 									onMediaElement={(node) => {
 										const registration = trackFeedVideo(node as HTMLVideoElement);
 										return () => registration.destroy();
@@ -1242,7 +1250,9 @@
 									muted
 									playsinline
 									preload="metadata"
-									class="size-full object-cover transition {!shouldHideVideo(media.url)
+									class="size-full {singleVideoMedia
+										? 'object-contain'
+										: 'object-cover'} transition {!shouldHideVideo(media.url)
 										? ''
 										: 'scale-105 blur-2xl saturate-50'}"
 								></video>
@@ -1792,7 +1802,7 @@
 					label={`Video from ${selectedViewerMedia.host}`}
 					fallbackSrcs={selectedViewerMedia.fallbacks}
 					class="relative mx-auto w-full max-w-5xl"
-					mediaClass="mx-auto max-h-[76vh] w-full bg-black object-contain"
+					mediaClass="mx-auto max-h-[76vh] max-w-full bg-black object-contain"
 					overlayControls
 					onMediaElement={(node) => {
 						const registration = trackFeedVideo(node as HTMLVideoElement);

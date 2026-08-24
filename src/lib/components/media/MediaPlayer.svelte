@@ -225,6 +225,9 @@
 
 	async function toggleFullscreen() {
 		if (!media || kind !== 'video') return;
+		const video = media as HTMLVideoElement & {
+			webkitEnterFullscreen?: () => void;
+		};
 		try {
 			if (document.fullscreenElement) {
 				await document.exitFullscreen();
@@ -233,7 +236,18 @@
 			// Reels retain their whole card. Elsewhere fullscreen the shared player
 			// shell, keeping our BitOS control overlay visible with the video.
 			const stage = media.closest('.reel-card') ?? player ?? media;
-			await stage.requestFullscreen();
+			if (typeof stage.requestFullscreen === 'function') {
+				await stage.requestFullscreen();
+				return;
+			}
+		} catch {
+			// Some WebKit builds expose the standard method but reject it for video.
+		}
+
+		// iOS Safari uses the video-specific WebKit fullscreen API instead of
+		// Element.requestFullscreen(). It must run directly from the button tap.
+		try {
+			video.webkitEnterFullscreen?.();
 		} catch {
 			// Fullscreen is optional and can be disabled by an embedded browser.
 		}
@@ -635,7 +649,11 @@
 		background: #000;
 	}
 	.media-player:fullscreen video {
+		width: auto !important;
+		height: auto !important;
+		max-width: 100vw !important;
 		max-height: 100vh !important;
+		object-fit: contain !important;
 	}
 	.media-player audio {
 		display: block;
