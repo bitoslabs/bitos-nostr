@@ -20,6 +20,7 @@ import {
 	type MemeTextOverlay
 } from '$lib/meme/schema';
 import { normalizeImageOverlay, type MemeImageOverlay } from '$lib/meme/image-overlay';
+import { normalizeDrawingGroups, type DrawingGroup } from '$lib/meme/drawing';
 
 export type MemeDraftOverlay = MemeTextOverlay;
 
@@ -48,6 +49,8 @@ export interface MemeDraftData {
 	/** Timeline state — optional for recovery of older drafts. */
 	sfxCues?: unknown[];
 	imageLayers?: unknown[];
+	/** Editable vector strokes, stored separately from the source media. */
+	drawingGroups?: unknown[];
 	trimStartSec?: number;
 	trimEndSec?: number | null;
 	playbackRate?: number;
@@ -74,6 +77,7 @@ export function readMemeDraft(): MemeDraftData | null {
 			(Array.isArray(parsed.overlays) && parsed.overlays.length > 0) ||
 			(Array.isArray(parsed.sfxCues) && parsed.sfxCues.length > 0) ||
 			(Array.isArray(parsed.imageLayers) && parsed.imageLayers.length > 0) ||
+			(Array.isArray(parsed.drawingGroups) && parsed.drawingGroups.length > 0) ||
 			parsed.caption.trim().length > 0;
 		if (!hasWork) return null;
 		return parsed;
@@ -167,6 +171,11 @@ export function draftImageLayers(draft: MemeDraftData): MemeImageOverlay[] {
 	return (Array.isArray(draft.imageLayers) ? draft.imageLayers : [])
 		.map(normalizeImageOverlay)
 		.filter((layer): layer is MemeImageOverlay => layer !== null);
+}
+
+/** Rehydrate drawing data through the capped, tolerant drawing schema. */
+export function draftDrawingGroups(draft: MemeDraftData): DrawingGroup[] {
+	return normalizeDrawingGroups(draft.drawingGroups);
 }
 
 /** Restore the source media as a File (null when the draft skipped it). */

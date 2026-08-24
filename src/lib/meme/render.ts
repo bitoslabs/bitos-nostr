@@ -12,6 +12,7 @@ import { overlayVisibleAt, type MemeFont, type MemeTextOverlay } from './schema'
 import { imageOverlayVisibleAt, type MemeImageOverlay } from './image-overlay';
 import { memeLookCss } from './look';
 import { fxTransformAt } from './fx';
+import { paintDrawingGroups, type DrawingGroup } from './drawing';
 
 /** Paints an animated layer frame into (x,y) — one scratch canvas per use. */
 export type AnimatedLayerPainter = (
@@ -29,6 +30,8 @@ const FONT_STACKS: Record<MemeFont, string> = {
 };
 
 export interface RenderOptions {
+	/** Editable vector drawing groups painted above image layers, below captions. */
+	drawingGroups?: DrawingGroup[];
 	/** Raster image layers painted after the media, under the captions. */
 	imageLayers?: MemeImageOverlay[];
 	/** Cached decoded bitmaps per src — see paintImageOverlays. */
@@ -420,6 +423,7 @@ export async function renderImageMeme(
 			canvas
 		);
 	}
+	if (options.drawingGroups?.length) paintDrawingGroups(ctx, options.drawingGroups, canvas);
 	paintAll(ctx, overlays, canvas);
 	const blob = await new Promise<Blob | null>((resolve) =>
 		canvas.toBlob(resolve, 'image/jpeg', options.quality ?? 0.9)
@@ -617,6 +621,8 @@ export async function renderVideoMeme(
 				options.animPainters ?? undefined
 			);
 		}
+		if (options.drawingGroups?.length)
+			paintDrawingGroups(ctx, options.drawingGroups, canvas, source.currentTime * 1000);
 		paintAll(ctx, overlays, canvas, source.currentTime * 1000);
 		if (options.onProgress && endSec !== Infinity && endSec > startSec) {
 			options.onProgress({

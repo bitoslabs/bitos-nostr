@@ -45,6 +45,7 @@
 	import type { MemeSuggestion } from '$lib/ai/suggest';
 	import {
 		createMemeDraftWriter,
+		draftDrawingGroups,
 		draftImageLayers,
 		draftMediaFile,
 		draftOverlays,
@@ -128,6 +129,13 @@
 	import { splitsTagsFor, validateSplits, type SplitRow } from '$lib/meme/splits';
 	import { makeSticker } from '$lib/meme/stickers';
 	import { fxTransformAt } from '$lib/meme/fx';
+	import {
+		normalizeDrawingGroups,
+		paintDrawingGroups,
+		type DrawingGroup,
+		type DrawingStroke,
+		type DrawingTool
+	} from '$lib/meme/drawing';
 	import MemeTimeline from '$lib/components/bitz/MemeTimeline.svelte';
 	import { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
@@ -146,6 +154,7 @@
 	import MemeInspectorPanel from '$lib/components/bitz/MemeInspectorPanel.svelte';
 	import MemeExpertClipPanel from '$lib/components/bitz/MemeExpertClipPanel.svelte';
 	import MemeStageMediaControls from '$lib/components/bitz/MemeStageMediaControls.svelte';
+	import MemeDrawingSurface from '$lib/components/bitz/MemeDrawingSurface.svelte';
 	import MemeTimelineQuickActions from '$lib/components/bitz/MemeTimelineQuickActions.svelte';
 	import MemeTimelineImagePicker from '$lib/components/bitz/MemeTimelineImagePicker.svelte';
 	import MemeImageLayerTools from '$lib/components/bitz/MemeImageLayerTools.svelte';
@@ -542,6 +551,76 @@
 	let overlays = $state<MemeTextOverlay[]>([]);
 	let selectedId = $state<string | null>(null);
 	let selectedCueId = $state<string | null>(null);
+	// ---- Draw & Record MVP (DRW-1) -------------------------------------------
+	let drawingGroups = $state<DrawingGroup[]>([]);
+	let drawActive = $state(false);
+	let drawingTool = $state<DrawingTool>('pen');
+	let drawingColor = $state('#ffffff');
+	let drawingWidth = $state(0.012);
+	let drawingOpacity = $state(1);
+	let drawingUndo = $state<DrawingGroup[][]>([]);
+	let drawingRedo = $state<DrawingGroup[][]>([]);
+	function drawingId(): string {
+		return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+			? crypto.randomUUID()
+			: `drawing-${Date.now().toString(36)}`;
+	}
+	function snapshotDrawings() {
+		// `$state` arrays are Svelte proxies, which `structuredClone` deliberately
+		// rejects. Normalizing also gives undo/redo the same safe caps as drafts.
+		drawingUndo = [...drawingUndo.slice(-24), normalizeDrawingGroups(drawingGroups)];
+		drawingRedo = [];
+	}
+	function copyDrawings(): DrawingGroup[] {
+		return normalizeDrawingGroups(drawingGroups);
+	}
+	function addDrawingStroke(stroke: DrawingStroke) {
+		snapshotDrawings();
+		const atMs = Math.max(0, Math.round(stageSeconds * 1000));
+		const first = drawingGroups[0];
+		if (first && !first.locked) {
+			drawingGroups = [
+				{ ...first, strokes: [...first.strokes, stroke] },
+				...drawingGroups.slice(1)
+			];
+		} else {
+			drawingGroups = [
+				{
+					id: drawingId(),
+					label: 'Drawing 1',
+					playback: 'static',
+					startMs: atMs,
+					visibleFromMs: 0,
+					strokes: [stroke]
+				}
+			];
+		}
+	}
+	function undoDrawing() {
+		const previous = drawingUndo[drawingUndo.length - 1];
+		if (!previous) return;
+		drawingRedo = [...drawingRedo, copyDrawings()];
+		drawingGroups = previous;
+		drawingUndo = drawingUndo.slice(0, -1);
+	}
+	function redoDrawing() {
+		const next = drawingRedo[drawingRedo.length - 1];
+		if (!next) return;
+		drawingUndo = [...drawingUndo, copyDrawings()];
+		drawingGroups = next;
+		drawingRedo = drawingRedo.slice(0, -1);
+	}
+	function clearDrawings() {
+		if (!drawingGroups.length) return;
+		snapshotDrawings();
+		drawingGroups = [];
+	}
+	function setDrawingPlayback(playback: DrawingGroup['playback']) {
+		const first = drawingGroups[0];
+		if (!first || first.playback === playback) return;
+		snapshotDrawings();
+		drawingGroups = [{ ...first, playback }, ...drawingGroups.slice(1)];
+	}
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
 
@@ -1426,7 +1505,9 @@
 
 	const me = $derived(identity.current);
 	const busy = $derived(phase !== 'idle');
-	const dirty = $derived(!!file || overlays.some((o) => o.text.trim()) || !!caption.trim());
+	const dirty = $derived(
+		!!file || overlays.some((o) => o.text.trim()) || !!caption.trim() || drawingGroups.length > 0
+	);
 	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
 	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
@@ -1542,6 +1623,9 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
+		drawingGroups = [];
+		drawingUndo = [];
+		drawingRedo = [];
 		for (const layer of imageLayers) layerAssets.release(layer.src);
 		imageLayers = [];
 		selectedLayerId = null;
@@ -1753,6 +1837,9 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
+		drawingGroups = [];
+		drawingUndo = [];
+		drawingRedo = [];
 		selectedId = null;
 		timingId = null;
 		fxId = null;
@@ -2220,6 +2307,15 @@
 	 *  options let creators ship the SAME composition as a still, a true
 	 *  looping .gif, or a video regardless of the source type. */
 	let exportFormat = $state<MemeExportFormat>('auto');
+	/** Human-readable *actual* output. Auto follows the same rules as exportMeme. */
+	const outputFormatLabel = $derived.by(() => {
+		if (exportFormat === 'image') return 'Image';
+		if (exportFormat === 'gif') return 'GIF';
+		if (exportFormat === 'video') return 'Video';
+		if (gif) return 'GIF';
+		if (mediaKind === 'image') return sfxCues.length ? 'Video' : 'Image';
+		return 'Video';
+	});
 
 	/** JPEG still of the current frame — works from ANY source (video draws
 	 *  the element's current frame; GIF paints the playhead frame). */
@@ -2253,6 +2349,7 @@
 			undefined,
 			layerAssets.painterFor
 		);
+		paintDrawingGroups(ctx, drawingGroups, a);
 		paintAll(ctx, overlays, a);
 		const blob = await new Promise<Blob | null>((res) => a.toBlob(res, 'image/jpeg', 0.92));
 		if (!blob) throw new Error('Could not encode the still');
@@ -2325,6 +2422,7 @@
 				t * 1000,
 				layerAssets.painterFor
 			);
+			paintDrawingGroups(ctx, drawingGroups, a, t * 1000);
 			paintAll(ctx, overlays, a, t * 1000);
 			frames.push({ source: await createImageBitmap(a), delayMs: step.delayMs });
 		}
@@ -2438,6 +2536,7 @@
 			sourceAudioGain,
 			lookCss,
 			imageLayers,
+			drawingGroups,
 			bitmaps: layerAssets.bitmaps,
 			animPainters: layerAssets.painterFor,
 			target: renderTarget,
@@ -2510,6 +2609,7 @@
 					elapsedMs,
 					layerAssets.painterFor
 				);
+				paintDrawingGroups(ctx, drawingGroups, a, elapsedMs);
 				paintAll(ctx, overlays, a, elapsedMs);
 			},
 			onProgress: (percent) => {
@@ -2570,6 +2670,7 @@
 					elapsedMs,
 					layerAssets.painterFor
 				);
+				paintDrawingGroups(ctx, drawingGroups, a, elapsedMs);
 				paintAll(ctx, overlays, a, elapsedMs);
 			},
 			onProgress: (percent) => {
@@ -2963,6 +3064,7 @@
 				overlays = draftOverlays(draft);
 				sfxCues = draftSfxCues(draft);
 				imageLayers = draftImageLayers(draft);
+				drawingGroups = draftDrawingGroups(draft);
 				for (const layer of imageLayers) {
 					void cacheLayerBitmap(layer.src);
 					void layerAssets.cacheGif(layer.src);
@@ -2987,6 +3089,7 @@
 					restored ||
 					overlays.length > 0 ||
 					imageLayers.length > 0 ||
+					drawingGroups.length > 0 ||
 					sfxCues.length > 0 ||
 					caption.trim()
 				) {
@@ -3012,6 +3115,7 @@
 		void selectedId;
 		void sfxCues;
 		void imageLayers;
+		void drawingGroups;
 		void trimStartSec;
 		void trimEndSec;
 		void playbackRate;
@@ -3027,6 +3131,7 @@
 			overlays,
 			sfxCues,
 			imageLayers,
+			drawingGroups,
 			trimStartSec,
 			trimEndSec,
 			playbackRate,
@@ -3051,6 +3156,7 @@
 					destination: snapshot.destination,
 					selectedId: snapshot.selectedId,
 					lookId: snapshot.lookId,
+					drawingGroups: snapshot.drawingGroups,
 					...(snapshot.framing.scale !== 1 || snapshot.framing.x !== 0 || snapshot.framing.y !== 0
 						? { mediaTransform: snapshot.framing }
 						: {})
@@ -3242,6 +3348,16 @@
 												onload={onImageLoad}
 											/>
 										{/if}
+										<MemeDrawingSurface
+											active={drawActive && !busy}
+											groups={drawingGroups}
+											tool={drawingTool}
+											color={drawingColor}
+											width={drawingWidth}
+											opacity={drawingOpacity}
+											atMs={Math.round(stageSeconds * 1000)}
+											onAddStroke={addDrawingStroke}
+										/>
 
 										<!-- Live draggable overlay previews (video overlays honor
 							     their timing windows via the stage clock above). -->
@@ -3540,6 +3656,100 @@
 								{removeSlot}
 								{saveCurrentSlot}
 							/>
+							<div
+								class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3 py-2.5"
+							>
+								<div class="flex items-center justify-between gap-2">
+									<span
+										class="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+										><Icon name="i-lucide-pencil-line" class="size-3.5" /> Draw</span
+									>
+									<button
+										type="button"
+										disabled={busy}
+										onclick={() => (drawActive = !drawActive)}
+										aria-pressed={drawActive}
+										class="rounded-full px-2.5 py-1 text-[10.5px] font-bold transition {drawActive
+											? 'bg-warm-500 text-white'
+											: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+										>{drawActive ? 'Drawing on' : 'Draw'}</button
+									>
+								</div>
+								{#if drawActive}
+									<div class="mt-2 flex flex-wrap items-center gap-1">
+										{#each ['pen', 'marker', 'eraser'] as tool}
+											<button
+												type="button"
+												onclick={() => (drawingTool = tool as DrawingTool)}
+												aria-pressed={drawingTool === tool}
+												class="rounded-full px-2 py-1 text-[10px] font-bold {drawingTool === tool
+													? 'bg-warm-500/15 text-warm-600'
+													: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
+												>{tool}</button
+											>
+										{/each}
+										<input
+											type="color"
+											bind:value={drawingColor}
+											aria-label="Drawing color"
+											class="ml-1 size-6 cursor-pointer rounded border-0 bg-transparent p-0"
+										/>
+									</div>
+									<label
+										class="mt-2 flex items-center gap-2 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
+										>Size <input
+											type="range"
+											min="0.3"
+											max="6"
+											step="0.1"
+											value={drawingWidth * 100}
+											oninput={(e) =>
+												(drawingWidth = Number((e.currentTarget as HTMLInputElement).value) / 100)}
+											class="h-1 flex-1 accent-warm-500"
+										/></label
+									>
+									{#if drawingGroups.length}
+										<div class="mt-2 flex flex-wrap items-center gap-1">
+											<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
+												>Playback</span
+											>
+											{#each ['static', 'replay', 'hold'] as playback}
+												<button
+													type="button"
+													onclick={() => setDrawingPlayback(playback as DrawingGroup['playback'])}
+													aria-pressed={drawingGroups[0]?.playback === playback}
+													class="rounded-full px-2 py-1 text-[10px] font-bold {drawingGroups[0]
+														?.playback === playback
+														? 'bg-warm-500/15 text-warm-600'
+														: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]'}"
+													>{playback}</button
+												>
+											{/each}
+										</div>
+									{/if}
+									<div class="mt-2 flex items-center gap-1">
+										<button
+											type="button"
+											disabled={!drawingUndo.length}
+											onclick={undoDrawing}
+											class="rounded-full px-2 py-1 text-[10px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)] disabled:opacity-30"
+											>Undo</button
+										><button
+											type="button"
+											disabled={!drawingRedo.length}
+											onclick={redoDrawing}
+											class="rounded-full px-2 py-1 text-[10px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)] disabled:opacity-30"
+											>Redo</button
+										><button
+											type="button"
+											disabled={!drawingGroups.length}
+											onclick={clearDrawings}
+											class="rounded-full px-2 py-1 text-[10px] font-bold text-red-500 hover:bg-red-500/10 disabled:opacity-30"
+											>Clear</button
+										>
+									</div>
+								{/if}
+							</div>
 							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
 							     they ride the same schema/wire format as captions. Nostr picks
 							     (kind-30030 custom emojis) are PICTURES → image layers. -->
@@ -3759,6 +3969,7 @@
 					{progressLabel}
 					{destination}
 					{exportFormat}
+					{outputFormatLabel}
 					videoExportSupported={canRenderVideoMeme()}
 					onFormat={(format) => (exportFormat = format)}
 					onCancel={requestClose}

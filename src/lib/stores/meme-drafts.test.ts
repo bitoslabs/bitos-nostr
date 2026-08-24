@@ -9,6 +9,7 @@ import {
 	MEME_DRAFT_KEY,
 	MEME_DRAFT_VERSION,
 	createMemeDraftWriter,
+	draftDrawingGroups,
 	draftOverlays,
 	draftMediaFile,
 	mediaToDraftDataUrl,
@@ -102,6 +103,43 @@ describe('readMemeDraft', () => {
 		const restored = draftOverlays(readMemeDraft()!);
 		expect(restored).toHaveLength(1);
 		expect(restored[0].text).toBe('ok');
+	});
+
+	it('restores valid drawing strokes and drops corrupted rows', () => {
+		const draft = {
+			version: MEME_DRAFT_VERSION,
+			savedAt: 1,
+			media: null,
+			overlays: [],
+			drawingGroups: [
+				{
+					id: 'drawing-1',
+					label: 'Ink',
+					playback: 'static',
+					startMs: 0,
+					visibleFromMs: 0,
+					strokes: [
+						{
+							id: 'stroke-1',
+							tool: 'pen',
+							color: '#ffffff',
+							width: 0.01,
+							opacity: 1,
+							points: [{ x: 0.1, y: 0.2, atMs: 0 }]
+						}
+					]
+				},
+				{ strokes: [{ nonsense: true }] }
+			],
+			caption: '',
+			sensitive: false,
+			destination: 'bitz' as const,
+			selectedId: null
+		};
+		memory.set(MEME_DRAFT_KEY, JSON.stringify(draft));
+		const restored = draftDrawingGroups(readMemeDraft()!);
+		expect(restored).toHaveLength(1);
+		expect(restored[0].strokes[0].points).toHaveLength(1);
 	});
 });
 

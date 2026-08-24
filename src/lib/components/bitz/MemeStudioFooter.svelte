@@ -14,6 +14,7 @@
 		progressLabel,
 		destination,
 		exportFormat,
+		outputFormatLabel,
 		videoExportSupported,
 		onFormat,
 		onCancel,
@@ -31,12 +32,22 @@
 		progressLabel: string;
 		destination: 'bitz' | 'story' | 'note';
 		exportFormat: MemeExportFormat;
+		outputFormatLabel: 'Image' | 'GIF' | 'Video';
 		videoExportSupported: boolean;
 		onFormat: (format: MemeExportFormat) => void;
 		onCancel: () => void;
 		onExport: () => void;
 		onPublish: () => void;
 	} = $props();
+
+	const exportActionLabel = $derived(`Export ${outputFormatLabel}`);
+	const publishActionLabel = $derived(
+		destination === 'story'
+			? `Post ${outputFormatLabel} story`
+			: destination === 'note'
+				? `Post ${outputFormatLabel} note`
+				: `Publish ${outputFormatLabel} meme`
+	);
 </script>
 
 <footer
@@ -90,28 +101,25 @@
 			type="button"
 			onclick={onExport}
 			disabled={!mediaLoaded || busy}
-			title="Render and download the meme as a file — same output as publishing"
-			class="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-warm-500/50 hover:bg-warm-500/10 hover:text-warm-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+			title={`Render and download as ${outputFormatLabel} — same output as publishing`}
+			class="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] px-3 text-[13px] font-bold whitespace-nowrap text-[var(--ui-text)] transition hover:border-warm-500/50 hover:bg-warm-500/10 hover:text-warm-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40 sm:px-4"
 		>
 			<Icon name="i-lucide-download" class="size-4" />
-			<span class="hidden sm:inline">Export</span>
+			<span>{exportActionLabel}</span>
 		</button>
 		<button
 			type="button"
 			onclick={onPublish}
 			disabled={!canPost || busy}
-			class="inline-flex h-9 items-center gap-2 rounded-full bg-warm-500 px-5 text-[13px] font-bold text-white transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+			title={publishActionLabel}
+			class="inline-flex h-9 items-center gap-2 rounded-full bg-warm-500 px-3 text-[13px] font-bold whitespace-nowrap text-white transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40 sm:px-5"
 		>
 			{#if busy}
 				<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
 				{progressLabel || 'Working…'}
 			{:else}
 				<Icon name="i-lucide-send" class="size-4" />
-				{destination === 'story'
-					? 'Post story'
-					: destination === 'note'
-						? 'Post note'
-						: 'Publish meme'}
+				{publishActionLabel}
 			{/if}
 		</button>
 	</div>
