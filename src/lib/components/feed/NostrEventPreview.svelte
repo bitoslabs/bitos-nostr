@@ -6,6 +6,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { queryPrimaryFirst } from '$lib/nostr/pool';
+	import type { Event } from '$lib/nostr/types';
 	import {
 		originNotes,
 		originNoteStates,
@@ -26,6 +28,21 @@
 	}: { value?: string; eventId?: string; compact?: boolean; inline?: boolean } = $props();
 	const reference = $derived(eventId ?? value ?? '');
 	const raw = $derived(stripNostrPrefix(reference));
+	type AddressReference = { kind: number; pubkey: string; identifier: string };
+	const address = $derived.by(() => {
+		try {
+			const data = decode(raw);
+			return data.type === 'naddr' ? (data.data as AddressReference) : undefined;
+		} catch {
+			return undefined;
+		}
+	});
+	const addressKey = $derived(
+		address ? `${address.kind}:${address.pubkey}:${address.identifier}` : ''
+	);
+	let addressEvent = $state<Event | undefined>(undefined);
+	let addressEventKey = $state('');
+	let loadedAddressKey = $state('');
 	/** NIP-29 group address (kind 39000) → render a Community invite card. */
 	const communityId = $derived.by(() => {
 		try {
@@ -52,11 +69,42 @@
 	});
 	// All embeds use the shared request queue. A feed containing many `nevent`
 	// references is therefore hydrated in batches, rather than one relay call per card.
-	const event = $derived(originNotes[noteId ?? '']);
-	const state = $derived(originNoteStates[noteId ?? '']);
-	const loading = $derived(!!noteId && !event && state !== 'missing');
+	const event = $derived(
+		originNotes[noteId ?? ''] ?? (addressEventKey === addressKey ? addressEvent : undefined)
+	);
+	const originState = $derived(originNoteStates[noteId ?? '']);
+	const loading = $derived(
+		(!!noteId && !event && originState !== 'missing') ||
+			(!!address && !event && loadedAddressKey !== addressKey)
+	);
 	$effect(() => {
 		if (browser && !communityId && noteId) requestOriginNotes([noteId]);
+		if (!browser || communityId || !address || loadedAddressKey === addressKey) return;
+		loadedAddressKey = addressKey;
+		addressEvent = undefined;
+		addressEventKey = '';
+		const requestKey = addressKey;
+		const applyAddressEvent = (events: Event[]) => {
+			if (requestKey !== addressKey) return;
+			addressEvent = events[0];
+			addressEventKey = requestKey;
+		};
+		void queryPrimaryFirst(
+			[
+				{
+					kinds: [address.kind],
+					authors: [address.pubkey],
+					'#d': [address.identifier],
+					limit: 1
+				}
+			],
+			{
+				onPrimary: applyAddressEvent,
+				onSecondary: applyAddressEvent
+			}
+		).then(applyAddressEvent);
+	});
+	$effect(() => {
 		if (event) profiles.ensure([event.pubkey, ...extractMentionEntities(event.content).pubkeys]);
 	});
 
@@ -102,7 +150,7 @@
 				: '/'
 	);
 	const noteHref = $derived(
-		`/note/${event?.id ?? noteId}?returnTo=${encodeURIComponent(returnTo)}`
+		`/note/${event?.id ?? noteId ?? raw}?returnTo=${encodeURIComponent(returnTo)}`
 	);
 </script>
 
@@ -178,7 +226,9 @@
 	</section>
 {:else}
 	<a
-		href={noteId ? `/note/${noteId}?returnTo=${encodeURIComponent(returnTo)}` : reference}
+		href={noteId || address
+			? `/note/${noteId ?? raw}?returnTo=${encodeURIComponent(returnTo)}`
+			: reference}
 		class="my-1 inline-flex items-center gap-1 text-[12px] font-semibold text-accent-500 hover:underline"
 		><Icon name="i-lucide-file-question" class="size-3.5" />Referenced note unavailable</a
 	>

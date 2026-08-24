@@ -10,8 +10,11 @@ import {
 	setCueAt,
 	sortCues,
 	synthEntries,
+	SFX_DURATIONS,
+	SFX_LABELS,
 	type SoundEntry
 } from '$lib/meme/sound-catalog';
+import { SFX_RECIPES } from '$lib/meme/sfx';
 
 const labels = Object.fromEntries(MEME_SFX_IDS.map((id, i) => [id, `Sound ${i}`])) as Record<
 	MemeSfxId,
@@ -108,5 +111,31 @@ describe('sound catalog', () => {
 		const sorted = sortCues(cues);
 		expect(sorted.map((c) => c.id)).toEqual(['b', 'a']);
 		expect(cues[0]?.id).toBe('a');
+	});
+});
+
+describe('SFX_LABELS / SFX_DURATIONS (single source)', () => {
+	it('labels every synth id with human copy', () => {
+		for (const id of MEME_SFX_IDS) {
+			expect(SFX_LABELS[id]).toBeTruthy();
+			expect(SFX_LABELS[id]).not.toBe(id);
+		}
+	});
+
+	it('durations match the recipe table exactly', () => {
+		for (const id of MEME_SFX_IDS) {
+			expect(SFX_DURATIONS[id]).toBe(SFX_RECIPES[id].duration);
+		}
+	});
+
+	it('resolve a synth cue via the canonical maps', () => {
+		const entry = entryForCue(
+			cue({ sfx: 'boom' }),
+			SFX_LABELS,
+			SFX_DURATIONS,
+			() => undefined,
+			() => undefined
+		);
+		expect(entry).toMatchObject({ id: 'synth:boom', label: 'Boom' });
 	});
 });

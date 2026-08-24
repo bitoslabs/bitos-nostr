@@ -8,6 +8,7 @@
  */
 
 import { CUSTOM_SOUND_KEY, MEME_SFX_IDS, type MemeSfxCue, type MemeSfxId } from '$lib/meme/schema';
+import { SFX_RECIPES } from '$lib/meme/sfx';
 
 export type SoundSource = 'synth' | 'library' | 'shared';
 
@@ -29,6 +30,24 @@ export interface SoundGroup {
 	label: string;
 	entries: SoundEntry[];
 }
+
+/** Human labels for the synth soundboard (display copy, single source). */
+export const SFX_LABELS: Record<MemeSfxId, string> = {
+	boom: 'Boom',
+	bruh: 'Bruh',
+	laugh: 'Laugh',
+	whoosh: 'Whoosh',
+	pop: 'Pop',
+	boing: 'Boing',
+	drumroll: 'Drumroll',
+	ding: 'Ding',
+	'sad-trombone': 'Sad trombone'
+};
+
+/** Playback length per synth recipe in seconds (single source). */
+export const SFX_DURATIONS: Record<MemeSfxId, number> = Object.fromEntries(
+	MEME_SFX_IDS.map((id) => [id, SFX_RECIPES[id].duration])
+) as Record<MemeSfxId, number>;
 
 /** Build the synth group from recipe ids + label/duration maps. */
 export function synthEntries(

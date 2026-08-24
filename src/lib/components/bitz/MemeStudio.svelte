@@ -34,10 +34,20 @@
 	import { humanBytes } from '$lib/media/uploaders';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
+	import { soundIO } from '$lib/stores/meme-sound-io.svelte';
+	import { sharedSoundsStore } from '$lib/stores/meme-shared-sounds.svelte';
+	import { fetchSourceFile, MAX_SOURCE_BYTES } from '$lib/meme/source-fetch';
 	import { memeTemplates } from '$lib/stores/meme-templates.svelte';
 	import { aiAssistedTag } from '$lib/meme/ai-provenance';
-	import { analyzeClip, windowRms } from '$lib/ai/extract';
-	import { suggestTimelines, type MemeSuggestion } from '$lib/ai/suggest';
+	import {
+		sourceMonoPcm,
+		cueTrackMonoPcm as cueTrackMonoPcmModule,
+		libraryDecodeSound,
+		buildSuggestionAudio,
+		type MonoPcm,
+		type MemeClipAnalysis
+	} from '$lib/meme/suggestion-audio';
+	import type { MemeSuggestion } from '$lib/ai/suggest';
 	import {
 		createMemeDraftWriter,
 		draftImageLayers,
@@ -92,7 +102,8 @@
 		type MemeSfxId,
 		normalizeSfxCue
 	} from '$lib/meme/schema';
-	import { createSfxAudioTrack, SFX_RECIPES, monoNormalize } from '$lib/meme/sfx';
+	import { createSfxAudioTrack, SFX_RECIPES } from '$lib/meme/sfx';
+	import { SFX_LABELS as sfxLabels, SFX_DURATIONS as sfxDurations } from '$lib/meme/sound-catalog';
 	import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
 	import {
 		clipsDuration,
@@ -103,7 +114,6 @@
 		splitClipAt,
 		type VideoClip
 	} from '$lib/meme/video-clips';
-	import { buildCueMixBuffer } from '$lib/meme/cue-mix';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
 	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
 	import MemeArtboardCard from '$lib/components/bitz/MemeArtboardCard.svelte';
@@ -115,11 +125,7 @@
 	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
-	import {
-		MAX_SOUND_SECONDS,
-		soundLibrary,
-		type LibrarySound
-	} from '$lib/stores/meme-sounds.svelte';
+	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
 	import { memeSlots, MAX_SLOT_BYTES } from '$lib/stores/meme-slots.svelte';
 	import {
 		applyRemixPayload,
@@ -143,16 +149,7 @@
 	import GifPicker, { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
-	import {
-		parseSharedSound,
-		rankSharedSounds,
-		sharedSoundEventParts,
-		verifySharedSoundSha256,
-		type SharedSound
-	} from '$lib/meme/shared-sounds';
-	import { clientTag } from '$lib/nostr/client-tag';
-	import { queryOnce, publish } from '$lib/nostr/pool';
-	import { signMined } from '$lib/auth/signer';
+	import type { SharedSound } from '$lib/meme/shared-sounds';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { fetchRemoteMedia } from '$lib/meme/remote-media';
 	import MemeStudioDropZone, {
@@ -229,49 +226,18 @@
 	let suggestBusy = $state(false);
 	let suggestionGroups = $state<MemeSuggestion[]>([]);
 	/** Last local analysis — feeds the cue-sheet waveform (AI-001 anchors). */
-	let lastAnalysis = $state<Awaited<ReturnType<typeof analyzeClip>> | null>(null);
+	let lastAnalysis = $state<MemeClipAnalysis | null>(null);
 	let analysisWindows = $state<Float32Array>(new Float32Array(0));
 	/** Grab the stage media's audio as mono PCM for analysis (no cloud, no
 	 *  detectors — the DSP always runs local per AI-003's boundary). */
-	async function stageMonoPcm(): Promise<{ pcm: Float32Array; sampleRate: number } | null> {
-		if (!file) return null;
-		const AudioCtx = window.AudioContext;
-		if (!AudioCtx || !(file.type.startsWith('video/') || file.type.startsWith('audio/'))) {
-			if (file.type.startsWith('audio/')) return null;
-			return null;
-		}
-		try {
-			const ctx = new AudioCtx();
-			const decoded = await ctx.decodeAudioData(await file.arrayBuffer());
-			return monoNormalize(decoded);
-		} catch {
-			return null;
-		}
+	async function stageMonoPcm(): Promise<MonoPcm | null> {
+		return file ? sourceMonoPcm(file) : null;
 	}
-	/** Image/GIF memes ship the cue sheet as their audio — render that exact
-	 *  mix (the same one the export attaches) and decode it to mono PCM so
-	 *  analysis reflects what viewers will actually hear (AI-002 rec #3). */
-	async function cueTrackMonoPcm(): Promise<{ pcm: Float32Array; sampleRate: number } | null> {
-		if (!sfxCues.length) return null;
-		const OfflineCtx = window.OfflineAudioContext;
-		const AudioCtx = window.AudioContext;
-		if (!OfflineCtx || !AudioCtx) return null;
-		try {
-			// Reuse the export mix builder — identical recipe/custom-sound handling.
-			const durationSec = cueTrackDurationSec(sfxCues);
-			const mix = await buildCueMixBuffer(sfxCues, durationSec, {
-				offlineCtor: OfflineCtx,
-				decodeSound: async (id) => {
-					const sound = soundLibrary.list.find((s) => s.id === id);
-					return sound ? decodeSoundBlob(sound) : null;
-				}
-			});
-			if (!mix) return null;
-			return monoNormalize(mix);
-		} catch {
-			return null;
-		}
+
+	async function cueTrackMonoPcm(): Promise<MonoPcm | null> {
+		return cueTrackMonoPcmModule(sfxCues, libraryDecodeSound);
 	}
+
 	/** Generate the three editable timelines — video memes analyze their own
 	 *  (trimmed) audio; image/GIF memes analyze the cue track they will ship. */
 	async function buildSuggestions(): Promise<void> {
@@ -309,10 +275,10 @@
 				}
 				span = mono.pcm;
 			}
-			const analysis = await analyzeClip(span, mono.sampleRate);
-			lastAnalysis = analysis;
-			analysisWindows = windowRms(span, mono.sampleRate);
-			suggestionGroups = suggestTimelines(analysis);
+			const built = await buildSuggestionAudio(span, mono.sampleRate);
+			lastAnalysis = built.analysis;
+			analysisWindows = built.windows;
+			suggestionGroups = built.groups;
 			toasts.info('3 timelines ready — pick a vibe, everything stays editable', 4000);
 		} finally {
 			suggestBusy = false;
@@ -335,10 +301,6 @@
 			`“${group.intensity}” applied — ${group.overlays.length} captions · ${group.sfxCues.length} cues`
 		);
 	}
-	/** Synth recipe durations for the dialog's catalog rows. */
-	const sfxDurations: Record<MemeSfxId, number> = Object.fromEntries(
-		MEME_SFX_IDS.map((id) => [id, SFX_RECIPES[id].duration])
-	) as Record<MemeSfxId, number>;
 	/** Timeline sound blocks: label + play length per cue (synth recipes have
 	 *  fixed lengths; custom sounds carry theirs in the library). */
 	function cueMeta(cue: MemeSfxCue): { label: string; durationSec: number } | null {
@@ -348,260 +310,56 @@
 		}
 		return { label: sfxLabels[cue.sfx], durationSec: sfxDurations[cue.sfx] ?? 0.5 };
 	}
-	const sfxLabels: Record<MemeSfxId, string> = {
-		boom: 'Boom',
-		bruh: 'Bruh',
-		laugh: 'Laugh',
-		whoosh: 'Whoosh',
-		pop: 'Pop',
-		boing: 'Boing',
-		drumroll: 'Drumroll',
-		ding: 'Ding',
-		'sad-trombone': 'Sad trombone'
-	};
 
 	// ---- custom sound library (device / mic one-shots) -----------------------
-	let recording = $state(false);
-	let micDenied = $state(false);
-	let micRecorder: MediaRecorder | null = null;
-	let micStream: MediaStream | null = null;
-	let micStart = 0;
+	// Browser audio plumbing lives in the soundIO store (SRP: the studio keeps
+	// cue state + UX, the store owns AudioContext / MediaRecorder lifecycles).
+	// NOTE: read reactive fields via `soundIO.x` — destructuring would snapshot.
 	let soundFileInput = $state<HTMLInputElement | null>(null);
-	const micSupported = $derived(
-		typeof navigator !== 'undefined' &&
-			!!navigator.mediaDevices?.getUserMedia &&
-			typeof MediaRecorder !== 'undefined'
-	);
 
 	function cueLabel(cue: MemeSfxCue): string {
 		if (cue.sfx !== CUSTOM_SOUND_KEY) return sfxLabels[cue.sfx];
 		const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
-		return sound ? `${sound.label} · custom` : 'Custom';
+		return sound ? sound.label : 'Custom';
 	}
 
 	function cueIcon(cue: MemeSfxCue): string {
 		return cue.sfx === CUSTOM_SOUND_KEY ? 'i-lucide-mic' : 'i-lucide-music-2';
 	}
 
-	/** Decode a library sound to normalized mono PCM (preview + export mix). */
-	async function decodeSoundBlob(
-		sound: LibrarySound
-	): Promise<{ pcm: Float32Array; sampleRate: number } | null> {
-		const blob = await soundLibrary.getBlob(sound.id);
-		if (!blob) return null;
-		const AudioCtx = window.AudioContext;
-		if (!AudioCtx) return null;
-		const ctx = new AudioCtx();
-		try {
-			const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-			return monoNormalize(decoded);
-		} catch {
-			return null;
-		} finally {
-			void ctx.close().catch(() => undefined);
-		}
-	}
-
-	/** Audition a library sound immediately. */
+	/** Audition a library sound immediately (store owns the AudioContext). */
 	async function previewSound(sound: LibrarySound) {
-		const decoded = await decodeSoundBlob(sound);
-		if (!decoded) {
-			toasts.error("That sound can't be played in this browser");
-			return;
-		}
-		const AudioCtx = window.AudioContext;
-		if (!AudioCtx) return;
-		const ctx = new AudioCtx();
-		// copyToChannel needs a Float32Array backed by a plain ArrayBuffer.
-		const pcm = new Float32Array(decoded.pcm.length);
-		pcm.set(decoded.pcm);
-		const buffer = ctx.createBuffer(1, pcm.length, decoded.sampleRate);
-		buffer.copyToChannel(pcm, 0);
-		const source = ctx.createBufferSource();
-		source.buffer = buffer;
-		source.connect(ctx.destination);
-		source.start();
-		source.onended = () => void ctx.close().catch(() => undefined);
+		await soundIO.preview(sound);
 	}
 
 	/** Measure a candidate audio blob by decoding it. */
-	async function soundDurationSec(blob: Blob): Promise<number> {
-		const AudioCtx = window.AudioContext;
-		if (!AudioCtx) return 0;
-		const ctx = new AudioCtx();
-		try {
-			const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
-			return decoded.duration;
-		} catch {
-			return 0;
-		} finally {
-			void ctx.close().catch(() => undefined);
-		}
-	}
-
-	async function importSoundBlob(
-		blob: Blob,
-		durationSec: number,
-		source: 'device' | 'mic',
-		label?: string
-	) {
-		if (!(durationSec > 0)) {
-			toasts.error('Could not read that audio — try WAV/MP3/M4A/OGG/WebM');
-			return;
-		}
-		if (durationSec > MAX_SOUND_SECONDS) {
-			toasts.error(`Sounds top out at ${MAX_SOUND_SECONDS}s — trim it first`);
-			return;
-		}
-		try {
-			const saved = await soundLibrary.add({
-				label,
-				source,
-				blob,
-				durationSec,
-				mime: blob.type
-			});
-			toasts.success(`Added “${saved.label}” to your sounds`);
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
-	}
-
-	function onSoundFileInput(e: Event) {
-		const input = e.currentTarget as HTMLInputElement;
-		void importSoundFile(input.files?.[0] ?? null);
-		input.value = '';
-	}
 
 	// ---- shared sounds (NIP-78 §17.1 + §17.2 ingestion rules) ------------------
+	// Relay + upload + ingestion logic lives in sharedSoundsStore; the studio
+	// keeps menu ids and template bindings only (reactive reads via the store).
 	let sharedMenuId = `meme-shared-${Math.random().toString(36).slice(2, 8)}`;
-	let sharedSounds = $state<SharedSound[]>([]);
-	let sharedLoading = $state(false);
-	let sharedImportingId = $state('');
-	let sharingSoundId = $state('');
-	let sharedFetchedAt = 0;
+	const sharedSounds = $derived(sharedSoundsStore.list);
+	const sharedLoading = $derived(sharedSoundsStore.loading);
+	const sharedImportingId = $derived(sharedSoundsStore.importingId);
+	const sharingSoundId = $derived(sharedSoundsStore.sharingId);
+	const loadSharedSounds = () => sharedSoundsStore.load();
+	const shareSound = (sound: LibrarySound) => sharedSoundsStore.share(sound.id);
+	const importSharedSound = (sound: SharedSound) => sharedSoundsStore.import(sound);
 	/** GIF URL sourcing: paste a direct image/gif link next to the picker. */
 	let gifUrl = $state('');
 	let gifUrlBusy = $state(false);
-
-	async function sha256Hex(bytes: Uint8Array): Promise<string> {
-		const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as ArrayBuffer);
-		return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-	}
-
-	/** Publish a library sound as a kind-30078 shared-sound event (§17.1). */
-	async function shareSound(sound: LibrarySound) {
-		if (!me) {
-			toasts.error('Sign in to share sounds');
-			return;
-		}
-		if (sharingSoundId) return;
-		sharingSoundId = sound.id;
-		try {
-			const blob = await soundLibrary.getBlob(sound.id);
-			if (!blob) throw new Error('The sound file is missing from this device');
-			// media.upload takes a named File (uploaders infer names from it)
-			const soundFile = new File([blob], `sound-${sound.id}.webm`, {
-				type: blob.type || 'audio/webm'
-			});
-			const uploaded = await media.upload(soundFile, undefined, {
-				pubkey: me.pk,
-				purpose: 'note'
-			});
-			const sha = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
-			const parts = sharedSoundEventParts({
-				soundId: sound.id,
-				label: sound.label,
-				durationSec: sound.durationSec,
-				mime: blob.type || sound.mime,
-				url: uploaded.url,
-				sha256: sha,
-				license: 'CC0-1.0',
-				clientTag: clientTag()
-			});
-			const event = await signMined({
-				kind: 30078,
-				content: parts.content,
-				created_at: Math.floor(Date.now() / 1000),
-				tags: parts.tags
-			});
-			await publish(event);
-			toasts.success(`Shared “${sound.label}” — other bitz creators can remix it`);
-		} catch (e) {
-			toasts.error(e instanceof Error ? e.message : 'Could not share that sound');
-		} finally {
-			sharingSoundId = '';
-		}
-	}
-
-	/** Query relays for shared-sound events (throttled to one fetch/minute). */
-	async function loadSharedSounds() {
-		if (sharedLoading) return;
-		if (Date.now() - sharedFetchedAt < 60_000 && sharedSounds.length) return;
-		sharedLoading = true;
-		try {
-			const events = await queryOnce([{ kinds: [30078], limit: 200 }]);
-			const mine = me?.pk ?? '';
-			sharedSounds = rankSharedSounds(
-				events.map((e) => parseSharedSound(e)).filter((s): s is SharedSound => s !== null),
-				mine
-			);
-			sharedFetchedAt = Date.now();
-			if (!sharedSounds.length) toasts.info('No shared sounds on your relays yet — be the first');
-		} catch {
-			toasts.error('Could not reach relays for shared sounds');
-		} finally {
-			sharedLoading = false;
-		}
-	}
-
-	/** §17.2 ingestion: fetch → verify hash → import into the local library. */
-	async function importSharedSound(sound: SharedSound) {
-		if (sharedImportingId) return;
-		if (!sound.sha256) {
-			toasts.error('That sound has no content hash — refusing to import it');
-			return;
-		}
-		sharedImportingId = sound.eventId;
-		try {
-			const res = await fetch(sound.url);
-			if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
-			const bytes = new Uint8Array(await res.arrayBuffer());
-			if (bytes.byteLength > 8 * 1024 * 1024) throw new Error('Over 8 MB — too big to import');
-			const ok = await verifySharedSoundSha256(bytes, sound.sha256, sha256Hex);
-			if (!ok) throw new Error('Hash mismatch — the file changed since it was shared');
-			const blob = new Blob([bytes as unknown as ArrayBuffer], { type: sound.mime });
-			await importSoundBlob(blob, sound.durationSec, 'device', sound.label);
-		} catch (e) {
-			toasts.error(e instanceof Error ? e.message : 'Could not import that sound');
-		} finally {
-			sharedImportingId = '';
-		}
-	}
-
-	/** GIF sourcing: pull a direct image/gif URL into the stage (remix-handoff pattern). */
 	async function importGifFromUrl() {
 		const url = gifUrl.trim();
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
 		try {
-			const res = await fetchRemoteMedia(url, { proxy: false }); // videos can't ride wsrv
-			if (!res) throw new Error('Could not fetch that media (CORS-blocked host)');
-			const mime = (res.headers.get('content-type') ?? '').split(';')[0] ?? '';
-			const isVideo = mime.startsWith('video/');
-			if (!isVideo && !mime.startsWith('image/')) {
-				throw new Error('That link is not a picture or video');
-			}
-			const blob = await res.blob();
-			const cap = isVideo ? MAX_MEDIA_BYTES : 50 * 1024 * 1024;
-			if (blob.size > cap) throw new Error(`Over ${humanBytes(cap)} — too big`);
-			const ext = isVideo
-				? (mime.split('/')[1]?.replace('quicktime', 'mov') ?? 'mp4')
-				: mime === 'image/gif'
-					? 'gif'
-					: (mime.split('/')[1] ?? 'img');
-			const name = `url-${Date.now()}.${ext}`;
-			await acceptFile(new File([blob], name, { type: mime }), {
+			const res = await fetchSourceFile(url, {
+				noProxy: true,
+				label: 'gif',
+				maxBytes: { image: 50 * 1024 * 1024, video: MAX_MEDIA_BYTES }
+			});
+			if (!res.ok || !res.file) throw new Error(res.error);
+			await acceptFile(res.file, {
 				keepRemix: true,
 				keepLayout: keepLayoutOnSwap
 			});
@@ -671,15 +429,10 @@
 		if (gifStageBusy) return false;
 		gifStageBusy = true;
 		try {
-			const res = await fetchRemoteMedia(url);
-			if (!res) throw new Error(`Could not load that ${label} (CORS-blocked host)`);
-			const blob = await res.blob();
-			if (blob.size > MAX_MEDIA_BYTES) throw new Error('That GIF is over the 200 MB cap');
-			await acceptFile(new File([blob], `gif-${Date.now()}.gif`, { type: 'image/gif' }), {
-				keepRemix: true,
-				keepLayout
-			});
-			mediaLibrary.remember(url, label, blob.type || 'image/gif');
+			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			if (!res.ok || !res.file) throw new Error(res.error ?? `Could not load that ${label}`);
+			await acceptFile(res.file, { keepRemix: true, keepLayout });
+			mediaLibrary.remember(res.url ?? url, label, res.file.type || 'image/gif');
 			return true;
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : `Could not load that ${label}`);
@@ -696,21 +449,13 @@
 		gifStageBusy = true;
 		popovers.close();
 		try {
-			const res = await fetchRemoteMedia(url);
-			if (!res) throw new Error('Could not fetch that source (CORS-blocked host)');
-			const type = (res.headers.get('content-type') ?? '').split(';')[0]!;
-			if (!type.startsWith('image/') && !type.startsWith('video/')) {
-				throw new Error('That link is not a picture or video');
-			}
-			const blob = await res.blob();
-			if (blob.size > MAX_MEDIA_BYTES) throw new Error('Over the 200 MB cap');
-			const ext = (type.split('/')[1] ?? 'bin').replace('quicktime', 'mov');
-			const name = `${(label || 'source').replace(/[^\w.-]+/g, '-')}-${Date.now()}.${ext}`;
-			await acceptFile(new File([blob], name, { type: type || 'application/octet-stream' }), {
+			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			if (!res.ok || !res.file) throw new Error(res.error ?? 'Could not open that source');
+			await acceptFile(res.file, {
 				keepRemix: true,
 				keepLayout: keepLayoutOnSwap
 			});
-			mediaLibrary.remember(url, label, type);
+			mediaLibrary.remember(res.url ?? url, label, res.file.type);
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : 'Could not open that source');
 		} finally {
@@ -809,72 +554,6 @@
 	let lookId = $state<MemeLookId>('none');
 	const lookCss = $derived(memeLookCss(lookId));
 	const looksAvailable = $derived(canvasFiltersSupported());
-
-	async function importSoundFile(next: File | null) {
-		if (!next) return;
-		if (next.size > 8 * 1024 * 1024) {
-			toasts.error('That sound file is over 8 MB — trim it first');
-			return;
-		}
-		const durationSec = await soundDurationSec(next);
-		await importSoundBlob(
-			next,
-			durationSec,
-			'device',
-			next.name.replace(/\.[^.]+$/, '').slice(0, 40)
-		);
-	}
-
-	async function toggleMicRecording() {
-		if (recording) {
-			stopMicRecording();
-			return;
-		}
-		if (!micSupported) {
-			toasts.error('Mic recording needs a Chromium browser');
-			return;
-		}
-		try {
-			micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-		} catch {
-			micDenied = true;
-			toasts.error('Microphone access was blocked');
-			return;
-		}
-		const pick = (): string => {
-			for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
-				if (MediaRecorder.isTypeSupported(type)) return type;
-			}
-			return '';
-		};
-		const mimeType = pick();
-		micRecorder = mimeType
-			? new MediaRecorder(micStream, { mimeType })
-			: new MediaRecorder(micStream);
-		const chunks: Blob[] = [];
-		micRecorder.ondataavailable = (e) => {
-			if (e.data.size) chunks.push(e.data);
-		};
-		micRecorder.onstop = () => {
-			const blob = new Blob(chunks, { type: micRecorder?.mimeType || 'audio/webm' });
-			micStream?.getTracks().forEach((t) => t.stop());
-			micStream = null;
-			const elapsed = (performance.now() - micStart) / 1000;
-			if (!blob.size) {
-				toasts.warning('Nothing was recorded — try again');
-				return;
-			}
-			void importSoundBlob(blob, elapsed, 'mic', 'Mic ' + new Date().toLocaleTimeString());
-		};
-		micStart = performance.now();
-		recording = true;
-		micRecorder.start(250);
-	}
-
-	function stopMicRecording() {
-		if (micRecorder && micRecorder.state !== 'inactive') micRecorder.stop();
-		recording = false;
-	}
 
 	function addCustomCue(sound: LibrarySound) {
 		if (sfxCues.length >= 16) {
@@ -1355,6 +1034,7 @@
 				return;
 			}
 			const { id: _id, ...copy } = original;
+			void _id; // destructure-drop the old id — makeOverlay mints a fresh one
 			const right = makeOverlay({ ...copy, startMs: atMs, endMs: end });
 			overlays = overlays.flatMap((item) =>
 				item.id === original.id ? [{ ...item, endMs: atMs }, right] : [item]
@@ -2698,11 +2378,7 @@
 		const { buildCueMixBuffer: _lazyMix } = await import('$lib/meme/cue-mix');
 		return _lazyMix(cues, durationSec, {
 			offlineCtor: OfflineCtx,
-			decodeSound: async (id) => {
-				const sound = soundLibrary.list.find((s) => s.id === id);
-				if (!sound) return null;
-				return decodeSoundBlob(sound);
-			}
+			decodeSound: libraryDecodeSound
 		});
 	}
 
@@ -6068,12 +5744,12 @@
 												<MenuItem
 													icon="i-lucide-mic"
 													onclick={() => {
-														void toggleMicRecording();
+														void soundIO.toggleMic();
 													}}
 												>
 													<span class="flex items-center gap-1">
-														{recording ? 'Stop recording · save' : 'Record with mic…'}
-														{#if micDenied && !recording}
+														{soundIO.recording ? 'Stop recording · save' : 'Record with mic…'}
+														{#if soundIO.micDenied && !soundIO.recording}
 															<Icon
 																name="i-lucide-alert-circle"
 																class="size-3 text-[var(--tone-error-text)]"
@@ -6923,7 +6599,11 @@
 	type="file"
 	accept="audio/*"
 	class="hidden"
-	onchange={onSoundFileInput}
+	onchange={(e) => {
+		const input = e.currentTarget as HTMLInputElement;
+		void soundIO.importFile(input.files?.[0] ?? null);
+		input.value = '';
+	}}
 />
 
 <MemeSoundDialog

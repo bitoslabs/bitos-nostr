@@ -21,7 +21,15 @@
 	let note = $state<FeedNote | null>(null);
 	let loadedFor = $state('');
 
-	const noteId = $derived(resolveNoteId(page.params.id));
+	type AddressReference = { kind: number; pubkey: string; identifier: string; relays: string[] };
+	type NoteReference = { id?: string; address?: AddressReference };
+
+	const noteReference = $derived(resolveNoteReference(page.params.id));
+	const noteId = $derived(noteReference?.id ?? '');
+	const address = $derived(noteReference?.address);
+	const referenceKey = $derived(
+		noteId || (address ? `${address.kind}:${address.pubkey}:${address.identifier}` : '')
+	);
 	// `reels` is the legacy ?from value from before the keyword rename —
 	// normalize so both spellings behave identically.
 	const rawSource = $derived(page.url.searchParams.get('from'));
@@ -50,27 +58,33 @@
 					: 'Notifications'
 	);
 
-	function resolveNoteId(value: string | undefined) {
-		if (!value) return '';
-		if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
-		if (value.startsWith('note1') || value.startsWith('nevent1')) {
+	function resolveNoteReference(value: string | undefined): NoteReference | null {
+		if (!value) return null;
+		if (/^[0-9a-f]{64}$/i.test(value)) return { id: value.toLowerCase() };
+		if (value.startsWith('note1') || value.startsWith('nevent1') || value.startsWith('naddr1')) {
 			try {
 				const decoded = decode(value);
-				if (decoded.type === 'note') return decoded.data as string;
-				if (decoded.type === 'nevent') return (decoded.data as { id: string }).id;
+				if (decoded.type === 'note') return { id: decoded.data as string };
+				if (decoded.type === 'nevent') return { id: (decoded.data as { id: string }).id };
+				if (decoded.type === 'naddr') {
+					const data = decoded.data as AddressReference;
+					return data.identifier && data.pubkey && Number.isInteger(data.kind)
+						? { address: data }
+						: null;
+				}
 			} catch {
-				return '';
+				return null;
 			}
 		}
-		return '';
+		return null;
 	}
 
-	async function loadNote(id: string) {
-		if (!id || loadedFor === id) return;
+	async function loadNote(reference: NoteReference, key: string) {
+		if (!key || loadedFor === key) return;
 		loading = true;
-		loadedFor = id;
+		loadedFor = key;
 		try {
-			const currentLoad = id;
+			const currentLoad = key;
 			const applyNoteEvent = async (
 				event?: Awaited<ReturnType<typeof queryPrimaryFirst>>[number]
 			) => {
@@ -91,7 +105,7 @@
 									NOSTR_KINDS.GENERIC_REPOST,
 									NOSTR_KINDS.ZAP
 								],
-								'#e': [id],
+								'#e': [event.id],
 								limit: 500
 							}
 						],
@@ -113,7 +127,19 @@
 				note = hydrated;
 				feed.upsertNote(hydrated);
 			};
-			const [event] = await queryPrimaryFirst([{ ids: [id], limit: 1 }], {
+			const filters = reference.id
+				? [{ ids: [reference.id], limit: 1 }]
+				: reference.address
+					? [
+							{
+								kinds: [reference.address.kind],
+								authors: [reference.address.pubkey],
+								'#d': [reference.address.identifier],
+								limit: 1
+							}
+						]
+					: [];
+			const [event] = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
 					if (loadedFor !== currentLoad) return;
 					void applyNoteEvent(mergedEvents[0]);
@@ -125,7 +151,7 @@
 				return;
 			}
 			await applyNoteEvent(event);
-			await loadReplies(id);
+			await loadReplies(event.id);
 		} catch (e) {
 			toasts.error((e as Error).message || 'Could not load note');
 		} finally {
@@ -170,7 +196,7 @@
 	}
 
 	$effect(() => {
-		if (noteId) void loadNote(noteId);
+		if (noteReference && referenceKey) void loadNote(noteReference, referenceKey);
 	});
 
 	// Bitz media resolution: a PLAIN note link to a NIP-68/71 media event (no
@@ -182,7 +208,7 @@
 	// never into a redirect loop.
 	$effect(() => {
 		const raw = note?.raw;
-		if (!raw || !noteId || noteSource || safeReturnTo) return;
+		if (!raw || !noteId || address || noteSource || safeReturnTo) return;
 		if (!BITZ_MEDIA_KINDS.includes(raw.kind)) return;
 		goto(`/bitz?author=${npubEncode(raw.pubkey)}${bitzHashLink(noteId)}`, {
 			replaceState: true
@@ -195,7 +221,9 @@
 <div class="h-full overflow-y-auto">
 	<PageHeader title="Note">
 		{#snippet subtitle()}
-			{#if noteId}<span class="font-mono">{shortKey(noteId, 10, 8)}</span>{/if}
+			{#if noteId}<span class="font-mono">{shortKey(noteId, 10, 8)}</span>{:else if address}
+				<span class="font-mono">{address.kind}:{shortKey(address.identifier, 10, 8)}</span>
+			{/if}
 		{/snippet}
 		{#snippet actions()}
 			<a href={backHref} class="icon-btn size-9" aria-label={backLabel}>
@@ -204,7 +232,7 @@
 		{/snippet}
 	</PageHeader>
 	<div class="page-container page-container--feed py-6">
-		{#if !noteId}
+		{#if !noteReference}
 			<div class="post-card py-16 text-center">
 				<p class="text-[15px] font-semibold">Invalid note</p>
 				<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
