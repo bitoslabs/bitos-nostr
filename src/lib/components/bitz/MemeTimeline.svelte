@@ -215,6 +215,15 @@
 		scrubbing = false;
 	}
 
+	/** The playhead sits above clips, including the full-width base-video strip.
+	 * It must own its pointer events: previously the line was decorative
+	 * (`pointer-events-none`), so a drag on it fell through to the Video trim
+	 * span and looked like the cursor was stuck. */
+	function startPlayheadDrag(e: PointerEvent) {
+		e.stopPropagation();
+		startScrub(e);
+	}
+
 	// ---- span drag: move / resize caption + layer windows ---------------------
 	interface WindowItem {
 		id: string;
@@ -787,14 +796,27 @@
 				{/if}
 			</div>
 
-			<!-- Shared playhead -->
+			<!-- Shared playhead. The invisible 16px hit area makes this usable at
+			     any zoom and prevents the Video row below from swallowing a scrub. -->
 			<div
-				class="pointer-events-none absolute top-0 bottom-0 z-10 w-0.5 bg-warm-500"
+				class="absolute top-0 bottom-0 z-20 w-4 -translate-x-1/2 cursor-ew-resize touch-none"
 				style="left:{seconds * pxPerSec}px;"
-				aria-hidden="true"
+				role="slider"
+				aria-label="Drag playhead"
+				aria-valuemin="0"
+				aria-valuemax={Math.round(duration)}
+				aria-valuenow={Math.round(seconds * 1000) / 1000}
+				tabindex="-1"
+				onpointerdown={startPlayheadDrag}
+				onpointermove={moveScrub}
+				onpointerup={endScrub}
+				onpointercancel={endScrub}
 			>
 				<span
-					class="absolute top-0 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warm-500 shadow"
+					class="pointer-events-none absolute top-0 bottom-0 left-1/2 w-0.5 -translate-x-1/2 bg-warm-500"
+				></span>
+				<span
+					class="pointer-events-none absolute top-0 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-warm-500 shadow"
 				></span>
 			</div>
 		</div>

@@ -1083,7 +1083,8 @@
 			if (!video) return;
 			if (video.paused) void video.play();
 			else video.pause();
-			previewPlaying = video.paused; // reflect the element's state
+			// `onplay` / `onpause` on the element below update previewPlaying once
+			// the browser has actually changed state.
 			return;
 		}
 		previewPlaying = !previewPlaying;
@@ -1094,6 +1095,9 @@
 	function scrubPreview(sec: number) {
 		const clamped = Math.max(0, Math.min(sec, timelineDurationSec || 0));
 		if (mediaKind === 'video' && stageVideo) {
+			// Hold the frame under the pointer. Leaving the looping video running
+			// made its native clock immediately fight a mouse drag of the playhead.
+			stageVideo.pause();
 			stageVideo.currentTime = clamped;
 			stageSeconds = clamped;
 		} else {
@@ -1251,6 +1255,68 @@
 		trimEndSec = end >= dur - 0.001 ? null : Math.min(end, dur);
 	}
 
+	/** Keep one side of the base video at the red playhead. Video export uses a
+	 * contiguous trim window, so this is a true non-destructive cut: the source
+	 * file stays untouched and the other side can be restored by dragging trim. */
+	function cutVideoAtPlayhead(keep: 'before' | 'after'): void {
+		const duration = meta?.duration ?? 0;
+		const at = Math.max(0, Math.min(stageSeconds, duration));
+		const start = trimStartSec;
+		const end = trimEndSec ?? duration;
+		if (mediaKind !== 'video' || !duration || at <= start + 0.1 || at >= end - 0.1) {
+			toasts.info('Move the playhead inside the video window before cutting');
+			return;
+		}
+		if (keep === 'before') trimEndSec = at;
+		else trimStartSec = at;
+		toasts.success(`Kept the ${keep === 'before' ? 'start' : 'end'} of the video`);
+	}
+
+	/** Split the selected caption or image layer into two independent windows at
+	 * the playhead. The clone keeps the same visual settings and can then be
+	 * moved, resized, or edited separately. */
+	function splitSelectedAtPlayhead(): void {
+		if (!timelineActive) return;
+		const atMs = Math.round(stageSeconds * 1000);
+		const endMs = Math.round(timelineDurationSec * 1000);
+		if (selectedId) {
+			const original = overlays.find((item) => item.id === selectedId);
+			const start = original?.startMs ?? 0;
+			const end = original?.endMs ?? endMs;
+			if (!original || atMs <= start + 100 || atMs >= end - 100) {
+				toasts.info('Put the playhead inside the selected caption to split it');
+				return;
+			}
+			const { id: _id, ...copy } = original;
+			const right = makeOverlay({ ...copy, startMs: atMs, endMs: end });
+			overlays = overlays.flatMap((item) =>
+				item.id === original.id ? [{ ...item, endMs: atMs }, right] : [item]
+			);
+			selectedId = right.id;
+			toasts.success('Caption split at playhead');
+			return;
+		}
+		if (selectedLayerId) {
+			const original = imageLayers.find((item) => item.id === selectedLayerId);
+			const start = original?.startMs ?? 0;
+			const end = original?.endMs ?? endMs;
+			if (!original || atMs <= start + 100 || atMs >= end - 100) {
+				toasts.info('Put the playhead inside the selected image layer to split it');
+				return;
+			}
+			const fresh = makeImageOverlay(original.src, original.aspect, { index: layerSeq++ });
+			if (!fresh) return;
+			const right = { ...original, id: fresh.id, startMs: atMs, endMs: end };
+			imageLayers = imageLayers.flatMap((item) =>
+				item.id === original.id ? [{ ...item, endMs: atMs }, right] : [item]
+			);
+			selectedLayerId = right.id;
+			toasts.success('Image layer split at playhead');
+			return;
+		}
+		toasts.info('Select a caption or image layer, then split it at the playhead');
+	}
+
 	/** Set the export window's LENGTH (user request: “set time 5s, 10s, 30s…”):
 	 *  keeps the current start mark, caps at the source's remaining time and
 	 *  the 90s video-meme limit — and says so when a preset doesn't fit. */
@@ -1295,6 +1361,7 @@
 	let aiAssisted = $state(false);
 	let destination = $state<Destination>('bitz');
 	let fileInput = $state<HTMLInputElement | null>(null);
+	let otherSourceInput = $state<HTMLInputElement | null>(null);
 	let confirmDiscard = $state(false);
 	let dragOver = $state(false);
 	// ---- format-first start (user request: “select type meme”) --------------------
@@ -2117,6 +2184,7 @@
 			remixLabel = '';
 		}
 		meta = null;
+		previewPlaying = false;
 		// Swaps may keep the caption layout + layers + cues (normalized coords
 		// make them media-agnostic); a fresh pick starts clean, as before.
 		if (!opts.keepLayout) {
@@ -2148,9 +2216,23 @@
 
 	function onFileInput(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
-		acceptFile(input.files?.[0] ?? null);
+		void acceptFile(input.files?.[0] ?? null);
 		input.value = '';
 		pickFormat = 'all'; // one scoped pick — later choosers see everything again
+	}
+
+	/** Pick another base image, GIF, or video from the timeline. Unlike a fresh
+	 * start, captions, layers, and cues stay in place so creators can audition
+	 * another source without rebuilding the edit. */
+	function pickOtherTimelineSource(): void {
+		if (busy) return;
+		otherSourceInput?.click();
+	}
+
+	function onOtherSourceInput(e: Event): void {
+		const input = e.currentTarget as HTMLInputElement;
+		void acceptFile(input.files?.[0] ?? null, { keepRemix: true, keepLayout: true });
+		input.value = '';
 	}
 
 	function onDrop(e: DragEvent) {
@@ -4084,6 +4166,8 @@
 										loop
 										playsinline
 										aria-label="Meme video preview"
+										onplay={() => (previewPlaying = true)}
+										onpause={() => (previewPlaying = false)}
 										onloadedmetadata={onVideoMetadata}
 										ondurationchange={(e) => {
 											// Browser-recorded webm clips report duration=Infinity at
@@ -4384,12 +4468,8 @@
 					{#snippet timelinePane()}
 						<MemeTimeline
 							durationSec={timelineDurationSec}
-							seconds={mediaKind === 'video' ? (stageVideo?.currentTime ?? 0) : stageSeconds}
-							playing={mediaKind === 'video'
-								? stageVideo
-									? !stageVideo.paused
-									: false
-								: previewPlaying}
+							seconds={stageSeconds}
+							playing={previewPlaying}
 							onPlayPause={togglePreview}
 							onScrub={(s) => scrubPreview(s)}
 							soundOn={previewSoundOn}
@@ -4420,6 +4500,48 @@
 						<!-- Insert-at-playhead actions (video/timed sources): the timeline is
 						     the natural place to drop a timed caption / sound / poster frame. -->
 						<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+							<button
+								type="button"
+								onclick={pickOtherTimelineSource}
+								disabled={busy}
+								title="Choose another image, GIF, or video while keeping this edit"
+								class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
+							>
+								<Icon name="i-lucide-clapperboard" class="size-3.5" />
+								Other source
+							</button>
+							{#if mediaKind === 'video'}
+								<button
+									type="button"
+									onclick={() => cutVideoAtPlayhead('before')}
+									disabled={busy}
+									title="Cut at the playhead and keep the part before it"
+									class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
+								>
+									<Icon name="i-lucide-scissors" class="size-3.5" />
+									Cut before
+								</button>
+								<button
+									type="button"
+									onclick={() => cutVideoAtPlayhead('after')}
+									disabled={busy}
+									title="Cut at the playhead and keep the part after it"
+									class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
+								>
+									<Icon name="i-lucide-scissors" class="size-3.5" />
+									Cut after
+								</button>
+							{/if}
+							<button
+								type="button"
+								onclick={splitSelectedAtPlayhead}
+								disabled={busy || !timelineActive || (!selectedId && !selectedLayerId)}
+								title="Split the selected caption or image layer at the playhead"
+								class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[10.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+							>
+								<Icon name="i-lucide-split" class="size-3.5" />
+								Split selected
+							</button>
 							<button
 								type="button"
 								onclick={addCaptionAtPlayhead}
@@ -6646,6 +6768,13 @@
 		: (PICK_FORMATS.find((f) => f.id === pickFormat)?.accept ?? 'image/*,video/*')}
 	class="hidden"
 	onchange={onFileInput}
+/>
+<input
+	bind:this={otherSourceInput}
+	type="file"
+	accept="image/*,video/mp4,video/webm,video/quicktime,image/gif"
+	class="hidden"
+	onchange={onOtherSourceInput}
 />
 <input
 	bind:this={layerInput}
