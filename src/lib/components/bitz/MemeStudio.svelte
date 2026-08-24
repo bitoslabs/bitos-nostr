@@ -20,7 +20,6 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import Popover from '$lib/components/ui/Popover.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
@@ -130,8 +129,8 @@
 	import { makeSticker } from '$lib/meme/stickers';
 	import { fxTransformAt } from '$lib/meme/fx';
 	import MemeTimeline from '$lib/components/bitz/MemeTimeline.svelte';
+	import { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
-	import GifPicker, { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
@@ -148,6 +147,8 @@
 	import MemeExpertClipPanel from '$lib/components/bitz/MemeExpertClipPanel.svelte';
 	import MemeStageMediaControls from '$lib/components/bitz/MemeStageMediaControls.svelte';
 	import MemeTimelineQuickActions from '$lib/components/bitz/MemeTimelineQuickActions.svelte';
+	import MemeTimelineImagePicker from '$lib/components/bitz/MemeTimelineImagePicker.svelte';
+	import MemeImageLayerTools from '$lib/components/bitz/MemeImageLayerTools.svelte';
 	import {
 		ARTBOARD_KEY,
 		ARTBOARDS,
@@ -3345,108 +3346,24 @@
 								onAddCaption={addCaptionAtPlayhead}
 								onAddSound={() => popovers.open(sfxMenuId)}
 							/>
-							<!-- Image @ playhead: drop a movable layer with a 2s window right
-							     where the playhead sits — sources: upload / URL / GIF library. -->
-							<Popover
+							<MemeTimelineImagePicker
 								id={tlImageMenuId}
-								float
-								placement="top-start"
-								width="auto"
-								label="Add an image layer at the playhead"
-								triggerClass="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10.5px] font-bold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-40"
-								triggerActiveClass="bg-emerald-500/20"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-image-plus" class="size-3.5" />
-									Image @ {formatDuration(stageSeconds)}
-								{/snippet}
-								<div class="w-64 max-w-[80vw] p-1.5">
-									<p class="px-1.5 pb-1.5 text-[10.5px] leading-snug text-[var(--ui-text-dimmed)]">
-										Lands with a 2s window at {formatDuration(stageSeconds)} — tweak it in the Image layers
-										list.
-									</p>
-									<div class="flex items-center gap-1">
-										<button
-											type="button"
-											onclick={() => {
-												pendingLayerAtMs = Math.round(stageSeconds * 1000);
-												layerInput?.click();
-												popovers.close();
-											}}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-upload" class="size-3.5" />
-											Upload file
-										</button>
-										<button
-											type="button"
-											onclick={(e) => {
-												// keep the popover open — the global click-close would eat it
-												e.stopPropagation();
-												showTlLayerUrlForm = !showTlLayerUrlForm;
-											}}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-link" class="size-3.5" />
-											URL
-										</button>
-									</div>
-									{#if showTlLayerUrlForm}
-										<div class="mt-1.5 flex items-center gap-1">
-											<input
-												type="url"
-												inputmode="url"
-												bind:value={layerUrl}
-												placeholder="https://…/sticker.png"
-												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-												disabled={layerUrlBusy}
-												onkeydown={(e) => {
-													// keydown (not form submit) — popover panels unmount on
-													// the global click-close before deferred submits fire.
-													if (e.key === 'Enter') {
-														e.preventDefault();
-														void addLayerFromUrl(Math.round(stageSeconds * 1000));
-														popovers.close();
-													}
-												}}
-											/>
-											<button
-												type="button"
-												onclick={() => {
-													void addLayerFromUrl(Math.round(stageSeconds * 1000));
-													popovers.close();
-												}}
-												disabled={layerUrlBusy || !layerUrl.trim()}
-												class="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-500/12 text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-50"
-												aria-label="Add this URL as a timed layer"
-											>
-												<Icon
-													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
-													class="size-3.5 {layerUrlBusy ? 'animate-spin' : ''}"
-												/>
-											</button>
-										</div>
-									{/if}
-									<p
-										class="mt-1.5 flex items-center gap-1 px-1 text-[10.5px] text-[var(--ui-text-dimmed)]"
-									>
-										<Icon name="i-lucide-film" class="size-3" />
-										or pick a GIF sticker
-									</p>
-									<GifPicker
-										onpick={(g) => void addLayerFromGifLib(g, Math.round(stageSeconds * 1000))}
-										onbrowse={() => {
-											// Same one-shot as the popover's Upload file: lands with a
-											// 2s window at the playhead.
-											pendingLayerAtMs = Math.round(stageSeconds * 1000);
-											layerInput?.click();
-											popovers.close();
-										}}
-									/>
-								</div>
-							</Popover>
+								seconds={stageSeconds}
+								busy={layerBusy}
+								bind:url={layerUrl}
+								bind:showUrl={showTlLayerUrlForm}
+								urlBusy={layerUrlBusy}
+								onBrowse={() => {
+									pendingLayerAtMs = Math.round(stageSeconds * 1000);
+									layerInput?.click();
+									popovers.close();
+								}}
+								onSubmitUrl={() => {
+									void addLayerFromUrl(Math.round(stageSeconds * 1000));
+									popovers.close();
+								}}
+								onPickGif={(gif) => void addLayerFromGifLib(gif, Math.round(stageSeconds * 1000))}
+							/>
 							{#if mediaKind === 'video'}
 								<button
 									type="button"
@@ -3499,302 +3416,32 @@
 							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
 							     Sources: local file, https URL, GIF library (as a sticker-sized
 							     layer — NOT the base-media swap in the footer). -->
-							<Popover
+							<MemeImageLayerTools
 								id={imageMenuId}
-								float
-								placement="top-start"
-								width="auto"
-								label="Add an image layer"
-								triggerClass="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-								triggerActiveClass="bg-warm-500/15 text-warm-600"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-image-plus" class="size-3.5" />
-									Image
-									{#if layerBusy}
-										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-									{/if}
-								{/snippet}
-								<div class="w-auto max-w-[100vw] p-2">
-									<div class="flex items-center gap-1">
-										<button
-											type="button"
-											onclick={() => {
-												// Playhead window on timed sources — same contract as
-												// the picker's From device / GIF volley.
-												pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
-												layerInput?.click();
-											}}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-upload" class="size-3.5" />
-											Upload file
-										</button>
-										<button
-											type="button"
-											onclick={(e) => {
-												// keep the popover open — the global click-close would eat it
-												e.stopPropagation();
-												showLayerUrlForm = !showLayerUrlForm;
-											}}
-											disabled={layerBusy}
-											class="flex flex-1 items-center gap-1.5 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2 text-[11.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-50"
-										>
-											<Icon name="i-lucide-link" class="size-3.5" />
-											URL
-										</button>
-									</div>
-									<!-- Insert another source from the stage itself: grab the current video
-								     frame at the playhead and drop it in as a movable layer. -->
-									{#if mediaKind === 'video'}
-										<button
-											type="button"
-											onclick={() => void insertFrameLayer()}
-											disabled={layerBusy || busy}
-											title="Grab the frame at the playhead and add it as a movable image layer"
-											class="mt-1.5 flex w-full items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-										>
-											<Icon
-												name={layerBusy ? 'i-lucide-loader-circle' : 'i-lucide-image-up'}
-												class="size-3.5 {layerBusy ? 'animate-spin' : ''}"
-											/>
-											Frame from video @ {formatDuration(stageSeconds)}
-										</button>
-									{/if}
-									{#if showLayerUrlForm}
-										<!-- keydown-Enter (not a <form> submit) — popover panels unmount
-										     on the global click-close before deferred submits fire. -->
-										<div class="mt-1.5 flex items-center gap-1">
-											<input
-												type="url"
-												inputmode="url"
-												bind:value={layerUrl}
-												placeholder="https://…/sticker.png"
-												class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-												disabled={layerUrlBusy}
-												onkeydown={(e) => {
-													if (e.key === 'Enter') {
-														e.preventDefault();
-														void addLayerFromUrl();
-													}
-												}}
-											/>
-											<button
-												type="button"
-												class="flex h-8 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-												disabled={layerUrlBusy || !layerUrl.trim()}
-												onclick={() => void addLayerFromUrl()}
-											>
-												<Icon
-													name={layerUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
-													class="size-3 {layerUrlBusy ? 'animate-spin' : ''}"
-												/>
-											</button>
-										</div>
-									{/if}
-									<p
-										class="mt-1.5 flex items-center gap-1 px-0.5 text-[10.5px] text-[var(--ui-text-dimmed)]"
-									>
-										<Icon name="i-lucide-sticker" class="size-3" />
-										pick GIFs or transparent stickers — tap several, then Add
-									</p>
-									<!-- Multi-select for mass production: tap several stickers,
-									     confirm once — each lands as a layer with a 2s window at
-									     the playhead, staggered 250ms apart. -->
-									<GifPicker
-										multiple
-										max={Math.max(1, MAX_IMAGE_OVERLAYS - imageLayers.length)}
-										onpick={(g) => void addLayerFromGifLib(g)}
-										onbrowse={() => {
-											// Device browse joins the volley: playhead window (timed
-											// sources), multi-select, 250ms stagger per file.
-											pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
-											layerInput?.click();
-										}}
-										onpickmany={(gifs) => {
-											const base = Math.round(stageSeconds * 1000);
-											for (let i = 0; i < gifs.length; i++) {
-												void addLayerFromGifLib(
-													gifs[i]!,
-													timelineActive ? base + i * 250 : undefined
-												);
-											}
-										}}
-									/>
-									{#if imageLayers.length}
-										<div class="mt-1.5 border-t border-[var(--ui-border-muted)] pt-1.5">
-											<p
-												class="mb-1 px-0.5 text-[10px] font-bold text-[var(--ui-text-dimmed)] uppercase"
-											>
-												Layers ({imageLayers.length}/{MAX_IMAGE_OVERLAYS})
-											</p>
-											<div class="flex flex-col gap-1">
-												{#each imageLayers as layer, li (layer.id)}
-													<div
-														class="flex items-center gap-1.5 rounded-lg px-1.5 py-1 transition {selectedLayerId ===
-														layer.id
-															? 'bg-warm-500/15'
-															: 'hover:bg-[var(--ui-bg-muted)]'}"
-													>
-														<button
-															type="button"
-															onclick={() => (selectedLayerId = layer.id)}
-															class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-														>
-															<span
-																class="grid size-7 shrink-0 place-items-center overflow-hidden rounded-md bg-black/40"
-															>
-																{#if layerAssets.bitmaps.has(layer.src)}
-																	<img
-																		src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
-																		alt=""
-																		class="max-h-full max-w-full"
-																	/>
-																{:else}
-																	<Icon name="i-lucide-image" class="size-3.5 text-white/60" />
-																{/if}
-															</span>
-															<span
-																class="truncate text-[11px] font-semibold text-[var(--ui-text)]"
-															>
-																Layer {li + 1}
-															</span>
-														</button>
-														<!-- Z-order: later layers paint on top — stack controls.
-														     stopPropagation keeps the popover open (global click-close). -->
-														<span class="flex shrink-0 items-center">
-															<button
-																type="button"
-																onclick={(e) => {
-																	e.stopPropagation();
-																	moveLayerRow(layer.id, 1);
-																}}
-																disabled={busy || li === imageLayers.length - 1}
-																aria-label={`Bring layer ${li + 1} forward`}
-																title="Bring forward (on top)"
-																class="grid size-5 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
-															>
-																<Icon name="i-lucide-chevron-up" class="size-3" />
-															</button>
-															<button
-																type="button"
-																onclick={(e) => {
-																	e.stopPropagation();
-																	moveLayerRow(layer.id, -1);
-																}}
-																disabled={busy || li === 0}
-																aria-label={`Send layer ${li + 1} backward`}
-																title="Send backward (behind)"
-																class="grid size-5 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
-															>
-																<Icon name="i-lucide-chevron-down" class="size-3" />
-															</button>
-														</span>
-														<!-- Layer timing (timed sources): chip toggles an edit row — same
-														     model as caption windows; missing window = always visible. -->
-														{#if timelineActive}
-															<button
-																type="button"
-																onclick={(e) => {
-																	// keep the popover open — the global click-close would eat it
-																	e.stopPropagation();
-																	layerTimingId = layerTimingId === layer.id ? null : layer.id;
-																}}
-																disabled={busy}
-																aria-expanded={layerTimingId === layer.id}
-																title="Show this layer only during part of the timeline"
-																class="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-bold transition {layerTimingId ===
-																	layer.id ||
-																layer.startMs !== undefined ||
-																layer.endMs !== undefined
-																	? 'bg-emerald-500/15 text-emerald-600'
-																	: 'text-[var(--ui-text-dimmed)] hover:text-[var(--ui-text)]'}"
-															>
-																{layer.startMs !== undefined || layer.endMs !== undefined
-																	? `${((layer.startMs ?? 0) / 1000).toFixed(1)}–${layer.endMs !== undefined ? (layer.endMs / 1000).toFixed(1) : '∞'}s`
-																	: 'always'}
-															</button>
-														{/if}
-														<button
-															type="button"
-															onclick={() => removeLayer(layer.id)}
-															aria-label={`Remove layer ${li + 1}`}
-															class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
-														>
-															<Icon name="i-lucide-x" class="size-3.5" />
-														</button>
-													</div>
-													{#if timelineActive && layerTimingId === layer.id}
-														<div
-															class="mb-1 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2"
-														>
-															<label
-																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
-															>
-																Show from
-																<input
-																	type="number"
-																	min="0"
-																	step="0.1"
-																	value={((layer.startMs ?? 0) / 1000).toFixed(1)}
-																	oninput={(e) => {
-																		const seconds = Number(
-																			(e.currentTarget as HTMLInputElement).value
-																		);
-																		patchLayer(layer.id, {
-																			startMs:
-																				Number.isFinite(seconds) && seconds > 0
-																					? Math.round(seconds * 1000)
-																					: undefined
-																		});
-																	}}
-																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
-																/>
-																s
-															</label>
-															<label
-																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
-															>
-																until
-																<input
-																	type="number"
-																	min="0"
-																	step="0.1"
-																	value={layer.endMs !== undefined
-																		? (layer.endMs / 1000).toFixed(1)
-																		: ''}
-																	placeholder="end"
-																	oninput={(e) => {
-																		const raw = (e.currentTarget as HTMLInputElement).value;
-																		const seconds = Number(raw);
-																		patchLayer(layer.id, {
-																			endMs:
-																				raw !== '' && Number.isFinite(seconds) && seconds > 0
-																					? Math.round(seconds * 1000)
-																					: undefined
-																		});
-																	}}
-																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
-																/>
-																s
-															</label>
-															<button
-																type="button"
-																onclick={() =>
-																	patchLayer(layer.id, { startMs: undefined, endMs: undefined })}
-																class="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
-															>
-																Always visible
-															</button>
-														</div>
-													{/if}
-												{/each}
-											</div>
-										</div>
-									{/if}
-								</div>
-							</Popover>
+								layers={imageLayers}
+								bind:selectedId={selectedLayerId}
+								bind:timingId={layerTimingId}
+								bind:showUrlForm={showLayerUrlForm}
+								bind:url={layerUrl}
+								{mediaKind}
+								{timelineActive}
+								{stageSeconds}
+								{busy}
+								loading={layerBusy}
+								urlBusy={layerUrlBusy}
+								loadedSources={layerAssets.bitmaps}
+								renderSrcs={layerAssets.renderSrcs}
+								onBrowse={() => {
+									pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
+									layerInput?.click();
+								}}
+								onInsertFrame={() => void insertFrameLayer()}
+								onAddUrl={() => void addLayerFromUrl()}
+								onAddGif={(gif, atMs) => void addLayerFromGifLib(gif, atMs)}
+								onMove={moveLayerRow}
+								onPatch={patchLayer}
+								onRemove={removeLayer}
+							/>
 
 							<!-- Look picker: one-tap color presets. Preview = CSS filter,
 							     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
