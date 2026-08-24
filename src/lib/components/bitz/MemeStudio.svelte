@@ -21,14 +21,11 @@
 	import { goto } from '$app/navigation';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
-	import PowCard from '$lib/components/ui/PowCard.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
-	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
+	import { media } from '$lib/stores/media.svelte';
 	import type { MediaProviderId, UploadedMedia } from '$lib/media/uploaders';
 	import { humanBytes } from '$lib/media/uploaders';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
@@ -58,13 +55,9 @@
 	} from '$lib/stores/meme-drafts';
 	import { formatDuration } from '$lib/utils/format';
 	import {
-		MAX_OVERLAY_CHARS,
 		MAX_OVERLAYS,
-		MEME_COLORS,
-		MEME_FONTS,
 		overlayVisibleAt,
 		makeOverlay,
-		makeClassicPair,
 		type MemeFont,
 		type MemeTextOverlay
 	} from '$lib/meme/schema';
@@ -107,12 +100,8 @@
 		type VideoClip
 	} from '$lib/meme/video-clips';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
-	import MemeLayerEditor from '$lib/components/bitz/MemeLayerEditor.svelte';
-	import MemeArtboardCard from '$lib/components/bitz/MemeArtboardCard.svelte';
-	import MemeTrimPanel from '$lib/components/bitz/MemeTrimPanel.svelte';
 	import MemeLookPicker from '$lib/components/bitz/MemeLookPicker.svelte';
 	import MemeStickerPicker from '$lib/components/bitz/MemeStickerPicker.svelte';
-	import MemeSourceLibrary from '$lib/components/bitz/MemeSourceLibrary.svelte';
 	import { mediaLibrary } from '$lib/stores/media-library.svelte';
 	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
 	import {
@@ -122,7 +111,6 @@
 	} from '$lib/meme/export-support';
 	import { cueAudioTrack, paintMemeBase, recordMeme } from '$lib/meme/export-pipeline';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
-	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
 	import { memeSlots, MAX_SLOT_BYTES } from '$lib/stores/meme-slots.svelte';
 	import {
@@ -138,28 +126,40 @@
 		type RemixLicense,
 		type RemixSource
 	} from '$lib/meme/remix';
-	import {
-		SPLIT_ROLES,
-		TOTAL_BASIS_POINTS,
-		splitsTagsFor,
-		validateSplits,
-		type SplitRole,
-		type SplitRow
-	} from '$lib/meme/splits';
+	import { splitsTagsFor, validateSplits, type SplitRow } from '$lib/meme/splits';
 	import { makeSticker } from '$lib/meme/stickers';
-	import { fxTransformAt, MEME_FX_OPTIONS } from '$lib/meme/fx';
+	import { fxTransformAt } from '$lib/meme/fx';
 	import MemeTimeline from '$lib/components/bitz/MemeTimeline.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
 	import GifPicker, { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
-	import type { SharedSound } from '$lib/meme/shared-sounds';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { fetchRemoteMedia } from '$lib/meme/remote-media';
-	import MemeStudioDropZone, {
-		type MemeMediaFormat,
-		type MemeMediaFormatOption
-	} from '$lib/components/bitz/MemeStudioDropZone.svelte';
+	import type { MemeMediaFormat } from '$lib/components/bitz/MemeStudioDropZone.svelte';
+	import MemeBatchQueueBar from '$lib/components/bitz/MemeBatchQueueBar.svelte';
+	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
+	import MemeStudioFooter from '$lib/components/bitz/MemeStudioFooter.svelte';
+	import MemeDiscardDialog from '$lib/components/bitz/MemeDiscardDialog.svelte';
+	import MemeTimelineDock from '$lib/components/bitz/MemeTimelineDock.svelte';
+	import MemeStudioInputs from '$lib/components/bitz/MemeStudioInputs.svelte';
+	import MemeTemplateSlotTools from '$lib/components/bitz/MemeTemplateSlotTools.svelte';
+	import MemeInspectorPanel from '$lib/components/bitz/MemeInspectorPanel.svelte';
+	import MemeExpertClipPanel from '$lib/components/bitz/MemeExpertClipPanel.svelte';
+	import MemeStageMediaControls from '$lib/components/bitz/MemeStageMediaControls.svelte';
+	import MemeTimelineQuickActions from '$lib/components/bitz/MemeTimelineQuickActions.svelte';
+	import {
+		ARTBOARD_KEY,
+		ARTBOARDS,
+		STAGE_ZOOM_KEY,
+		STAGE_ZOOM_STEPS,
+		TEMPLATES,
+		type MemeArtboardId as ArtboardId,
+		type MemeDestination as Destination,
+		type MemeExportFormat,
+		type MemeStudioPhase as Phase,
+		type MemeStudioTemplate as Template
+	} from '$lib/components/bitz/meme-studio-config';
 
 	/**
 	 * Meme Studio — create video/image memes and publish them as standard
@@ -191,17 +191,6 @@
 		slotHandoff?: string | null;
 	} = $props();
 
-	type Phase = 'idle' | 'rendering' | 'uploading' | 'mining' | 'publishing';
-	type Destination = 'bitz' | 'story' | 'note';
-
-	interface Template {
-		id: string;
-		label: string;
-		hint: string;
-		icon: string;
-		overlays: () => MemeTextOverlay[];
-	}
-
 	// ---- media state ---------------------------------------------------------
 	let file = $state<File | null>(null);
 	let previewUrl = $state('');
@@ -221,7 +210,6 @@
 	/** Sound studio dialog (picker + cue-sheet editor). */
 	let soundDialogOpen = $state(false);
 	// --- AI-002 suggestion ladder (Mild/Funny/Chaos) -------------------------
-	let suggestMenuId = `meme-suggest-${Math.random().toString(36).slice(2, 8)}`;
 	let suggestBusy = $state(false);
 	let suggestionGroups = $state<MemeSuggestion[]>([]);
 	/** Last local analysis — feeds the cue-sheet waveform (AI-001 anchors). */
@@ -316,16 +304,6 @@
 	// NOTE: read reactive fields via `soundIO.x` — destructuring would snapshot.
 	let soundFileInput = $state<HTMLInputElement | null>(null);
 
-	function cueLabel(cue: MemeSfxCue): string {
-		if (cue.sfx !== CUSTOM_SOUND_KEY) return sfxLabels[cue.sfx];
-		const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
-		return sound ? sound.label : 'Custom';
-	}
-
-	function cueIcon(cue: MemeSfxCue): string {
-		return cue.sfx === CUSTOM_SOUND_KEY ? 'i-lucide-mic' : 'i-lucide-music-2';
-	}
-
 	/** Audition a library sound immediately (store owns the AudioContext). */
 	async function previewSound(sound: LibrarySound) {
 		await soundIO.preview(sound);
@@ -336,14 +314,7 @@
 	// ---- shared sounds (NIP-78 §17.1 + §17.2 ingestion rules) ------------------
 	// Relay + upload + ingestion logic lives in sharedSoundsStore; the studio
 	// keeps menu ids and template bindings only (reactive reads via the store).
-	let sharedMenuId = `meme-shared-${Math.random().toString(36).slice(2, 8)}`;
 	const sharedSounds = $derived(sharedSoundsStore.list);
-	const sharedLoading = $derived(sharedSoundsStore.loading);
-	const sharedImportingId = $derived(sharedSoundsStore.importingId);
-	const sharingSoundId = $derived(sharedSoundsStore.sharingId);
-	const loadSharedSounds = () => sharedSoundsStore.load();
-	const shareSound = (sound: LibrarySound) => sharedSoundsStore.share(sound.id);
-	const importSharedSound = (sound: SharedSound) => sharedSoundsStore.import(sound);
 	/** GIF URL sourcing: paste a direct image/gif link next to the picker. */
 	let gifUrl = $state('');
 	let gifUrlBusy = $state(false);
@@ -563,7 +534,6 @@
 	// ---- overlays ------------------------------------------------------------
 	let overlays = $state<MemeTextOverlay[]>([]);
 	let selectedId = $state<string | null>(null);
-	let providerMenuId = `meme-provider-${Math.random().toString(36).slice(2, 8)}`;
 	/** Playhead for timed video overlays on the WYSIWYG stage. */
 	let stageSeconds = $state(0);
 
@@ -571,8 +541,6 @@
 	/** View zoom for the WYSIWYG stage — 1 = fit (old behavior). Bigger steps
 	 *  grow the canvas for detail work; overlay coords are normalized to the
 	 *  stage box so zoom never disturbs them. Persisted per device. */
-	const STAGE_ZOOM_KEY = 'bitos:meme-stage-zoom';
-	const STAGE_ZOOM_STEPS = [0.6, 0.8, 1, 1.25, 1.5];
 	let stageZoom = $state(1);
 
 	function setStageZoom(next: number) {
@@ -597,15 +565,6 @@
 	 *  cover-fit the media (a 16:9 clip on 9:16 crops to fill — mobile-first).
 	 *  Overlay coordinates are normalized, so they land identically on any
 	 *  artboard. Persisted per device. */
-	const ARTBOARD_KEY = 'bitos:meme-artboard';
-	type ArtboardId = 'source' | '9:16' | '16:9' | '1:1' | '4:5';
-	const ARTBOARDS: { id: ArtboardId; label: string; hint: string; w: number; h: number }[] = [
-		{ id: 'source', label: 'Source', hint: "Keep the media's own frame", w: 0, h: 0 },
-		{ id: '9:16', label: '9:16', hint: 'Mobile full-screen · stories / reels', w: 1080, h: 1920 },
-		{ id: '16:9', label: '16:9', hint: 'Landscape · YouTube', w: 1920, h: 1080 },
-		{ id: '1:1', label: '1:1', hint: 'Square feed post', w: 1080, h: 1080 },
-		{ id: '4:5', label: '4:5', hint: 'Portrait feed post', w: 1080, h: 1350 }
-	];
 	let artboardId = $state<ArtboardId>('source');
 
 	function setArtboard(next: ArtboardId) {
@@ -1033,29 +992,6 @@
 	/** Which meme format the creator picked — filters the media chooser so the
 	 *  file dialog opens pre-scoped (image / GIF / video). `all` = unfiltered. */
 	let pickFormat = $state<'all' | MemeMediaFormat>('all');
-	const PICK_FORMATS: (MemeMediaFormatOption & { accept: string })[] = [
-		{
-			id: 'image',
-			label: 'Image meme',
-			hint: 'JPG · PNG · WebP',
-			icon: 'i-lucide-image',
-			accept: 'image/png,image/jpeg,image/webp,image/*'
-		},
-		{
-			id: 'gif',
-			label: 'GIF meme',
-			hint: 'animated, keeps motion',
-			icon: 'i-lucide-film',
-			accept: 'image/gif'
-		},
-		{
-			id: 'video',
-			label: 'Video meme',
-			hint: 'MP4 · WebM · MOV',
-			icon: 'i-lucide-video',
-			accept: 'video/mp4,video/webm,video/quicktime,video/*'
-		}
-	];
 	/** Pick media pre-scoped to a format: filters the chooser, then opens it. */
 	async function pickMediaAs(format: MemeMediaFormat) {
 		pickFormat = format;
@@ -1067,15 +1003,12 @@
 	/** Open motion-fx popover for this caption (video memes). */
 	let fxId = $state<string | null>(null);
 	/** Saved-template popover id + inline save-name input. */
-	let templateMenuId = `meme-templates-${Math.random().toString(36).slice(2, 8)}`;
 	let showTemplateSave = $state(false);
 	let templateName = $state('');
 	/** Draft-slot popover: named WIP snapshots (save now, resume later). */
-	let slotsMenuId = `meme-slots-${Math.random().toString(36).slice(2, 8)}`;
 	let showSlotSave = $state(false);
 	let slotName = $state('');
 	let slotBusyId = $state('');
-	let destMenuId = `meme-dest-${Math.random().toString(36).slice(2, 8)}`;
 
 	// ---- sticker picker (#3) --------------------------------------------------
 	// (UI lives in MemeStickerPicker.svelte — this is the state it drives.)
@@ -1373,26 +1306,7 @@
 	const splitCheck = $derived(
 		splitRows.length ? validateSplits(splitRows) : ({ ok: true } as const)
 	);
-	const splitTotal = $derived(splitRows.reduce((sum, r) => sum + r.basisPoints, 0));
-
-	function addSplitRow() {
-		splitRows = [...splitRows, { role: 'video_creator', basisPoints: 0 }];
-	}
-
-	function removeSplitRow(role: SplitRole, beneficiary?: string) {
-		splitRows = splitRows.filter(
-			(r) => !(r.role === role && (r.beneficiary ?? '') === (beneficiary ?? ''))
-		);
-	}
-
 	/** Advisory license menu (S-013) — labels kept human, codes on the wire. */
-	const LICENSE_OPTIONS: Array<{ code: RemixLicense; label: string }> = [
-		{ code: 'CC0-1.0', label: 'CC0 · anyone can reuse' },
-		{ code: 'CC-BY-4.0', label: 'CC BY · reuse with credit' },
-		{ code: 'CC-BY-NC-4.0', label: 'CC BY-NC · non-commercial' },
-		{ code: 'bitz/source-permission', label: 'Ask me first' },
-		{ code: 'bitz/all-reserved', label: 'No remixes' }
-	];
 	let remixLabel = $state('');
 
 	// ---- publish state --------------------------------------------------------
@@ -1415,7 +1329,6 @@
 	const busy = $derived(phase !== 'idle');
 	const dirty = $derived(!!file || overlays.some((o) => o.text.trim()) || !!caption.trim());
 	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
-	const overSoft = $derived(caption.length > SOFT_CAP);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
 	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
 	 *  kind 21 (landscape), matching what clients actually play. */
@@ -1442,75 +1355,6 @@
 		}
 		return null;
 	});
-
-	const DESTINATIONS: { id: Destination; label: string; icon: string; hint: string }[] = [
-		{
-			id: 'bitz',
-			label: 'Bitz feed',
-			icon: 'i-lucide-clapperboard',
-			hint: 'Permanent media post (kind 20/21/22)'
-		},
-		{
-			id: 'story',
-			label: 'Story · 24h',
-			icon: 'i-lucide-circle-dot-dashed',
-			hint: 'Disappearing story (kind 30315)'
-		},
-		{
-			id: 'note',
-			label: 'Note',
-			icon: 'i-lucide-message-square-text',
-			hint: 'Text note with the meme attached (kind 1)'
-		}
-	];
-
-	const TEMPLATES: Template[] = [
-		{
-			id: 'classic',
-			label: 'Classic',
-			hint: 'Top / bottom Impact caps',
-			icon: 'i-lucide-letter-text',
-			overlays: () => makeClassicPair()
-		},
-		{
-			id: 'caption',
-			label: 'Caption bar',
-			hint: 'Single subtitle-bar line',
-			icon: 'i-lucide-captions',
-			overlays: () => [
-				makeOverlay({
-					text: 'when the code finally runs',
-					y: 0.88,
-					size: 0.06,
-					bar: true,
-					font: 'sans'
-				})
-			]
-		},
-		{
-			id: 'drake',
-			label: 'Drake',
-			hint: 'No / Yes panels',
-			icon: 'i-lucide-columns-2',
-			overlays: () => [
-				makeOverlay({ text: 'web2 platforms', x: 0.25, y: 0.24, size: 0.05 }),
-				makeOverlay({ text: 'nostr', x: 0.75, y: 0.74, size: 0.05 })
-			]
-		},
-		{
-			id: 'punchline',
-			label: 'Punchline',
-			hint: 'Timed setup → punchline (video)',
-			icon: 'i-lucide-zap',
-			overlays: () => [
-				{ ...makeOverlay({ text: 'setup…', y: 0.2, size: 0.06 }), endMs: 1500 },
-				{ ...makeOverlay({ text: 'PUNCHLINE', y: 0.8, size: 0.1 }), startMs: 1500 }
-			]
-		}
-	].filter((t) => t.id); // guard against typos in template defs
-
-	/** Blank-canvas starter colors (fewer than MEME_COLORS — swatches, not text). */
-	const BLANK_CANVAS_COLORS = ['#ffffff', '#000000', '#fde047', '#f97316', '#22d3ee', '#a3e635'];
 
 	// ---- drag logic (pointer events, works with touch) -----------------------
 	let dragState: { id: string; dx: number; dy: number } | null = null;
@@ -1941,10 +1785,6 @@
 	}
 
 	/** Is this caption color from outside the preset palette (custom picker)? */
-	function isCustomCaptionColor(color: string): boolean {
-		return !(MEME_COLORS as readonly string[]).includes(color);
-	}
-
 	/** Reorder = z-order: later array slots paint on top (render.ts paintAll). */
 	function moveOverlayRow(id: string, dir: -1 | 1) {
 		const idx = overlays.findIndex((o) => o.id === id);
@@ -2270,7 +2110,7 @@
 	 *  cue → sound video, plain static → JPEG, video → video). The explicit
 	 *  options let creators ship the SAME composition as a still, a true
 	 *  looping .gif, or a video regardless of the source type. */
-	let exportFormat = $state<'auto' | 'image' | 'gif' | 'video'>('auto');
+	let exportFormat = $state<MemeExportFormat>('auto');
 
 	/** JPEG still of the current frame — works from ANY source (video draws
 	 *  the element's current frame; GIF paints the playhead frame). */
@@ -3118,197 +2958,43 @@
 		<div
 			class="surface-card relative z-10 flex h-full w-full max-w-none flex-col overflow-hidden rounded-none border-0 shadow-none"
 		>
-			{#if batch.remaining > 0}
-				<div
-					class="flex shrink-0 items-start justify-between gap-2 border-b border-warm-500/25 bg-warm-500/10 px-4 py-2"
-				>
-					<div class="flex min-w-0 flex-1 flex-col gap-1.5">
-						<div class="flex items-center gap-2 text-[12px] font-semibold text-warm-600">
-							<Icon name="i-lucide-list-video" class="size-4 shrink-0" />
-							<span class="truncate">
-								Batch queue: {batch.remaining} clip{batch.remaining === 1 ? '' : 's'} left — each post
-								loads the next
-							</span>
-						</div>
-						<!-- Per-item captions: type a line per queued GIF; it becomes that post's text. -->
-						<div class="flex flex-col gap-1">
-							{#each batch.remainingItems as item, i (item.id)}
-								<div class="flex items-center gap-1.5">
-									<span
-										class="grid size-5 shrink-0 place-items-center rounded-full bg-warm-500/15 font-mono text-[10px] font-bold text-warm-600"
-										title={batch.remainingItems[i]?.label ?? ''}
-									>
-										{batch.index + i + 1}
-									</span>
-									<input
-										type="text"
-										value={item.caption ?? ''}
-										maxlength="280"
-										placeholder={`Caption for ${item.label}…`}
-										aria-label={`Caption for queued clip ${batch.index + i + 1}`}
-										oninput={(e) =>
-											batch.setCaption(item.id, (e.target as HTMLInputElement).value || undefined)}
-										class="h-7 min-w-0 flex-1 rounded-lg border border-warm-500/20 bg-[var(--ui-bg)] px-2 text-[12px] outline-none focus:border-warm-500/60"
-									/>
-								</div>
-							{/each}
-						</div>
-					</div>
-					<span class="flex shrink-0 items-center gap-1">
-						<button
-							type="button"
-							onclick={() => void stageNextQueued()}
-							disabled={gifStageBusy || busy}
-							title={`Skip this one and load the next queued clip (${batch.peekLabel})`}
-							class="rounded-full px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-						>
-							Skip →
-						</button>
-						<button
-							type="button"
-							onclick={() => batch.clear()}
-							title="Drop every queued GIF"
-							class="rounded-full px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-						>
-							Clear
-						</button>
-					</span>
-				</div>
-			{/if}
+			<MemeBatchQueueBar
+				items={batch.remainingItems}
+				startIndex={batch.index}
+				peekLabel={batch.peekLabel}
+				{busy}
+				staging={gifStageBusy}
+				onCaption={(id, value) => batch.setCaption(id, value)}
+				onSkip={() => void stageNextQueued()}
+				onClear={() => batch.clear()}
+			/>
 
 			<div class="flex min-h-0 flex-1 flex-col">
 				{#if !file}
-					<!-- Empty state -->
-					<div class="flex min-h-[420px] flex-col items-center justify-center p-6">
-						{#if remixSource}
-							<!-- Remix chain handoff: the source media is loading (or failed and
-							     fell back to "pick your own clip" — the layout still applies). -->
-							<div
-								class="mb-4 flex w-full max-w-sm items-center gap-3 rounded-2xl border border-warm-500/30 bg-warm-500/10 px-4 py-3"
-							>
-								<span
-									class="grid size-9 shrink-0 place-items-center rounded-xl bg-warm-500/15 text-warm-500"
-								>
-									<Icon name="i-lucide-repeat" class="size-5" />
-								</span>
-								<div class="min-w-0">
-									<p class="text-[13.5px] font-bold text-[var(--ui-text-highlighted)]">
-										Remixing “{remixLabel}”
-									</p>
-									<p class="text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
-										Loading the source clip + applying its captions & sounds…
-									</p>
-								</div>
-							</div>
-						{/if}
-						<MemeStudioDropZone
-							formats={PICK_FORMATS}
-							onChooseMedia={() => fileInput?.click()}
-							onChooseFormat={pickMediaAs}
-							onDropFile={acceptFile}
-						/>
-						<div class="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-1.5">
-							<Popover
-								id={gifPickerMenuId}
-								float
-								placement="top-start"
-								width="auto"
-								class="w-72 max-w-[80vw] p-0 sm:w-80"
-								label="Pick a GIF from the library"
-								triggerClass="flex items-center gap-1 rounded-full bg-warm-500/10 px-3 py-1.5 text-[11.5px] font-bold text-warm-600 transition hover:bg-warm-500/20"
-								triggerActiveClass="bg-warm-500/20"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-film" class="size-3.5" />
-									GIF library
-									{#if gifStageBusy}
-										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-									{/if}
-								{/snippet}
-								<GifPicker
-									multiple
-									max={6}
-									onpick={pickGifForStage}
-									onpickmany={pickGifsForStage}
-								/>
-							</Popover>
-							<Popover
-								id={blankMenuId}
-								float
-								placement="top-start"
-								width="auto"
-								label="Start from a blank canvas"
-								triggerClass="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-							>
-								{#snippet trigger()}
-									<Icon name="i-lucide-square-plus" class="size-3.5" />
-									Blank canvas
-								{/snippet}
-								<div class="flex items-center gap-1.5 p-1.5">
-									{#each BLANK_CANVAS_COLORS as color (color)}
-										<button
-											type="button"
-											aria-label={`Start a blank ${color} canvas`}
-											title={color}
-											disabled={gifStageBusy}
-											onclick={() => startBlank(color)}
-											class="size-7 rounded-full border border-black/10 transition hover:scale-110 active:scale-95 dark:border-white/20"
-											style="background:{color};"
-										></button>
-									{/each}
-								</div>
-							</Popover>
-							<button
-								type="button"
-								class="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-								onclick={() => (showGifUrlForm = !showGifUrlForm)}
-							>
-								<Icon name="i-lucide-link" class="size-3.5" />
-								{showGifUrlForm ? 'Hide URL' : 'Paste URL'}
-							</button>
-							<!-- Recently-used sources: one-tap reopen for mass production. -->
-							<MemeSourceLibrary
-								id={startLibMenuId}
-								busy={gifStageBusy || busy}
-								onOpenBase={(source) => void loadSourceFromUrl(source.url, source.label)}
-								onAddLayer={(source) =>
-									void addImageLayer({ url: source.url }, undefined, {
-										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
-									})}
-							/>
-						</div>
-						{#if showGifUrlForm}
-							<!-- Image/GIF sourcing: paste a direct URL (user request 2026-08-23). -->
-							<form
-								class="mt-2 flex w-full max-w-sm items-center gap-1.5"
-								onsubmit={(e) => {
-									e.preventDefault();
-									void importGifFromUrl();
-								}}
-							>
-								<label class="sr-only" for="meme-gif-url">Image or GIF URL</label>
-								<input
-									id="meme-gif-url"
-									type="url"
-									bind:value={gifUrl}
-									placeholder="Paste an image / GIF / video URL"
-									class="h-9 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3.5 text-[12.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-									disabled={gifUrlBusy}
-								/>
-								<button
-									type="submit"
-									class="flex h-9 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11.5px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-									disabled={gifUrlBusy || !gifUrl.trim()}
-								>
-									<Icon
-										name={gifUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-link'}
-										class="size-3.5 {gifUrlBusy ? 'animate-spin' : ''}"
-									/>
-									{gifUrlBusy ? 'Loading…' : 'Use URL'}
-								</button>
-							</form>
-						{/if}
-					</div>
+					<MemeStudioEmptyState
+						remixing={!!remixSource}
+						{remixLabel}
+						staging={gifStageBusy}
+						{busy}
+						gifPickerId={gifPickerMenuId}
+						blankPickerId={blankMenuId}
+						sourceLibraryId={startLibMenuId}
+						bind:showUrl={showGifUrlForm}
+						bind:url={gifUrl}
+						urlBusy={gifUrlBusy}
+						onChooseMedia={() => fileInput?.click()}
+						onChooseFormat={pickMediaAs}
+						onDropFile={acceptFile}
+						onPickGif={pickGifForStage}
+						onPickGifs={pickGifsForStage}
+						onBlank={startBlank}
+						onSubmitUrl={importGifFromUrl}
+						onOpenSource={(source) => void loadSourceFromUrl(source.url, source.label)}
+						onAddSourceLayer={(source) =>
+							void addImageLayer({ url: source.url }, undefined, {
+								atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+							})}
+					/>
 				{:else}
 					<!-- Panes as snippets — one markup source, two layouts: the dialog grid
 					     (composer dialog) and the full-page pro studio (tools · stage ·
@@ -3556,189 +3242,42 @@
 									</div>
 								{/if}
 							</div>
-							<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-								<div class="flex flex-wrap items-center gap-1">
-									<button
-										type="button"
-										onclick={() => fileInput?.click()}
-										disabled={busy}
-										class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-									>
-										<Icon name="i-lucide-repeat-2" class="size-3" />
-										Replace
-									</button>
-									<!-- Mass production: multi-pick more sources (videos/pictures) into
-									     the batch queue — each publish loads the next one. -->
-									<button
-										type="button"
-										onclick={() => queueInput?.click()}
-										disabled={busy}
-										title="Queue more clips — each publish loads the next one"
-										class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
-									>
-										<Icon name="i-lucide-list-video" class="size-3" />
-										Queue clips
-									</button>
-									<!-- Recent sources: swap the base or drop a layer in one tap. -->
-									<MemeSourceLibrary
-										id={swapLibMenuId}
-										busy={gifStageBusy || busy}
-										triggerLabel="Library"
-										onOpenBase={(source) => void loadSourceFromUrl(source.url, source.label)}
-										onAddLayer={(source) =>
-											void addImageLayer({ url: source.url }, undefined, {
-												atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
-											})}
-									/>
-									<Popover
-										id={swapGifMenuId}
-										float
-										placement="top-start"
-										width="auto"
-										class="w-72 max-w-[80vw] p-0 sm:w-80"
-										label="Swap the base GIF from the library"
-										triggerClass="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-										triggerActiveClass="bg-warm-500/15 text-warm-600"
-									>
-										{#snippet trigger()}
-											<Icon name="i-lucide-film" class="size-3" />
-											GIFs
-											{#if gifStageBusy}
-												<Icon name="i-lucide-loader-circle" class="size-3 animate-spin" />
-											{/if}
-										{/snippet}
-										<GifPicker onpick={swapGifFromLib} />
-									</Popover>
-									<label
-										class="inline-flex cursor-pointer items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold transition {keepLayoutOnSwap
-											? 'bg-warm-500/15 text-warm-600'
-											: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-										title="Keep captions, image layers and sound cues when the base media changes"
-									>
-										<input
-											type="checkbox"
-											bind:checked={keepLayoutOnSwap}
-											disabled={busy}
-											class="size-3 accent-[var(--color-warm-500)]"
-										/>
-										Keep captions
-									</label>
-									<button
-										type="button"
-										onclick={() => (showSwapUrlForm = !showSwapUrlForm)}
-										disabled={busy || gifUrlBusy}
-										class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-									>
-										<Icon name="i-lucide-link" class="size-3" />
-										{showSwapUrlForm ? 'Hide URL' : 'URL'}
-									</button>
-								</div>
-								<button
-									type="button"
-									onclick={clearMedia}
-									disabled={busy}
-									class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)] disabled:opacity-40"
-								>
-									<Icon name="i-lucide-trash-2" class="size-3" />
-									Remove
-								</button>
-								<!-- Start over: full reset (media + captions + sounds + remix
-								     lineage + queue + draft) back to the format-card start panel. -->
-								<button
-									type="button"
-									onclick={requestNew}
-									disabled={busy}
-									title="Clear everything and start a new meme"
-									class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold text-warm-600 transition hover:bg-warm-500/15 disabled:opacity-40"
-								>
-									<Icon name="i-lucide-file-plus" class="size-3" />
-									New
-								</button>
-							</div>
-							{#if showSwapUrlForm}
-								<form
-									class="mt-2 flex items-center gap-1.5"
-									onsubmit={(e) => {
-										e.preventDefault();
-										void importGifFromUrl();
-									}}
-								>
-									<input
-										type="url"
-										inputmode="url"
-										bind:value={gifUrl}
-										placeholder="https://example.com/meme.gif"
-										class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[12px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
-										disabled={gifUrlBusy}
-									/>
-									<button
-										type="submit"
-										class="flex h-8 shrink-0 items-center gap-1 rounded-full bg-warm-500/10 px-3 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
-										disabled={gifUrlBusy || !gifUrl.trim()}
-									>
-										<Icon
-											name={gifUrlBusy ? 'i-lucide-loader-circle' : 'i-lucide-check'}
-											class="size-3 {gifUrlBusy ? 'animate-spin' : ''}"
-										/>
-										{gifUrlBusy ? 'Loading…' : 'Swap'}
-									</button>
-								</form>
-							{/if}
+							<MemeStageMediaControls
+								{busy}
+								staging={gifStageBusy}
+								sourceLibraryId={swapLibMenuId}
+								gifPickerId={swapGifMenuId}
+								bind:keepLayout={keepLayoutOnSwap}
+								bind:showUrlForm={showSwapUrlForm}
+								bind:url={gifUrl}
+								urlBusy={gifUrlBusy}
+								onChooseFile={() => fileInput?.click()}
+								onQueue={() => queueInput?.click()}
+								onOpenSource={(source) => void loadSourceFromUrl(source.url, source.label)}
+								onAddLayer={(source) =>
+									void addImageLayer({ url: source.url }, undefined, {
+										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									})}
+								onPickGif={swapGifFromLib}
+								onSubmitUrl={() => void importGifFromUrl()}
+								onRemove={clearMedia}
+								onNew={requestNew}
+							/>
 						</div>
 						{#if expertTimeline && mediaKind === 'video'}
-							<div class="mt-2 rounded-lg border border-violet-500/20 bg-violet-500/5 p-2">
-								<div class="mb-1 flex items-center justify-between gap-2">
-									<p class="text-[10px] font-bold tracking-wider text-violet-700 uppercase">
-										Expert clips
-									</p>
-									<span class="text-[10px] text-[var(--ui-text-dimmed)]"
-										>{videoClips.length} clips · {formatDuration(clipsDuration(videoClips))}</span
-									>
-								</div>
-								<div class="flex flex-wrap gap-1">
-									{#each videoClips as clip, index (clip.id)}
-										<button
-											type="button"
-											onclick={() => {
-												selectedClipId = clip.id;
-												const before = videoClips
-													.slice(0, index)
-													.reduce((total, item) => total + (item.endSec - item.startSec), 0);
-												scrubPreview(before);
-											}}
-											class="rounded-md border px-2 py-1 text-left text-[10px] font-bold transition {selectedClipId ===
-											clip.id
-												? 'border-violet-500 bg-violet-500 text-white'
-												: 'border-violet-500/20 bg-[var(--ui-bg)] text-[var(--ui-text-muted)] hover:border-violet-500/50'}"
-											title="Select clip {index + 1}"
-										>
-											{index + 1} · {clip.startSec.toFixed(1)}–{clip.endSec.toFixed(1)}s
-										</button>
-									{/each}
-								</div>
-								{#if selectedClipId}
-									<div class="mt-1.5 flex gap-1">
-										<button
-											type="button"
-											onclick={() => (videoClips = moveClip(videoClips, selectedClipId!, -1))}
-											class="rounded px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-500/10"
-											><Icon
-												name="i-lucide-arrow-left"
-												class="mr-0.5 inline size-3"
-											/>Earlier</button
-										>
-										<button
-											type="button"
-											onclick={() => (videoClips = moveClip(videoClips, selectedClipId!, 1))}
-											class="rounded px-2 py-1 text-[10px] font-bold text-violet-700 hover:bg-violet-500/10"
-											>Later<Icon
-												name="i-lucide-arrow-right"
-												class="ml-0.5 inline size-3"
-											/></button
-										>
-									</div>
-								{/if}
-							</div>
+							<MemeExpertClipPanel
+								clips={videoClips}
+								bind:selectedId={selectedClipId}
+								onSelect={(clip, index) => {
+									const before = videoClips
+										.slice(0, index)
+										.reduce((total, item) => total + (item.endSec - item.startSec), 0);
+									scrubPreview(before);
+								}}
+								onMove={(direction) => {
+									if (selectedClipId) videoClips = moveClip(videoClips, selectedClipId, direction);
+								}}
+							/>
 						{/if}
 					{/snippet}
 
@@ -3783,124 +3322,29 @@
 							onPatchCueLane={moveSfxCueLane}
 							cueMetaFor={cueMeta}
 						/>
-						<!-- Insert-at-playhead actions (video/timed sources): the timeline is
-						     the natural place to drop a timed caption / sound / poster frame. -->
+						<!-- Insert-at-playhead actions for the timeline. -->
 						<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-							<button
-								type="button"
-								onclick={pickOtherTimelineSource}
-								disabled={busy}
-								title="Choose another image, GIF, or video while keeping this edit"
-								class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
-							>
-								<Icon name="i-lucide-clapperboard" class="size-3.5" />
-								Other source
-							</button>
-							{#if mediaKind === 'video'}
-								<div
-									class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 py-1 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
-									title="Source-video volume in preview and export"
-								>
-									<Icon
-										name={includeSourceAudio ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
-										class="size-3.5"
-									/>
-									<input
-										aria-label="Source video volume"
-										type="range"
-										min="0"
-										max="1"
-										step="0.05"
-										bind:value={sourceAudioGain}
-										disabled={!includeSourceAudio || busy}
-										class="h-1 w-14 accent-[var(--color-warm-500)]"
-									/>
-									<button
-										type="button"
-										onclick={() => (includeSourceAudio = !includeSourceAudio)}
-										class="font-mono text-[9px] hover:text-[var(--ui-text)]"
-										>{Math.round(sourceAudioGain * 100)}%</button
-									>
-								</div>
-								<button
-									type="button"
-									onclick={enableExpertTimeline}
-									disabled={busy || expertTimeline}
-									title="Enable multi-clip video editing"
-									class="flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10.5px] font-bold text-violet-600 transition hover:bg-violet-500/20 disabled:opacity-40"
-								>
-									<Icon name="i-lucide-list-tree" class="size-3.5" />
-									{expertTimeline ? 'Expert timeline' : 'Expert'}
-								</button>
-								{#if expertTimeline}
-									<button
-										type="button"
-										onclick={splitVideoClipAtPlayhead}
-										disabled={busy}
-										class="flex items-center gap-1 rounded-full bg-violet-500/10 px-2.5 py-1 text-[10.5px] font-bold text-violet-600 transition hover:bg-violet-500/20 disabled:opacity-40"
-									>
-										<Icon name="i-lucide-scissors" class="size-3.5" /> Split video
-									</button>
-									<button
-										type="button"
-										onclick={removeSelectedVideoClip}
-										disabled={busy || !selectedClipId || videoClips.length <= 1}
-										class="flex items-center gap-1 rounded-full bg-red-500/10 px-2.5 py-1 text-[10.5px] font-bold text-red-600 transition hover:bg-red-500/20 disabled:opacity-40"
-									>
-										<Icon name="i-lucide-trash-2" class="size-3.5" /> Delete clip
-									</button>
-								{/if}
-								<button
-									type="button"
-									onclick={() => cutVideoAtPlayhead('before')}
-									disabled={busy}
-									title="Cut at the playhead and keep the part before it"
-									class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
-								>
-									<Icon name="i-lucide-scissors" class="size-3.5" />
-									Cut before
-								</button>
-								<button
-									type="button"
-									onclick={() => cutVideoAtPlayhead('after')}
-									disabled={busy}
-									title="Cut at the playhead and keep the part after it"
-									class="flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-1 text-[10.5px] font-bold text-sky-600 transition hover:bg-sky-500/20 disabled:opacity-40"
-								>
-									<Icon name="i-lucide-scissors" class="size-3.5" />
-									Cut after
-								</button>
-							{/if}
-							<button
-								type="button"
-								onclick={splitSelectedAtPlayhead}
-								disabled={busy || !timelineActive || (!selectedId && !selectedLayerId)}
-								title="Split the selected caption or image layer at the playhead"
-								class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[10.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
-							>
-								<Icon name="i-lucide-split" class="size-3.5" />
-								Split selected
-							</button>
-							<button
-								type="button"
-								onclick={addCaptionAtPlayhead}
-								disabled={busy}
-								title="Add a caption with a 2s window starting at the playhead"
-								class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[10.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
-							>
-								<Icon name="i-lucide-captions-plus" class="size-3.5" />
-								Caption @ {formatDuration(stageSeconds)}
-							</button>
-							<button
-								type="button"
-								onclick={() => popovers.open(sfxMenuId)}
-								disabled={busy || !mediaKind}
-								title="Add a sound cue at the playhead"
-								class="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[10.5px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-40"
-							>
-								<Icon name="i-lucide-music-plus" class="size-3.5" />
-								Sound @ {formatDuration(stageSeconds)}
-							</button>
+							<MemeTimelineQuickActions
+								{busy}
+								{mediaKind}
+								{timelineActive}
+								{stageSeconds}
+								selectedOverlayId={selectedId}
+								{selectedLayerId}
+								bind:includeSourceAudio
+								bind:sourceAudioGain
+								{expertTimeline}
+								hasSelectedClip={!!selectedClipId}
+								canDeleteClip={videoClips.length > 1}
+								onOtherSource={pickOtherTimelineSource}
+								onEnableExpert={enableExpertTimeline}
+								onSplitVideo={splitVideoClipAtPlayhead}
+								onDeleteClip={removeSelectedVideoClip}
+								onCutVideo={cutVideoAtPlayhead}
+								onSplitSelected={splitSelectedAtPlayhead}
+								onAddCaption={addCaptionAtPlayhead}
+								onAddSound={() => popovers.open(sfxMenuId)}
+							/>
 							<!-- Image @ playhead: drop a movable layer with a 2s window right
 							     where the playhead sits — sources: upload / URL / GIF library. -->
 							<Popover
@@ -4021,266 +3465,24 @@
 					{#snippet toolsPane()}
 						<!-- Tool rail: layouts, stickers, image layers, looks -->
 						<div class="flex min-w-0 flex-col gap-3">
-							<!-- Templates -->
-							<div class="flex flex-wrap items-center gap-1.5">
-								<span
-									class="text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
-								>
-									Template
-								</span>
-								{#each TEMPLATES as template (template.id)}
-									<button
-										type="button"
-										onclick={() => applyTemplate(template)}
-										disabled={busy}
-										title={template.hint}
-										class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-warm-500/15 hover:text-warm-500 active:scale-95 disabled:opacity-40"
-									>
-										<Icon name={template.icon} class="size-3.5" />
-										{template.label}
-									</button>
-								{/each}
-								<button
-									type="button"
-									onclick={() => addOverlay()}
-									disabled={busy || overlays.length >= 12}
-									class="inline-flex items-center gap-1 rounded-full bg-warm-500/12 px-2.5 py-1 text-[11px] font-bold text-warm-500 transition hover:bg-warm-500/20 active:scale-95 disabled:opacity-40"
-								>
-									<Icon name="i-lucide-plus" class="size-3.5" />
-									Caption
-								</button>
-								<!-- Saved templates: user layouts persisted locally -->
-								<Popover
-									id={templateMenuId}
-									float
-									placement="bottom-start"
-									width="auto"
-									class="w-72 max-w-[80vw] p-0"
-									label="Saved templates"
-									triggerClass="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-warm-500/15 hover:text-warm-500"
-									triggerActiveClass="bg-warm-500/15 text-warm-500"
-								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-bookmark" class="size-3.5" />
-										Saved
-										{#if memeTemplates.list.length}
-											<span
-												class="rounded-full bg-warm-500/15 px-1.5 font-mono text-[10px] text-warm-500"
-											>
-												{memeTemplates.list.length}
-											</span>
-										{/if}
-									{/snippet}
-									<div class="max-h-64 overflow-y-auto p-1.5">
-										{#if memeTemplates.list.length}
-											{#each memeTemplates.list as saved (saved.id)}
-												<div
-													class="group flex items-center gap-1 rounded-lg px-1.5 py-1 transition hover:bg-[var(--ui-bg-muted)]"
-												>
-													<button
-														type="button"
-														onclick={() => applySavedTemplate(saved.id)}
-														disabled={busy}
-														title="Apply this layout"
-														class="flex min-w-0 flex-1 items-center gap-2 text-left"
-													>
-														<Icon name={saved.icon} class="size-4 shrink-0 text-warm-500" />
-														<span class="min-w-0 flex-1">
-															<span class="block truncate text-[12.5px] font-bold">
-																{saved.label}
-															</span>
-															<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																{saved.overlays.length} caption{saved.overlays.length === 1
-																	? ''
-																	: 's'}
-															</span>
-														</span>
-													</button>
-													<button
-														type="button"
-														onclick={() => removeSavedTemplate(saved.id)}
-														aria-label={`Delete template ${saved.label}`}
-														class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-[var(--tone-error-text)] focus-visible:opacity-100"
-													>
-														<Icon name="i-lucide-trash-2" class="size-3.5" />
-													</button>
-												</div>
-											{/each}
-										{:else}
-											<p class="px-2 py-3 text-center text-[12px] text-[var(--ui-text-muted)]">
-												No saved templates yet — build a layout and hit
-												<span class="font-bold">Save</span>.
-											</p>
-										{/if}
-									</div>
-									{#if memeTemplates.list.length}
-										<div class="border-t border-[var(--ui-border-muted)] p-1.5">
-											<MenuDivider />
-										</div>
-									{/if}
-									<div class="p-1.5 pt-0">
-										{#if showTemplateSave}
-											<div class="flex items-center gap-1.5">
-												<input
-													type="text"
-													value={templateName}
-													maxlength="40"
-													placeholder="Template name"
-													aria-label="Template name"
-													onkeydown={(e) => {
-														if (e.key === 'Enter') saveCurrentTemplate();
-														if (e.key === 'Escape') showTemplateSave = false;
-													}}
-													class="h-8 min-w-0 flex-1 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 text-[12.5px] font-semibold outline-none focus:border-warm-500/60"
-												/>
-												<button
-													type="button"
-													onclick={saveCurrentTemplate}
-													disabled={busy || !overlays.length}
-													class="grid size-8 shrink-0 place-items-center rounded-lg bg-warm-500 text-white transition hover:brightness-110 active:scale-95 disabled:opacity-40"
-													aria-label="Save template"
-												>
-													<Icon name="i-lucide-check" class="size-4" />
-												</button>
-											</div>
-										{:else}
-											<button
-												type="button"
-												onclick={() => (showTemplateSave = true)}
-												disabled={busy || !overlays.length}
-												class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-warm-500/12 text-[12px] font-bold text-warm-500 transition hover:bg-warm-500/20 active:scale-[0.98] disabled:opacity-40"
-											>
-												<Icon name="i-lucide-bookmark-plus" class="size-4" />
-												Save current layout{overlays.length
-													? ` (${overlays.length} caption${overlays.length === 1 ? '' : 's'})`
-													: ''}
-											</button>
-										{/if}
-									</div>
-								</Popover>
-
-								<!-- Draft slots: named WIP snapshots (save now, resume later) -->
-								<Popover
-									id={slotsMenuId}
-									float
-									placement="bottom-start"
-									width="auto"
-									class="w-72 max-w-[80vw] p-0"
-									label="Draft slots"
-									triggerClass="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-primary-500/15 hover:text-primary-600"
-									triggerActiveClass="bg-primary-500/15 text-primary-600"
-								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-save" class="size-3.5" />
-										Slots
-										{#if memeSlots.list.length}
-											<span
-												class="rounded-full bg-primary-500/15 px-1.5 font-mono text-[10px] text-primary-600"
-											>
-												{memeSlots.list.length}
-											</span>
-										{/if}
-									{/snippet}
-									<div class="max-h-64 overflow-y-auto p-1.5">
-										{#if memeSlots.list.length}
-											{#each memeSlots.list as slot (slot.id)}
-												<div
-													class="group flex items-center gap-1 rounded-lg px-1.5 py-1 transition hover:bg-[var(--ui-bg-muted)]"
-												>
-													<button
-														type="button"
-														onclick={() => void openSlot(slot.id)}
-														disabled={busy || !!slotBusyId}
-														title="Restore this work-in-progress"
-														class="flex min-w-0 flex-1 items-center gap-2 text-left"
-													>
-														<Icon
-															name={slotBusyId === slot.id
-																? 'i-lucide-loader-circle'
-																: 'i-lucide-history'}
-															class="size-4 shrink-0 text-primary-600 {slotBusyId === slot.id
-																? 'animate-spin'
-																: ''}"
-														/>
-														<span class="min-w-0 flex-1">
-															<span class="block truncate text-[12.5px] font-bold">
-																{slot.label}
-															</span>
-															<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																{new Date(slot.savedAt).toLocaleDateString()} ·
-																{slot.overlays.length} caption{slot.overlays.length === 1
-																	? ''
-																	: 's'}
-																{slot.sfxCues.length
-																	? ` · ${slot.sfxCues.length} cue${slot.sfxCues.length === 1 ? '' : 's'}`
-																	: ''}
-																{#if !slot.media}
-																	· no media
-																{/if}
-															</span>
-														</span>
-													</button>
-													<button
-														type="button"
-														onclick={() => removeSlot(slot.id)}
-														aria-label={`Delete slot ${slot.label}`}
-														class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-[var(--tone-error-text)] focus-visible:opacity-100"
-													>
-														<Icon name="i-lucide-trash-2" class="size-3.5" />
-													</button>
-												</div>
-											{/each}
-										{:else}
-											<p class="px-2 py-3 text-center text-[12px] text-[var(--ui-text-muted)]">
-												No slots yet — save a work-in-progress and pick it back up later.
-											</p>
-										{/if}
-									</div>
-									{#if memeSlots.list.length}
-										<div class="border-t border-[var(--ui-border-muted)] p-1.5">
-											<MenuDivider />
-										</div>
-									{/if}
-									<div class="p-1.5 pt-0">
-										{#if showSlotSave}
-											<div class="flex items-center gap-1.5">
-												<input
-													type="text"
-													value={slotName}
-													maxlength="40"
-													placeholder="Slot name"
-													aria-label="Slot name"
-													onkeydown={(e) => {
-														if (e.key === 'Enter') void saveCurrentSlot();
-														if (e.key === 'Escape') showSlotSave = false;
-													}}
-													class="h-8 min-w-0 flex-1 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary-500/60"
-												/>
-												<button
-													type="button"
-													onclick={() => void saveCurrentSlot()}
-													disabled={busy || !dirty}
-													class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary-500 text-white transition hover:brightness-110 active:scale-95 disabled:opacity-40"
-													aria-label="Save slot"
-												>
-													<Icon name="i-lucide-check" class="size-4" />
-												</button>
-											</div>
-										{:else}
-											<button
-												type="button"
-												onclick={() => (showSlotSave = true)}
-												disabled={busy || !dirty}
-												class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-500/12 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-[0.98] disabled:opacity-40"
-											>
-												<Icon name="i-lucide-save" class="size-4" />
-												Save work-in-progress
-											</button>
-										{/if}
-									</div>
-								</Popover>
-							</div>
-
+							<MemeTemplateSlotTools
+								{overlays}
+								{busy}
+								{dirty}
+								{slotBusyId}
+								bind:templateName
+								bind:showTemplateSave
+								bind:slotName
+								bind:showSlotSave
+								{applyTemplate}
+								{addOverlay}
+								{applySavedTemplate}
+								{removeSavedTemplate}
+								{saveCurrentTemplate}
+								{openSlot}
+								{removeSlot}
+								{saveCurrentSlot}
+							/>
 							<!-- Sticker picker (#3): stickers are stroke-free emoji overlays —
 							     they ride the same schema/wire format as captions. Nostr picks
 							     (kind-30030 custom emojis) are PICTURES → image layers. -->
@@ -4603,1172 +3805,94 @@
 					{/snippet}
 
 					{#snippet inspectorPane()}
-						<!-- Inspector: export support, overlay list, composition, sound, publish -->
-						<div class="flex min-w-0 flex-col gap-3">
-							<!-- Selected image layer: precise resize + effects. -->
-							{#if selectedLayer}
-								{#key selectedLayer.id}
-									<MemeLayerEditor
-										layer={selectedLayer}
-										index={imageLayers.findIndex((l) => l.id === selectedLayer.id) + 1}
-										renderSrc={layerAssets.renderSrcs.get(selectedLayer.src) ?? null}
-										{busy}
-										onPatch={(id, patch) => patchLayer(id, patch)}
-										onRemove={(id) => removeLayer(id)}
-									/>
-								{/key}
-							{/if}
-							{#if !videoMemeSupported}
-								<p
-									class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
-								>
-									<Icon name="i-lucide-triangle-alert" class="size-3.5 shrink-0" />
-									This browser can't export video memes — try Chrome/Edge, or start from a picture.
-								</p>
-							{/if}
-
-							<!-- Overlay list -->
-							{#if overlays.length}
-								<div class="flex flex-col gap-2">
-									{#each overlays as overlay, i (overlay.id)}
-										<div
-											class="rounded-xl border px-3 py-2.5 transition {selectedId === overlay.id
-												? 'border-warm-500/50 bg-warm-500/[0.06]'
-												: 'border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]'}"
-										>
-											<div class="flex items-center gap-2">
-												<span
-													class="grid size-6 shrink-0 place-items-center rounded-full bg-warm-500/12 font-mono text-[10px] font-bold text-warm-500"
-												>
-													{i + 1}
-												</span>
-												<!-- The input always shows the RAW typed text ('Hi' stays 'Hi') —
-												     only the STAGE applies the ALL-CAPS styling, so editing is
-												     never visually mangled. -->
-												<input
-													value={overlay.text}
-													maxlength={MAX_OVERLAY_CHARS}
-													placeholder="Caption text…"
-													aria-label={`Caption ${i + 1} text`}
-													disabled={busy}
-													oninput={(e) =>
-														patchOverlay(overlay.id, {
-															text: (e.currentTarget as HTMLInputElement).value
-														})}
-													onfocus={() => (selectedId = overlay.id)}
-													class="min-w-0 flex-1 bg-transparent text-[13.5px] font-semibold text-[var(--ui-text)] outline-none placeholder:font-normal placeholder:text-[var(--ui-text-dimmed)]"
-												/>
-												<!-- Case quick-toggle, always visible: free-write (Aa) vs
-												     classic ALL CAPS (AA) — one click, no selection needed. -->
-												<button
-													type="button"
-													onclick={() => patchOverlay(overlay.id, { caps: !overlay.caps })}
-													disabled={busy}
-													aria-pressed={overlay.caps}
-													title={overlay.caps
-														? 'ALL CAPS on — click to keep your own casing'
-														: 'Keeping your casing — click for ALL CAPS'}
-													class="grid size-6 shrink-0 place-items-center rounded-full text-[10.5px] font-extrabold transition {overlay.caps
-														? 'bg-warm-500/15 text-warm-500'
-														: 'text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
-												>
-													{overlay.caps ? 'AA' : 'Aa'}
-												</button>
-												{#if mediaKind === 'video'}
-													<button
-														type="button"
-														onclick={() => moveOverlay(overlay.id, -0.05)}
-														disabled={busy}
-														aria-label="Move caption up"
-														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-40"
-													>
-														<Icon name="i-lucide-chevron-up" class="size-3.5" />
-													</button>
-													<button
-														type="button"
-														onclick={() => moveOverlay(overlay.id, 0.05)}
-														disabled={busy}
-														aria-label="Move caption down"
-														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-40"
-													>
-														<Icon name="i-lucide-chevron-down" class="size-3.5" />
-													</button>
-												{/if}
-												<!-- Z-order (2+ captions): later slots paint on top. -->
-												{#if overlays.length > 1}
-													<button
-														type="button"
-														onclick={() => moveOverlayRow(overlay.id, 1)}
-														disabled={busy || i === overlays.length - 1}
-														aria-label={`Stack caption ${i + 1} on top`}
-														title="Bring forward (paints on top)"
-														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-30"
-													>
-														<Icon name="i-lucide-bring-to-front" class="size-3.5" />
-													</button>
-													<button
-														type="button"
-														onclick={() => moveOverlayRow(overlay.id, -1)}
-														disabled={busy || i === 0}
-														aria-label={`Send caption ${i + 1} backward`}
-														title="Send backward (paints behind)"
-														class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] disabled:opacity-30"
-													>
-														<Icon name="i-lucide-send-to-back" class="size-3.5" />
-													</button>
-												{/if}
-												<button
-													type="button"
-													onclick={() => removeOverlay(overlay.id)}
-													disabled={busy}
-													aria-label={`Remove caption ${i + 1}`}
-													class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--tone-error-text)]/10 hover:text-[var(--tone-error-text)] disabled:opacity-40"
-												>
-													<Icon name="i-lucide-x" class="size-3.5" />
-												</button>
-											</div>
-											{#if selectedId === overlay.id}
-												<div class="mt-2 flex flex-wrap items-center gap-1.5">
-													<!-- Font -->
-													{#each MEME_FONTS as font (font)}
-														<button
-															type="button"
-															onclick={() => patchOverlay(overlay.id, { font })}
-															disabled={busy}
-															class="rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {overlay.font ===
-															font
-																? 'bg-warm-500 text-white'
-																: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-														>
-															{font}
-														</button>
-													{/each}
-													<span class="mx-1 h-4 w-px bg-[var(--ui-border-muted)]"></span>
-													<!-- Colors -->
-													{#each MEME_COLORS as color (color)}
-														<button
-															type="button"
-															onclick={() => patchOverlay(overlay.id, { color })}
-															disabled={busy}
-															aria-label={`Text color ${color}`}
-															class="grid size-5 place-items-center rounded-full border border-black/20 transition hover:scale-110 {overlay.color ===
-															color
-																? 'ring-2 ring-warm-500 ring-offset-1 ring-offset-[var(--ui-bg-muted)]'
-																: ''}"
-															style={`background:${color}`}
-														></button>
-													{/each}
-													<!-- Custom color: any hex via the native picker; shows the
-													     current color when it's outside the preset palette. -->
-													<label
-														class="relative grid size-5 cursor-pointer place-items-center overflow-hidden rounded-full border border-dashed transition hover:scale-110 {isCustomCaptionColor(
-															overlay.color
-														)
-															? 'border-warm-500 ring-2 ring-warm-500 ring-offset-1 ring-offset-[var(--ui-bg-muted)]'
-															: 'border-[var(--ui-border-accented)]'}"
-														title="Custom text color"
-														style={isCustomCaptionColor(overlay.color)
-															? `background:${overlay.color};`
-															: ''}
-													>
-														{#if !isCustomCaptionColor(overlay.color)}
-															<Icon
-																name="i-lucide-pipette"
-																class="size-3 text-[var(--ui-text-muted)]"
-															/>
-														{/if}
-														<input
-															type="color"
-															value={/^#[0-9a-f]{6}$/i.test(overlay.color)
-																? overlay.color
-																: '#ffffff'}
-															disabled={busy}
-															aria-label="Custom text color"
-															class="absolute inset-0 size-full cursor-pointer opacity-0"
-															oninput={(e) => {
-																const color = (e.currentTarget as HTMLInputElement).value;
-																if (/^#[0-9a-f]{6}$/i.test(color))
-																	patchOverlay(overlay.id, { color });
-															}}
-														/>
-													</label>
-													<span class="mx-1 h-4 w-px bg-[var(--ui-border-muted)]"></span>
-													<button
-														type="button"
-														onclick={() => patchOverlay(overlay.id, { caps: !overlay.caps })}
-														disabled={busy}
-														aria-pressed={overlay.caps}
-														class="rounded-full px-2 py-0.5 text-[10.5px] font-bold uppercase transition {overlay.caps
-															? 'bg-warm-500/15 text-warm-500'
-															: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-													>
-														Aa
-													</button>
-													<button
-														type="button"
-														onclick={() => patchOverlay(overlay.id, { stroke: !overlay.stroke })}
-														disabled={busy}
-														aria-pressed={overlay.stroke}
-														title="Classic outline around the letters"
-														class="rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {overlay.stroke
-															? 'bg-warm-500/15 text-warm-500'
-															: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-													>
-														Ⓞ
-													</button>
-													<button
-														type="button"
-														onclick={() => patchOverlay(overlay.id, { bar: !overlay.bar })}
-														disabled={busy}
-														aria-pressed={overlay.bar}
-														title="Contrast bar behind the text"
-														class="rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {overlay.bar
-															? 'bg-warm-500/15 text-warm-500'
-															: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-													>
-														▬
-													</button>
-													<!-- Size slider -->
-													<input
-														type="range"
-														min="3"
-														max="22"
-														step="1"
-														value={Math.round(overlay.size * 100)}
-														oninput={(e) =>
-															patchOverlay(overlay.id, {
-																size: Number((e.currentTarget as HTMLInputElement).value) / 100
-															})}
-														disabled={busy}
-														aria-label={`Caption ${i + 1} size`}
-														class="h-1.5 min-w-16 flex-1 accent-[var(--color-warm-500)]"
-													/>
-													{#if timelineActive}
-														<button
-															type="button"
-															onclick={() => (fxId = fxId === overlay.id ? null : overlay.id)}
-															disabled={busy}
-															aria-expanded={fxId === overlay.id}
-															title="Motion effect — pop, fade, shake or spin, baked into the export"
-															class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {fxId ===
-																overlay.id ||
-															(overlay.fx && overlay.fx !== 'none')
-																? 'bg-primary-500/15 text-primary-600'
-																: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-														>
-															<Icon name="i-lucide-wand-sparkles" class="size-3" />
-															{overlay.fx && overlay.fx !== 'none' ? overlay.fx : 'fx'}
-														</button>
-													{/if}
-													{#if timelineActive && fxId === overlay.id}
-														<div
-															class="mt-2 flex flex-wrap items-center gap-1 rounded-lg bg-[var(--ui-bg-accented)] px-2 py-1.5"
-														>
-															{#each MEME_FX_OPTIONS as opt (opt.id)}
-																<button
-																	type="button"
-																	onclick={() => {
-																		patchOverlay(overlay.id, { fx: opt.id });
-																		fxId = null;
-																	}}
-																	title={opt.hint}
-																	class="rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {(overlay.fx ??
-																		'none') === opt.id
-																		? 'bg-primary-500 text-white'
-																		: 'bg-[var(--ui-bg)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-																>
-																	{opt.label}
-																</button>
-															{/each}
-														</div>
-													{/if}
-													{#if mediaKind === 'video'}
-														<button
-															type="button"
-															onclick={() =>
-																(timingId = timingId === overlay.id ? null : overlay.id)}
-															disabled={busy}
-															aria-expanded={timingId === overlay.id}
-															title="Show this caption only during part of the video"
-															class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {timingId ===
-																overlay.id ||
-															overlay.startMs !== undefined ||
-															overlay.endMs !== undefined
-																? 'bg-warm-500/15 text-warm-500'
-																: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-														>
-															<Icon name="i-lucide-timer" class="size-3" />
-															{overlay.startMs !== undefined || overlay.endMs !== undefined
-																? `${((overlay.startMs ?? 0) / 1000).toFixed(1)}–${overlay.endMs !== undefined ? (overlay.endMs / 1000).toFixed(1) : '∞'}s`
-																: 'always'}
-														</button>
-													{/if}
-													{#if mediaKind === 'video' && timingId === overlay.id}
-														<div
-															class="mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--ui-bg-accented)] px-2.5 py-2"
-														>
-															<label
-																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
-															>
-																Show from
-																<input
-																	type="number"
-																	min="0"
-																	step="0.1"
-																	value={((overlay.startMs ?? 0) / 1000).toFixed(1)}
-																	oninput={(e) => {
-																		const seconds = Number(
-																			(e.currentTarget as HTMLInputElement).value
-																		);
-																		patchOverlay(overlay.id, {
-																			startMs:
-																				Number.isFinite(seconds) && seconds > 0
-																					? Math.round(seconds * 1000)
-																					: undefined
-																		});
-																	}}
-																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
-																/>
-																s
-															</label>
-															<label
-																class="flex items-center gap-1.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
-															>
-																until
-																<input
-																	type="number"
-																	min="0"
-																	step="0.1"
-																	value={overlay.endMs !== undefined
-																		? (overlay.endMs / 1000).toFixed(1)
-																		: ''}
-																	placeholder="end"
-																	oninput={(e) => {
-																		const raw = (e.currentTarget as HTMLInputElement).value;
-																		const seconds = Number(raw);
-																		patchOverlay(overlay.id, {
-																			endMs:
-																				raw !== '' && Number.isFinite(seconds) && seconds > 0
-																					? Math.round(seconds * 1000)
-																					: undefined
-																		});
-																	}}
-																	class="w-16 rounded-md border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums"
-																/>
-																s
-															</label>
-															<button
-																type="button"
-																onclick={() =>
-																	patchOverlay(overlay.id, {
-																		startMs: undefined,
-																		endMs: undefined
-																	})}
-																class="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text)]"
-															>
-																Always visible
-															</button>
-														</div>
-													{/if}
-												</div>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{:else}
-								<button
-									type="button"
-									onclick={() => applyTemplate(TEMPLATES[0])}
-									disabled={busy}
-									class="flex items-center gap-2 rounded-xl border-2 border-dashed border-[var(--ui-border-accented)] px-3.5 py-3 text-left transition hover:border-warm-500/60 hover:bg-[var(--ui-bg-muted)] disabled:opacity-40"
-								>
-									<Icon name="i-lucide-letter-text" class="size-5 shrink-0 text-warm-500" />
-									<span>
-										<span class="block text-[13px] font-bold text-[var(--ui-text)]"
-											>Add captions</span
-										>
-										<span class="block text-[11px] text-[var(--ui-text-muted)]">
-											Start with the classic top/bottom template or add your own
-										</span>
-									</span>
-								</button>
-							{/if}
-
-							<!-- Caption -->
-							<div
-								class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 py-3 transition focus-within:border-warm-500 focus-within:bg-[var(--ui-bg)] focus-within:ring-2 focus-within:ring-warm-500/20"
-							>
-								<textarea
-									bind:value={caption}
-									rows="2"
-									maxlength={HARD_CAP}
-									placeholder="Write a caption… #hashtags and @mentions work"
-									aria-label="Meme caption"
-									readonly={busy}
-									class="w-full resize-none bg-transparent text-[15px] leading-relaxed text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)]"
-								></textarea>
-								{#if caption.length > SOFT_CAP - 50}
-									<p
-										class="text-right text-[10.5px] font-bold tabular-nums {caption.length >
-										HARD_CAP
-											? 'text-[var(--tone-error-text)]'
-											: overSoft
-												? 'text-warm-500'
-												: 'text-[var(--ui-text-dimmed)]'}"
-									>
-										{caption.length} / {overSoft ? HARD_CAP : SOFT_CAP}
-									</p>
-								{/if}
-							</div>
-
-							<!-- Artboard (extracted component): size presets, background colors and
-							     crop & zoom framing for the base media. -->
-							{#if mediaKind}
-								<MemeArtboardCard
-									{artboardId}
-									width={renderTarget.width}
-									height={renderTarget.height}
-									{busy}
-									staging={gifStageBusy}
-									{blankBg}
-									zoom={mediaZoom}
-									panX={mediaPanX}
-									panY={mediaPanY}
-									onArtboard={(id) => setArtboard(id)}
-									onBackground={(color) => void applyBackgroundColor(color)}
-									onFraming={(patch) => {
-										if (patch.zoom !== undefined) mediaZoom = patch.zoom;
-										if (patch.panX !== undefined) mediaPanX = patch.panX;
-										if (patch.panY !== undefined) mediaPanY = patch.panY;
-									}}
-								/>
-							{/if}
-
-							<!-- Trim + speed (extracted component). -->
-							{#if mediaKind === 'video' && meta?.duration}
-								<MemeTrimPanel
-									durationSec={meta.duration}
-									trimStart={trimStartSec}
-									trimEnd={trimEndSec}
-									trimDurationSec={trimDuration}
-									{exportDurationSec}
-									rate={playbackRate}
-									playheadSec={stageSeconds}
-									{busy}
-									canPreview={!!stageVideo}
-									onTrim={(patch) => {
-										if (patch.start !== undefined) trimStartSec = patch.start;
-										if (patch.end !== undefined) trimEndSec = patch.end;
-									}}
-									onRate={(rate) => (playbackRate = rate)}
-									onSetLength={(sec) => setTrimLength(sec)}
-									onReset={() => {
-										trimStartSec = 0;
-										trimEndSec = null;
-										playbackRate = 1;
-									}}
-									onPreviewCut={() => {
-										if (!stageVideo) return;
-										stageVideo.currentTime = trimStartSec;
-										stageVideo.playbackRate = playbackRate;
-										void stageVideo.play();
-									}}
-								/>
-							{:else if gif}
-								<!-- GIF base: no trim window, but the export LENGTH is settable —
-								     shorter trims the loop, longer loops the GIF to fill. -->
-								<MemeTrimPanel
-									variant="gif"
-									durationSec={gif.duration}
-									lengthSec={pinnedLengthSec}
-									{busy}
-									onSetLength={(sec) => (pinnedLengthSec = sec)}
-									onReset={() => (pinnedLengthSec = null)}
-								/>
-							{:else if mediaKind === 'image' && sfxCues.length && !gif}
-								<!-- Static image + sound cues: the cue track IS the duration —
-								     the Length card pins it (shorter cuts late cues, longer adds
-								     a silent tail so memes can breathe past the last sound). -->
-								<MemeTrimPanel
-									variant="cues"
-									durationSec={cueTrackDurationSec(sfxCues)}
-									lengthSec={pinnedLengthSec}
-									{busy}
-									onSetLength={(sec) => (pinnedLengthSec = sec)}
-									onReset={() => (pinnedLengthSec = null)}
-								/>
-							{/if}
-
-							<!-- Sound effects (animated sources, or static once a cue exists) -->
-							{#if mediaKind}
-								<div
-									class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3.5 py-3"
-								>
-									<!-- Compact sound toolbar: label + status chips on one line, actions as
-								     chips — the long explanations move into tooltips so the card stays tight. -->
-									<div class="flex flex-wrap items-center gap-1.5">
-										<p
-											class="mr-auto flex min-w-0 items-center gap-1.5 text-[11px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
-										>
-											<Icon name="i-lucide-audio-lines" class="size-3.5 shrink-0" />
-											Sound
-											{#if sfxCues.length}
-												<span
-													class="rounded-full bg-warm-500/15 px-1.5 font-mono text-[10px] font-bold text-warm-600 normal-case"
-													>{sfxCues.length}</span
-												>
-											{/if}
-											<!-- A static meme flips to a video export once it has cues — tiny badge,
-											     full sentence in the tooltip. -->
-											{#if mediaKind === 'image' && !animated && sfxCues.length === 0}
-												<span
-													class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--ui-text-muted)] normal-case"
-													title="Adding a sound cue makes this ship as a video with audio"
-												>
-													<Icon name="i-lucide-clapperboard" class="size-3" />
-													+ sound = video
-												</span>
-											{/if}
-										</p>
-										<button
-											type="button"
-											disabled={busy}
-											onclick={() => (soundDialogOpen = true)}
-											title="Browse, preview and fine-tune every sound cue"
-											class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
-										>
-											<Icon name="i-lucide-audio-lines" class="size-3.5" />
-											Sound studio
-										</button>
-										{#if mediaKind === 'video'}
-											<!-- Export-time source audio: off = the clip's own sound is
-											     dropped, only the sound cues ride the export. -->
-											<button
-												type="button"
-												disabled={busy}
-												onclick={() => (includeSourceAudio = !includeSourceAudio)}
-												aria-pressed={includeSourceAudio}
-												title={includeSourceAudio
-													? 'The clip’s own audio is included in the export'
-													: 'The clip’s own audio is dropped — only sound cues export'}
-												class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-40 {includeSourceAudio
-													? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20'
-													: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-dimmed)] hover:bg-[var(--ui-bg-muted)]'}"
-											>
-												<Icon
-													name={includeSourceAudio ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
-													class="size-3.5"
-												/>
-												Video audio {includeSourceAudio ? 'on' : 'off'}
-											</button>
-										{/if}
-										<Popover
-											id={sfxMenuId}
-											float
-											placement="top-start"
-											width="auto"
-											label="Add sound effect"
-											triggerClass="flex items-center gap-1 rounded-full bg-warm-500/10 px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20"
-											triggerActiveClass="bg-warm-500/20"
-										>
-											{#snippet trigger()}
-												<Icon name="i-lucide-music-plus" class="size-3.5" />
-												Add sound @ {formatDuration(stageSeconds)}
-											{/snippet}
-											<div class="max-h-80 scrollbar-thin overflow-y-auto">
-												{#each MEME_SFX_IDS as sfxId (sfxId)}
-													<MenuItem
-														onclick={() => {
-															previewSfx(sfxId);
-															addSfxCue(sfxId);
-														}}
-													>
-														{sfxLabels[sfxId]}
-													</MenuItem>
-												{/each}
-												{#if soundLibrary.list.length}
-													<MenuDivider />
-													{#each soundLibrary.list as sound (sound.id)}
-														<MenuItem
-															onclick={() => {
-																void previewSound(sound);
-																addCustomCue(sound);
-															}}
-														>
-															<span class="flex min-w-0 items-center gap-2">
-																<Icon
-																	name={sound.source === 'mic'
-																		? 'i-lucide-mic'
-																		: 'i-lucide-file-audio'}
-																	class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
-																/>
-																<span class="min-w-0">
-																	<span class="block truncate">{sound.label}</span>
-																	<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																		{sound.durationSec.toFixed(1)}s · custom · cues at {formatDuration(
-																			stageSeconds
-																		)}
-																	</span>
-																</span>
-															</span>
-															{#snippet trailing()}
-																<!-- Library management rides along (share as kind-30078 /
-																     delete) — no separate My-sounds surface needed. -->
-																<span class="flex items-center">
-																	<button
-																		type="button"
-																		class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-600"
-																		aria-label={`Share ${sound.label} with other creators`}
-																		title="Publish as a kind-30078 shared sound"
-																		disabled={sharingSoundId === sound.id || !!sharingSoundId}
-																		onclick={(e) => {
-																			e.stopPropagation();
-																			void shareSound(sound);
-																		}}
-																	>
-																		<Icon
-																			name={sharingSoundId === sound.id
-																				? 'i-lucide-loader-circle'
-																				: 'i-lucide-share-2'}
-																			class="size-3.5 {sharingSoundId === sound.id
-																				? 'animate-spin'
-																				: ''}"
-																		/>
-																	</button>
-																	<button
-																		type="button"
-																		class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
-																		aria-label={`Delete ${sound.label} from this device`}
-																		title="Delete from this device"
-																		onclick={(e) => {
-																			e.stopPropagation();
-																			removeSoundFromLibrary(sound.id);
-																		}}
-																	>
-																		<Icon name="i-lucide-trash-2" class="size-3.5" />
-																	</button>
-																</span>
-															{/snippet}
-														</MenuItem>
-													{/each}
-												{/if}
-												<MenuDivider />
-												<MenuItem
-													icon="i-lucide-upload"
-													onclick={() => {
-														soundFileInput?.click();
-													}}
-												>
-													Import audio from device…
-												</MenuItem>
-												<MenuItem
-													icon="i-lucide-mic"
-													onclick={() => {
-														void soundIO.toggleMic();
-													}}
-												>
-													<span class="flex items-center gap-1">
-														{soundIO.recording ? 'Stop recording · save' : 'Record with mic…'}
-														{#if soundIO.micDenied && !soundIO.recording}
-															<Icon
-																name="i-lucide-alert-circle"
-																class="size-3 text-[var(--tone-error-text)]"
-															/>
-														{/if}
-													</span>
-												</MenuItem>
-											</div>
-										</Popover>
-										<!-- Shared sounds (plan 17.1/17.2): pick CC-licensed sounds
-										     other creators published as kind-30078 events; hash-verified import. -->
-										<Popover
-											id={sharedMenuId}
-											float
-											placement="top-start"
-											width="auto"
-											label="Shared sounds"
-											triggerClass="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/10"
-											triggerActiveClass="bg-primary-500/15"
-										>
-											{#snippet trigger()}
-												<Icon name="i-lucide-globe-2" class="size-3.5" />
-												Shared
-											{/snippet}
-											<button
-												type="button"
-												class="flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
-												disabled={sharedLoading}
-												onclick={() => void loadSharedSounds()}
-											>
-												<Icon
-													name="i-lucide-refresh-cw"
-													class="size-3.5 {sharedLoading ? 'animate-spin' : ''}"
-												/>
-												{sharedLoading ? 'Searching relays…' : 'Refresh'}
-											</button>
-											{#if sharedSounds.length}
-												<MenuDivider />
-												{#each sharedSounds as sound (sound.eventId)}
-													<MenuItem
-														onclick={() => {
-															void importSharedSound(sound);
-														}}
-													>
-														<span class="flex min-w-0 items-center gap-2">
-															<Icon
-																name="i-lucide-download"
-																class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]"
-															/>
-															<span class="min-w-0">
-																<span class="block truncate">{sound.label}</span>
-																<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																	{sound.durationSec.toFixed(1)}s · {sound.license}
-																	{#if sound.creatorPubkey === me?.pk}· yours{/if}
-																</span>
-															</span>
-														</span>
-														{#snippet trailing()}
-															{#if sharedImportingId === sound.eventId}
-																<Icon
-																	name="i-lucide-loader-circle"
-																	class="size-3.5 animate-spin text-primary-600"
-																/>
-															{:else if sound.sha256}
-																<span
-																	class="text-[10px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
-																>
-																	+ add
-																</span>
-															{:else}
-																<Icon
-																	name="i-lucide-shield-off"
-																	class="size-3.5 text-[var(--ui-text-dimmed)]"
-																	title="No content hash — cannot verify"
-																/>
-															{/if}
-														{/snippet}
-													</MenuItem>
-												{/each}
-											{/if}
-										</Popover>
-										<!-- #2 sound-timed captions: snap every caption window onto the cue sheet in order. -->
-										{#if sfxCues.length && overlays.length}
-											<button
-												type="button"
-												onclick={syncCaptionsToCues}
-												disabled={busy}
-												title="Each caption appears with its own sound cue"
-												class="flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
-											>
-												<Icon name="i-lucide-captions" class="size-3.5" />
-												Sync captions
-											</button>
-										{/if}
-										<Popover
-											id={suggestMenuId}
-											float
-											placement="top-start"
-											width="auto"
-											class="w-72 max-w-[80vw] p-0"
-											label="Suggested timings"
-											triggerClass="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
-											triggerActiveClass="bg-primary-500/20 text-primary-600"
-										>
-											{#snippet trigger()}
-												<Icon
-													name={suggestBusy ? 'i-lucide-loader-circle' : 'i-lucide-sparkles'}
-													class="size-3.5 {suggestBusy ? 'animate-spin' : ''}"
-												/>
-												Suggest
-											{/snippet}
-											<div class="p-1.5">
-												<p
-													class="px-2 pb-1.5 text-[11px] leading-snug text-[var(--ui-text-dimmed)]"
-												>
-													Local audio analysis → 3 editable timelines. Nothing leaves your device.
-												</p>
-												{#if !suggestionGroups.length}
-													<button
-														type="button"
-														onclick={() => void buildSuggestions()}
-														disabled={suggestBusy || busy}
-														class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-500/12 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-[0.98] disabled:opacity-40"
-													>
-														<Icon name="i-lucide-wand-sparkles" class="size-4" />
-														{suggestBusy ? 'Analyzing…' : 'Generate 3 vibes'}
-													</button>
-												{:else}
-													{#each suggestionGroups as group (group.intensity)}
-														<button
-															type="button"
-															onclick={() => applySuggestion(group)}
-															disabled={busy}
-															class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-[var(--ui-bg-muted)]"
-														>
-															<span
-																class="grid size-7 shrink-0 place-items-center rounded-full {group.intensity ===
-																'chaos'
-																	? 'bg-[var(--tone-error)]/15 text-[var(--tone-error-text)]'
-																	: group.intensity === 'funny'
-																		? 'bg-warm-500/15 text-warm-600'
-																		: 'bg-primary-500/10 text-primary-600'}"
-															>
-																<Icon
-																	name={group.intensity === 'chaos'
-																		? 'i-lucide-bomb'
-																		: group.intensity === 'funny'
-																			? 'i-lucide-laugh'
-																			: 'i-lucide-smile'}
-																	class="size-4"
-																/>
-															</span>
-															<span class="min-w-0 flex-1">
-																<span class="block text-[12.5px] font-bold capitalize">
-																	{group.intensity}
-																</span>
-																<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
-																	{group.overlays.length} captions · {group.sfxCues.length} cues
-																	{group.zooms.length ? ` · ${group.zooms.length} zooms` : ''}
-																</span>
-															</span>
-															<Icon
-																name="i-lucide-arrow-right"
-																class="size-4 shrink-0 text-[var(--ui-text-muted)]"
-															/>
-														</button>
-													{/each}
-													<MenuDivider />
-													<button
-														type="button"
-														onclick={() => void buildSuggestions()}
-														disabled={suggestBusy || busy}
-														class="flex h-7 w-full items-center justify-center gap-1 rounded-lg text-[11px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-													>
-														<Icon name="i-lucide-refresh-cw" class="size-3.5" />
-														Re-analyze
-													</button>
-												{/if}
-											</div>
-										</Popover>
-									</div>
-									{#if sfxCues.length}
-										<ul class="mt-2 flex flex-col gap-1">
-											{#each sfxCues as cue (cue.id)}
-												<li
-													class="flex items-center justify-between gap-2 rounded-lg bg-[var(--ui-bg)] px-2.5 py-1.5 text-[12px]"
-												>
-													<span class="flex items-center gap-1.5 font-semibold">
-														<Icon name={cueIcon(cue)} class="size-3.5 text-warm-500" />
-														{cueLabel(cue)}
-														<!-- Time chip doubles as a seek: jump the playhead to the cue. -->
-														<button
-															type="button"
-															disabled={busy || !timelineActive}
-															title="Jump the playhead to this cue"
-															onclick={() => scrubPreview(cue.atMs / 1000)}
-															class="rounded-full bg-[var(--ui-bg-muted)] px-1.5 py-px font-mono text-[10.5px] font-bold text-[var(--ui-text-muted)] tabular-nums transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
-														>
-															@ {formatDuration(cue.atMs / 1000)}
-														</button>
-													</span>
-													<span class="flex items-center gap-1">
-														<button
-															type="button"
-															class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-															aria-label={`Preview ${cueLabel(cue)}`}
-															onclick={() => {
-																if (cue.sfx === CUSTOM_SOUND_KEY) {
-																	const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
-																	if (sound) void previewSound(sound);
-																} else {
-																	previewSfx(cue.sfx);
-																}
-															}}
-														>
-															<Icon name="i-lucide-play" class="size-3.5" />
-														</button>
-														<button
-															type="button"
-															class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--tone-error-text)]"
-															aria-label={`Remove ${cueLabel(cue)}`}
-															onclick={() => removeSfxCue(cue.id)}
-														>
-															<Icon name="i-lucide-x" class="size-3.5" />
-														</button>
-													</span>
-												</li>
-											{/each}
-										</ul>
-									{:else}
-										<p
-											class="mt-1.5 text-[11px] text-[var(--ui-text-dimmed)]"
-											title="Cue a sound at the playhead — it gets mixed into the export. All synthesized, no licensing headaches."
-										>
-											No cues yet — tap “Cue @” or press 1–9.
-										</p>
-									{/if}
-								</div>
-							{/if}
-
-							<!-- Options row -->
-							<div class="flex flex-wrap items-center gap-1.5">
-								<Popover
-									id={destMenuId}
-									float
-									placement="top-start"
-									width="auto"
-									label="Post destination"
-									triggerClass="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition {destination ===
-									'bitz'
-										? 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'
-										: 'bg-primary-500/10 text-primary-600'}"
-									triggerActiveClass="bg-primary-500/10 text-primary-600"
-								>
-									{#snippet trigger()}
-										<Icon
-											name={destination === 'story'
-												? 'i-lucide-circle-dot-dashed'
-												: destination === 'note'
-													? 'i-lucide-message-square-text'
-													: 'i-lucide-clapperboard'}
-											class="size-4"
-										/>
-										{destination === 'story'
-											? 'To story · 24h'
-											: destination === 'note'
-												? 'To note'
-												: 'To Bitz feed'}
-									{/snippet}
-									{#each DESTINATIONS as dest (dest.id)}
-										<MenuItem
-											icon={dest.icon}
-											tone={destination === dest.id ? 'accent' : 'default'}
-											onclick={() => (destination = dest.id)}
-										>
-											<div class="min-w-0">
-												<div>{dest.label}</div>
-												<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-													{dest.hint}
-												</div>
-											</div>
-											{#snippet trailing()}
-												{#if destination === dest.id}
-													<Icon name="i-lucide-check" class="size-4 shrink-0" />
-												{/if}
-											{/snippet}
-										</MenuItem>
-									{/each}
-								</Popover>
-								<button
-									type="button"
-									onclick={() => (sensitive = !sensitive)}
-									aria-pressed={sensitive}
-									title="Mark as sensitive content"
-									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-40 {sensitive
-										? 'bg-warm-500/15 text-warm-500'
-										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-								>
-									<Icon name="i-lucide-eye-off" class="size-4" />
-									Sensitive
-								</button>
-								<button
-									type="button"
-									onclick={() => (showPow = !showPow)}
-									disabled={busy}
-									aria-pressed={showPow}
-									title="Mine a rare meme — NIP-13 proof of work"
-									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {showPow
-										? 'bg-primary-500/10 text-primary-600'
-										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-								>
-									<Icon name="i-lucide-gem" class="size-4" />
-									Rare meme
-								</button>
-								<!-- Remix rights picker (S-013): advisory license stamped on
-								     publish — readers see it, the network never enforces it. -->
-								<label
-									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-									title="Remix rights — advisory license for this bitz"
-								>
-									<Icon name="i-lucide-scale" class="size-4" />
-									<select
-										bind:value={license}
-										disabled={busy}
-										class="cursor-pointer appearance-none bg-transparent text-[12px] font-bold outline-none"
-										aria-label="Remix rights license"
-									>
-										{#each LICENSE_OPTIONS as opt (opt.code)}
-											<option value={opt.code}>{opt.label}</option>
-										{/each}
-									</select>
-								</label>
-								<!-- AI-004 provenance: opt-in `ai` tag on publish. Manual toggle —
-								     stamp it when AI suggestions helped build this meme. -->
-								<button
-									type="button"
-									onclick={() => (aiAssisted = !aiAssisted)}
-									disabled={busy}
-									aria-pressed={aiAssisted}
-									title="AI-assisted — adds an `ai` provenance tag so clients can badge it"
-									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {aiAssisted
-										? 'bg-primary-500/10 text-primary-600'
-										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-								>
-									<Icon name="i-lucide-sparkles" class="size-4" />
-									{aiAssisted ? 'AI-assisted ✓' : 'AI-assisted'}
-								</button>
-								<!-- Value-split editor (CRE-008, section 7.2): opt-in manifest
-								     declaring how future monetization would flow. Publish is gated on an
-								     exact 10,000-bps total - V1 stores/displays only, no payment execution. -->
-								<button
-									type="button"
-									onclick={() => (splitsOpen = !splitsOpen)}
-									disabled={busy}
-									aria-pressed={splitsOpen}
-									title="Value splits - who gets paid when this bitz earns"
-									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {splitsOpen
-										? 'bg-primary-500/10 text-primary-600'
-										: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-								>
-									<Icon name="i-lucide-git-fork" class="size-4" />
-									Splits {splitRows.length ? `(${splitRows.length})` : ''}
-								</button>
-								{#if splitsOpen}
-									<div
-										class="flex w-full flex-col gap-2 rounded-xl bg-[var(--ui-bg-muted)]/60 p-3 text-left"
-									>
-										{#each splitRows as row, i (i)}
-											<div class="flex items-center gap-2">
-												<select
-													bind:value={row.role}
-													disabled={busy}
-													aria-label="Split role"
-													class="min-w-0 flex-1 cursor-pointer appearance-none rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-[12px] font-semibold outline-none"
-												>
-													{#each SPLIT_ROLES as role (role)}
-														<option value={role}>{role.replace(/_/g, ' ')}</option>
-													{/each}
-												</select>
-												<input
-													type="number"
-													bind:value={row.basisPoints}
-													min="0"
-													max="10000"
-													step="50"
-													disabled={busy}
-													aria-label="Share in basis points"
-													class="w-24 rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-right text-[12px] font-semibold outline-none"
-												/>
-												<span class="text-[11px] font-bold text-[var(--ui-text-muted)]">bps</span>
-												<button
-													type="button"
-													onclick={() => removeSplitRow(row.role, row.beneficiary)}
-													disabled={busy}
-													aria-label="Remove split row"
-													class="rounded-lg p-1 text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-												>
-													<Icon name="i-lucide-x" class="size-4" />
-												</button>
-											</div>
-										{/each}
-										<button
-											type="button"
-											onclick={addSplitRow}
-											disabled={busy}
-											class="self-start rounded-full px-3 py-1 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/10"
-										>
-											+ Add row
-										</button>
-										<p
-											class="text-[11px] font-bold {splitRows.length === 0 || splitCheck.ok
-												? 'text-[var(--ui-text-muted)]'
-												: 'text-primary-600'}"
-										>
-											{splitTotal.toLocaleString()} / {TOTAL_BASIS_POINTS.toLocaleString()} bps
-											{#if splitRows.length > 0 && !splitCheck.ok}
-												- {splitCheck.error}
-											{/if}
-										</p>
-									</div>
-								{/if}
-								<Popover
-									id={providerMenuId}
-									float
-									placement="top-start"
-									width="lg"
-									label="Upload provider"
-									triggerClass="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-									triggerActiveClass="bg-primary-500/10 text-primary-600"
-								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-cloud-upload" class="size-4 text-primary-500" />
-										<span class="max-w-[110px] truncate"
-											>{providerLabel(
-												selectedProvider === 'none' ? 'server' : selectedProvider
-											)}</span
-										>
-									{/snippet}
-									<MenuItem
-										icon="i-lucide-hard-drive-upload"
-										onclick={() => (selectedProvider = 'none')}
-										tone={selectedProvider === 'none' ? 'accent' : 'default'}
-									>
-										BitOS uploads
-										{#snippet trailing()}
-											{#if selectedProvider === 'none'}
-												<Icon name="i-lucide-check" class="size-4 shrink-0" />
-											{/if}
-										{/snippet}
-									</MenuItem>
-									<MenuDivider />
-									{#each MEDIA_PROVIDERS as provider (provider.id)}
-										<MenuItem
-											icon={provider.icon}
-											disabled={!media.isConfigured(provider.id)}
-											tone={selectedProvider === provider.id ? 'accent' : 'default'}
-											onclick={() => (selectedProvider = provider.id)}
-										>
-											<div class="min-w-0">
-												<div>{provider.label}</div>
-												<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-													{media.isConfigured(provider.id)
-														? provider.description
-														: 'Configure this provider in Settings first'}
-												</div>
-											</div>
-											{#snippet trailing()}
-												{#if selectedProvider === provider.id}
-													<Icon name="i-lucide-check" class="size-4 shrink-0" />
-												{/if}
-											{/snippet}
-										</MenuItem>
-									{/each}
-								</Popover>
-							</div>
-
-							{#if showPow && destination !== 'story'}
-								<PowCard
-									bind:pow
-									mining={phase === 'mining'}
-									progress={powProgress}
-									oncancel={() => mineController?.abort()}
-								/>
-							{/if}
-
-							<p class="flex items-center gap-1.5 text-[11px] text-[var(--ui-text-dimmed)]">
-								<Icon name="i-lucide-globe" class="size-3.5 shrink-0 text-primary-500" />
-								{#if destination === 'story'}
-									Publishes a 24h story (kind 30315) — video memes loop in the story viewer.
-								{:else if destination === 'note'}
-									Publishes a kind-1 note with the meme attached as standard media — renders in
-									every Nostr client.
-								{:else}
-									Publishes to {writeRelayCount}
-									{writeRelayCount === 1 ? 'relay' : 'relays'} — a standard
-									{kindInfo?.nip ?? 'Nostr'} event with captions burned in.
-								{/if}
-							</p>
-						</div>
+						<MemeInspectorPanel
+							{selectedLayer}
+							imageLayerIndex={imageLayers.findIndex((layer) => layer.id === selectedLayer?.id) + 1}
+							renderSrc={selectedLayer
+								? (layerAssets.renderSrcs.get(selectedLayer.src) ?? null)
+								: null}
+							{busy}
+							{videoMemeSupported}
+							{overlays}
+							bind:selectedId
+							bind:timingId
+							bind:fxId
+							{mediaKind}
+							{timelineActive}
+							{patchOverlay}
+							{moveOverlay}
+							{moveOverlayRow}
+							{removeOverlay}
+							onAddClassic={() => applyTemplate(TEMPLATES[0])}
+							bind:caption
+							softCaptionLimit={SOFT_CAP}
+							hardCaptionLimit={HARD_CAP}
+							{artboardId}
+							artboardWidth={renderTarget.width}
+							artboardHeight={renderTarget.height}
+							staging={gifStageBusy}
+							{blankBg}
+							{mediaZoom}
+							{mediaPanX}
+							{mediaPanY}
+							onArtboard={setArtboard}
+							onBackground={(color) => void applyBackgroundColor(color)}
+							onFraming={(patch) => {
+								if (patch.zoom !== undefined) mediaZoom = patch.zoom;
+								if (patch.panX !== undefined) mediaPanX = patch.panX;
+								if (patch.panY !== undefined) mediaPanY = patch.panY;
+							}}
+							videoDuration={meta?.duration ?? null}
+							bind:trimStart={trimStartSec}
+							bind:trimEnd={trimEndSec}
+							trimDurationSec={trimDuration}
+							{exportDurationSec}
+							bind:playbackRate
+							{stageSeconds}
+							canPreview={!!stageVideo}
+							onSetLength={setTrimLength}
+							onPreviewCut={() => {
+								if (!stageVideo) return;
+								stageVideo.currentTime = trimStartSec;
+								stageVideo.playbackRate = playbackRate;
+								void stageVideo.play();
+							}}
+							gifDuration={gif?.duration ?? null}
+							cues={sfxCues}
+							bind:pinnedLength={pinnedLengthSec}
+							menuId={sfxMenuId}
+							{animated}
+							bind:includeSourceAudio
+							analyzing={suggestBusy}
+							suggestions={suggestionGroups}
+							onOpenSoundStudio={() => (soundDialogOpen = true)}
+							onPreviewSynth={previewSfx}
+							onAddSynth={addSfxCue}
+							onAddCustom={addCustomCue}
+							onRemoveLibrarySound={removeSoundFromLibrary}
+							onImportAudio={() => soundFileInput?.click()}
+							onSyncCaptions={syncCaptionsToCues}
+							onBuildSuggestions={() => void buildSuggestions()}
+							onApplySuggestion={applySuggestion}
+							onSeek={scrubPreview}
+							onRemoveCue={removeSfxCue}
+							bind:destination
+							bind:sensitive
+							bind:showPow
+							bind:license
+							bind:aiAssisted
+							bind:splitsOpen
+							bind:splitRows
+							bind:selectedProvider
+							bind:pow
+							{phase}
+							{powProgress}
+							{writeRelayCount}
+							kindNip={kindInfo?.nip}
+							onCancelMining={() => mineController?.abort()}
+							onPatchLayer={patchLayer}
+							onRemoveLayer={removeLayer}
+						/>
 					{/snippet}
 
 					<!-- Full-page pro layout (mass production): tool rail · big stage ·
@@ -5812,288 +3936,75 @@
 							{@render inspectorPane()}
 						</aside>
 					</div>
-					<!-- Pinned transport bar: timeline + the keyboard layer. Collapsible —
-						     hide it to hand the whole viewport to the stage (chevron, top-right). -->
-					<div
-						class="relative shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/40 px-3 py-2 sm:px-4"
-					>
-						<button
-							type="button"
-							onclick={() => (timelineCollapsed = !timelineCollapsed)}
-							aria-expanded={!timelineCollapsed}
-							aria-label={timelineCollapsed ? 'Show timeline' : 'Hide timeline'}
-							title={timelineCollapsed ? 'Show the timeline' : 'Hide the timeline — more stage'}
-							class="absolute top-1.5 right-2 z-10 grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-						>
-							<Icon
-								name={timelineCollapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'}
-								class="size-4"
-							/>
-						</button>
-						{#if timelineCollapsed}
-							<p class="py-1 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]">
-								Timeline hidden — Space still plays · {timelineActive
-									? 'chevron to reopen'
-									: 'add a sound cue to unlock it'}
-							</p>
-						{:else}
-							{#if stripFrames}
-								<!-- Video frame strip rides the transport bar in the full layout: scrub,
-								     pick the poster, see the trim window — right under the timeline. -->
-								<VideoFrameStrip
-									durationSec={meta?.duration ?? 0}
-									thumbUrls={frameThumbs}
-									playheadSec={scrubSec}
-									{trimStartSec}
-									{trimEndSec}
-									posterSec={posterAtSec}
-									posterUrl={posterDataUrl}
-									{busy}
-									onScrub={scrubTo}
-									onPickPoster={(sec) => void pickPosterAt(sec)}
-								/>
-							{/if}
-							{#if timelineActive}
-								{@render timelinePane()}
-							{:else}
-								<p
-									class="py-1.5 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
-								>
-									Static meme — add a sound cue to unlock the timeline
-								</p>
-							{/if}
-							<p
-								class="mt-1.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9.5px] font-semibold text-[var(--ui-text-dimmed)]"
-							>
-								<span class="flex items-center gap-1"
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>Space</kbd
-									> play / pause</span
-								>
-								<span class="flex items-center gap-1"
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>←</kbd
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>→</kbd
-									> nudge playhead</span
-								>
-								<span class="flex items-center gap-1"
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>1</kbd
-									>–<kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>9</kbd
-									> cue a sound</span
-								>
-								<span class="flex items-center gap-1"
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>Ctrl ↵</kbd
-									> publish</span
-								>
-								<span class="flex items-center gap-1"
-									><kbd
-										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-										>M</kbd
-									> preview sound</span
-								>
-							</p>
-						{/if}
-					</div>
+					<MemeTimelineDock
+						bind:collapsed={timelineCollapsed}
+						active={timelineActive}
+						showFrames={stripFrames}
+						durationSec={meta?.duration ?? 0}
+						thumbUrls={frameThumbs}
+						playheadSec={scrubSec}
+						{trimStartSec}
+						{trimEndSec}
+						posterSec={posterAtSec}
+						posterUrl={posterDataUrl}
+						{busy}
+						onScrub={scrubTo}
+						onPickPoster={(seconds) => void pickPosterAt(seconds)}
+						timeline={timelinePane}
+					/>
 				{/if}
 			</div>
 
 			<!-- Footer -->
 			{#if file}
-				<footer
-					class="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] px-4 py-3"
-				>
-					<div class="flex min-w-0 items-center gap-2 text-[11px] text-[var(--ui-text-dimmed)]">
-						<Icon name="i-lucide-info" class="size-3.5 shrink-0" />
-						<span class="truncate">
-							{overlays.length} caption{overlays.length === 1 ? '' : 's'} ·
-							{kindInfo?.label ?? 'Meme'}
-							{#if mediaKind}{renderTarget.width}×{renderTarget.height}{:else if meta}{meta.width}×{meta.height}{/if}
-						</span>
-					</div>
-					<!-- Output format: Auto infers from the source; the explicit
-					     options re-render the SAME composition as image / true GIF /
-					     video. Publish rides the same choice. -->
-					<div
-						class="hidden items-center gap-0.5 rounded-full bg-[var(--ui-bg-muted)] p-0.5 sm:flex"
-						role="group"
-						aria-label="Output format"
-					>
-						{#each [{ id: 'auto', label: 'Auto', hint: 'Infer from the source media' }, { id: 'image', label: 'Image', hint: 'JPEG still of the current frame' }, { id: 'gif', label: 'GIF', hint: 'True looping .gif (image or GIF base)' }, { id: 'video', label: 'Video', hint: 'Recorded video with sound' }] as fmt (fmt.id)}
-							{@const disabled =
-								fmt.id === 'gif' && mediaKind === 'video'
-									? 'GIF export needs an image or GIF base'
-									: fmt.id === 'video' && !canRenderVideoMeme()
-										? 'This browser cannot record video'
-										: ''}
-							<button
-								type="button"
-								disabled={busy || !!disabled}
-								onclick={() => (exportFormat = fmt.id as typeof exportFormat)}
-								aria-pressed={exportFormat === fmt.id}
-								title={disabled || fmt.hint}
-								class="rounded-full px-2.5 py-1 text-[11px] font-bold transition {exportFormat ===
-								fmt.id
-									? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
-									: disabled
-										? 'cursor-not-allowed text-[var(--ui-text-dimmed)] opacity-50'
-										: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-							>
-								{fmt.label}
-							</button>
-						{/each}
-					</div>
-					<div class="flex items-center gap-2">
-						<button
-							type="button"
-							onclick={requestClose}
-							disabled={busy}
-							class="h-9 rounded-full px-4 text-[13px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
-						>
-							Cancel
-						</button>
-						<!-- Export to file: same render pipeline as publish, saved locally —
-						     nothing hits a relay. -->
-						<button
-							type="button"
-							onclick={() => void exportFile()}
-							disabled={!file || busy}
-							title="Render and download the meme as a file — same output as publishing"
-							class="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-warm-500/50 hover:bg-warm-500/10 hover:text-warm-600 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-						>
-							<Icon name="i-lucide-download" class="size-4" />
-							<span class="hidden sm:inline">Export</span>
-						</button>
-						<button
-							type="button"
-							onclick={() => void submit()}
-							disabled={!canPost || busy}
-							class="inline-flex h-9 items-center gap-2 rounded-full bg-warm-500 px-5 text-[13px] font-bold text-white transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-						>
-							{#if busy}
-								<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-								{progressLabel || 'Working…'}
-							{:else}
-								<Icon name="i-lucide-send" class="size-4" />
-								{destination === 'story'
-									? 'Post story'
-									: destination === 'note'
-										? 'Post note'
-										: 'Publish meme'}
-							{/if}
-						</button>
-					</div>
-				</footer>
+				<MemeStudioFooter
+					captionCount={overlays.length}
+					kindLabel={kindInfo?.label ?? 'Meme'}
+					{mediaKind}
+					width={renderTarget.width}
+					height={renderTarget.height}
+					mediaLoaded={!!file}
+					{busy}
+					{canPost}
+					{progressLabel}
+					{destination}
+					{exportFormat}
+					videoExportSupported={canRenderVideoMeme()}
+					onFormat={(format) => (exportFormat = format)}
+					onCancel={requestClose}
+					onExport={() => void exportFile()}
+					onPublish={() => void submit()}
+				/>
 			{/if}
 		</div>
 
 		<!-- Discard confirmation -->
 		{#if confirmDiscard}
-			<div class="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4">
-				<div class="surface-card w-full max-w-xs rounded-2xl p-5 text-center">
-					<Icon
-						name={discardIntent === 'new' ? 'i-lucide-file-plus' : 'i-lucide-trash-2'}
-						class="mx-auto size-8 {discardIntent === 'new'
-							? 'text-warm-500'
-							: 'text-[var(--tone-error-text)]'}"
-					/>
-					<h3 class="mt-2 text-[15px] font-bold">
-						{discardIntent === 'new' ? 'Start a new meme?' : 'Discard this meme?'}
-					</h3>
-					<p class="mt-1 text-[12.5px] text-[var(--ui-text-muted)]">
-						{discardIntent === 'new'
-							? 'The canvas resets — media, captions, sounds and remix lineage are cleared.'
-							: 'Captions and the chosen media will be lost.'}
-					</p>
-					<div class="mt-4 flex gap-2">
-						<button
-							type="button"
-							onclick={() => (confirmDiscard = false)}
-							class="h-9 flex-1 rounded-full border border-[var(--ui-border-muted)] text-[13px] font-bold transition hover:bg-[var(--ui-bg-muted)]"
-						>
-							Keep editing
-						</button>
-						<button
-							type="button"
-							onclick={discard}
-							class="h-9 flex-1 rounded-full {discardIntent === 'new'
-								? 'bg-warm-500'
-								: 'bg-[var(--tone-error-text)]'} text-[13px] font-bold text-white transition hover:brightness-110"
-						>
-							{discardIntent === 'new' ? 'Start over' : 'Discard'}
-						</button>
-					</div>
-					<!-- Middle path: park the WIP in a slot instead of losing it. -->
-					<button
-						type="button"
-						onclick={async () => {
-							await saveCurrentSlot();
-							startFresh();
-						}}
-						class="mt-2 h-9 w-full rounded-full bg-primary-500/10 text-[12.5px] font-bold text-primary-600 transition hover:bg-primary-500/20"
-					>
-						<Icon name="i-lucide-save" class="mr-1 inline size-3.5" />
-						Save to slots instead{discardIntent === 'new' ? ', then start over' : ''}
-					</button>
-				</div>
-			</div>
+			<MemeDiscardDialog
+				intent={discardIntent}
+				onKeep={() => (confirmDiscard = false)}
+				onDiscard={discard}
+				onSave={() => {
+					void saveCurrentSlot().then(startFresh);
+				}}
+			/>
 		{/if}
 	</div>
 {/if}
 
-<input
-	bind:this={fileInput}
-	type="file"
-	accept={pickFormat === 'all'
-		? 'image/*,video/mp4,video/webm,video/quicktime,image/gif'
-		: (PICK_FORMATS.find((f) => f.id === pickFormat)?.accept ?? 'image/*,video/*')}
-	class="hidden"
-	onchange={onFileInput}
+<MemeStudioInputs
+	bind:fileInput
+	bind:otherSourceInput
+	bind:layerInput
+	bind:queueInput
+	bind:soundInput={soundFileInput}
+	{pickFormat}
+	onFile={onFileInput}
+	onOtherSource={onOtherSourceInput}
+	onLayer={onLayerFileInput}
+	onQueue={onQueueInput}
+	onSound={(sound) => void soundIO.importFile(sound)}
 />
-<input
-	bind:this={otherSourceInput}
-	type="file"
-	accept="image/*,video/mp4,video/webm,video/quicktime,image/gif"
-	class="hidden"
-	onchange={onOtherSourceInput}
-/>
-<input
-	bind:this={layerInput}
-	type="file"
-	accept="image/png,image/gif,image/jpeg,image/webp"
-	multiple
-	class="hidden"
-	onchange={onLayerFileInput}
-/>
-<input
-	bind:this={queueInput}
-	type="file"
-	accept="image/*,video/mp4,video/webm,video/quicktime,image/gif"
-	multiple
-	class="hidden"
-	onchange={onQueueInput}
-/>
-<input
-	bind:this={soundFileInput}
-	type="file"
-	accept="audio/*"
-	class="hidden"
-	onchange={(e) => {
-		const input = e.currentTarget as HTMLInputElement;
-		void soundIO.importFile(input.files?.[0] ?? null);
-		input.value = '';
-	}}
-/>
-
 <MemeSoundDialog
 	bind:open={soundDialogOpen}
 	bind:cues={sfxCues}

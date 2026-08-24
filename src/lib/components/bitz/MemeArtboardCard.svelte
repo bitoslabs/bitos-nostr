@@ -1,5 +1,10 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import {
+		ARTBOARDS,
+		BLANK_CANVAS_COLORS as SWATCHES,
+		type MemeArtboardId
+	} from './meme-studio-config';
 
 	/**
 	 * MemeArtboardCard — the output canvas controls: size presets (Source /
@@ -34,27 +39,12 @@
 		zoom?: number;
 		panX?: number;
 		panY?: number;
-		onArtboard: (id: 'source' | '9:16' | '16:9' | '1:1' | '4:5') => void;
+		onArtboard: (id: MemeArtboardId) => void;
 		onBackground: (color: string) => void;
 		/** Patch the framing (any subset of zoom / panX / panY; reset via zoom 1). */
 		onFraming: (patch: { zoom?: number; panX?: number; panY?: number }) => void;
 	} = $props();
 
-	const ARTBOARDS: {
-		id: 'source' | '9:16' | '16:9' | '1:1' | '4:5';
-		label: string;
-		hint: string;
-		w: number;
-		h: number;
-	}[] = [
-		{ id: 'source', label: 'Source', hint: "Keep the media's own frame", w: 0, h: 0 },
-		{ id: '9:16', label: '9:16', hint: 'Mobile full-screen · stories / reels', w: 1080, h: 1920 },
-		{ id: '16:9', label: '16:9', hint: 'Landscape · YouTube', w: 1920, h: 1080 },
-		{ id: '1:1', label: '1:1', hint: 'Square feed post', w: 1080, h: 1080 },
-		{ id: '4:5', label: '4:5', hint: 'Portrait feed post', w: 1080, h: 1350 }
-	];
-
-	const SWATCHES = ['#ffffff', '#000000', '#fde047', '#f97316', '#22d3ee', '#a3e635'];
 	const framingActive = $derived(zoom !== 1 || panX !== 0 || panY !== 0);
 </script>
 
