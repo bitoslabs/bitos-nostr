@@ -94,7 +94,7 @@
 		type MemeSfxId,
 		normalizeSfxCue
 	} from '$lib/meme/schema';
-	import { createSfxAudioTrack, SFX_RECIPES } from '$lib/meme/sfx';
+	import { SFX_RECIPES } from '$lib/meme/sfx';
 	import { SFX_LABELS as sfxLabels, SFX_DURATIONS as sfxDurations } from '$lib/meme/sound-catalog';
 	import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
 	import {
@@ -118,10 +118,9 @@
 	import {
 		exportErrorMessage,
 		exportImetaDuration,
-		pickRecorderMime,
-		RecorderSession,
 		shiftCuesForExport
 	} from '$lib/meme/export-support';
+	import { cueAudioTrack, paintMemeBase, recordMeme } from '$lib/meme/export-pipeline';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import VideoFrameStrip from '$lib/components/bitz/VideoFrameStrip.svelte';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
@@ -131,6 +130,7 @@
 		fetchLayerBlob,
 		probeAspect
 	} from '$lib/stores/meme-layer-assets.svelte';
+	import { MemeBatchQueue } from '$lib/stores/meme-batch-queue.svelte';
 	import {
 		applyRemixPayload,
 		remixTagsFor,
@@ -182,18 +182,13 @@
 		 * once on open (fresh ids — the saved template stays re-usable). */
 		templateHandoff,
 		/** Resume-slot handoff (studio home): WIP slot id to restore on open. */
-		slotHandoff,
-		/** Page variant (/studio/create?tab=meme): a full-bleed editing surface
-		 * instead of a floating dialog — no backdrop, no own close chrome, the
-		 * route owns navigation (tabs, ESC → back to the studio home). */
-		full = false
+		slotHandoff
 	}: {
 		open?: boolean;
 		onposted?: (eventId: string) => void;
 		remixHandoff?: RemixHandoff | null;
 		templateHandoff?: { id: string; overlays: MemeTextOverlay[] } | null;
 		slotHandoff?: string | null;
-		full?: boolean;
 	} = $props();
 
 	type Phase = 'idle' | 'rendering' | 'uploading' | 'mining' | 'publishing';
@@ -394,18 +389,9 @@
 	let blankMenuId = `meme-blank-${Math.random().toString(36).slice(2, 8)}`;
 	let showGifUrlForm = $state(false);
 	let gifStageBusy = $state(false);
-	/** Batch queue items: either a remote GIF URL or a local File (videos and
-	 *  pictures multi-picked for mass production — each publish loads the next). */
-	interface QueueItem {
-		id: number;
-		url: string;
-		label: string;
-		caption?: string;
-		file?: File;
-	}
-	let queue = $state<QueueItem[]>([]);
-	let queueIndex = $state(0);
-	let queueSeq = 0;
+	/** Batch queue (mass production) — the store owns list mechanics (ids,
+	 *  captions, the staging pointer); staging side-effects live here. */
+	const batch = new MemeBatchQueue();
 	let queueInput = $state<HTMLInputElement | null>(null);
 
 	/** Multi-pick local videos/pictures into the batch queue (first one stages
@@ -419,12 +405,12 @@
 		if (!picked.length) return;
 		if (!file) {
 			const [first, ...rest] = picked;
-			queue = [...queue, ...rest.map((f) => ({ id: ++queueSeq, url: '', label: f.name, file: f }))];
+			batch.appendFiles(rest);
 			if (rest.length) toasts.info(`${rest.length} more queued — each post loads the next`);
 			if (first) void acceptFile(first, { keepRemix: true });
 			return;
 		}
-		queue = [...queue, ...picked.map((f) => ({ id: ++queueSeq, url: '', label: f.name, file: f }))];
+		batch.appendFiles(picked);
 		toasts.info(`${picked.length} queued — each post loads the next`);
 	}
 
@@ -479,11 +465,7 @@
 		popovers.close();
 		const [first, ...rest] = gifs;
 		if (!first) return;
-		queue = [
-			...queue,
-			...rest.map((g) => ({ id: ++queueSeq, url: g.url, label: g.title ?? 'GIF' }))
-		];
-		queueIndex = queue.length - rest.length;
+		batch.appendUrls(rest.map((g) => ({ url: g.url, label: g.title ?? 'GIF' })));
 		if (file) {
 			if (rest.length)
 				toasts.info(
@@ -496,9 +478,8 @@
 
 	/** Stage the next queued GIF after a publish (returns false when the queue is empty). */
 	async function stageNextQueued(): Promise<boolean> {
-		const next = queue[queueIndex];
+		const next = batch.take();
 		if (!next) return false;
-		queueIndex += 1;
 		// This item's caption (if any) becomes the post text — per-item, so each meme
 		// in the batch can carry its own words instead of inheriting the previous one's.
 		if (typeof next.caption === 'string') caption = next.caption;
@@ -2204,31 +2185,6 @@
 		if (percent !== undefined) progress = percent;
 	}
 
-	/** Build the full cue schedule (synth + custom sounds) and render it to
-	 * an AudioBuffer ready to attach to a MediaRecorder stream. Returns null
-	 * when there is nothing audible to mix (silent export). */
-	async function renderCueMix(
-		durationSec: number,
-		cues: MemeSfxCue[] = sfxCues
-	): Promise<AudioBuffer | null> {
-		const OfflineCtx = window.OfflineAudioContext;
-		if (!OfflineCtx) return null;
-		const { buildCueMixBuffer: _lazyMix } = await import('$lib/meme/cue-mix');
-		return _lazyMix(cues, durationSec, {
-			offlineCtor: OfflineCtx,
-			decodeSound: libraryDecodeSound
-		});
-	}
-
-	/** createSfxAudioTrack that never breaks the export on failure. */
-	function safeCueTrack(buffer: AudioBuffer): MediaStreamTrack | null {
-		try {
-			return createSfxAudioTrack(buffer, window.AudioContext);
-		} catch {
-			return null;
-		}
-	}
-
 	/** Seek-then-grab the composed frame at `timeSec` and stage it as poster. */
 	async function pickPosterAt(timeSec: number): Promise<void> {
 		if (!stageVideo) {
@@ -2328,31 +2284,18 @@
 		if (!ctx) throw new Error('Canvas is not available in this browser');
 		ctx.fillStyle = '#000';
 		ctx.fillRect(0, 0, a.width, a.height);
-		if (lookCss !== 'none') ctx.filter = lookCss;
-		if (mediaKind === 'video' && stageVideo) {
-			const rect = coverRect(
-				stageVideo.videoWidth || a.width,
-				stageVideo.videoHeight || a.height,
-				a.width,
-				a.height,
-				mediaTransform
-			);
-			ctx.drawImage(stageVideo, rect.x, rect.y, rect.w, rect.h);
-		} else if (gif) {
-			paintGifFrameAt(ctx, gif, stageSeconds, a, mediaTransform);
-		} else if (stageImg) {
-			const rect = coverRect(
-				stageImg.naturalWidth || a.width,
-				stageImg.naturalHeight || a.height,
-				a.width,
-				a.height,
-				mediaTransform
-			);
-			ctx.drawImage(stageImg, rect.x, rect.y, rect.w, rect.h);
-		} else {
+		if (!(mediaKind === 'video' && stageVideo) && !gif && !stageImg) {
 			throw new Error('The preview is still loading');
 		}
-		ctx.filter = 'none';
+		paintMemeBase(ctx, a, {
+			mediaKind,
+			gif,
+			stageImg,
+			stageVideo,
+			lookCss,
+			mediaTransform,
+			stageSeconds
+		});
 		paintImageOverlays(
 			ctx,
 			imageLayers,
@@ -2413,23 +2356,18 @@
 			);
 			ctx.fillStyle = '#000';
 			ctx.fillRect(0, 0, a.width, a.height);
-			if (lookCss !== 'none') ctx.filter = lookCss;
-			if (gif) {
+			paintMemeBase(ctx, a, {
+				mediaKind,
+				gif,
+				stageImg,
+				stageVideo,
+				lookCss,
+				mediaTransform,
 				// Mod so the base LOOPS when a layer/cue extends past one pass
 				// (mirrors the recorder path) instead of freezing on its last
 				// frame for the rest of the window.
-				paintGifFrameAt(ctx, gif, gif.duration > 0 ? t % gif.duration : t, a, mediaTransform);
-			} else if (stageImg) {
-				const rect = coverRect(
-					stageImg.naturalWidth || a.width,
-					stageImg.naturalHeight || a.height,
-					a.width,
-					a.height,
-					mediaTransform
-				);
-				ctx.drawImage(stageImg, rect.x, rect.y, rect.w, rect.h);
-			}
-			ctx.filter = 'none';
+				stageSeconds: gif && gif.duration > 0 ? t % gif.duration : t
+			});
 			paintImageOverlays(
 				ctx,
 				imageLayers,
@@ -2537,12 +2475,13 @@
 		// Cue mix is built on the EXPORT timeline: media time re-mapped by the
 		// trim window and compressed by playbackRate (cues after trimEnd drop).
 		const exportCues = shiftCuesForExport(sfxCues, trimStartSec, playbackRate, trimDuration);
-		const cueBuffer = await renderCueMix(trimDuration / (playbackRate || 1), exportCues);
+		const cueTrack = await cueAudioTrack(
+			trimDuration / (playbackRate || 1),
+			exportCues,
+			libraryDecodeSound
+		);
 		const extraTracks: MediaStreamTrack[] = [];
-		if (cueBuffer) {
-			const track = safeCueTrack(cueBuffer);
-			if (track) extraTracks.push(track);
-		}
+		if (cueTrack) extraTracks.push(cueTrack);
 		const { blob, mimeType } = await renderVideoMeme(stageVideo, overlays, {
 			signal: mineController?.signal,
 			extraTracks,
@@ -2567,7 +2506,6 @@
 	}
 
 	/** GIF export: paint decoded frames onto a canvas at creation speed, mix
-	/** GIF export: paint decoded frames onto a canvas at creation speed, mix
 	 * the synthesized SFX track into the MediaRecorder stream, and return the
 	 * recorded video. Same recorder contract as renderVideoMeme. */
 	async function exportGifMeme(): Promise<File> {
@@ -2590,35 +2528,31 @@
 			Math.max(pinnedLengthSec ?? decoded.duration, 0.2),
 			MAX_VIDEO_MEME_SECONDS
 		);
-		const mimeType = pickRecorderMime();
-		if (!mimeType) throw new Error('This browser cannot record animated memes');
 		track('rendering', 'Recording meme…', 0);
 		// Synthesized + custom cue mix (if any cues exist) becomes the audio track.
-		const cueBuffer = await renderCueMix(exportLengthSec);
-		const cueTrack = cueBuffer ? safeCueTrack(cueBuffer) : null;
-		const session = new RecorderSession({
+		const cueTrack = await cueAudioTrack(exportLengthSec, sfxCues, libraryDecodeSound);
+		// Real-time single pass: paint each frame for its own duration. GIF
+		// timestamps are wall-clock aligned so SFX cues stay in sync; the
+		// base painter loops (mod duration) so a longer Length pick
+		// repeats the GIF instead of freezing on its last frame.
+		return recordMeme({
 			canvas: a,
-			mimeType,
+			totalMs: exportLengthSec * 1000,
 			signal: mineController?.signal,
-			extraTracks: cueTrack ? [cueTrack] : []
-		});
-		try {
-			// Real-time single pass: paint each frame for its own duration. GIF
-			// timestamps are wall-clock aligned so SFX cues stay in sync; the
-			// base painter loops (mod duration) so a longer Length pick
-			// repeats the GIF instead of freezing on its last frame.
-			await session.run((ctx, elapsedMs) => {
+			extraTracks: cueTrack ? [cueTrack] : [],
+			unsupportedMessage: 'This browser cannot record animated memes',
+			paint: (ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
-				if (lookCss !== 'none') ctx.filter = lookCss;
-				paintGifFrameAt(
-					ctx,
-					decoded,
-					(elapsedMs / 1000) % Math.max(decoded.duration, 0.01),
-					a,
-					mediaTransform
-				);
-				ctx.filter = 'none';
+				paintMemeBase(ctx, a, {
+					mediaKind,
+					gif: decoded,
+					stageImg,
+					stageVideo,
+					lookCss,
+					mediaTransform,
+					stageSeconds: (elapsedMs / 1000) % Math.max(decoded.duration, 0.01)
+				});
 				paintImageOverlays(
 					ctx,
 					imageLayers,
@@ -2628,22 +2562,19 @@
 					layerAssets.painterFor
 				);
 				paintAll(ctx, overlays, a, elapsedMs);
-				return optionsProgress(elapsedMs, exportLengthSec * 1000);
-			});
-			return await session.finish();
-		} catch (e) {
-			session.dispose();
-			throw e;
-		}
+			},
+			onProgress: (percent) => {
+				progress = percent;
+			}
+		});
 	}
 
-	/** Static + SFX: real-time record a painted frame for as long as the cue
 	/** Static + SFX: real-time record a painted frame for as long as the cue
 	 * sheet runs (+ padding), so the audio track carries the sound. */
 	async function exportStaticVideoMeme(): Promise<File> {
 		if (!stageImg) throw new Error('The preview is still loading');
 		if (!canRenderVideoMeme()) {
-			throw new Error('This browser cannot export sound memes \u2014 try Chrome/Edge');
+			throw new Error('This browser cannot export sound memes — try Chrome/Edge');
 		}
 		const a = document.createElement('canvas');
 		// Artboard (cover-fit) or the image's own frame, even dims, 1080 cap.
@@ -2651,44 +2582,37 @@
 		a.width = Math.max(2, size.width - (size.width % 2));
 		a.height = Math.max(2, size.height - (size.height % 2));
 		// Duration: last cue end + tail, clamped to the video-meme cap (shared
-		// with the suggestion path via cue-track). A pinned Length overrides \u2014
+		// with the suggestion path via cue-track). A pinned Length overrides —
 		// shorter drops late cues, longer holds the last frame in silence.
 		const durationSec = Math.min(
 			Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
 			MAX_VIDEO_MEME_SECONDS
 		);
-		const mimeType = pickRecorderMime();
-		if (!mimeType) throw new Error('This browser cannot record sound memes');
-		track('rendering', 'Recording sound meme\u2026', 0);
-		const cueBuffer = await renderCueMix(durationSec, sfxCues);
-		const cueTrack = cueBuffer ? safeCueTrack(cueBuffer) : null;
-		const session = new RecorderSession({
+		track('rendering', 'Recording sound meme…', 0);
+		const cueTrack = await cueAudioTrack(durationSec, sfxCues, libraryDecodeSound);
+		// Real-time pass: paint the static frame (look + image layers + timed
+		// captions), then re-paint as the timeline advances so start/end
+		// windows and cue-synced captions behave exactly like GIF export.
+		return recordMeme({
 			canvas: a,
-			mimeType,
+			totalMs: durationSec * 1000,
 			signal: mineController?.signal,
-			extraTracks: cueTrack ? [cueTrack] : []
-		});
-		try {
-			// Real-time pass: paint the static frame (look + image layers + timed
-			// captions), then re-paint as the timeline advances so start/end
-			// windows and cue-synced captions behave exactly like GIF export.
-			const img: HTMLImageElement = stageImg;
-			await session.run((ctx, elapsedMs) => {
+			extraTracks: cueTrack ? [cueTrack] : [],
+			unsupportedMessage: 'This browser cannot record sound memes',
+			paint: (ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
-				if (lookCss !== 'none') ctx.filter = lookCss;
-				// Cover-fit (not stretch) \u2014 a mismatched artboard crops like the
+				// Cover-fit (not stretch) — a mismatched artboard crops like the
 				// stage preview instead of distorting the picture; the framing
 				// (crop/zoom) rides the same rect.
-				const rect = coverRect(
-					img.naturalWidth || a.width,
-					img.naturalHeight || a.height,
-					a.width,
-					a.height,
+				paintMemeBase(ctx, a, {
+					mediaKind,
+					gif,
+					stageImg,
+					stageVideo,
+					lookCss,
 					mediaTransform
-				);
-				ctx.drawImage(img, rect.x, rect.y, rect.w, rect.h);
-				ctx.filter = 'none';
+				});
 				paintImageOverlays(
 					ctx,
 					imageLayers,
@@ -2698,19 +2622,11 @@
 					layerAssets.painterFor
 				);
 				paintAll(ctx, overlays, a, elapsedMs);
-				return optionsProgress(elapsedMs, durationSec * 1000);
-			});
-			return await session.finish();
-		} catch (e) {
-			session.dispose();
-			throw e;
-		}
-	}
-
-	function optionsProgress(elapsedMs: number, totalMs: number): boolean {
-		const percent = Math.min(100, Math.round((elapsedMs / totalMs) * 100));
-		progress = percent;
-		return percent >= 100;
+			},
+			onProgress: (percent) => {
+				progress = percent;
+			}
+		});
 	}
 
 	async function uploadRendered(rendered: File): Promise<UploadedMediaLike> {
@@ -2921,13 +2837,12 @@
 			reset();
 			draftWriter.clear();
 			// Batch mode: keep the studio open and load the next queued GIF.
-			if (queue.length > queueIndex) {
+			if (batch.remaining > 0) {
 				void stageNextQueued();
-				toasts.info(`Next meme loaded — ${queue.length - queueIndex - 1} left in queue`);
+				toasts.info(`Next meme loaded — ${batch.remaining} left in queue`);
 				return;
 			}
-			queue = [];
-			queueIndex = 0;
+			batch.clear();
 			open = false;
 		} catch (e) {
 			const message = exportErrorMessage(e);
@@ -2954,27 +2869,20 @@
 			return;
 		}
 		reset();
-		// Full-page mode has no overlay to hide — land on the start panel.
-		if (!full) open = false;
 	}
 
-	/** What the discard dialog should do after wiping: `close` leaves the
-	 *  studio (dialog mode hides, full mode resets to the start panel — the
-	 *  page NEVER blanks), `new` is the "Start over" action (always stays). */
+	/** What the discard dialog should do after wiping: `close` lands on the
+	 *  start panel (the page NEVER blanks), `new` is the "Start over" action
+	 *  (also stays). Both keep the page mounted — the route owns leaving. */
 	let discardIntent = $state<'close' | 'new'>('close');
 
 	/** Shared wipe: clears everything (media, captions, layers, sounds, remix
 	 *  lineage, queue, draft) and lands on the start panel. */
 	function startFresh() {
 		confirmDiscard = false;
-		queue = [];
-		queueIndex = 0;
+		batch.clear();
 		reset();
 		draftWriter.clear();
-		// Dialog mode: closing hides the overlay. Full-page mode keeps the
-		// studio mounted — the creator sees the format-card start panel
-		// instead of a blank route (the old Cancel-blanks-the-page bug).
-		if (!full && discardIntent === 'close') open = false;
 	}
 
 	/** "Start over" — a functional reset/create-new from inside the editor
@@ -3059,21 +2967,12 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (!open) return;
 		if (confirmDiscard) {
+			// Escape dismisses the discard modal; the route owns Escape-elsewhere
+			// (back to the studio home).
 			if (event.key === 'Escape') {
 				event.preventDefault();
 				confirmDiscard = false;
 			}
-			return;
-		}
-		if (full) {
-			// Page mode: the route owns Escape (back to the studio home); the
-			// studio owns the editing shortcuts on top of it.
-			handleStudioShortcut(event);
-			return;
-		}
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			requestClose();
 			return;
 		}
 		handleStudioShortcut(event);
@@ -3215,61 +3114,11 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open}
-	<div class={full ? 'h-full' : 'fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4'}>
-		{#if !full}
-			<button
-				type="button"
-				aria-label="Close Meme Studio"
-				tabindex="-1"
-				class="animate-fade absolute inset-0 bg-black/60 backdrop-blur-[3px]"
-				onclick={requestClose}
-			></button>
-		{/if}
+	<div class="h-full">
 		<div
-			class="surface-card relative z-10 flex w-full flex-col overflow-hidden {full
-				? 'h-full max-w-none rounded-none border-0 shadow-none'
-				: 'max-h-[calc(100dvh-1.5rem)] max-w-3xl rounded-2xl shadow-2xl shadow-black/30'}"
-			role={full ? undefined : 'dialog'}
-			aria-modal={full ? undefined : 'true'}
-			aria-label={full ? undefined : 'Meme Studio'}
+			class="surface-card relative z-10 flex h-full w-full max-w-none flex-col overflow-hidden rounded-none border-0 shadow-none"
 		>
-			{#if !full}
-				<header
-					class="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-[var(--ui-border)] px-4 sm:h-14"
-				>
-					<span
-						class="grid size-9 shrink-0 place-items-center rounded-xl bg-warm-500/12 text-warm-500"
-					>
-						<Icon name="i-lucide-laugh" class="size-5" />
-					</span>
-					<div class="min-w-0 flex-1">
-						<h2 class="text-[15px] leading-tight font-bold text-[var(--ui-text-highlighted)]">
-							Meme Studio
-						</h2>
-						<p class="truncate text-[11px] text-[var(--ui-text-dimmed)]">
-							{#if kindInfo}
-								{kindInfo.label} · kind {kindInfo.kind} · {kindInfo.nip} → {destination === 'story'
-									? 'story (24h)'
-									: destination === 'note'
-										? 'note'
-										: 'Bitz feed'}
-							{:else}
-								Burn captions into a picture or video, publish anywhere
-							{/if}
-						</p>
-					</div>
-					<button
-						type="button"
-						onclick={requestClose}
-						aria-label="Close Meme Studio"
-						class="grid size-9 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] active:scale-95"
-					>
-						<Icon name="i-lucide-x" class="size-5" />
-					</button>
-				</header>
-			{/if}
-
-			{#if queue.length - queueIndex > 0}
+			{#if batch.remaining > 0}
 				<div
 					class="flex shrink-0 items-start justify-between gap-2 border-b border-warm-500/25 bg-warm-500/10 px-4 py-2"
 				>
@@ -3277,31 +3126,28 @@
 						<div class="flex items-center gap-2 text-[12px] font-semibold text-warm-600">
 							<Icon name="i-lucide-list-video" class="size-4 shrink-0" />
 							<span class="truncate">
-								Batch queue: {queue.length - queueIndex} clip{queue.length - queueIndex === 1
-									? ''
-									: 's'} left — each post loads the next
+								Batch queue: {batch.remaining} clip{batch.remaining === 1 ? '' : 's'} left — each post
+								loads the next
 							</span>
 						</div>
 						<!-- Per-item captions: type a line per queued GIF; it becomes that post's text. -->
 						<div class="flex flex-col gap-1">
-							{#each queue.slice(queueIndex) as item, i (item.id)}
+							{#each batch.remainingItems as item, i (item.id)}
 								<div class="flex items-center gap-1.5">
 									<span
 										class="grid size-5 shrink-0 place-items-center rounded-full bg-warm-500/15 font-mono text-[10px] font-bold text-warm-600"
-										title={queue[queueIndex + i]?.label ?? ''}
+										title={batch.remainingItems[i]?.label ?? ''}
 									>
-										{queueIndex + i + 1}
+										{batch.index + i + 1}
 									</span>
 									<input
 										type="text"
 										value={item.caption ?? ''}
 										maxlength="280"
 										placeholder={`Caption for ${item.label}…`}
-										aria-label={`Caption for queued clip ${queueIndex + i + 1}`}
-										oninput={(e) => {
-											const v = (e.target as HTMLInputElement).value;
-											item.caption = v === '' ? undefined : v;
-										}}
+										aria-label={`Caption for queued clip ${batch.index + i + 1}`}
+										oninput={(e) =>
+											batch.setCaption(item.id, (e.target as HTMLInputElement).value || undefined)}
 										class="h-7 min-w-0 flex-1 rounded-lg border border-warm-500/20 bg-[var(--ui-bg)] px-2 text-[12px] outline-none focus:border-warm-500/60"
 									/>
 								</div>
@@ -3313,17 +3159,14 @@
 							type="button"
 							onclick={() => void stageNextQueued()}
 							disabled={gifStageBusy || busy}
-							title={`Skip this one and load the next queued clip (${queue[queueIndex]?.label ?? 'none'})`}
+							title={`Skip this one and load the next queued clip (${batch.peekLabel})`}
 							class="rounded-full px-2.5 py-1 text-[11px] font-bold text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-50"
 						>
 							Skip →
 						</button>
 						<button
 							type="button"
-							onclick={() => {
-								queue = [];
-								queueIndex = 0;
-							}}
+							onclick={() => batch.clear()}
 							title="Drop every queued GIF"
 							class="rounded-full px-2.5 py-1 text-[11px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
 						>
@@ -3333,9 +3176,7 @@
 				</div>
 			{/if}
 
-			<!-- Full page mode owns its own pane scrolling; the dialog keeps a
-			     single centered scroll column. -->
-			<div class={full ? 'flex min-h-0 flex-1 flex-col' : 'min-h-0 flex-1 overflow-y-auto'}>
+			<div class="flex min-h-0 flex-1 flex-col">
 				{#if !file}
 					<!-- Empty state -->
 					<div class="flex min-h-[420px] flex-col items-center justify-center p-6">
@@ -3478,10 +3319,8 @@
 					     box, so zoom never disturbs them), fixed 260px in the dialog.
 					     The width calc uses the ARTBOARD ratio (was hardcoded 9:16). -->
 						<div
-							class="mx-auto w-full {full ? '' : 'max-w-[260px] sm:mx-0'}"
-							style={full
-								? `width:calc(min(430px, (100dvh - 17.5rem) * ${stageRatio}) * ${stageZoom})`
-								: ''}
+							class="mx-auto w-full"
+							style={`width:calc(min(430px, (100dvh - 17.5rem) * ${stageRatio}) * ${stageZoom})`}
 						>
 							<div class="mb-1.5 flex items-center justify-between gap-2">
 								<p
@@ -3491,39 +3330,37 @@
 								</p>
 								<!-- Canvas-size zoom (full layout): fit ↔ 150% for detail work.
 									     The % readout doubles as a reset-to-fit button. -->
-								{#if full}
-									<div class="flex items-center gap-0.5" role="group" aria-label="Stage zoom">
-										<button
-											type="button"
-											onclick={() => zoomStage(-1)}
-											disabled={stageZoom <= STAGE_ZOOM_STEPS[0] + 0.001}
-											aria-label="Zoom out stage"
-											title="Zoom out the preview canvas"
-											class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
-										>
-											<Icon name="i-lucide-zoom-out" class="size-3.5" />
-										</button>
-										<button
-											type="button"
-											onclick={() => setStageZoom(1)}
-											disabled={Math.abs(stageZoom - 1) < 0.001}
-											title="Reset zoom to fit"
-											class="min-w-11 rounded-full px-1 font-mono text-[10px] font-bold text-[var(--ui-text-dimmed)] tabular-nums transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-60"
-										>
-											{Math.round(stageZoom * 100)}%
-										</button>
-										<button
-											type="button"
-											onclick={() => zoomStage(1)}
-											disabled={stageZoom >= STAGE_ZOOM_STEPS[STAGE_ZOOM_STEPS.length - 1] - 0.001}
-											aria-label="Zoom in stage"
-											title="Zoom in the preview canvas — pan by scrolling the stage"
-											class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
-										>
-											<Icon name="i-lucide-zoom-in" class="size-3.5" />
-										</button>
-									</div>
-								{/if}
+								<div class="flex items-center gap-0.5" role="group" aria-label="Stage zoom">
+									<button
+										type="button"
+										onclick={() => zoomStage(-1)}
+										disabled={stageZoom <= STAGE_ZOOM_STEPS[0] + 0.001}
+										aria-label="Zoom out stage"
+										title="Zoom out the preview canvas"
+										class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+									>
+										<Icon name="i-lucide-zoom-out" class="size-3.5" />
+									</button>
+									<button
+										type="button"
+										onclick={() => setStageZoom(1)}
+										disabled={Math.abs(stageZoom - 1) < 0.001}
+										title="Reset zoom to fit"
+										class="min-w-11 rounded-full px-1 font-mono text-[10px] font-bold text-[var(--ui-text-dimmed)] tabular-nums transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-60"
+									>
+										{Math.round(stageZoom * 100)}%
+									</button>
+									<button
+										type="button"
+										onclick={() => zoomStage(1)}
+										disabled={stageZoom >= STAGE_ZOOM_STEPS[STAGE_ZOOM_STEPS.length - 1] - 0.001}
+										aria-label="Zoom in stage"
+										title="Zoom in the preview canvas — pan by scrolling the stage"
+										class="grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-30"
+									>
+										<Icon name="i-lucide-zoom-in" class="size-3.5" />
+									</button>
+								</div>
 							</div>
 							<div
 								bind:this={stageBox}
@@ -5207,23 +5044,6 @@
 								/>
 							{/if}
 
-							<!-- Frame strip (dialog mode — the full layout shows it in the
-								     pinned transport bar instead, next to the timeline). -->
-							{#if stripFrames && !full}
-								<VideoFrameStrip
-									durationSec={meta?.duration ?? 0}
-									thumbUrls={frameThumbs}
-									playheadSec={scrubSec}
-									{trimStartSec}
-									{trimEndSec}
-									posterSec={posterAtSec}
-									posterUrl={posterDataUrl}
-									{busy}
-									onScrub={scrubTo}
-									onPickPoster={(sec) => void pickPosterAt(sec)}
-								/>
-							{/if}
-
 							<!-- Trim + speed (extracted component). -->
 							{#if mediaKind === 'video' && meta?.duration}
 								<MemeTrimPanel
@@ -5951,171 +5771,139 @@
 						</div>
 					{/snippet}
 
-					{#if full}
-						<!-- Full-page pro layout (mass production): tool rail · big stage ·
+					<!-- Full-page pro layout (mass production): tool rail · big stage ·
 						     inspector — panes scroll on their own; the timeline bar stays pinned.
 						     Mobile stacks the panes in one scroll column. -->
-						{#if remixSource}
-							<div
-								class="flex shrink-0 items-center gap-2 border-b border-warm-500/25 bg-warm-500/10 px-4 py-2 text-[12px] font-semibold text-warm-600"
-							>
-								<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
-								<span class="truncate"
-									>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
-								>
-							</div>
-						{/if}
+					{#if remixSource}
 						<div
-							class="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden"
+							class="flex shrink-0 items-center gap-2 border-b border-warm-500/25 bg-warm-500/10 px-4 py-2 text-[12px] font-semibold text-warm-600"
 						>
-							<!-- Tool rail (left): add things to the meme -->
-							<aside
-								class="order-2 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:order-1 lg:w-[248px] lg:overflow-y-auto lg:border-r lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-3.5 lg:pl-4"
-								aria-label="Meme tools"
+							<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
+							<span class="truncate"
+								>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
 							>
-								<p
-									class="mb-3 hidden text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase lg:block"
-								>
-									Tools
-								</p>
-								{@render toolsPane()}
-							</aside>
-							<!-- Stage (center): the WYSIWYG mirror, as tall as the viewport allows.
-							     A zoomed-in stage overflows the pane — scroll to pan. -->
-							<section
-								class="order-1 flex min-h-0 flex-1 scrollbar-thin flex-col items-center justify-center gap-2 overflow-y-auto p-3 sm:p-4 lg:order-2"
-							>
-								{@render stagePane()}
-							</section>
-							<!-- Inspector (right): selection, composition, sound, publish -->
-							<aside
-								class="order-3 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:w-[330px] lg:overflow-y-auto lg:border-l lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-4 lg:pl-3.5 xl:w-[368px]"
-								aria-label="Meme inspector"
-							>
-								{@render inspectorPane()}
-							</aside>
-						</div>
-						<!-- Pinned transport bar: timeline + the keyboard layer. Collapsible —
-						     hide it to hand the whole viewport to the stage (chevron, top-right). -->
-						<div
-							class="relative shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/40 px-3 py-2 sm:px-4"
-						>
-							<button
-								type="button"
-								onclick={() => (timelineCollapsed = !timelineCollapsed)}
-								aria-expanded={!timelineCollapsed}
-								aria-label={timelineCollapsed ? 'Show timeline' : 'Hide timeline'}
-								title={timelineCollapsed ? 'Show the timeline' : 'Hide the timeline — more stage'}
-								class="absolute top-1.5 right-2 z-10 grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-							>
-								<Icon
-									name={timelineCollapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'}
-									class="size-4"
-								/>
-							</button>
-							{#if timelineCollapsed}
-								<p
-									class="py-1 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
-								>
-									Timeline hidden — Space still plays · {timelineActive
-										? 'chevron to reopen'
-										: 'add a sound cue to unlock it'}
-								</p>
-							{:else}
-								{#if stripFrames && full}
-									<!-- Video frame strip rides the transport bar in the full layout: scrub,
-								     pick the poster, see the trim window — right under the timeline. -->
-									<VideoFrameStrip
-										durationSec={meta?.duration ?? 0}
-										thumbUrls={frameThumbs}
-										playheadSec={scrubSec}
-										{trimStartSec}
-										{trimEndSec}
-										posterSec={posterAtSec}
-										posterUrl={posterDataUrl}
-										{busy}
-										onScrub={scrubTo}
-										onPickPoster={(sec) => void pickPosterAt(sec)}
-									/>
-								{/if}
-								{#if timelineActive}
-									{@render timelinePane()}
-								{:else}
-									<p
-										class="py-1.5 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
-									>
-										Static meme — add a sound cue to unlock the timeline
-									</p>
-								{/if}
-								<p
-									class="mt-1.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9.5px] font-semibold text-[var(--ui-text-dimmed)]"
-								>
-									<span class="flex items-center gap-1"
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>Space</kbd
-										> play / pause</span
-									>
-									<span class="flex items-center gap-1"
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>←</kbd
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>→</kbd
-										> nudge playhead</span
-									>
-									<span class="flex items-center gap-1"
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>1</kbd
-										>–<kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>9</kbd
-										> cue a sound</span
-									>
-									<span class="flex items-center gap-1"
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>Ctrl ↵</kbd
-										> publish</span
-									>
-									<span class="flex items-center gap-1"
-										><kbd
-											class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
-											>M</kbd
-										> preview sound</span
-									>
-								</p>
-							{/if}
-						</div>
-					{:else}
-						<!-- Dialog layout: 260px stage column + stacked controls -->
-						<div
-							class="grid gap-4 p-4 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)] sm:gap-5 sm:p-5"
-						>
-							{#if remixSource}
-								<!-- Lineage chip: this project derives from a remixed bitz; the
-							     published event will carry remix + meme tags crediting it. -->
-								<div
-									class="mb-4 flex items-center gap-2 rounded-full bg-warm-500/10 px-3 py-1.5 text-[12px] font-semibold text-warm-600 sm:col-span-2"
-								>
-									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
-									<span class="truncate"
-										>Remix of “{remixLabel}” · captions &amp; sounds credited via remix tags</span
-									>
-								</div>
-							{/if}
-							{@render stagePane()}
-							<div class="flex min-w-0 flex-col gap-4">
-								{#if timelineActive}
-									{@render timelinePane()}
-								{/if}
-								{@render toolsPane()}
-								{@render inspectorPane()}
-							</div>
 						</div>
 					{/if}
+					<div class="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+						<!-- Tool rail (left): add things to the meme -->
+						<aside
+							class="order-2 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:order-1 lg:w-[248px] lg:overflow-y-auto lg:border-r lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-3.5 lg:pl-4"
+							aria-label="Meme tools"
+						>
+							<p
+								class="mb-3 hidden text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase lg:block"
+							>
+								Tools
+							</p>
+							{@render toolsPane()}
+						</aside>
+						<!-- Stage (center): the WYSIWYG mirror, as tall as the viewport allows.
+							     A zoomed-in stage overflows the pane — scroll to pan. -->
+						<section
+							class="order-1 flex min-h-0 flex-1 scrollbar-thin flex-col items-center justify-center gap-2 overflow-y-auto p-3 sm:p-4 lg:order-2"
+						>
+							{@render stagePane()}
+						</section>
+						<!-- Inspector (right): selection, composition, sound, publish -->
+						<aside
+							class="order-3 shrink-0 scrollbar-thin px-3 pt-3 pb-1 sm:px-4 lg:w-[330px] lg:overflow-y-auto lg:border-l lg:border-[var(--ui-border-muted)] lg:py-4 lg:pr-4 lg:pl-3.5 xl:w-[368px]"
+							aria-label="Meme inspector"
+						>
+							{@render inspectorPane()}
+						</aside>
+					</div>
+					<!-- Pinned transport bar: timeline + the keyboard layer. Collapsible —
+						     hide it to hand the whole viewport to the stage (chevron, top-right). -->
+					<div
+						class="relative shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/40 px-3 py-2 sm:px-4"
+					>
+						<button
+							type="button"
+							onclick={() => (timelineCollapsed = !timelineCollapsed)}
+							aria-expanded={!timelineCollapsed}
+							aria-label={timelineCollapsed ? 'Show timeline' : 'Hide timeline'}
+							title={timelineCollapsed ? 'Show the timeline' : 'Hide the timeline — more stage'}
+							class="absolute top-1.5 right-2 z-10 grid size-6 place-items-center rounded-full text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
+						>
+							<Icon
+								name={timelineCollapsed ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'}
+								class="size-4"
+							/>
+						</button>
+						{#if timelineCollapsed}
+							<p class="py-1 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]">
+								Timeline hidden — Space still plays · {timelineActive
+									? 'chevron to reopen'
+									: 'add a sound cue to unlock it'}
+							</p>
+						{:else}
+							{#if stripFrames}
+								<!-- Video frame strip rides the transport bar in the full layout: scrub,
+								     pick the poster, see the trim window — right under the timeline. -->
+								<VideoFrameStrip
+									durationSec={meta?.duration ?? 0}
+									thumbUrls={frameThumbs}
+									playheadSec={scrubSec}
+									{trimStartSec}
+									{trimEndSec}
+									posterSec={posterAtSec}
+									posterUrl={posterDataUrl}
+									{busy}
+									onScrub={scrubTo}
+									onPickPoster={(sec) => void pickPosterAt(sec)}
+								/>
+							{/if}
+							{#if timelineActive}
+								{@render timelinePane()}
+							{:else}
+								<p
+									class="py-1.5 text-center text-[10.5px] font-semibold text-[var(--ui-text-dimmed)]"
+								>
+									Static meme — add a sound cue to unlock the timeline
+								</p>
+							{/if}
+							<p
+								class="mt-1.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[9.5px] font-semibold text-[var(--ui-text-dimmed)]"
+							>
+								<span class="flex items-center gap-1"
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>Space</kbd
+									> play / pause</span
+								>
+								<span class="flex items-center gap-1"
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>←</kbd
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>→</kbd
+									> nudge playhead</span
+								>
+								<span class="flex items-center gap-1"
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>1</kbd
+									>–<kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>9</kbd
+									> cue a sound</span
+								>
+								<span class="flex items-center gap-1"
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>Ctrl ↵</kbd
+									> publish</span
+								>
+								<span class="flex items-center gap-1"
+									><kbd
+										class="rounded border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1 py-px font-mono text-[9px] font-bold text-[var(--ui-text-muted)]"
+										>M</kbd
+									> preview sound</span
+								>
+							</p>
+						{/if}
+					</div>
 				{/if}
 			</div>
 

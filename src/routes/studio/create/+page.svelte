@@ -139,7 +139,6 @@
 				onposted={afterPost}
 				templateHandoff={pendingTemplate}
 				slotHandoff={pendingSlotId}
-				full
 			/>
 		{:else}
 			<BitzComposer bind:open={bitzOpen} onposted={afterPost} full />
