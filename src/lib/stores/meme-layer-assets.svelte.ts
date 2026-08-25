@@ -1,6 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { canDecodeGif, decodeGif, gifLayerPainter, type DecodedGif } from '$lib/meme/gif';
 import { MAX_IMAGE_OVERLAY_BYTES } from '$lib/meme/image-overlay';
+import { isBuddySrc } from '$lib/meme/bitz-buddy';
 import { fetchRemoteMedia } from '$lib/meme/remote-media';
 import type { AnimatedLayerPainter } from '$lib/meme/render';
 
@@ -28,7 +29,12 @@ import type { AnimatedLayerPainter } from '$lib/meme/render';
 /** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
  *  failure — callers fall back to the plain URL path). */
 export async function fetchLayerBlob(url: string): Promise<Blob | null> {
-	const res = await fetchRemoteMedia(url);
+	// Bundled assets (Bitz Buddy stickers) are same-origin — fetch them
+	// directly; routing a relative path through the remote proxy chain
+	// would mangle it. Everything else keeps the CORS-minded policy.
+	const res = isBuddySrc(url)
+		? await fetchRemoteMedia(url, { proxy: false })
+		: await fetchRemoteMedia(url);
 	if (!res) return null;
 	const blob = await res.blob();
 	if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;

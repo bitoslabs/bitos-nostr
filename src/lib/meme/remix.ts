@@ -24,6 +24,22 @@ import {
 	type MemeImageOverlay,
 	type WireImageOverlay
 } from './image-overlay';
+import { MAX_ZOOM_WINDOWS, normalizeZoomWindows } from './zoom-track';
+import {
+	decodeFxWindows,
+	encodeFxWindows,
+	normalizeFxWindows,
+	MAX_FX_WINDOWS as WIRE_FX_CAP
+} from './fx-track';
+import type { FrameFxWindow, WireFx } from './fx-track';
+import {
+	decodeSpeedWindows,
+	encodeSpeedWindows,
+	normalizeSpeedWindows,
+	MAX_SPEED_WINDOWS as WIRE_SPEED_CAP
+} from './speed-track';
+import type { SpeedWindow } from './speed-track';
+import type { ZoomWindow } from '$lib/ai/suggest';
 import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
 
 /** Wire cap for `g` (graphics) — tighter than the editor's 6 because the meme
@@ -48,6 +64,14 @@ export interface RemixPayload {
 	sfxCues: MemeSfxCue[];
 	/** Raster image layers (2026-08-23): ordered bottom-to-top, capped. */
 	imageLayers?: MemeImageOverlay[];
+	/** Punch-in zoom windows (compact-wire): media-timed like sfxCues. */
+	zoomWindows?: ZoomWindow[];
+	/** Frame-FX windows (glitch/flash/shake/…) — media-timed like zooms. */
+	fxWindows?: FrameFxWindow[];
+	/** Speed-ramp windows (slow-mo / speed-up) — media-timed like zooms.
+	 *  Studio UI consumption ships in V2; the wire codec keeps round-trips
+	 *  lossless so remixed memes don't lose the author's ramps. */
+	speedWindows?: SpeedWindow[];
 }
 
 /** Compact wire format — ids stripped (fresh ids on apply), booleans packed. */
@@ -72,9 +96,19 @@ interface WireCue {
 	l?: number; // mixer lane
 }
 
+/** Compact zoom window: [startMs, endMs, factor(2dp), cx(2dp), cy(2dp)]. */
+type WireZoom = [number, number, number, number, number];
+
 /** Serialize overlays + cues into the compact `meme` tag payload. */
 export function encodeRemixPayload(payload: RemixPayload): string {
-	const wire: { v: number; o: WireOverlay[]; c: WireCue[]; g?: WireImageOverlay[] } = {
+	const wire: {
+		v: number;
+		o: WireOverlay[];
+		c: WireCue[];
+		g?: WireImageOverlay[];
+		z?: WireZoom[];
+		f?: WireFx[];
+	} = {
 		v: MEME_SCHEMA_VERSION,
 		o: payload.overlays.map((ol) => {
 			const w: WireOverlay = { t: ol.text, x: round2(ol.x), y: round2(ol.y), s: round2(ol.size) };
@@ -103,6 +137,30 @@ export function encodeRemixPayload(payload: RemixPayload): string {
 			? {
 					g: payload.imageLayers.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE).map(encodeImageOverlay)
 				}
+			: {}),
+		// Zoom windows ride as `z` — same covenant: omitted when the track is
+		// empty, capped, media-timed milliseconds like the cue sheet.
+		...(payload.zoomWindows?.length
+			? {
+					z: payload.zoomWindows
+						.slice(0, MAX_ZOOM_WINDOWS)
+						.map((w): WireZoom => [
+							w.startMs,
+							w.endMs,
+							round2(w.factor),
+							round2(w.cx),
+							round2(w.cy)
+						])
+				}
+			: {}),
+		// Frame-FX windows ride as `f` — same covenant: omitted when empty,
+		// capped by the fx-track limit, media-timed like the zooms.
+		...(payload.fxWindows?.length
+			? { f: encodeFxWindows(payload.fxWindows).slice(0, WIRE_FX_CAP) }
+			: {}),
+		// Speed-ramp windows ride as `s` — same covenant again.
+		...(payload.speedWindows?.length
+			? { s: encodeSpeedWindows(payload.speedWindows).slice(0, WIRE_SPEED_CAP) }
 			: {})
 	};
 	return JSON.stringify(wire);
@@ -121,6 +179,9 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			o?: WireOverlay[];
 			c?: WireCue[];
 			g?: unknown[];
+			z?: unknown[];
+			f?: unknown[];
+			s?: unknown[];
 		};
 		if (!parsed || typeof parsed !== 'object') return null;
 		if (!Array.isArray(parsed.o)) return null;
@@ -155,7 +216,17 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			.map(decodeImageOverlay)
 			.filter((l): l is MemeImageOverlay => !!l)
 			.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE);
-		return { overlays, sfxCues: cues, ...(imageLayers.length ? { imageLayers } : {}) };
+		const zoomWindows = normalizeZoomWindows(parsed.z ?? []);
+		const fxWindows = decodeFxWindows(parsed.f ?? []);
+		const speedWindows = normalizeSpeedWindows(decodeSpeedWindows(parsed.s ?? []));
+		return {
+			overlays,
+			sfxCues: cues,
+			...(imageLayers.length ? { imageLayers } : {}),
+			...(zoomWindows.length ? { zoomWindows } : {}),
+			...(fxWindows.length ? { fxWindows } : {}),
+			...(speedWindows.length ? { speedWindows } : {})
+		};
 	} catch {
 		return null;
 	}
@@ -284,8 +355,11 @@ export function applyRemixPayload(payload: RemixPayload): {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
 	imageLayers: MemeImageOverlay[];
+	zoomWindows: ZoomWindow[];
+	fxWindows: FrameFxWindow[];
+	speedWindows: SpeedWindow[];
 } {
-	// Strip ids first — normalizeOverlay/normalizeSfxCue keep valid ids, and a
+	// Strip ids first — normalizeOverlay/normalizeSfxCues keep valid ids, and a
 	// remix must be an independent clone (mirrors memeTemplates.apply).
 	const overlays = payload.overlays
 		.map((o) => normalizeOverlay({ ...o, id: undefined }))
@@ -295,7 +369,10 @@ export function applyRemixPayload(payload: RemixPayload): {
 		.map((l) => normalizeImageOverlay({ ...l, id: undefined }))
 		.filter((l): l is MemeImageOverlay => !!l)
 		.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE);
-	return { overlays, sfxCues, imageLayers };
+	const zoomWindows = normalizeZoomWindows(payload.zoomWindows ?? []);
+	const fxWindows = normalizeFxWindows(payload.fxWindows ?? []);
+	const speedWindows = normalizeSpeedWindows(payload.speedWindows ?? []);
+	return { overlays, sfxCues, imageLayers, zoomWindows, fxWindows, speedWindows };
 }
 
 // ---- Remix DAG (plan §17 / ledger CRE-006, S-014) ----------------------------

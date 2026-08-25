@@ -27,7 +27,7 @@
 	placement="top-start"
 	width="auto"
 	class="w-72 max-w-[80vw] p-0"
-	label="Suggested timings"
+	label="Auto Meme — 3 editable timelines from your audio"
 	triggerClass="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
 	triggerActiveClass="bg-primary-500/20 text-primary-600"
 >

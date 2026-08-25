@@ -23,7 +23,7 @@
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
+	import { queryPrimaryFirst, queryUrls, queryOnce } from '$lib/nostr/pool';
 	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -33,7 +33,12 @@
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
-	import { algorithmPreferences, buildScoringContext, rankNotes } from '$lib/algorithm';
+	import {
+		algorithmPreferences,
+		buildScoringContext,
+		rankNotesWithBreakdown,
+		type ScoreBreakdown
+	} from '$lib/algorithm';
 	import { interactionProfile, extractTags } from '$lib/algorithm';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -58,7 +63,9 @@
 	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
 	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
 	import { remixLayoutOf, remixOf, rightsOf, canRemix } from '$lib/meme/remix';
+	import { remixChainOf, type RemixAncestor } from '$lib/meme/remix';
 	import { splitsOf } from '$lib/meme/splits';
+	import { SFX_LABELS } from '$lib/meme/sound-catalog';
 	type Burst = {
 		id: number;
 		reelId: string;
@@ -132,7 +139,9 @@
 	const bitzTabs: { key: BitzMode; label: string }[] = [
 		{ key: 'explore', label: 'Explore' },
 		{ key: 'following', label: 'Following' },
-		{ key: 'foryou', label: 'For you' }
+		{ key: 'foryou', label: 'For you' },
+		{ key: 'trending', label: 'Trending' },
+		{ key: 'zapped', label: 'Most zapped' }
 	];
 
 	// --- Author mode (profile → Bitz tab → tile tap) -------------------------
@@ -276,7 +285,7 @@
 	// --- Remix chain (plan §17 creator economy rec #1) ---
 	/** Which action rail is currently opening the studio (prevents double taps). */
 	let remixStartingId = $state('');
-	const rankedReels = $derived.by(() => {
+	const rankedReelResult = $derived.by(() => {
 		if (!reels.length) return reels;
 		// Author mode keeps the loaded (chronological) order — the profile grid
 		// deep-links to an exact index, so re-ranking would land elsewhere.
@@ -289,15 +298,80 @@
 		const dwell = new Map<string, number>();
 		for (const [id, ratio] of reelVisibility) dwell.set(id, ratio);
 		const ctx = buildScoringContext('reels', reels, { dwell });
-		return rankNotes('reels', reels, ctx);
+		return rankNotesWithBreakdown('reels', reels, ctx);
 	});
+	const rankedReels = $derived(
+		Array.isArray(rankedReelResult) ? rankedReelResult : rankedReelResult.notes
+	);
+	/** Score breakdowns for the "why this bitz" chip (mirrors the home feed). */
+	const reelBreakdown = $derived(
+		Array.isArray(rankedReelResult) ? new Map<string, ScoreBreakdown>() : rankedReelResult.breakdown
+	);
+
+	const RANK_TAG_COLORS: Record<string, string> = {
+		recency: '#3b82f6',
+		engagement: '#f97316',
+		zaps: '#eab308',
+		affinity: '#ec4899',
+		wot: '#22c55e',
+		novelty: '#14b8a6'
+	};
+	const RANK_TAG_ICONS: Record<string, string> = {
+		recency: 'i-lucide-clock',
+		engagement: 'i-lucide-flame',
+		zaps: 'i-lucide-zap',
+		affinity: 'i-lucide-heart-handshake',
+		wot: 'i-lucide-shield-check',
+		novelty: 'i-lucide-shuffle'
+	};
+
+	/** Why-this-bitz chip from the reel's score breakdown (home-feed parity). */
+	function rankTagFor(reel: ReelNote): { label: string; icon: string } | undefined {
+		if (authorMode || !algorithmPreferences.isEnabled('reels')) return undefined;
+		const b = reelBreakdown.get(reel.id);
+		if (!b?.topSignal) return undefined;
+		return {
+			label: `Because ${b.topSignal.label.toLowerCase()}`,
+			icon: RANK_TAG_ICONS[b.topSignal.signalId] ?? 'i-lucide-sparkles'
+		};
+	}
 	const followingReels = $derived(
 		rankedReels.filter(
 			(reel) => contacts.followingSet.has(reel.pubkey) || reel.pubkey === identity.current?.pk
 		)
 	);
+	/** Trending (audit gap #2): engagement score with a recency ceiling — old
+	 *  hits fade out instead of squatting the tab forever. View-only: sorts the
+	 *  SAME loaded set; no extra fetch, ranking stays on the algorithm path. */
+	const trendingReels = $derived(
+		[...rankedReels]
+			.map((reel) => {
+				const ageHours = Math.max(0, (Date.now() / 1000 - reel.createdAt) / 3600);
+				// 3-day half-life, same halving constant the trending-sounds rank uses,
+				// scaled to hours so feeds (not 48h windows) get the long tail.
+				const decay = Math.pow(0.5, ageHours / 72);
+				const reactions = reel.reactions.reduce((sum, r) => sum + r.count, 0);
+				const engagement = reactions + reel.repostCount + reel.zapCount;
+				return { reel, score: engagement * decay };
+			})
+			.sort((a, b) => b.score - a.score)
+			.map(({ reel }) => reel)
+	);
+	/** Most zapped: raw sat totals, newest-first tiebreak. Value-ranked — the
+	 *  number is right on the card, so the sort must visibly match it. */
+	const zappedReels = $derived(
+		[...rankedReels].sort((a, b) => b.zapTotalSats - a.zapTotalSats || b.createdAt - a.createdAt)
+	);
 	// The snap player consumes whichever list the active tab implies.
-	const playbackReels = $derived(bitzMode === 'following' ? followingReels : rankedReels);
+	const playbackReels = $derived(
+		bitzMode === 'following'
+			? followingReels
+			: bitzMode === 'trending'
+				? trendingReels
+				: bitzMode === 'zapped'
+					? zappedReels
+					: rankedReels
+	);
 	const renderedReels = $derived(playbackReels.slice(0, renderedReelCount));
 	const hasMoreRenderedReels = $derived(renderedReelCount < playbackReels.length);
 	// Explore grid: videos lead (it is the "vdo" tab), pictures keep ranked order.
@@ -428,6 +502,9 @@
 			mediaType: reel.mediaType,
 			overlays: layout?.overlays ?? [],
 			sfxCues: layout?.sfxCues ?? [],
+			zoomWindows: layout?.zoomWindows ?? [],
+			fxWindows: layout?.fxWindows ?? [],
+			speedWindows: layout?.speedWindows ?? [],
 			relays: [...new Set([...(remixOf(reel.tags)?.relays ?? []), ...relays.writeUrls])].slice(0, 3)
 		};
 		// /studio/create owns the lazy editor bundle. Keep the button visibly busy
@@ -1249,6 +1326,51 @@
 		await loadComments(reel);
 	}
 
+	// ---- remix lineage browser (audit gap #12) ------------------------------
+	/** Chain sheet state: which reel's lineage is open + the walked ancestry. */
+	let lineageReel = $state<ReelNote | null>(null);
+	let lineageOpen = $state(false);
+	let lineageLoading = $state(false);
+	let lineageChain = $state<RemixAncestor[]>([]);
+	let lineageTruncated = $state(false);
+	let lineageFailed = $state(false);
+
+	/** Load an ancestor's tags by event id (relays, best-effort). */
+	async function loadEventTags(eventId: string): Promise<string[][] | null> {
+		try {
+			const [event] = await queryOnce([{ ids: [eventId], limit: 1 }]);
+			return event ? event.tags : null;
+		} catch {
+			// A missing event is the chain's natural end — pruned history
+			// degrades gracefully instead of failing the sheet.
+			return null;
+		}
+	}
+
+	/** Open the lineage sheet for a remixed bitz (S-014 bounded walk). */
+	async function openLineage(reel: ReelNote) {
+		if (!remixOf(reel.tags)) return;
+		lineageReel = reel;
+		lineageOpen = true;
+		lineageLoading = true;
+		lineageFailed = false;
+		lineageChain = [];
+		lineageTruncated = false;
+		try {
+			const result = await remixChainOf(reel.tags, loadEventTags);
+			if (result.ok) {
+				lineageChain = result.chain;
+				lineageTruncated = result.truncated;
+			} else {
+				lineageFailed = true;
+			}
+		} catch {
+			lineageFailed = true;
+		} finally {
+			lineageLoading = false;
+		}
+	}
+
 	async function loadComments(reel: ReelNote, options: { force?: boolean; more?: boolean } = {}) {
 		const page = commentPages[reel.id];
 		if (!options.force && !options.more && page?.loaded) return;
@@ -1936,6 +2058,21 @@
 									{remixStartingId === reel.id ? 'Opening' : 'Remix'}
 								</span>
 							</button>
+							<!-- Lineage (audit #12): only remixed bitz carry a chain worth
+							     browsing — the button stays hidden on original memes. -->
+							{#if remixOf(reel.tags)}
+								<button
+									type="button"
+									onclick={() => void openLineage(reel)}
+									class="reel-action"
+									aria-label="Browse this bitz's remix chain"
+								>
+									<span class="icon-circle">
+										<Icon name="i-lucide-git-fork" class="size-5" />
+									</span>
+									<span class="text-[11px] font-semibold">Chain</span>
+								</button>
+							{/if}
 							<button
 								type="button"
 								onclick={() => openZap(reel)}
@@ -2221,6 +2358,17 @@
 									{/each}
 								</p>
 							{/if}
+							{#if rankTagFor(reel)}
+								<!-- Why-this-bitz chip (algorithm parity with the home feed): names the
+								     top ranking signal so the surface feels explainable, not arbitrary. -->
+								<span
+									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold text-white/85 backdrop-blur"
+									title="How this bitz ranked for you — tune signals in Settings → Feed"
+								>
+									<Icon name={rankTagFor(reel)!.icon} class="size-3.5 shrink-0" />
+									<span class="truncate">{rankTagFor(reel)!.label}</span>
+								</span>
+							{/if}
 							{#if remixOf(reel.tags)}
 								<!-- Remix lineage chip (§17 creator economy): links the derivative to
 								     its source. Protocol provenance only — rights live upstream. -->
@@ -2230,6 +2378,28 @@
 								>
 									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
 									<span class="truncate">Remixed</span>
+								</a>
+							{/if}
+							{#if remixLayoutOf(reel.tags)?.sfxCues.length}
+								{@const reelSoundCues = remixLayoutOf(reel.tags)?.sfxCues ?? []}
+								<!-- Sound chip (meme-virality rec): surfaces the bitz's primary cue so
+								     viewers can name the sound — and jump to trending to reuse it. -->
+								<a
+									href="/more/sounds"
+									class="text-warm-200 mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-warm-500/20 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-warm-500/30"
+									title="{reelSoundCues.length} sound cue{reelSoundCues.length > 1
+										? 's'
+										: ''} — see trending sounds"
+								>
+									<Icon name="i-lucide-audio-lines" class="size-3.5 shrink-0" />
+									<span class="truncate"
+										>{reelSoundCues[0]?.sfx === 'custom'
+											? 'Custom sound'
+											: (SFX_LABELS[reelSoundCues[0]?.sfx as keyof typeof SFX_LABELS] ??
+												'Sound')}{reelSoundCues.length > 1
+											? ` +${reelSoundCues.length - 1}`
+											: ''}</span
+									>
 								</a>
 							{/if}
 							{#if rightsOf(reel.tags).license}
@@ -2283,12 +2453,22 @@
 							<Icon name="i-lucide-clapperboard" class="size-8" />
 						</div>
 						<h1 class="font-display text-[28px] font-extrabold">
-							{bitzMode === 'following' ? 'Nothing from your follows yet' : 'No bitz found'}
+							{bitzMode === 'following'
+								? 'Nothing from your follows yet'
+								: bitzMode === 'trending'
+									? 'Nothing trending yet'
+									: bitzMode === 'zapped'
+										? 'No zapped bitz yet'
+										: 'No bitz found'}
 						</h1>
 						<p class="mt-2 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
 							{bitzMode === 'following'
 								? 'Follow more creators from Discover and their short videos will land here.'
-								: 'Your configured relays did not return kind-1 notes with video links.'}
+								: bitzMode === 'trending'
+									? 'Engagement builds up here as the feed picks up reactions and reposts.'
+									: bitzMode === 'zapped'
+										? 'Zapped bitz rank here once value starts flowing.'
+										: 'Your configured relays did not return kind-1 notes with video links.'}
 						</p>
 						{#if bitzMode === 'following'}
 							<a
@@ -2389,7 +2569,7 @@
 		{/if}
 		{#if !authorMode}
 			<div
-				class="pointer-events-auto flex items-center gap-0.5 rounded-full p-1 {isExplore
+				class="pointer-events-auto flex max-w-full [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-full p-1 [&::-webkit-scrollbar]:hidden {isExplore
 					? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
 					: 'bg-black/40 backdrop-blur-md'}"
 				role="tablist"
@@ -2703,6 +2883,65 @@
 				{deletingCommentId ? 'Deleting' : 'Delete'}
 			</button>
 		{/snippet}
+	</Dialog>
+
+	<!-- Remix lineage (audit #12): the bounded ancestry walked off the remix
+	     tags — cycle-safe, depth-capped, graceful on pruned relay history. -->
+	<Dialog bind:open={lineageOpen} title="Remix chain">
+		{#if lineageLoading}
+			<div
+				class="flex items-center justify-center gap-2 py-10 text-[13px] font-semibold text-[var(--ui-text-muted)]"
+			>
+				<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+				Walking the chain…
+			</div>
+		{:else if lineageFailed}
+			<div class="py-10 text-center text-[13px] text-[var(--ui-text-muted)]">
+				Couldn't read the full chain — the lineage loops or a relay failed.
+				<br />The oldest reachable ancestor is still shown below.
+			</div>
+		{:else if lineageChain.length === 0}
+			<div class="py-10 text-center text-[13px] text-[var(--ui-text-muted)]">
+				No remix ancestry found on your relays.
+			</div>
+		{:else}
+			<ol class="flex flex-col gap-1.5">
+				{#each lineageChain as ancestor, i (ancestor.eventId)}
+					{@const ancestorName = profiles.displayName(ancestor.pubkey) || 'Unknown creator'}
+					<li
+						class="flex items-center gap-2.5 rounded-xl px-2 py-1.5 {i === 0
+							? 'bg-[var(--ui-bg-muted)]'
+							: ''}"
+					>
+						<Avatar pubkey={ancestor.pubkey} name={ancestorName} size={28} />
+						<a
+							href="/note/{ancestor.eventId}"
+							class="flex min-w-0 flex-1 flex-col"
+							aria-label="Open the source bitz"
+						>
+							<span class="truncate text-[13px] font-bold">{ancestorName}</span>
+							<span class="text-[11px] text-[var(--ui-text-dimmed)]">
+								{ancestor.depth === 0
+									? 'Direct source'
+									: `${ancestor.depth} step${ancestor.depth === 1 ? '' : 's'} back`}
+							</span>
+						</a>
+						{#if i === 0}
+							<span
+								class="shrink-0 rounded-full bg-primary-500/15 px-2 py-0.5 text-[10px] font-bold text-primary-600"
+							>
+								Source
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+			{#if lineageTruncated}
+				<p class="mt-3 text-center text-[11px] text-[var(--ui-text-dimmed)]">
+					Chain longer than 32 — oldest steps hidden.
+				</p>
+			{/if}
+		{/if}
 	</Dialog>
 
 	{#if zapReel}

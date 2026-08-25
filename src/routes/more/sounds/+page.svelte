@@ -6,7 +6,9 @@
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { SFX_RECIPES } from '$lib/meme/sfx';
 	import type { MemeSfxId } from '$lib/meme/schema';
+	import { SFX_LABELS as labels } from '$lib/meme/sound-catalog';
 	import { rankTrendingSounds, type TrendingSound } from '$lib/meme/trending';
+	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
 
 	/**
 	 * Trending sounds (#4 of the meme-virality recs). Ranks the synth SFX ids
@@ -20,18 +22,6 @@
 
 	const WINDOW_HOURS = 48;
 	const MAX_EVENTS = 500;
-
-	const labels: Record<MemeSfxId, string> = {
-		boom: 'Boom',
-		bruh: 'Bruh',
-		laugh: 'Laugh',
-		whoosh: 'Whoosh',
-		pop: 'Pop',
-		boing: 'Boing',
-		drumroll: 'Drumroll',
-		ding: 'Ding',
-		'sad-trombone': 'Sad trombone'
-	};
 
 	/** Top ranked sfx ids the composer can one-tap cue. */
 	let previewing = $state<MemeSfxId | null>(null);
@@ -89,6 +79,16 @@
 	}
 
 	onMount(load);
+
+	/** "Hear it → use it": stage the sound in the Meme Studio as the first
+	 *  cue (studio handoff — no studio bytes on this page's bundle). */
+	function useSound(sfx: MemeSfxId) {
+		void studioHandoff.useSound({
+			kind: 'synth',
+			id: sfx,
+			label: labels[sfx] ?? sfx
+		});
+	}
 </script>
 
 <PageHeader title="Trending sounds">
@@ -148,6 +148,14 @@
 							name={previewing === sound.sfx ? 'i-lucide-pause' : 'i-lucide-play'}
 							class="size-4"
 						/>
+					</button>
+					<button
+						type="button"
+						onclick={() => useSound(sound.sfx)}
+						aria-label={`Use ${labels[sound.sfx] ?? sound.sfx} in the Meme Studio`}
+						class="grid h-9 shrink-0 place-items-center rounded-full bg-warm-500 px-3 text-[12px] font-bold text-white transition hover:brightness-110 active:scale-95"
+					>
+						Use
 					</button>
 				</li>
 			{/each}

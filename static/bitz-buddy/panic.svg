@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitz Buddy — PANIC: dilated pupils, wavy mouth, chaos lines -->
+	<defs>
+		<radialGradient id="coin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+		<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#d98812"/>
+		</linearGradient>
+	</defs>
+	<!-- chaos lines (spec: expression line system) -->
+	<g stroke="#3a2a10" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.7">
+		<path d="M 36 40 l 8 10"/><path d="M 52 28 l 2 12"/>
+		<path d="M 204 40 l -8 10"/><path d="M 188 28 l -2 12"/>
+	</g>
+	<g stroke="#ffb020" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9">
+		<path d="M 34 60 l -12 -7"/><path d="M 30 84 l -14 1"/>
+		<path d="M 206 60 l 12 -7"/><path d="M 210 84 l 14 1"/>
+	</g>
+	<!-- legs running -->
+	<g stroke="#3a2a10" stroke-width="14" stroke-linecap="round" fill="none">
+		<path d="M 98 190 q -12 16 -22 22"/>
+		<path d="M 142 190 q 10 18 18 24"/>
+	</g>
+	<g fill="#ff7a1a" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round">
+		<path d="M 56 214 q 14 -4 22 4 l -2 9 q -18 2 -24 -6 z"/>
+		<path d="M 168 216 q 12 -6 24 0 l 0 9 q -18 4 -26 -4 z"/>
+	</g>
+	<!-- arms flailing -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 46 126 q -22 -6 -26 -26"/>
+		<path d="M 194 126 q 22 -6 26 -26"/>
+	</g>
+	<circle cx="20" cy="96" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="220" cy="96" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="120" cy="120" r="96" fill="url(#rim)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="120" cy="120" r="82" fill="url(#coin)" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- dilated panic eyes -->
+	<ellipse cx="93" cy="102" rx="19" ry="23" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<ellipse cx="147" cy="102" rx="19" ry="23" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="93" cy="103" r="11" fill="#241804"/>
+	<circle cx="147" cy="103" r="11" fill="#241804"/>
+	<circle cx="89" cy="98" r="3" fill="#fff"/><circle cx="143" cy="98" r="3" fill="#fff"/>
+	<!-- wavy mouth -->
+	<path d="M 96 148 q 8 -8 14 0 q 6 8 14 0 q 6 -8 14 0" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<!-- sweat drops both sides -->
+	<path d="M 172 64 q 8 12 0 17 q -9 -5 0 -17 z" fill="#7dd3fc" stroke="#0c4a6e" stroke-width="3"/>
+	<path d="M 66 70 q 7 10 0 14 q -8 -4 0 -14 z" fill="#7dd3fc" stroke="#0c4a6e" stroke-width="3"/>
+</svg>

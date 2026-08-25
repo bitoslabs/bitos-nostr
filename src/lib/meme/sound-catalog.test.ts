@@ -10,6 +10,7 @@ import {
 	setCueAt,
 	sortCues,
 	synthEntries,
+	SFX_BUCKETS,
 	SFX_DURATIONS,
 	SFX_LABELS,
 	type SoundEntry
@@ -36,7 +37,7 @@ function cue(partial: Partial<MemeSfxCue>): MemeSfxCue {
 describe('sound catalog', () => {
 	it('builds the synth group from recipe ids', () => {
 		const entries = synthEntries(labels, durations);
-		expect(entries.length).toBe(9); // MEME_SFX_IDS
+		expect(entries.length).toBe(31); // MEME_SFX_IDS
 		expect(entries[0]).toMatchObject({ id: 'synth:boom', label: 'Boom', durationSec: 0.8 });
 	});
 
@@ -82,14 +83,22 @@ describe('sound catalog', () => {
 	});
 
 	it('groups and drops empty sections in display order', () => {
-		const synth = synthEntries(labels, durations).slice(0, 1);
+		const synth = synthEntries(labels, durations).slice(0, 1); // boom → funny bucket
 		const groups = groupEntries(
 			synth,
 			[{ id: 'l1', source: 'library', label: 'clap', durationSec: 0.4 }],
 			[]
 		);
-		expect(groups.map((g) => g.id)).toEqual(['synth', 'library']);
+		expect(groups.map((g) => g.id)).toEqual(['synth-funny', 'library']);
 		expect(groupEntries([], [], [])).toEqual([]);
+	});
+
+	it('buckets every sfx id exactly once and covers the whole pack', () => {
+		const bucketed = SFX_BUCKETS.flatMap((b) => b.ids).sort();
+		expect(bucketed).toEqual([...MEME_SFX_IDS].sort());
+		const groups = groupEntries(synthEntries(labels, durations), [], []);
+		// Five spec buckets, nothing left over in the fallback Soundboard group.
+		expect(groups.map((g) => g.id)).toEqual(SFX_BUCKETS.map((b) => `synth-${b.id}`));
 	});
 
 	it('retimes by delta clamped at zero', () => {

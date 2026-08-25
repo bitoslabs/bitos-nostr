@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitz Buddy — THINKING: side-glance eyes, raised brow, hmm mouth, thought spark -->
+	<defs>
+		<radialGradient id="coin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+		<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#d98812"/>
+		</linearGradient>
+	</defs>
+	<!-- thought bubbles -->
+	<g fill="none" stroke="#8a5a0a" stroke-width="4" opacity="0.8">
+		<circle cx="196" cy="40" r="5"/>
+		<circle cx="212" cy="24" r="8"/>
+		<path d="M 204 58 q 4 10 -2 14 q -8 3 -10 -5 q 0 -8 12 -9 z" fill="#fffdf4"/>
+	</g>
+	<g stroke="#ffb020" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9">
+		<path d="M 34 60 l -12 -7"/><path d="M 30 84 l -14 1"/>
+		<path d="M 206 60 l 12 -7"/><path d="M 210 84 l 14 1"/>
+	</g>
+	<!-- one leg crossed, standing -->
+	<g stroke="#3a2a10" stroke-width="14" stroke-linecap="round" fill="none">
+		<path d="M 104 190 q 2 20 -4 30"/>
+		<path d="M 140 190 q 12 14 6 30"/>
+	</g>
+	<g fill="#ff7a1a" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round">
+		<path d="M 76 226 q 12 -8 26 -2 l 2 8 q -16 6 -28 2 z"/>
+		<path d="M 138 226 q 14 -6 22 2 l 0 8 q -16 4 -26 -4 z"/>
+	</g>
+	<!-- hand to chin -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 44 134 q -14 16 -4 30"/>
+		<path d="M 196 134 q 14 8 14 24"/>
+	</g>
+	<circle cx="40" cy="168" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="210" cy="162" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="120" cy="120" r="96" fill="url(#rim)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="120" cy="120" r="82" fill="url(#coin)" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- one raised brow -->
+	<path d="M 74 80 q 14 -10 28 -2" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<ellipse cx="93" cy="106" rx="19" ry="21" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<ellipse cx="147" cy="106" rx="19" ry="21" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<!-- pupils glance aside -->
+	<circle cx="99" cy="106" r="8" fill="#241804"/>
+	<circle cx="153" cy="106" r="8" fill="#241804"/>
+	<circle cx="96" cy="102" r="2.6" fill="#fff"/><circle cx="150" cy="102" r="2.6" fill="#fff"/>
+	<!-- hmm mouth -->
+	<path d="M 100 150 q 12 4 16 -4" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+</svg>

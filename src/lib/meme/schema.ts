@@ -138,17 +138,46 @@ export function normalizeOverlay(raw: unknown): MemeTextOverlay | null {
 	return overlay;
 }
 
-/** Synthesized comedy SFX ids (recipes live in meme/sfx.ts — pure data). */
+/** Synthesized comedy SFX ids (recipes live in meme/sfx.ts — pure data).
+ *  Bitz Meme Pack V1 (docs/source/templete/tp-2.md) buckets: funny /
+ *  impact / system / money / transitions. */
 export const MEME_SFX_IDS = [
+	// funny
 	'boom',
 	'bruh',
 	'laugh',
+	'crowd-laugh',
+	'gasp',
+	'sad-trombone',
+	'awkward-silence',
+	// impact
+	'bass-hit',
 	'whoosh',
+	'slam',
+	'explosion',
+	'punch',
+	'anime-slash',
+	// system
+	'error',
+	'success',
+	'notification',
+	'loading',
+	'game-over',
+	// money
+	'coin',
+	'cash',
+	'jackpot',
+	'lightning-zap',
+	// transitions
 	'pop',
 	'boing',
 	'drumroll',
 	'ding',
-	'sad-trombone'
+	'swipe',
+	'click',
+	'snap',
+	'record-scratch',
+	'reverse-whoosh'
 ] as const;
 export type MemeSfxId = (typeof MEME_SFX_IDS)[number];
 

@@ -12,6 +12,8 @@ import { overlayVisibleAt, type MemeFont, type MemeTextOverlay } from './schema'
 import { imageOverlayVisibleAt, type MemeImageOverlay } from './image-overlay';
 import { memeLookCss } from './look';
 import { fxTransformAt } from './fx';
+import { paintFxFrame, type FrameFxWindow } from './fx-track';
+import { rateAt, type SpeedWindow } from './speed-track';
 import { paintDrawingGroups, type DrawingGroup } from './drawing';
 
 /** Paints an animated layer frame into (x,y) — one scratch canvas per use. */
@@ -58,6 +60,14 @@ export interface RenderOptions {
 	quality?: number;
 	/** CSS filter chain burned into the MEDIA pixels (captions stay crisp). */
 	lookCss?: string;
+	/**
+	 * Frame-level FX windows (glitch/flash/shake/…) — media-timed like the
+	 * zoom track. Painted OVER the base + layers, UNDER the captions, in every
+	 * render path. See fx-track.ts (the painters + the CSS preview mirror).
+	 */
+	fxWindows?: FrameFxWindow[];
+	/** The still-image render moment in ms (video paths use media time). */
+	fxAtMs?: number;
 }
 
 export interface VideoRenderOptions extends RenderOptions {
@@ -75,6 +85,23 @@ export interface VideoRenderOptions extends RenderOptions {
 	trimEndSec?: number;
 	/** Playback rate for the export pass (0.5–2; audio pitch follows). */
 	playbackRate?: number;
+	/**
+	 * Speed-ramp windows riding ON TOP of the base playbackRate — the loop
+	 * drives `source.playbackRate = rateAt(windows, mediaMs) × base` every
+	 * frame. Real-time playback supports dynamic rates, and everything else
+	 * (zooms/FX/captions) keys off media time, so the whole scene stays in
+	 * sync under the curve. See speed-track.ts.
+	 */
+	speedWindows?: SpeedWindow[];
+	/**
+	 * Time-varying framing (punch-in zoom track): given the CURRENT media
+	 * time in ms, returns the transform to paint this frame with. Takes
+	 * precedence over the static `mediaTransform` — pass a composed callback
+	 * like `(ms) => composeZoomWithFraming(base, zoomTransformAt(windows, ms))`.
+	 * Kept as a callback (not window data) so render.ts stays decoupled from
+	 * the zoom-track module (which already imports render for MediaTransform).
+	 */
+	mediaTransformAt?: (mediaTimeMs: number) => MediaTransform;
 }
 
 function fontFor(overlay: MemeTextOverlay, px: number): string {
@@ -415,6 +442,7 @@ export async function renderImageMeme(
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');
 	drawCover(ctx, media, canvas, options.lookCss, options.mediaTransform);
+	if (options.fxWindows?.length) paintFxFrame(ctx, options.fxWindows, options.fxAtMs ?? 0, canvas);
 	if (options.imageLayers?.length) {
 		paintImageOverlays(
 			ctx,
@@ -595,7 +623,10 @@ export async function renderVideoMeme(
 
 	// (Mute/volume were already ducked above, before stream capture.)
 	const rate = clampNum(options.playbackRate ?? 1, 0.5, 2);
-	source.playbackRate = rate;
+	const ramps = options.speedWindows?.length ? options.speedWindows : null;
+	source.playbackRate = ramps
+		? clampNum(rate * rateAt(ramps, source.currentTime * 1000), 0.5, 2)
+		: rate;
 	const startSec = Math.max(0, options.trimStartSec ?? 0);
 	const endSec =
 		options.trimEndSec !== undefined && Number.isFinite(options.trimEndSec)
@@ -610,7 +641,25 @@ export async function renderVideoMeme(
 		if (monitor) monitor.gain.value = 1; // preview sound works again
 	};
 	const paint = () => {
-		drawCover(ctx, source, canvas, options.lookCss, options.mediaTransform);
+		// Speed ramps: re-apply the rate every frame (clamped to the same
+		// 0.5–2 span the base rate uses). Media-timed windows + media-time
+		// paint inputs stay in sync with zero extra bookkeeping.
+		if (ramps) {
+			const next = clampNum(rate * rateAt(ramps, source.currentTime * 1000), 0.5, 2);
+			if (Math.abs(source.playbackRate - next) > 0.001) source.playbackRate = next;
+		}
+		drawCover(
+			ctx,
+			source,
+			canvas,
+			options.lookCss,
+			options.mediaTransformAt
+				? options.mediaTransformAt(source.currentTime * 1000)
+				: options.mediaTransform
+		);
+		if (options.fxWindows?.length) {
+			paintFxFrame(ctx, options.fxWindows, source.currentTime * 1000, canvas);
+		}
 		if (options.imageLayers?.length) {
 			paintImageOverlays(
 				ctx,

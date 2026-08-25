@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitz Buddy — FACEPALM: hand over face, peeking eye, embarassed blush -->
+	<defs>
+		<radialGradient id="coin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+		<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#d98812"/>
+		</linearGradient>
+	</defs>
+	<g stroke="#ffb020" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.7">
+		<path d="M 34 60 l -12 -7"/><path d="M 206 60 l 12 -7"/>
+	</g>
+	<!-- standing legs -->
+	<g stroke="#3a2a10" stroke-width="14" stroke-linecap="round" fill="none">
+		<path d="M 98 190 q 3 20 -4 30"/><path d="M 142 190 q -3 20 4 30"/>
+	</g>
+	<g fill="#ff7a1a" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round">
+		<path d="M 70 226 q 12 -8 26 -2 l 2 8 q -16 6 -28 2 z"/>
+		<path d="M 170 226 q -12 -8 -26 -2 l -2 8 q 16 6 28 2 z"/>
+	</g>
+	<!-- other arm relaxed -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 196 134 q 16 12 14 30"/>
+	</g>
+	<circle cx="210" cy="168" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="120" cy="120" r="96" fill="url(#rim)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="120" cy="120" r="82" fill="url(#coin)" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- blush under the palm -->
+	<ellipse cx="86" cy="138" rx="12" ry="6" fill="#f87171" opacity="0.6"/>
+	<!-- peeking eye (left, half covered) -->
+	<ellipse cx="90" cy="102" rx="10" ry="16" fill="#fff" stroke="#3a2a10" stroke-width="4"/>
+	<circle cx="92" cy="105" r="6" fill="#241804"/>
+	<!-- squint of the covered eye -->
+	<path d="M 136 104 q 10 4 18 -2" fill="none" stroke="#3a2a10" stroke-width="5" stroke-linecap="round"/>
+	<!-- THE PALM — big hand draped over the face -->
+	<g>
+		<path d="M 96 84 q 30 -18 62 -6 q 6 30 -2 52 q -30 10 -58 -2 q -8 -24 -2 -44 z"
+			fill="#ffd968" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round"/>
+		<g stroke="#8a5a0a" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.7">
+			<path d="M 108 86 q 2 14 0 26"/>
+			<path d="M 122 82 q 3 16 1 30"/>
+			<path d="M 136 82 q 4 16 2 30"/>
+			<path d="M 150 86 q 3 14 2 26"/>
+		</g>
+	</g>
+	<!-- downturned peek mouth -->
+	<path d="M 106 162 q 12 -8 26 0" fill="none" stroke="#3a2a10" stroke-width="5" stroke-linecap="round"/>
+	<!-- arm connecting to the palm -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 76 156 q -8 -28 14 -62"/>
+	</g>
+</svg>

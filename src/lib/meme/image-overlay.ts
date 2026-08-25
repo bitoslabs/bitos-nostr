@@ -4,7 +4,9 @@
  *
  * Model rules (mirrors schema.ts conventions):
  *   • coordinates are normalized 0–1 so a draft restores onto any media
- *   • `src` is http(s) only — base64 never rides the localStorage draft or
+ *   • `src` is http(s), or a bundled same-origin buddy sticker path
+ *     (`/bitz-buddy/*.svg` — the BitOS mascot pack, never uploaded, always
+ *     available offline) — base64 never rides the localStorage draft or
  *     the `meme` wire tag (size + relay caps); blobs are uploaded to the
  *     media provider first and the returned URL is what persists
  *   • time windows reuse the overlay timing model (startMs/endMs, integer ms)
@@ -12,6 +14,7 @@
  *     keep working — they simply never see the image layer)
  */
 
+import { isBuddySrc } from './bitz-buddy';
 import { memeLookOf } from './look';
 
 const SRC_RE = /^https:\/\/\S+$/i;
@@ -26,7 +29,7 @@ export const MAX_IMAGE_SIZE = 0.9;
 
 export interface MemeImageOverlay {
 	id: string;
-	/** Remote image URL (uploaded to the media provider — never base64). */
+	/** Image src (https or bundled `/bitz-buddy/*` — never base64). */
 	src: string;
 	/** Natural aspect (w/h) captured at add time; reused for draft restore. */
 	aspect: number;
@@ -66,12 +69,17 @@ export function isHttpUrl(raw: string): boolean {
 	return SRC_RE.test(raw.trim());
 }
 
+/** Layer-legal src: remote https URL or a bundled buddy sticker path. */
+export function layerSrcOk(raw: string): boolean {
+	return isHttpUrl(raw) || isBuddySrc(raw);
+}
+
 /** Tolerant parser: coerces, clamps and drops unknown fields. */
 export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const o = raw as Record<string, unknown>;
 	const src = typeof o.src === 'string' ? o.src.trim() : '';
-	if (!isHttpUrl(src)) return null;
+	if (!layerSrcOk(src)) return null;
 	const aspect = clamp(num(o.aspect, 1), 0.05, 20);
 	const lookId = memeLookOf(o.lookId);
 	const overlay: MemeImageOverlay = {
@@ -117,7 +125,7 @@ export function makeImageOverlay(
 	aspect: number,
 	options: { index?: number } = {}
 ): MemeImageOverlay | null {
-	if (!isHttpUrl(src)) return null;
+	if (!layerSrcOk(src)) return null;
 	const i = options.index ?? 0;
 	const anchors = [
 		{ x: 0.5, y: 0.35 },

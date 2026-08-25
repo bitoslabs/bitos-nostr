@@ -108,6 +108,147 @@ export const SFX_RECIPES: Record<MemeSfxId, SfxRecipe> = {
 		{ type: 'sawtooth', t: 0.4, d: 0.36, f: 220, g: 0.42 },
 		{ type: 'sawtooth', t: 0.8, d: 0.55, f: 207, to: 180, g: 0.45 },
 		{ type: 'sawtooth', t: 0.8, d: 0.55, f: 104, to: 92, g: 0.3 }
+	]),
+	// ---- Bitz Meme Pack V1 (docs/source/templete/tp-2.md) --------------------
+	// Layered chuckle + room wash: crowd laugh.
+	'crowd-laugh': recip('crowd-laugh', 1.6, 0.55, [
+		{ type: 'triangle', t: 0, d: 0.12, f: 380, to: 300, g: 0.4 },
+		{ type: 'triangle', t: 0.16, d: 0.12, f: 420, to: 330, g: 0.42 },
+		{ type: 'triangle', t: 0.32, d: 0.12, f: 360, to: 290, g: 0.38 },
+		{ type: 'triangle', t: 0.5, d: 0.14, f: 400, to: 310, g: 0.36 },
+		{ type: 'sine', t: 0.1, d: 1.2, f: 190, g: 0.14 },
+		{ type: 'sine', t: 0.28, d: 1.0, f: 150, g: 0.1 }
+	]),
+	// Sharp in-breath rise: gasp.
+	gasp: recip('gasp', 0.5, 0.7, [
+		{ type: 'sine', t: 0, d: 0.22, f: 300, to: 900, g: 0.55 },
+		{ type: 'triangle', t: 0.02, d: 0.18, f: 500, to: 1200, g: 0.25 },
+		{ type: 'sine', t: 0.24, d: 0.2, f: 700, to: 350, g: 0.3 }
+	]),
+	// Dead-air room tone blip: awkward silence (mostly nothing, then a beat).
+	'awkward-silence': recip('awkward-silence', 1.1, 0.3, [
+		{ type: 'sine', t: 0, d: 0.9, f: 60, g: 0.12 },
+		{ type: 'triangle', t: 0.92, d: 0.12, f: 220, to: 180, g: 0.3 },
+		{ type: 'sine', t: 0.92, d: 0.12, f: 110, g: 0.2 }
+	]),
+	// Sub drop + click transient: bass hit.
+	'bass-hit': recip('bass-hit', 0.7, 0.9, [
+		{ type: 'sine', t: 0, d: 0.5, f: 120, to: 34, g: 1 },
+		{ type: 'square', t: 0, d: 0.04, f: 800, g: 0.15 }
+	]),
+	// Heavy low thud + rattle: slam.
+	slam: recip('slam', 0.8, 0.9, [
+		{ type: 'sine', t: 0, d: 0.45, f: 100, to: 30, g: 1 },
+		{ type: 'sawtooth', t: 0.02, d: 0.12, f: 400, to: 80, g: 0.2 },
+		{ type: 'triangle', t: 0.1, d: 0.25, f: 90, to: 45, g: 0.3 }
+	]),
+	// Noise-style burst via detuned saw fan: explosion.
+	explosion: recip('explosion', 1.2, 0.85, [
+		{ type: 'sawtooth', t: 0, d: 0.7, f: 220, to: 28, g: 0.5 },
+		{ type: 'sawtooth', t: 0.01, d: 0.6, f: 180, to: 24, g: 0.45 },
+		{ type: 'sine', t: 0, d: 0.8, f: 70, to: 22, g: 0.8 },
+		{ type: 'triangle', t: 0.4, d: 0.5, f: 55, to: 20, g: 0.25 }
+	]),
+	// Short double thump: punch.
+	punch: recip('punch', 0.35, 0.85, [
+		{ type: 'sine', t: 0, d: 0.14, f: 150, to: 55, g: 0.9 },
+		{ type: 'sine', t: 0.12, d: 0.16, f: 120, to: 40, g: 0.8 },
+		{ type: 'triangle', t: 0, d: 0.06, f: 500, to: 200, g: 0.2 }
+	]),
+	// Fast high sweep + metallic ring: anime slash.
+	'anime-slash': recip('anime-slash', 0.5, 0.75, [
+		{ type: 'sawtooth', t: 0, d: 0.16, f: 2400, to: 600, g: 0.5 },
+		{ type: 'sine', t: 0.05, d: 0.3, f: 1800, to: 900, g: 0.3 },
+		{ type: 'triangle', t: 0.14, d: 0.2, f: 3000, g: 0.18 }
+	]),
+	// Two-tone descending buzz: error (windows-style).
+	error: recip('error', 0.55, 0.6, [
+		{ type: 'square', t: 0, d: 0.14, f: 330, g: 0.3 },
+		{ type: 'square', t: 0.18, d: 0.3, f: 220, g: 0.32 }
+	]),
+	// Rising major arpeggio: success.
+	success: recip('success', 0.8, 0.65, [
+		{ type: 'triangle', t: 0, d: 0.12, f: 523, g: 0.4 },
+		{ type: 'triangle', t: 0.12, d: 0.12, f: 659, g: 0.42 },
+		{ type: 'triangle', t: 0.24, d: 0.3, f: 784, g: 0.45 },
+		{ type: 'sine', t: 0.24, d: 0.3, f: 1568, g: 0.15 }
+	]),
+	// Two clean dings: notification.
+	notification: recip('notification', 0.6, 0.6, [
+		{ type: 'sine', t: 0, d: 0.22, f: 988, g: 0.5 },
+		{ type: 'sine', t: 0.18, d: 0.35, f: 1319, g: 0.5 },
+		{ type: 'sine', t: 0, d: 0.2, f: 1976, g: 0.12 }
+	]),
+	// Soft looping spinner hum: loading.
+	loading: recip('loading', 1.2, 0.4, [
+		{ type: 'sine', t: 0, d: 0.5, f: 320, to: 480, g: 0.25 },
+		{ type: 'sine', t: 0.5, d: 0.5, f: 480, to: 320, g: 0.25 },
+		{ type: 'triangle', t: 0, d: 1.1, f: 160, g: 0.12 }
+	]),
+	// Descending chip-menu chromatic: game over.
+	'game-over': recip('game-over', 1.3, 0.6, [
+		{ type: 'square', t: 0, d: 0.16, f: 392, g: 0.28 },
+		{ type: 'square', t: 0.18, d: 0.16, f: 370, g: 0.28 },
+		{ type: 'square', t: 0.36, d: 0.16, f: 349, g: 0.28 },
+		{ type: 'square', t: 0.54, d: 0.5, f: 330, to: 165, g: 0.3 },
+		{ type: 'sine', t: 0.54, d: 0.6, f: 82, g: 0.3 }
+	]),
+	// Bright double coin chime.
+	coin: recip('coin', 0.4, 0.7, [
+		{ type: 'square', t: 0, d: 0.07, f: 988, g: 0.3 },
+		{ type: 'square', t: 0.08, d: 0.25, f: 1319, g: 0.35 },
+		{ type: 'sine', t: 0.08, d: 0.25, f: 2637, g: 0.12 }
+	]),
+	// Register flutter + chime tail: cash.
+	cash: recip('cash', 0.9, 0.65, [
+		{ type: 'triangle', t: 0, d: 0.2, f: 700, to: 1400, g: 0.3 },
+		{ type: 'sine', t: 0.18, d: 0.4, f: 1319, g: 0.4 },
+		{ type: 'sine', t: 0.26, d: 0.5, f: 1760, g: 0.3 },
+		{ type: 'triangle', t: 0.05, d: 0.3, f: 880, g: 0.15 }
+	]),
+	// Coin cascade + fanfare tail: jackpot.
+	jackpot: recip('jackpot', 1.5, 0.65, [
+		{ type: 'square', t: 0, d: 0.06, f: 988, g: 0.22 },
+		{ type: 'square', t: 0.07, d: 0.06, f: 1047, g: 0.22 },
+		{ type: 'square', t: 0.14, d: 0.06, f: 988, g: 0.2 },
+		{ type: 'square', t: 0.21, d: 0.06, f: 1175, g: 0.22 },
+		{ type: 'triangle', t: 0.4, d: 0.2, f: 784, g: 0.35 },
+		{ type: 'triangle', t: 0.6, d: 0.2, f: 988, g: 0.38 },
+		{ type: 'triangle', t: 0.8, d: 0.5, f: 1319, g: 0.42 },
+		{ type: 'sine', t: 0.8, d: 0.5, f: 2637, g: 0.15 }
+	]),
+	// Cracked buzzy strike: lightning zap.
+	'lightning-zap': recip('lightning-zap', 0.6, 0.8, [
+		{ type: 'sawtooth', t: 0, d: 0.25, f: 1600, to: 90, g: 0.55 },
+		{ type: 'square', t: 0.02, d: 0.18, f: 220, to: 60, g: 0.35 },
+		{ type: 'sine', t: 0.05, d: 0.4, f: 80, to: 30, g: 0.6 }
+	]),
+	// Quick band sweep: swipe.
+	swipe: recip('swipe', 0.3, 0.6, [
+		{ type: 'sine', t: 0, d: 0.24, f: 600, to: 2400, g: 0.45 },
+		{ type: 'triangle', t: 0.04, d: 0.18, f: 400, to: 1600, g: 0.25 }
+	]),
+	// Tiny UI tick: click.
+	click: recip('click', 0.09, 0.55, [
+		{ type: 'square', t: 0, d: 0.03, f: 1200, g: 0.3 },
+		{ type: 'sine', t: 0.01, d: 0.06, f: 2400, to: 800, g: 0.25 }
+	]),
+	// Finger snap: crisp pop + thump.
+	snap: recip('snap', 0.18, 0.7, [
+		{ type: 'sine', t: 0, d: 0.05, f: 2000, to: 700, g: 0.5 },
+		{ type: 'sine', t: 0.05, d: 0.1, f: 180, to: 70, g: 0.55 }
+	]),
+	// Stutter stop + rise up: record scratch.
+	'record-scratch': recip('record-scratch', 0.6, 0.7, [
+		{ type: 'sawtooth', t: 0, d: 0.08, f: 900, to: 300, g: 0.4 },
+		{ type: 'sawtooth', t: 0.1, d: 0.08, f: 800, to: 250, g: 0.42 },
+		{ type: 'sawtooth', t: 0.22, d: 0.25, f: 200, to: 1400, g: 0.45 },
+		{ type: 'sine', t: 0.22, d: 0.3, f: 100, to: 400, g: 0.2 }
+	]),
+	// reverse riser falls away.
+	'reverse-whoosh': recip('reverse-whoosh', 0.7, 0.6, [
+		{ type: 'sine', t: 0, d: 0.55, f: 1800, to: 160, g: 0.5 },
+		{ type: 'triangle', t: 0.05, d: 0.5, f: 1300, to: 120, g: 0.3 }
 	])
 };
 
