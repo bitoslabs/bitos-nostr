@@ -9,6 +9,7 @@ import type { FrameFxWindow } from '$lib/meme/fx-track';
 import type { SpeedWindow } from '$lib/meme/speed-track';
 import { makeImageOverlay, type MemeImageOverlay } from '$lib/meme/image-overlay';
 import { buddyFigure } from '$lib/meme/bitz-buddy';
+import { bitzverseProp } from '$lib/meme/bitzverse';
 import type { ZoomWindow } from '$lib/ai/suggest';
 import type {
 	MemeMediaFormat,
@@ -42,9 +43,10 @@ export const STAGE_ZOOM_KEY = 'bitos:meme-stage-zoom';
 export const STAGE_ZOOM_STEPS = [0.6, 0.8, 1, 1.25, 1.5] as const;
 export const ARTBOARD_KEY = 'bitos:meme-artboard';
 
-/** Buddy sticker layer factory — a catalog figure placed on the stage.
- *  `endMs`/`startMs` optional windows keep the figure timed like any layer. */
-function buddyFigureLayer(
+/** Sticker layer factory — a buddy figure OR a Bitzverse world prop
+ *  (§14) placed on the stage. `endMs`/`startMs` optional windows keep the
+ *  sticker timed like any layer. */
+function stickerLayer(
 	id: string,
 	x: number,
 	y: number,
@@ -52,7 +54,7 @@ function buddyFigureLayer(
 	startMs?: number,
 	endMs?: number
 ): MemeImageOverlay {
-	const figure = buddyFigure(id);
+	const figure = buddyFigure(id) ?? bitzverseProp(id);
 	const layer =
 		makeImageOverlay(figure?.src ?? `/bitz-buddy/buddy.svg`, 1) ??
 		({
@@ -63,6 +65,9 @@ function buddyFigureLayer(
 			y: 0.5,
 			size: 0.3
 		} satisfies MemeImageOverlay);
+	// Figure's default ambient motion rides along (§15 creator-friendly
+	// motion) — the inspector exposes it like any other layer knob.
+	if (figure && figure.motion !== 'none') layer.motionId = figure.motion;
 	layer.x = x;
 	layer.y = y;
 	layer.size = size;
@@ -540,8 +545,12 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ id: 'tpl-bp-2', sfx: 'jackpot', atMs: 1500, gain: 1 }
 		],
 		fxWindows: () => [{ startMs: 1500, endMs: 2400, fx: 'zoom-blur', intensity: 0.7 }],
-		zoomWindows: () => [{ startMs: 1500, endMs: 3000, factor: 1.8, cx: 0.5, cy: 0.4 }],
-		imageLayers: () => [buddyFigureLayer('moon', 0.72, 0.78, 0.42, 1500)]
+		zoomWindows: () => [{ startMs: 1200, endMs: 2400, factor: 1.8, cx: 0.5, cy: 0.45 }],
+		// §14 world: the moon elevator climbs while buddy moon-walks in.
+		imageLayers: () => [
+			stickerLayer('moon-elevator', 0.22, 0.3, 0.34, 1200),
+			stickerLayer('moon', 0.72, 0.78, 0.42, 1500)
+		]
 	},
 	{
 		id: 'btc-dump',
@@ -564,7 +573,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ startMs: 1400, endMs: 1700, fx: 'flash', intensity: 0.6 },
 			{ startMs: 1700, endMs: 2600, fx: 'shake', intensity: 0.8 }
 		],
-		imageLayers: () => [buddyFigureLayer('panic', 0.7, 0.74, 0.4, 1400)]
+		imageLayers: () => [stickerLayer('panic', 0.7, 0.74, 0.4, 1400)]
 	},
 	{
 		id: 'btc-hodl',
@@ -583,7 +592,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ id: 'tpl-bh-2', sfx: 'ding', atMs: 2000, gain: 0.7 }
 		],
 		fxWindows: () => [{ startMs: 0, endMs: 2000, fx: 'shake', intensity: 0.5 }],
-		imageLayers: () => [buddyFigureLayer('hodl-zen', 0.5, 0.72, 0.46)]
+		imageLayers: () => [stickerLayer('hodl-zen', 0.5, 0.72, 0.46)]
 	},
 	{
 		id: 'btc-buy-the-dip',
@@ -609,8 +618,8 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		],
 		zoomWindows: () => [{ startMs: 1600, endMs: 2800, factor: 1.6, cx: 0.35, cy: 0.7 }],
 		imageLayers: () => [
-			buddyFigureLayer('thinking', 0.3, 0.3, 0.3, undefined, 1600),
-			buddyFigureLayer('moon', 0.7, 0.76, 0.34, 1600)
+			stickerLayer('thinking', 0.3, 0.3, 0.3, undefined, 1600),
+			stickerLayer('moon', 0.7, 0.76, 0.34, 1600)
 		]
 	},
 	{
@@ -634,7 +643,11 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ id: 'tpl-bf-3', sfx: 'success', atMs: 1800, gain: 0.8 }
 		],
 		fxWindows: () => [{ startMs: 0, endMs: 1800, fx: 'shake', intensity: 0.4 }],
-		imageLayers: () => [buddyFigureLayer('dead-inside', 0.68, 0.7, 0.34)]
+		// §14 world: the fiat monster IS the money printer.
+		imageLayers: () => [
+			stickerLayer('fiat-monster', 0.24, 0.32, 0.4),
+			stickerLayer('dead-inside', 0.68, 0.7, 0.34)
+		]
 	},
 	{
 		id: 'btc-lightning-zap',
@@ -653,7 +666,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ id: 'tpl-bz-2', sfx: 'ding', atMs: 2000, gain: 0.6 }
 		],
 		fxWindows: () => [{ startMs: 1400, endMs: 2000, fx: 'glitch', intensity: 0.8 }],
-		imageLayers: () => [buddyFigureLayer('shock', 0.72, 0.74, 0.36, 1400)]
+		imageLayers: () => [stickerLayer('shock', 0.72, 0.74, 0.36, 1400)]
 	},
 	{
 		id: 'btc-self-custody',
@@ -679,7 +692,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 			{ id: 'tpl-bs-2', sfx: 'success', atMs: 1900, gain: 0.9 }
 		],
 		fxWindows: () => [{ startMs: 1800, endMs: 2400, fx: 'flash', intensity: 0.5 }],
-		imageLayers: () => [buddyFigureLayer('angry', 0.28, 0.72, 0.36, undefined, 1800)]
+		imageLayers: () => [stickerLayer('angry', 0.28, 0.72, 0.36, undefined, 1800)]
 	},
 	{
 		id: 'btc-number-go-up',
@@ -701,7 +714,470 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		fxWindows: () => [{ startMs: 1400, endMs: 2200, fx: 'zoom-blur', intensity: 0.6 }],
 		// Euphoria ramp: steady build → 2× at the ATH hit.
 		speedWindows: () => [{ startMs: 1500, endMs: 2500, rate: 2 }],
-		imageLayers: () => [buddyFigureLayer('laugh', 0.74, 0.76, 0.4, 1400)]
+		imageLayers: () => [
+			// §14 world: sats sparking at the new ATH.
+			stickerLayer('sat-sparks', 0.2, 0.28, 0.3, 1400),
+			stickerLayer('laugh', 0.74, 0.76, 0.4, 1400)
+		]
+	},
+	// ---- Dev Pack round-out (spec tp-bitcoin.md §13): production bug + deploy
+	// Friday already ship — these four complete the six-template pack. -------
+	{
+		id: 'dev-works-on-my-machine',
+		label: 'Works on my machine 🤷',
+		hint: 'Buddy shrug — identical envs, different results (Dev pack)',
+		icon: 'i-lucide-laptop',
+		overlays: () => [
+			{
+				...makeOverlay({ text: 'works on my machine', y: 0.16, size: 0.05, font: 'mono' }),
+				endMs: 1600
+			},
+			{
+				...makeOverlay({
+					text: 'then WHY is prod down 💀',
+					y: 0.82,
+					size: 0.06,
+					bar: true
+				}),
+				startMs: 1600
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-wm-1', sfx: 'click', atMs: 400, gain: 0.5 },
+			{ id: 'tpl-wm-2', sfx: 'bruh', atMs: 1600, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1600, endMs: 2200, fx: 'glitch', intensity: 0.4 }],
+		imageLayers: () => [stickerLayer('facepalm', 0.72, 0.74, 0.38, 1600)]
+	},
+	{
+		id: 'dev-merge-conflict',
+		label: 'Merge conflict ⚔️',
+		hint: 'Both branches valid — buddy laughs at yours (Dev pack)',
+		icon: 'i-lucide-git-merge',
+		overlays: () => [
+			{
+				...makeOverlay({ text: 'git merge main', y: 0.16, size: 0.05, font: 'mono' }),
+				endMs: 1400
+			},
+			{
+				...makeOverlay({
+					text: '342 CONFLICTS 😱',
+					y: 0.5,
+					size: 0.09,
+					bar: true,
+					color: '#ef4444'
+				}),
+				startMs: 1400
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-mc-1', sfx: 'click', atMs: 300, gain: 0.5 },
+			{ id: 'tpl-mc-2', sfx: 'error', atMs: 1400, gain: 1 },
+			{ id: 'tpl-mc-3', sfx: 'crowd-laugh', atMs: 2100, gain: 0.7 }
+		],
+		fxWindows: () => [{ startMs: 1400, endMs: 2000, fx: 'shake', intensity: 0.6 }],
+		zoomWindows: () => [{ startMs: 1400, endMs: 2600, factor: 1.6, cx: 0.5, cy: 0.5 }],
+		imageLayers: () => [stickerLayer('panic', 0.74, 0.76, 0.4, 1400)]
+	},
+	{
+		id: 'dev-server-down',
+		label: 'Server down 🔌',
+		hint: 'Pager fires at 3am — buddy dead inside (Dev pack)',
+		icon: 'i-lucide-server-off',
+		overlays: () => [
+			{
+				...makeOverlay({ text: '03:00 AM — page duty', y: 0.14, size: 0.045, font: 'mono' }),
+				endMs: 1500
+			},
+			{
+				...makeOverlay({ text: 'SERVER DOWN 🚨', y: 0.5, size: 0.1, bar: true, color: '#ef4444' }),
+				startMs: 1500
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-sd-1', sfx: 'notification', atMs: 200, gain: 0.8 },
+			{ id: 'tpl-sd-2', sfx: 'explosion', atMs: 1500, gain: 1 },
+			{ id: 'tpl-sd-3', sfx: 'sad-trombone', atMs: 2300, gain: 0.6 }
+		],
+		fxWindows: () => [
+			{ startMs: 1500, endMs: 1800, fx: 'flash', intensity: 0.5 },
+			{ startMs: 1800, endMs: 2700, fx: 'vignette', intensity: 0.6 }
+		],
+		imageLayers: () => [stickerLayer('dead-inside', 0.7, 0.72, 0.38, 1500)]
+	},
+	{
+		id: 'dev-small-change',
+		label: 'Client: "small change" 😤',
+		hint: 'Buddy angry — the classic scope creep (Dev pack)',
+		icon: 'i-lucide-file-warning',
+		overlays: () => [
+			{
+				...makeOverlay({ text: 'client: just a small change', y: 0.16, size: 0.05 }),
+				endMs: 1500
+			},
+			{
+				...makeOverlay({
+					text: 'REBUILD EVERYTHING 😤',
+					y: 0.82,
+					size: 0.07,
+					bar: true,
+					color: '#f97316'
+				}),
+				startMs: 1500
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-sc-1', sfx: 'pop', atMs: 1200, gain: 0.6 },
+			{ id: 'tpl-sc-2', sfx: 'punch', atMs: 1500, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1500, endMs: 2200, fx: 'shake', intensity: 0.8 }],
+		imageLayers: () => [stickerLayer('angry', 0.7, 0.74, 0.4, 1500)]
+	},
+	// ---- Local packs (spec tp-1.md “Local Meme Templates”): Thai/Lao crowd
+	// favorites — the spec's exact lines as timed punchline templates. ------
+	{
+		id: 'thai-ee-yang-wa',
+		label: 'อีหยังวะ 😂',
+		hint: 'Confused zoom → อีหยังวะ! (Thai pack)',
+		icon: 'i-lucide-help-circle',
+		overlays: () => [
+			{ ...makeOverlay({ text: '???' }), endMs: 1200 },
+			{
+				...makeOverlay({ text: 'อีหยังวะ!!', y: 0.5, size: 0.12, color: '#fde047' }),
+				startMs: 1200
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-ey-1', sfx: 'record-scratch', atMs: 900, gain: 0.8 },
+			{ id: 'tpl-ey-2', sfx: 'bruh', atMs: 1200, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1200, endMs: 1800, fx: 'glitch', intensity: 0.5 }],
+		zoomWindows: () => [{ startMs: 0, endMs: 900, factor: 1.8, cx: 0.5, cy: 0.45 }],
+		imageLayers: () => [stickerLayer('shock', 0.74, 0.72, 0.38, 1200)]
+	},
+	{
+		id: 'thai-bo-maen-laeo',
+		label: 'บ่แม่นแล้ว 🙃',
+		hint: 'Slow-mo zoom + dead-inside (Thai/Lao pack)',
+		icon: 'i-lucide-meh',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'ผิดหวัง…', y: 0.14, size: 0.05 }), endMs: 1400 },
+			{
+				...makeOverlay({ text: 'บ่แม่นแล้ว', y: 0.84, size: 0.09, bar: true }),
+				startMs: 1400
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-bm-1', sfx: 'drumroll', atMs: 200, gain: 0.4 },
+			{ id: 'tpl-bm-2', sfx: 'sad-trombone', atMs: 1400, gain: 0.9 }
+		],
+		fxWindows: () => [{ startMs: 1400, endMs: 2200, fx: 'vignette', intensity: 0.6 }],
+		zoomWindows: () => [{ startMs: 0, endMs: 1400, factor: 1.7, cx: 0.5, cy: 0.5 }],
+		imageLayers: () => [stickerLayer('dead-inside', 0.72, 0.7, 0.36, 1400)]
+	},
+	{
+		id: 'thai-ao',
+		label: 'เอ้า! 😤',
+		hint: 'Flash + slam + angry buddy (Thai pack)',
+		icon: 'i-lucide-zap',
+		overlays: () => [
+			{
+				...makeOverlay({ text: 'เอ้า!!', y: 0.5, size: 0.13, color: '#f97316' }),
+				startMs: 1000
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-ao-1', sfx: 'pop', atMs: 600, gain: 0.6 },
+			{ id: 'tpl-ao-2', sfx: 'slam', atMs: 1000, gain: 1 }
+		],
+		fxWindows: () => [
+			{ startMs: 1000, endMs: 1300, fx: 'flash', intensity: 0.7 },
+			{ startMs: 1300, endMs: 2000, fx: 'shake', intensity: 0.7 }
+		],
+		imageLayers: () => [stickerLayer('angry', 0.28, 0.72, 0.38, 1000)]
+	},
+	{
+		id: 'thai-555',
+		label: '555+ 🤣',
+		hint: 'Laughing caption bar escalation (Thai pack)',
+		icon: 'i-lucide-laugh',
+		overlays: () => [
+			{ ...makeOverlay({ text: '555', y: 0.84, size: 0.07, bar: true }), endMs: 900 },
+			{
+				...makeOverlay({ text: '5555', y: 0.84, size: 0.085, bar: true }),
+				startMs: 900,
+				endMs: 1700
+			},
+			{ ...makeOverlay({ text: '555555555 😂', y: 0.82, size: 0.1, bar: true }), startMs: 1700 }
+		],
+		sfxCues: () => [
+			{ id: 'tpl-ha-1', sfx: 'laugh', atMs: 800, gain: 0.6 },
+			{ id: 'tpl-ha-2', sfx: 'crowd-laugh', atMs: 1700, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1700, endMs: 2400, fx: 'zoom-blur', intensity: 0.5 }],
+		imageLayers: () => [stickerLayer('laugh', 0.76, 0.72, 0.38, 1700)]
+	},
+	{
+		id: 'thai-payday',
+		label: 'เงินเดือนออก vs ปลายเดือน 💸',
+		hint: 'Cash hit → broke vignette (Thai pack)',
+		icon: 'i-lucide-wallet',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'เงินเดือนออก 🤑', y: 0.12, size: 0.055 }), endMs: 1600 },
+			{ ...makeOverlay({ text: 'ปลายเดือน 💀', y: 0.12, size: 0.055 }), startMs: 1600 },
+			{
+				...makeOverlay({ text: 'กินข้าวมาม่า', y: 0.84, size: 0.07, bar: true }),
+				startMs: 1600
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-pd-1', sfx: 'cash', atMs: 200, gain: 0.9 },
+			{ id: 'tpl-pd-2', sfx: 'jackpot', atMs: 700, gain: 0.8 },
+			{ id: 'tpl-pd-3', sfx: 'sad-trombone', atMs: 1700, gain: 0.8 }
+		],
+		fxWindows: () => [
+			{ startMs: 0, endMs: 1500, fx: 'spotlight', intensity: 0.4 },
+			{ startMs: 1600, endMs: 3000, fx: 'vignette', intensity: 0.7 }
+		],
+		imageLayers: () => [
+			stickerLayer('moon', 0.24, 0.7, 0.34, undefined, 1500),
+			stickerLayer('dead-inside', 0.76, 0.72, 0.38, 1600)
+		]
+	},
+	{
+		id: 'thai-mom-calls',
+		label: 'แม่เรียกกลับบ้าน 🏠',
+		hint: 'Notification dread → honest caption (Thai pack)',
+		icon: 'i-lucide-phone-call',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'แม่: กลับบ้านไหมลูก', y: 0.12, size: 0.05 }), endMs: 1800 },
+			{
+				...makeOverlay({ text: 'ไปเที่ยวก่อนนะ 🙏', y: 0.84, size: 0.07, bar: true }),
+				startMs: 1800
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-mc2-1', sfx: 'notification', atMs: 200, gain: 0.9 },
+			{ id: 'tpl-mc2-2', sfx: 'pop', atMs: 1800, gain: 0.6 }
+		],
+		fxWindows: () => [{ startMs: 1500, endMs: 2100, fx: 'flash', intensity: 0.4 }],
+		zoomWindows: () => [{ startMs: 0, endMs: 1500, factor: 1.6, cx: 0.5, cy: 0.4 }],
+		imageLayers: () => [stickerLayer('panic', 0.74, 0.72, 0.36, 0, 1500)]
+	},
+	{
+		id: 'lao-3g-moment',
+		label: 'Network 3G 🐌',
+		hint: 'Loading freeze + glitch drop (Lao pack)',
+		icon: 'i-lucide-wifi-off',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'ກຳລັງໂຫຼດ…', y: 0.14, size: 0.05, font: 'mono' }), endMs: 2000 },
+			{
+				...makeOverlay({ text: '3G MOMENT 💀', y: 0.5, size: 0.08, bar: true }),
+				startMs: 2000
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-3g-1', sfx: 'loading', atMs: 0, gain: 0.8 },
+			{ id: 'tpl-3g-2', sfx: 'error', atMs: 2000, gain: 1 }
+		],
+		fxWindows: () => [
+			{ startMs: 600, endMs: 1900, fx: 'pixelate', intensity: 0.6 },
+			{ startMs: 2000, endMs: 2600, fx: 'glitch', intensity: 0.7 }
+		],
+		zoomWindows: () => [{ startMs: 2000, endMs: 2600, factor: 1.5, cx: 0.5, cy: 0.5 }],
+		imageLayers: () => [stickerLayer('facepalm', 0.24, 0.72, 0.38, 2000)]
+	},
+	// ---- Spec tp-2.md round-out #11–20: the numbered-template catalog ------
+	{
+		id: 'anime-reaction',
+		label: 'Anime reaction ⚡',
+		hint: 'Speed lines + zoom + slash (spec #11)',
+		icon: 'i-lucide-swords',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'ナニ?!', y: 0.14, size: 0.07 }), endMs: 1400 },
+			{
+				...makeOverlay({ text: '待って… OH NO', y: 0.84, size: 0.06, bar: true }),
+				startMs: 1400
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-ar-1', sfx: 'whoosh', atMs: 900, gain: 0.8 },
+			{ id: 'tpl-ar-2', sfx: 'anime-slash', atMs: 1400, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1400, endMs: 2000, fx: 'color-flash', intensity: 0.7 }],
+		zoomWindows: () => [{ startMs: 800, endMs: 2000, factor: 1.9, cx: 0.5, cy: 0.4 }],
+		imageLayers: () => [stickerLayer('shock', 0.72, 0.72, 0.36, 1400)]
+	},
+	{
+		id: 'breaking-news',
+		label: 'Breaking news 📰',
+		hint: 'Lower-third + ticker + alert (spec #12)',
+		icon: 'i-lucide-newspaper',
+		overlays: () => [
+			{
+				...makeOverlay({
+					text: '■ BREAKING NEWS ■',
+					y: 0.86,
+					size: 0.055,
+					bar: true,
+					color: '#ef4444'
+				})
+			},
+			{
+				...makeOverlay({ text: 'LOCAL MAN SELDSOM', y: 0.78, size: 0.035, font: 'mono' })
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-bn-1', sfx: 'notification', atMs: 0, gain: 0.9 },
+			{ id: 'tpl-bn-2', sfx: 'boom', atMs: 2500, gain: 0.7 }
+		],
+		fxWindows: () => [{ startMs: 0, endMs: 600, fx: 'flash', intensity: 0.4 }],
+		zoomWindows: () => [{ startMs: 2200, endMs: 3000, factor: 1.4, cx: 0.5, cy: 0.45 }]
+	},
+	{
+		id: 'mission-failed',
+		label: 'Mission failed 💀',
+		hint: 'Grayscale slow-mo + game over (spec #13)',
+		icon: 'i-lucide-skull',
+		overlays: () => [
+			{
+				...makeOverlay({ text: 'MISSION FAILED', y: 0.5, size: 0.08, bar: true }),
+				startMs: 1600
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-mf-1', sfx: 'error', atMs: 1400, gain: 0.8 },
+			{ id: 'tpl-mf-2', sfx: 'game-over', atMs: 1700, gain: 1 }
+		],
+		fxWindows: () => [{ startMs: 1600, endMs: 3200, fx: 'vignette', intensity: 0.8 }],
+		zoomWindows: () => [{ startMs: 1400, endMs: 2600, factor: 1.6, cx: 0.5, cy: 0.5 }],
+		speedWindows: () => [{ startMs: 1600, endMs: 2800, rate: 0.5 }],
+		imageLayers: () => [stickerLayer('dead-inside', 0.2, 0.76, 0.32, 1600)]
+	},
+	{
+		id: 'instant-regret',
+		label: 'Instant regret 😬',
+		hint: 'Freeze + zoom face + sad replay (spec #14)',
+		icon: 'i-lucide-undo-2',
+		overlays: () => [
+			{ ...makeOverlay({ text: '…', y: 0.5, size: 0.12 }), startMs: 1400, endMs: 2000 },
+			{
+				...makeOverlay({ text: 'why did i do that', y: 0.84, size: 0.05, bar: true }),
+				startMs: 2000
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-ir-1', sfx: 'record-scratch', atMs: 1300, gain: 0.7 },
+			{ id: 'tpl-ir-2', sfx: 'sad-trombone', atMs: 2000, gain: 0.8 }
+		],
+		fxWindows: () => [{ startMs: 1400, endMs: 2000, fx: 'spotlight', intensity: 0.5 }],
+		zoomWindows: () => [{ startMs: 1400, endMs: 2400, factor: 2.1, cx: 0.5, cy: 0.4 }],
+		imageLayers: () => [stickerLayer('facepalm', 0.72, 0.74, 0.38, 1400)]
+	},
+	{
+		id: 'bro-thought',
+		label: 'Bro thought… 💭',
+		hint: 'Confident setup → BOOM skull (spec #15)',
+		icon: 'i-lucide-message-circle-warning',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'bro thought he ate 💅', y: 0.14, size: 0.05 }), endMs: 1800 },
+			{
+				...makeOverlay({ text: 'BOOM 💀', y: 0.5, size: 0.13, color: '#ef4444' }),
+				startMs: 1800
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-bt2-1', sfx: 'snap', atMs: 1600, gain: 0.6 },
+			{ id: 'tpl-bt2-2', sfx: 'explosion', atMs: 1800, gain: 1 },
+			{ id: 'tpl-bt2-3', sfx: 'bruh', atMs: 2300, gain: 0.8 }
+		],
+		fxWindows: () => [
+			{ startMs: 1800, endMs: 2100, fx: 'flash', intensity: 0.8 },
+			{ startMs: 2100, endMs: 2800, fx: 'shake', intensity: 0.6 }
+		],
+		zoomWindows: () => [{ startMs: 1800, endMs: 2600, factor: 1.7, cx: 0.5, cy: 0.45 }],
+		imageLayers: () => [
+			stickerLayer('thinking', 0.22, 0.72, 0.32, undefined, 1800),
+			stickerLayer('dead-inside', 0.74, 0.74, 0.36, 1800)
+		]
+	},
+	{
+		id: 'suspicious',
+		label: 'Suspicious 🤨',
+		hint: 'Slow zoom + side-eye + suspicious ding (spec #17)',
+		icon: 'i-lucide-eye',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'hmm…', y: 0.16, size: 0.06 }), endMs: 2000 },
+			{ ...makeOverlay({ text: '🤨', y: 0.5, size: 0.14 }), startMs: 2000 }
+		],
+		sfxCues: () => [
+			{ id: 'tpl-sp-1', sfx: 'ding', atMs: 2000, gain: 0.5 },
+			{ id: 'tpl-sp-2', sfx: 'record-scratch', atMs: 2100, gain: 0.5 }
+		],
+		fxWindows: () => [{ startMs: 2000, endMs: 2800, fx: 'spotlight', intensity: 0.6 }],
+		zoomWindows: () => [{ startMs: 0, endMs: 2000, factor: 1.6, cx: 0.6, cy: 0.42 }],
+		imageLayers: () => [stickerLayer('thinking', 0.26, 0.72, 0.34, 2000)]
+	},
+	{
+		id: 'victory',
+		label: 'Victory 🏆',
+		hint: 'Flash + jackpot + W caption (spec #18)',
+		icon: 'i-lucide-trophy',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'grinding arc', y: 0.14, size: 0.05 }), endMs: 1600 },
+			{
+				...makeOverlay({ text: 'W 💪', y: 0.5, size: 0.13, color: '#22c55e', bar: true }),
+				startMs: 1600
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-vi-1', sfx: 'drumroll', atMs: 800, gain: 0.5 },
+			{ id: 'tpl-vi-2', sfx: 'success', atMs: 1600, gain: 0.9 },
+			{ id: 'tpl-vi-3', sfx: 'jackpot', atMs: 1900, gain: 0.8 }
+		],
+		fxWindows: () => [{ startMs: 1600, endMs: 2200, fx: 'flash', intensity: 0.6 }],
+		zoomWindows: () => [{ startMs: 1600, endMs: 2400, factor: 1.5, cx: 0.5, cy: 0.45 }],
+		imageLayers: () => [
+			stickerLayer('sat-sparks', 0.2, 0.26, 0.28, 1600),
+			stickerLayer('moon', 0.76, 0.74, 0.4, 1600)
+		]
+	},
+	{
+		id: 'disaster',
+		label: "IT'S OVER 💀",
+		hint: 'Error → RGB glitch → shake sirens (spec #19)',
+		icon: 'i-lucide-siren',
+		overlays: () => [
+			{
+				...makeOverlay({ text: "IT'S OVER 💀", y: 0.5, size: 0.1, color: '#ef4444', bar: true }),
+				startMs: 1500
+			}
+		],
+		sfxCues: () => [
+			{ id: 'tpl-di-1', sfx: 'error', atMs: 1200, gain: 1 },
+			{ id: 'tpl-di-2', sfx: 'explosion', atMs: 1500, gain: 1 },
+			{ id: 'tpl-di-3', sfx: 'game-over', atMs: 2300, gain: 0.8 }
+		],
+		fxWindows: () => [
+			{ startMs: 1200, endMs: 1600, fx: 'rgb-split', intensity: 0.8 },
+			{ startMs: 1600, endMs: 2400, fx: 'shake', intensity: 0.9 },
+			{ startMs: 2400, endMs: 3000, fx: 'vignette', intensity: 0.7 }
+		],
+		zoomWindows: () => [{ startMs: 1500, endMs: 2200, factor: 1.8, cx: 0.5, cy: 0.45 }],
+		imageLayers: () => [stickerLayer('panic', 0.24, 0.76, 0.36, 1200)]
+	},
+	{
+		id: 'silent-judgment',
+		label: 'Silent judgment 🤫',
+		hint: 'Face zoom + 1s dead air + awkward (spec #20)',
+		icon: 'i-lucide-volume-x',
+		overlays: () => [
+			{ ...makeOverlay({ text: 'so…', y: 0.86, size: 0.04, font: 'mono' }), startMs: 2000 }
+		],
+		sfxCues: () => [{ id: 'tpl-sj-1', sfx: 'bruh', atMs: 3000, gain: 0.5 }],
+		fxWindows: () => [{ startMs: 1000, endMs: 3100, fx: 'vignette', intensity: 0.5 }],
+		zoomWindows: () => [{ startMs: 800, endMs: 3000, factor: 1.9, cx: 0.5, cy: 0.38 }],
+		imageLayers: () => [stickerLayer('dead-inside', 0.74, 0.72, 0.34, 2000)]
 	}
 ];
 

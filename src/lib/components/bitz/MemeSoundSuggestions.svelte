@@ -3,19 +3,25 @@
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
+	import { SMART_TEMPLATES } from '$lib/ai/smart-templates';
 
 	let {
 		busy,
 		analyzing,
 		groups,
+		smartMatches = [],
 		onBuild,
-		onApply
+		onApply,
+		onApplySmart
 	}: {
 		busy: boolean;
 		analyzing: boolean;
 		groups: MemeSuggestion[];
+		smartMatches?: SmartResolution[];
 		onBuild: () => void;
 		onApply: (suggestion: MemeSuggestion) => void;
+		onApplySmart: (match: SmartResolution) => void;
 	} = $props();
 
 	const menuId = `meme-suggest-${Math.random().toString(36).slice(2, 8)}`;
@@ -86,6 +92,41 @@
 					<Icon name="i-lucide-arrow-right" class="size-4 shrink-0 text-[var(--ui-text-muted)]" />
 				</button>
 			{/each}
+			{#if smartMatches.length}
+				<MenuDivider />
+				<p
+					class="px-2 pb-1 text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+				>
+					Smart templates — trigger rules
+				</p>
+				{#each smartMatches as match (match.templateId)}
+					{@const tpl = SMART_TEMPLATES.find((t) => t.id === match.templateId)}
+					<button
+						type="button"
+						onclick={() => onApplySmart(match)}
+						disabled={busy}
+						class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-[var(--ui-bg-muted)]"
+					>
+						<span
+							class="grid size-7 shrink-0 place-items-center rounded-full bg-warm-500/15 text-warm-600"
+						>
+							<Icon name={tpl?.icon ?? 'i-lucide-sparkles'} class="size-4" />
+						</span>
+						<span class="min-w-0 flex-1">
+							<span class="block text-[12.5px] font-bold">{tpl?.label ?? match.templateId}</span>
+							<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+								{match.overlays.length +
+									match.sfxCues.length +
+									match.zoomWindows.length +
+									match.fxWindows.length +
+									match.imageLayers.length} hits ·
+								{Math.round(match.matchScore * 100)}% match
+							</span>
+						</span>
+						<Icon name="i-lucide-arrow-right" class="size-4 shrink-0 text-[var(--ui-text-muted)]" />
+					</button>
+				{/each}
+			{/if}
 			<MenuDivider />
 			<button
 				type="button"

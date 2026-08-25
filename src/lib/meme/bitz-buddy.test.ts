@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { BUDDY_FIGURES, buddyFigure, isBuddySrc } from './bitz-buddy';
-import { layerSrcOk, normalizeImageOverlay, makeImageOverlay } from './image-overlay';
+import { LAYER_MOTION_IDS, layerMotionOf } from './layer-motion';
+import {
+	decodeImageOverlay,
+	encodeImageOverlay,
+	layerSrcOk,
+	makeImageOverlay,
+	normalizeImageOverlay
+} from './image-overlay';
 
 describe('bitz-buddy catalog', () => {
 	it('ships the 10-figure V1 pack with unique ids and bundled srcs', () => {
@@ -11,6 +18,8 @@ describe('bitz-buddy catalog', () => {
 		for (const f of BUDDY_FIGURES) {
 			expect(f.src).toBe(`/bitz-buddy/${f.id}.svg`);
 			expect(f.label.length).toBeGreaterThan(0);
+			// §15 default motions: valid layer-motion ids (or explicit 'none').
+			expect([...LAYER_MOTION_IDS, 'none']).toContain(f.motion);
 		}
 	});
 
@@ -59,5 +68,22 @@ describe('bitz-buddy catalog', () => {
 		expect(restored).not.toBeNull();
 		expect(restored!.startMs).toBe(100);
 		expect(restored!.src).toBe(src);
+	});
+
+	it('motion presets ride the wire and drop-in defaults are valid', () => {
+		// Wire round-trip: m encodes only when set, decodes back verbatim.
+		const layer = makeImageOverlay('/bitz-buddy/hodl-zen.svg', 1)!;
+		const moving = normalizeImageOverlay({ ...layer, motionId: 'bounce' })!;
+		expect(encodeImageOverlay(moving).m).toBe('bounce');
+		expect(decodeImageOverlay(encodeImageOverlay(moving))!.motionId).toBe('bounce');
+		// Static layers never carry the field.
+		expect(encodeImageOverlay(normalizeImageOverlay(layer)!).m).toBeUndefined();
+		// Junk ids normalize to none → field dropped entirely.
+		expect(normalizeImageOverlay({ ...layer, motionId: 'matrix' })!.motionId).toBeUndefined();
+		// Figures with motion drop Moving layers by default.
+		const moon = buddyFigure('moon')!;
+		if (moon.motion !== 'none') {
+			expect(layerMotionOf(moon.motion)).not.toBe('none');
+		}
 	});
 });

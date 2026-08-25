@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { MEME_LOOKS } from '$lib/meme/look';
+	import { LAYER_MOTIONS, layerMotionOf } from '$lib/meme/layer-motion';
 	import { MAX_IMAGE_SIZE, MIN_IMAGE_SIZE, type MemeImageOverlay } from '$lib/meme/image-overlay';
 
 	/**
@@ -242,6 +243,43 @@
 					: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
 			>
 				{look.label}
+			</button>
+		{/each}
+	</div>
+
+	<!-- Ambient motion (layer-motion.ts): one-tap bounce/wiggle/spin/pop/
+	     breathe. Phase is media-timed — loops while visible, WYSIWYG export. -->
+	<div class="mt-2 flex flex-wrap items-center gap-1">
+		<span class="mr-0.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]">Motion</span>
+		<button
+			type="button"
+			disabled={busy}
+			onclick={() => onPatch(layer.id, { motionId: undefined })}
+			aria-pressed={layerMotionOf(layer.motionId) === 'none'}
+			title="No motion — static layer"
+			class="rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {layerMotionOf(
+				layer.motionId
+			) === 'none'
+				? 'bg-warm-500 text-white'
+				: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+		>
+			None
+		</button>
+		{#each LAYER_MOTIONS as motion (motion.id)}
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onPatch(layer.id, { motionId: motion.id })}
+				aria-pressed={layerMotionOf(layer.motionId) === motion.id}
+				title={`${motion.label} — loops every ${motion.periodSec}s`}
+				class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition {layerMotionOf(
+					layer.motionId
+				) === motion.id
+					? 'bg-warm-500 text-white'
+					: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'} disabled:opacity-40"
+			>
+				<Icon name={motion.icon} class="size-3" />
+				{motion.label}
 			</button>
 		{/each}
 	</div>

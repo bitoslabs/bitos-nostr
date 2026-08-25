@@ -220,7 +220,8 @@ export function normalizeSfxCue(raw: unknown): MemeSfxCue | null {
 	};
 }
 
-const MAX_SFX_CUES = 16;
+/** Cap for normalized cue lists (drafts, wires, shared templates). */
+export const MAX_SFX_CUES = 16;
 
 export function normalizeSfxCues(raw: unknown): MemeSfxCue[] {
 	if (!Array.isArray(raw)) return [];

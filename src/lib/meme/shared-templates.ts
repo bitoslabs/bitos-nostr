@@ -1,4 +1,16 @@
-import { MAX_OVERLAYS, normalizeOverlay, type MemeTextOverlay } from '$lib/meme/schema';
+import {
+	MAX_OVERLAYS,
+	MAX_SFX_CUES,
+	normalizeOverlay,
+	normalizeSfxCues,
+	type MemeSfxCue,
+	type MemeTextOverlay
+} from '$lib/meme/schema';
+import { MAX_IMAGE_OVERLAYS, normalizeImageOverlay, type MemeImageOverlay } from './image-overlay';
+import { MAX_FX_WINDOWS, normalizeFxWindows, type FrameFxWindow } from './fx-track';
+import { MAX_ZOOM_WINDOWS, normalizeZoomWindows } from './zoom-track';
+import type { ZoomWindow } from '$lib/ai/suggest';
+import { normalizeSpeedWindows, type SpeedWindow } from './speed-track';
 
 /**
  * Shared meme templates over Nostr (audit gap #8 / CRE-004 Phase 6).
@@ -20,7 +32,7 @@ import { MAX_OVERLAYS, normalizeOverlay, type MemeTextOverlay } from '$lib/meme/
  */
 
 export const TEMPLATE_SCHEMA = 'com.bitos.bitz.template';
-export const TEMPLATE_SCHEMA_VERSION = 1;
+export const TEMPLATE_SCHEMA_VERSION = 2;
 
 /** d-tag namespace prefix for shared templates (mirrors SOUND_D_PREFIX). */
 export const TEMPLATE_D_PREFIX = 'com.bitos.bitz:template:';
@@ -48,6 +60,14 @@ export interface SharedTemplate {
 	label: string;
 	icon: string;
 	overlays: MemeTextOverlay[];
+	/** Timed extras (wire v2, all optional — absent on v1 layouts):
+	 *  sounds, zoom punches, frame-fx windows, speed ramps and sticker
+	 *  layers riding the template, mirroring the studio template shape. */
+	sfxCues?: MemeSfxCue[];
+	zoomWindows?: ZoomWindow[];
+	fxWindows?: FrameFxWindow[];
+	speedWindows?: SpeedWindow[];
+	imageLayers?: MemeImageOverlay[];
 	creatorPubkey: string;
 	createdAt: number;
 }
@@ -56,6 +76,31 @@ interface TemplateContent {
 	label: string;
 	icon: string;
 	overlays: unknown[];
+	sfxCues?: unknown[];
+	zoomWindows?: unknown[];
+	fxWindows?: unknown[];
+	speedWindows?: unknown[];
+	imageLayers?: unknown[];
+}
+
+/** Sanitize timed extras (v2 content). Every row re-validates — readers
+ *  never trust remote JSON — and each track clamps to its own cap. */
+function normalizeTimedExtras(content: TemplateContent) {
+	const sfxCues = normalizeSfxCues(content.sfxCues ?? []).slice(0, MAX_SFX_CUES);
+	const zoomWindows = normalizeZoomWindows(content.zoomWindows ?? []).slice(0, MAX_ZOOM_WINDOWS);
+	const fxWindows = normalizeFxWindows(content.fxWindows ?? []).slice(0, MAX_FX_WINDOWS);
+	const speedWindows = normalizeSpeedWindows(content.speedWindows ?? []).slice(0, MAX_FX_WINDOWS);
+	const imageLayers = (content.imageLayers ?? [])
+		.map((l) => normalizeImageOverlay(l as Record<string, unknown>))
+		.filter((l): l is MemeImageOverlay => l !== null)
+		.slice(0, MAX_IMAGE_OVERLAYS);
+	return {
+		...(sfxCues.length ? { sfxCues } : {}),
+		...(zoomWindows.length ? { zoomWindows } : {}),
+		...(fxWindows.length ? { fxWindows } : {}),
+		...(speedWindows.length ? { speedWindows } : {}),
+		...(imageLayers.length ? { imageLayers } : {})
+	};
 }
 
 /** Build the d-tag + content + tags for publishing a saved template. */
@@ -64,6 +109,11 @@ export function sharedTemplateEventParts(input: {
 	label: string;
 	icon: string;
 	overlays: MemeTextOverlay[];
+	sfxCues?: MemeSfxCue[];
+	zoomWindows?: ZoomWindow[];
+	fxWindows?: FrameFxWindow[];
+	speedWindows?: SpeedWindow[];
+	imageLayers?: MemeImageOverlay[];
 	clientTag: string[][];
 }): { d: string; content: string; tags: string[][] } {
 	const overlays = input.overlays
@@ -74,7 +124,12 @@ export function sharedTemplateEventParts(input: {
 	const content: TemplateContent = {
 		label: input.label.trim().slice(0, 40) || 'Shared template',
 		icon: isTemplateIcon(input.icon) ? input.icon : 'i-lucide-bookmark',
-		overlays
+		overlays,
+		...(input.sfxCues?.length ? { sfxCues: input.sfxCues } : {}),
+		...(input.zoomWindows?.length ? { zoomWindows: input.zoomWindows } : {}),
+		...(input.fxWindows?.length ? { fxWindows: input.fxWindows } : {}),
+		...(input.speedWindows?.length ? { speedWindows: input.speedWindows } : {}),
+		...(input.imageLayers?.length ? { imageLayers: input.imageLayers } : {})
 	};
 	const tags: string[][] = [
 		...input.clientTag,
@@ -128,6 +183,7 @@ export function parseSharedTemplate(event: {
 			(typeof content.label === 'string' && content.label.trim().slice(0, 40)) || 'Shared template',
 		icon: isTemplateIcon(content.icon) ? content.icon : 'i-lucide-bookmark',
 		overlays,
+		...normalizeTimedExtras(content),
 		creatorPubkey: event.pubkey,
 		createdAt: event.created_at
 	};

@@ -1,5 +1,6 @@
 import { analyzeClip, windowRms } from '$lib/ai/extract';
 import { suggestTimelines } from '$lib/ai/suggest';
+import { recommendSmartTemplates, type SmartResolution } from '$lib/ai/smart-templates';
 import { buildCueMixBuffer, type CueMixDeps } from '$lib/meme/cue-mix';
 import { cueTrackDurationSec } from '$lib/meme/cue-track';
 import { monoNormalize } from '$lib/meme/sfx';
@@ -29,6 +30,8 @@ export interface SuggestionAudio {
 	analysis: MemeClipAnalysis;
 	windows: Float32Array;
 	groups: ReturnType<typeof suggestTimelines>;
+	/** AI Smart Templates ranked by trigger support (Auto Meme cards). */
+	smart: SmartResolution[];
 }
 
 /** Decode the stage file's audio to normalized mono PCM (null = no audio). */
@@ -73,9 +76,13 @@ export async function buildSuggestionAudio(
 	sampleRate: number
 ): Promise<SuggestionAudio> {
 	const analysis = await analyzeClip(span, sampleRate);
+	// AI Smart Templates (tp-2 p.558): trigger rules resolved against the
+	// same anchors — ranked "94% match" style cards for Auto Meme.
+	const smart = recommendSmartTemplates(analysis);
 	return {
 		analysis,
 		windows: windowRms(span, sampleRate),
-		groups: suggestTimelines(analysis)
+		groups: suggestTimelines(analysis),
+		smart
 	};
 }

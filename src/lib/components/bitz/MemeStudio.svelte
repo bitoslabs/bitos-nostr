@@ -50,6 +50,7 @@
 		type MemeClipAnalysis
 	} from '$lib/meme/suggestion-audio';
 	import type { MemeSuggestion, ZoomWindow } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import {
 		createMemeDraftWriter,
 		draftDrawingGroups,
@@ -87,6 +88,7 @@
 		type MemeImageOverlay
 	} from '$lib/meme/image-overlay';
 	import { buddyFigure, isBuddySrc } from '$lib/meme/bitz-buddy';
+	import { layerMotionCss, layerMotionOf } from '$lib/meme/layer-motion';
 	import { canDecodeGif, decodeGif, paintGifFrameAt, type DecodedGif } from '$lib/meme/gif';
 	import { planGifExport } from '$lib/meme/gif-export';
 	import {
@@ -404,6 +406,9 @@
 	// --- AI-002 suggestion ladder (Mild/Funny/Chaos) -------------------------
 	let suggestBusy = $state(false);
 	let suggestionGroups = $state<MemeSuggestion[]>([]);
+	/** AI Smart Templates (tp-2 p.558): trigger-rule resolutions ranked by
+	 *  match — the “Production Bug 94%” cards of Auto Meme V2. */
+	let smartMatches = $state<SmartResolution[]>([]);
 	// ---- punchline zoom track (Auto Meme follow-through) ----------------------
 	/** Face-anchored zoom windows in media time — the runnable counterpart of
 	 *  the suggestion cards' "N zooms" line. Persisted + burned into exports
@@ -470,6 +475,7 @@
 			lastAnalysis = built.analysis;
 			analysisWindows = built.windows;
 			suggestionGroups = built.groups;
+			smartMatches = built.smart;
 			toasts.info('3 timelines ready — pick a vibe, everything stays editable', 4000);
 		} finally {
 			suggestBusy = false;
@@ -496,6 +502,48 @@
 			`“${group.intensity}” applied — ${group.overlays.length} captions · ${group.sfxCues.length} cues${
 				zoomWindows.length ? ` · ${zoomWindows.length} zooms` : ''
 			}`
+		);
+	}
+
+	/** Apply one AI Smart Template resolution: every timed track lands like
+	 *  a studio template (merged under caps), AI-provenance flips on. */
+	function applySmartMatch(match: SmartResolution) {
+		if (busy) return;
+		const total =
+			match.overlays.length +
+			match.sfxCues.length +
+			match.zoomWindows.length +
+			match.fxWindows.length +
+			match.speedWindows.length +
+			match.imageLayers.length;
+		if (!total) {
+			toasts.info('That template found no trigger support in this clip');
+			return;
+		}
+		if (match.overlays.length) overlays = [...overlays, ...match.overlays.map((o) => ({ ...o }))];
+		if (match.sfxCues.length) {
+			const room = Math.max(0, 16 - sfxCues.length);
+			const take = match.sfxCues.slice(0, room);
+			if (take.length) sfxCues = [...sfxCues, ...take];
+		}
+		if (match.zoomWindows.length)
+			zoomWindows = normalizeZoomWindows([...zoomWindows, ...match.zoomWindows]);
+		if (match.fxWindows.length) fxWindows = normalizeFxWindows([...fxWindows, ...match.fxWindows]);
+		if (match.speedWindows.length)
+			speedWindows = normalizeSpeedWindows([...speedWindows, ...match.speedWindows]);
+		if (match.imageLayers.length) {
+			const room = Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length);
+			const take = match.imageLayers.slice(0, room);
+			if (take.length) {
+				imageLayers = [...imageLayers, ...take];
+				for (const l of take) void cacheLayerBitmap(l.src);
+			}
+		}
+		selectedId = match.overlays[0]?.id ?? selectedId;
+		aiAssisted = true; // AI-004: applied a smart-template resolution
+		popovers.close();
+		toasts.success(
+			`Smart template applied — ${match.overlays.length} captions · ${match.zoomWindows.length} zooms · ${match.imageLayers.length} stickers`
 		);
 	}
 	/** Timeline sound blocks: label + play length per cue (synth recipes have
@@ -1112,6 +1160,7 @@
 	 *  canvas painters (the GIF canvas stage runs the REAL painters in its
 	 *  paint loop, so that path is exact by construction). */
 	const previewFx = $derived(fxPreviewStyle(fxWindows, Math.round(stageSeconds * 1000)));
+
 	/** Combined media-box filter: look preset + any active frame fx. */
 	const previewMediaFilterCss = $derived(
 		[lookCss !== 'none' ? lookCss : '', previewFx.mediaFilter ?? ''].filter(Boolean).join(' ') ||
@@ -1712,6 +1761,37 @@
 	// bytes go to the media provider first, never into localStorage or the
 	// `meme` wire tag.
 	let imageLayers = $state<MemeImageOverlay[]>([]);
+
+	// Layer motion clock (layer-motion.ts): one rAF loop while ANY layer has
+	// a motion preset, feeding the live phase to the stage. Video bases use
+	// the media clock (stageSeconds) so preview matches export timing; static
+	// bases get a wall-clock loop so buddy stickers still bounce on image
+	// memes. No motions → no loop (zero idle cost).
+	let motionTickMs = $state(0);
+	$effect(() => {
+		if (!imageLayers.some((l) => layerMotionOf(l.motionId) !== 'none')) return;
+		if (timelineActive && mediaKind === 'video') {
+			// Derived from the media clock — same timeline the export paints.
+			const video = stageVideo;
+			let raf = 0;
+			const tick = () => {
+				motionTickMs = Math.round((video?.currentTime ?? 0) * 1000);
+				raf = requestAnimationFrame(tick);
+			};
+			raf = requestAnimationFrame(tick);
+			return () => cancelAnimationFrame(raf);
+		}
+		// Static/GIF base: wall-clock loop from mount — the export paints these
+		// with the same wall-clock convention (see render.ts image-meme path).
+		let raf = 0;
+		const t0 = performance.now();
+		const tick = () => {
+			motionTickMs = Math.round(performance.now() - t0);
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(raf);
+	});
 	let layerSeq = 0;
 	/** Every per-src layer resource — decoded bitmaps, render URLs, bytes,
 	 *  GIF decoders and export painters (stores/meme-layer-assets.svelte).
@@ -1746,7 +1826,7 @@
 	 *  the bytes (same-origin blob → export-safe); the media provider re-homes
 	 *  them best-effort so drafts and the wire keep plain https srcs. */
 	async function addImageLayer(
-		source: { url?: string; bytes?: Blob; name?: string },
+		source: { url?: string; bytes?: Blob; name?: string; motionId?: string },
 		aspectHint?: number,
 		opts: { atMs?: number } = {}
 	) {
@@ -1799,6 +1879,8 @@
 			toasts.error('Could not use that image URL');
 			return;
 		}
+		// Drop-in ambient motion (buddy picker feel; templates may set it too).
+		if (source.motionId) layer.motionId = layerMotionOf(source.motionId) || undefined;
 		// Timeline insert: window [playhead, playhead+2s] on timed sources;
 		// static memes have no clock, so the layer stays always-visible.
 		if (opts.atMs !== undefined && timelineActive) {
@@ -2658,12 +2740,33 @@
 		}
 	}
 
-	/** Re-apply a user-saved layout — fresh ids so each overlay is editable. */
+	/** Re-apply a user-saved layout — fresh ids so each overlay is editable.
+	 *  v2 rows also restore their timed tracks (cues/zoom/fx/speed/stickers).
+	 */
 	function applySavedTemplate(id: string) {
 		if (busy) return;
 		const saved = memeTemplates.list.find((t) => t.id === id);
 		if (!saved) return;
 		addTemplateOverlays(memeTemplates.apply(saved), `“${saved.label}”`);
+		const extras = memeTemplates.applyExtras(saved);
+		if (extras.sfxCues?.length) {
+			const room = 16 - sfxCues.length;
+			if (room > 0) sfxCues = [...sfxCues, ...extras.sfxCues.slice(0, room)];
+		}
+		if (extras.zoomWindows?.length)
+			zoomWindows = normalizeZoomWindows([...zoomWindows, ...extras.zoomWindows]);
+		if (extras.fxWindows?.length)
+			fxWindows = normalizeFxWindows([...fxWindows, ...extras.fxWindows]);
+		if (extras.speedWindows?.length)
+			speedWindows = normalizeSpeedWindows([...speedWindows, ...extras.speedWindows]);
+		if (extras.imageLayers?.length) {
+			const room = Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length);
+			const take = extras.imageLayers.slice(0, room);
+			if (take.length) {
+				imageLayers = [...imageLayers, ...take];
+				for (const l of take) void cacheLayerBitmap(l.src);
+			}
+		}
 	}
 
 	/** Snapshot the whole studio state into a named slot (media ≤ cap). */
@@ -2778,7 +2881,15 @@
 			return;
 		}
 		try {
-			const saved = memeTemplates.save(templateName, overlays);
+			// v2: capture the timed tracks with the layout — cues, zoom
+			// punches, frame-fx, speed ramps and sticker layers all ride.
+			const saved = memeTemplates.save(templateName, overlays, 'i-lucide-bookmark', {
+				sfxCues,
+				zoomWindows,
+				fxWindows,
+				speedWindows,
+				imageLayers
+			});
 			toasts.push(`Template “${saved.label}” saved`, 'success', 4000);
 			showTemplateSave = false;
 			templateName = '';
@@ -4276,10 +4387,16 @@
 														? 'ring-2 ring-warm-500/80'
 														: 'hover:ring-1 hover:ring-white/40'}"
 													style="left:{layer.x * 100}%; top:{layer.y * 100}%; height:{layer.size *
-														100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) rotate({layer.rotate ??
-														0}deg) scaleX({layer.flipH ? -1 : 1}) scaleY({layer.flipV
+														100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) {layerMotionCss(
+														layer.motionId ?? 'none',
+														timelineActive && mediaKind === 'video'
+															? Math.round(stageSeconds * 1000)
+															: motionTickMs,
+														layer.startMs
+													) ?? ''} rotate({layer.rotate ?? 0}deg) scaleX({layer.flipH
 														? -1
-														: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
+														: 1}) scaleY({layer.flipV ? -1 : 1}); opacity:{layer.opacity ??
+														1}; filter:{layerLookCss(layer)};"
 													aria-label={`Image layer ${li + 1}`}
 												>
 													{#if layerAssets.bitmaps.has(layer.src)}
@@ -5089,9 +5206,16 @@
 								{busy}
 								layerCount={imageLayers.length}
 								onAdd={(figure, _atMs) => {
-									void addImageLayer({ url: figure.src }, 1, {
-										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
-									});
+									// Buddy figures drop in with their feel-good default motion
+									// (breathe/pop/bounce…) — clearable in the inspector.
+									void addImageLayer(
+										{
+											url: figure.src,
+											motionId: figure.motion === 'none' ? undefined : figure.motion
+										},
+										1,
+										{ atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined }
+									);
 								}}
 							/>
 
@@ -5225,6 +5349,8 @@
 							bind:includeSourceAudio
 							analyzing={suggestBusy}
 							suggestions={suggestionGroups}
+							{smartMatches}
+							onApplySmartMatch={applySmartMatch}
 							onOpenSoundStudio={() => (soundDialogOpen = true)}
 							onPreviewSynth={previewSfx}
 							onAddSynth={addSfxCue}

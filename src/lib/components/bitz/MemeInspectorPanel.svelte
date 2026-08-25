@@ -11,6 +11,7 @@
 	import type { MemeTextOverlay } from '$lib/meme/schema';
 	import type { MemeSfxCue, MemeSfxId } from '$lib/meme/schema';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import type { PowProgress } from '$lib/nostr/feed.svelte';
 	import type { RemixLicense } from '$lib/meme/remix';
@@ -79,6 +80,8 @@
 		onSyncCaptions,
 		onBuildSuggestions,
 		onApplySuggestion,
+		smartMatches = [],
+		onApplySmartMatch,
 		onSeek,
 		onRemoveCue,
 		destinations = $bindable<MemeDestination[]>(['bitz']),
@@ -164,6 +167,8 @@
 		onSyncCaptions: () => void;
 		onBuildSuggestions: () => void;
 		onApplySuggestion: (suggestion: MemeSuggestion) => void;
+		smartMatches?: SmartResolution[];
+		onApplySmartMatch: (match: SmartResolution) => void;
 		onSeek: (seconds: number) => void;
 		onRemoveCue: (id: string) => void;
 		destinations: MemeDestination[];
@@ -302,6 +307,7 @@
 			bind:includeSourceAudio
 			{analyzing}
 			{suggestions}
+			{smartMatches}
 			onOpenStudio={onOpenSoundStudio}
 			{onPreviewSynth}
 			{onAddSynth}
@@ -311,6 +317,7 @@
 			{onSyncCaptions}
 			{onBuildSuggestions}
 			{onApplySuggestion}
+			{onApplySmartMatch}
 			{onSeek}
 			{onRemoveCue}
 		/>

@@ -10,6 +10,7 @@
  */
 import { overlayVisibleAt, type MemeFont, type MemeTextOverlay } from './schema';
 import { imageOverlayVisibleAt, type MemeImageOverlay } from './image-overlay';
+import { layerMotionTransform } from './layer-motion';
 import { memeLookCss } from './look';
 import { fxTransformAt } from './fx';
 import { paintFxFrame, type FrameFxWindow } from './fx-track';
@@ -295,13 +296,24 @@ export function paintImageOverlays(
 		const flipY = layer.flipV ? -1 : 1;
 		const alpha = layer.opacity ?? 1;
 		const look = layer.lookId && layer.lookId !== 'none' ? memeLookCss(layer.lookId) : '';
-		const transformed = rad !== 0 || flipX < 0 || flipY < 0;
+		// Ambient motion (layer-motion.ts): phase derives from media time so
+		// preview and export share ONE clock — WYSIWYG by construction.
+		const motion =
+			atMs !== undefined
+				? layerMotionTransform(layer.motionId ?? 'none', atMs, layer.startMs)
+				: null;
+		const transformed = rad !== 0 || flipX < 0 || flipY < 0 || motion !== null;
 		if (transformed || alpha < 1 || look) {
 			ctx.save();
 			if (alpha < 1) ctx.globalAlpha = alpha;
 			if (look) ctx.filter = look;
 			if (transformed) {
 				ctx.translate(x + w / 2, y + h / 2);
+				if (motion) {
+					ctx.translate(motion.dxNorm * w, motion.dyNorm * h);
+					ctx.rotate((motion.rotateDeg * Math.PI) / 180);
+					if (motion.scale !== 1) ctx.scale(motion.scale, motion.scale);
+				}
 				ctx.rotate(rad);
 				ctx.scale(flipX, flipY);
 				ctx.translate(-(x + w / 2), -(y + h / 2));

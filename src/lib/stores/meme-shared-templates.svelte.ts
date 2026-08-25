@@ -67,6 +67,11 @@ class SharedTemplatesStore {
 				label: saved.label,
 				icon: saved.icon,
 				overlays: saved.overlays,
+				sfxCues: saved.sfxCues,
+				zoomWindows: saved.zoomWindows,
+				fxWindows: saved.fxWindows,
+				speedWindows: saved.speedWindows,
+				imageLayers: saved.imageLayers,
 				clientTag: clientTag()
 			});
 			const event = await signMined({
@@ -94,7 +99,13 @@ class SharedTemplatesStore {
 		if (this.importingId) return null;
 		this.importingId = template.eventId;
 		try {
-			const saved = memeTemplates.save(template.label, template.overlays, template.icon);
+			const saved = memeTemplates.save(template.label, template.overlays, template.icon, {
+				sfxCues: template.sfxCues,
+				zoomWindows: template.zoomWindows,
+				fxWindows: template.fxWindows,
+				speedWindows: template.speedWindows,
+				imageLayers: template.imageLayers
+			});
 			toasts.success(`Saved “${template.label}” to your templates`);
 			return saved;
 		} catch (e) {

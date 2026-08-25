@@ -4,8 +4,8 @@
  *
  * Model rules (mirrors schema.ts conventions):
  *   • coordinates are normalized 0–1 so a draft restores onto any media
- *   • `src` is http(s), or a bundled same-origin buddy sticker path
- *     (`/bitz-buddy/*.svg` — the BitOS mascot pack, never uploaded, always
+ *   • `src` is http(s), or a bundled same-origin sticker path (`/bitz-buddy/*`
+ *     mascot pack + `/bitzverse/*` world props — never uploaded, always
  *     available offline) — base64 never rides the localStorage draft or
  *     the `meme` wire tag (size + relay caps); blobs are uploaded to the
  *     media provider first and the returned URL is what persists
@@ -15,6 +15,8 @@
  */
 
 import { isBuddySrc } from './bitz-buddy';
+import { isBitzverseSrc } from './bitzverse';
+import { layerMotionOf } from './layer-motion';
 import { memeLookOf } from './look';
 
 const SRC_RE = /^https:\/\/\S+$/i;
@@ -29,7 +31,7 @@ export const MAX_IMAGE_SIZE = 0.9;
 
 export interface MemeImageOverlay {
 	id: string;
-	/** Image src (https or bundled `/bitz-buddy/*` — never base64). */
+	/** Image src (https or bundled `/bitz-buddy|bitzverse/*` — never base64). */
 	src: string;
 	/** Natural aspect (w/h) captured at add time; reused for draft restore. */
 	aspect: number;
@@ -50,6 +52,8 @@ export interface MemeImageOverlay {
 	flipV?: boolean;
 	/** Per-layer color look (id from meme/look.ts). Missing/none = as-is. */
 	lookId?: string;
+	/** Ambient motion preset (layer-motion.ts). Missing/none = static. */
+	motionId?: string;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -69,9 +73,9 @@ export function isHttpUrl(raw: string): boolean {
 	return SRC_RE.test(raw.trim());
 }
 
-/** Layer-legal src: remote https URL or a bundled buddy sticker path. */
+/** Layer-legal src: remote https URL or a bundled sticker path. */
 export function layerSrcOk(raw: string): boolean {
-	return isHttpUrl(raw) || isBuddySrc(raw);
+	return isHttpUrl(raw) || isBuddySrc(raw) || isBitzverseSrc(raw);
 }
 
 /** Tolerant parser: coerces, clamps and drops unknown fields. */
@@ -82,6 +86,7 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	if (!layerSrcOk(src)) return null;
 	const aspect = clamp(num(o.aspect, 1), 0.05, 20);
 	const lookId = memeLookOf(o.lookId);
+	const motionId = layerMotionOf(o.motionId);
 	const overlay: MemeImageOverlay = {
 		id: typeof o.id === 'string' && o.id.trim() ? o.id.slice(0, 64) : newId(),
 		src: src.slice(0, 512),
@@ -98,7 +103,8 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 				: clamp(Math.round(Number(o.rotate)), -180, 180),
 		flipH: o.flipH === true ? true : undefined,
 		flipV: o.flipV === true ? true : undefined,
-		...(lookId !== 'none' ? { lookId } : {})
+		...(lookId !== 'none' ? { lookId } : {}),
+		...(motionId !== 'none' ? { motionId } : {})
 	};
 	if (
 		overlay.startMs !== undefined &&
@@ -158,6 +164,7 @@ export interface WireImageOverlay {
 	fh?: 1; // horizontal flip (only when true)
 	fv?: 1; // vertical flip (only when true)
 	k?: string; // per-layer look id (only when set)
+	m?: string; // ambient motion preset id (only when set)
 }
 
 export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay {
@@ -176,6 +183,7 @@ export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay 
 	if (overlay.flipH) w.fh = 1;
 	if (overlay.flipV) w.fv = 1;
 	if (overlay.lookId && overlay.lookId !== 'none') w.k = overlay.lookId;
+	if (overlay.motionId && overlay.motionId !== 'none') w.m = overlay.motionId;
 	return w;
 }
 
@@ -194,7 +202,8 @@ export function decodeImageOverlay(w: unknown): MemeImageOverlay | null {
 		rotate: raw.r,
 		flipH: raw.fh === 1,
 		flipV: raw.fv === 1,
-		lookId: raw.k
+		lookId: raw.k,
+		motionId: raw.m
 	});
 }
 

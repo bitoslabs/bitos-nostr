@@ -23,28 +23,32 @@ export interface BuddyFigure {
 	label: string;
 	/** Emoji hint shown in compact UIs beside the label. */
 	emoji: string;
+	/** Ambient motion the figure drops in with (layer-motion.ts id;
+	 *  creators can clear it in the inspector — this is just the feel). */
+	motion: string;
 }
 
-const FIGURE = (id: string, label: string, emoji: string): BuddyFigure => ({
+const FIGURE = (id: string, label: string, emoji: string, motion: string): BuddyFigure => ({
 	id,
 	src: `/bitz-buddy/${id}.svg`,
 	label,
-	emoji
+	emoji,
+	motion
 });
 
 /** The V1 pack — 10 figures: base + 9 expressions/poses (spec §8 lists 12
  *  emotions; sad/cry/proud/sleepy fold onto the closest shipped face). */
 export const BUDDY_FIGURES: readonly BuddyFigure[] = [
-	FIGURE('buddy', 'Buddy', '🙂'),
-	FIGURE('shock', 'Shock', '😱'),
-	FIGURE('laugh', 'Laugh', '😂'),
-	FIGURE('panic', 'Panic', '😰'),
-	FIGURE('angry', 'Angry', '😤'),
-	FIGURE('thinking', 'Thinking', '🤔'),
-	FIGURE('dead-inside', 'Dead inside', '💀'),
-	FIGURE('hodl-zen', 'HODL zen', '🧘'),
-	FIGURE('moon', 'To the moon', '🚀'),
-	FIGURE('facepalm', 'Facepalm', '🤦')
+	FIGURE('buddy', 'Buddy', '🙂', 'breathe'),
+	FIGURE('shock', 'Shock', '😱', 'pop'),
+	FIGURE('laugh', 'Laugh', '😂', 'bounce'),
+	FIGURE('panic', 'Panic', '😰', 'wiggle'),
+	FIGURE('angry', 'Angry', '😤', 'wiggle'),
+	FIGURE('thinking', 'Thinking', '🤔', 'breathe'),
+	FIGURE('dead-inside', 'Dead inside', '💀', 'none'),
+	FIGURE('hodl-zen', 'HODL zen', '🧘', 'breathe'),
+	FIGURE('moon', 'To the moon', '🚀', 'bounce'),
+	FIGURE('facepalm', 'Facepalm', '🤦', 'none')
 ];
 
 /** Lookup by figure id (templates reference buddies this way). */

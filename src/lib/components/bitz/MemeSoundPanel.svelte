@@ -4,6 +4,7 @@
 	import MemeSoundCueList from './MemeSoundCueList.svelte';
 	import MemeSoundSuggestions from './MemeSoundSuggestions.svelte';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { CUSTOM_SOUND_KEY, type MemeSfxCue, type MemeSfxId } from '$lib/meme/schema';
 	import { SFX_LABELS } from '$lib/meme/sound-catalog';
@@ -23,6 +24,8 @@
 		includeSourceAudio = $bindable(),
 		analyzing,
 		suggestions,
+		smartMatches = [],
+		onApplySmartMatch,
 		onOpenStudio,
 		onPreviewSynth,
 		onAddSynth,
@@ -46,6 +49,8 @@
 		includeSourceAudio: boolean;
 		analyzing: boolean;
 		suggestions: MemeSuggestion[];
+		smartMatches?: SmartResolution[];
+		onApplySmartMatch: (match: SmartResolution) => void;
 		onOpenStudio: () => void;
 		onPreviewSynth: (sfx: MemeSfxId) => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
@@ -156,8 +161,10 @@
 			{busy}
 			{analyzing}
 			groups={suggestions}
+			{smartMatches}
 			onBuild={onBuildSuggestions}
 			onApply={onApplySuggestion}
+			onApplySmart={onApplySmartMatch}
 		/>
 	</div>
 	<MemeSoundCueList
