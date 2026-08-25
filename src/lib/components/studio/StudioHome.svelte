@@ -335,4 +335,22 @@
 			</p>
 		</section>
 	{/if}
+
+	<!-- Mass-production tip: the batch queue is invisible until items are
+	     queued — surface the loop once so new creators discover it. -->
+	<section
+		class="mt-7 flex items-start gap-3 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/30 p-4"
+		aria-label="Batch tip"
+	>
+		<span class="grid size-9 shrink-0 place-items-center rounded-xl bg-warm-500/12 text-warm-500">
+			<Icon name="i-lucide-list-video" class="size-4.5" />
+		</span>
+		<div class="min-w-0">
+			<p class="text-[12.5px] font-bold">Make many at once</p>
+			<p class="mt-0.5 text-[11.5px] leading-relaxed text-[var(--ui-text-muted)]">
+				In the Meme Studio, pick <strong>several</strong> clips or GIFs at once (or multi-pick from the
+				GIF library). They line up in a batch queue — caption one, publish, and the next loads automatically.
+			</p>
+		</div>
+	</section>
 </div>

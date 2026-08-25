@@ -43,6 +43,8 @@ describe('sharedSoundEventParts', () => {
 			sha256: '',
 			license: 'CC-BY-4.0',
 			attribution: 'alice',
+			description: 'A friendly bonk for reaction memes.',
+			topics: ['Meme', 'reaction', 'reaction', 'bad topic!'],
 			clientTag: CLIENT()
 		});
 		expect(parts.d).toBe(`${SOUND_D_PREFIX}x1`);
@@ -51,12 +53,16 @@ describe('sharedSoundEventParts', () => {
 			version: 1,
 			label: 'Bonk',
 			durationSec: 1.234,
-			mime: 'audio/mpeg'
+			mime: 'audio/mpeg',
+			description: 'A friendly bonk for reaction memes.'
 		});
 		expect(parts.tags).toContainEqual(['d', `${SOUND_D_PREFIX}x1`]);
 		expect(parts.tags).toContainEqual(['url', 'https://cdn.example/b.mp3']);
 		expect(parts.tags).toContainEqual(['license', 'CC-BY-4.0']);
 		expect(parts.tags).toContainEqual(['attribution', 'alice']);
+		expect(parts.tags).toContainEqual(['t', 'meme']);
+		expect(parts.tags).toContainEqual(['t', 'reaction']);
+		expect(parts.tags.find((t) => t[1] === 'bad topic!')).toBeUndefined();
 		expect(parts.tags.find((t) => t[0] === 'x')).toBeUndefined(); // no hash, no x tag
 	});
 });

@@ -4,11 +4,13 @@ import { identity } from '$lib/nostr/identity.svelte';
 import { clientTag } from '$lib/nostr/client-tag';
 import { queryOnce, publish } from '$lib/nostr/pool';
 import { signMined } from '$lib/auth/signer';
+import { minePowAsync } from '$lib/nostr/pow';
 import {
 	parseSharedSound,
 	rankSharedSounds,
 	sharedSoundEventParts,
 	verifySharedSoundSha256,
+	type ShareableLicense,
 	type SharedSound
 } from '$lib/meme/shared-sounds';
 import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
@@ -56,17 +58,28 @@ class SharedSoundsStore {
 	}
 
 	/** Publish a library sound as a kind-30078 shared-sound event (§17.1). */
-	async share(soundId: string): Promise<void> {
+	async share(
+		soundId: string,
+		options: {
+			label?: string;
+			description?: string;
+			topics?: string[];
+			license?: ShareableLicense;
+			attribution?: string;
+			cover?: File;
+			pow?: number;
+		} = {}
+	): Promise<boolean> {
 		const me = identity.current;
 		if (!me) {
 			toasts.error('Sign in to share sounds');
-			return;
+			return false;
 		}
-		if (this.sharingId) return;
+		if (this.sharingId) return false;
 		const sound = this.lookup(soundId);
 		if (!sound) {
 			toasts.error('That sound is missing from this device');
-			return;
+			return false;
 		}
 		this.sharingId = sound.id;
 		try {
@@ -80,27 +93,40 @@ class SharedSoundsStore {
 				pubkey: me.pk,
 				purpose: 'note'
 			});
+			const cover = options.cover
+				? await media.upload(options.cover, undefined, { pubkey: me.pk, purpose: 'note' })
+				: null;
 			const sha = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
 			const parts = sharedSoundEventParts({
 				soundId: sound.id,
-				label: sound.label,
+				label: options.label ?? sound.label,
 				durationSec: sound.durationSec,
 				mime: blob.type || sound.mime,
 				url: uploaded.url,
 				sha256: sha,
-				license: 'CC0-1.0',
+				license: options.license ?? 'CC0-1.0',
+				description: options.description,
+				topics: options.topics,
+				attribution: options.attribution,
+				coverUrl: cover?.url,
 				clientTag: clientTag()
 			});
-			const event = await signMined({
+			const unsigned = {
+				pubkey: me.pk,
 				kind: 30078,
 				content: parts.content,
 				created_at: Math.floor(Date.now() / 1000),
 				tags: parts.tags
-			});
+			};
+			const event = await signMined(
+				options.pow ? await minePowAsync(unsigned, options.pow) : unsigned
+			);
 			await publish(event);
 			toasts.success(`Shared “${sound.label}” — other bitz creators can remix it`);
+			return true;
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : 'Could not share that sound');
+			return false;
 		} finally {
 			this.sharingId = '';
 		}

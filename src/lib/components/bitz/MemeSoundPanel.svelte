@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import MemeShareSoundWidget from './MemeShareSoundWidget.svelte';
 	import MemeSharedSoundsPicker from './MemeSharedSoundsPicker.svelte';
 	import MemeSoundCueList from './MemeSoundCueList.svelte';
 	import MemeSoundSuggestions from './MemeSoundSuggestions.svelte';
@@ -117,6 +118,15 @@
 			<Icon name="i-lucide-music-plus" class="size-3.5" />
 			Add sound
 		</button>
+		<MemeShareSoundWidget />
+		<MemeSharedSoundsPicker
+			sounds={sharedSoundsStore.list}
+			loading={sharedSoundsStore.loading}
+			importingId={sharedSoundsStore.importingId}
+			currentPubkey={identity.current?.pk}
+			onRefresh={() => void sharedSoundsStore.load()}
+			onImport={(sound) => void sharedSoundsStore.import(sound)}
+		/>
 		{#if mediaKind === 'video'}
 			<button
 				type="button"
@@ -137,14 +147,6 @@
 				Video audio {includeSourceAudio ? 'on' : 'off'}
 			</button>
 		{/if}
-		<MemeSharedSoundsPicker
-			sounds={sharedSoundsStore.list}
-			loading={sharedSoundsStore.loading}
-			importingId={sharedSoundsStore.importingId}
-			currentPubkey={identity.current?.pk}
-			onRefresh={() => void sharedSoundsStore.load()}
-			onImport={(sound) => void sharedSoundsStore.import(sound)}
-		/>
 		{#if cues.length && overlayCount}
 			<button
 				type="button"

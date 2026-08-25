@@ -28,7 +28,8 @@
 		onBlank,
 		onSubmitUrl,
 		onOpenSource,
-		onAddSourceLayer
+		onAddSourceLayer,
+		onOpenSoundStudio
 	}: {
 		remixLabel?: string;
 		remixing?: boolean;
@@ -49,6 +50,7 @@
 		onSubmitUrl: () => void | Promise<void>;
 		onOpenSource: (source: MediaSource) => void;
 		onAddSourceLayer: (source: MediaSource) => void;
+		onOpenSoundStudio: () => void;
 	} = $props();
 </script>
 
@@ -88,6 +90,7 @@
 				{#if staging}
 					<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
 				{/if}
+				<span class="rounded-full bg-warm-500/15 px-1.5 text-[9.5px]">pick up to 6</span>
 			{/snippet}
 			<GifPicker multiple max={6} onpick={onPickGif} onpickmany={onPickGifs} />
 		</Popover>
@@ -131,6 +134,15 @@
 			onOpenBase={onOpenSource}
 			onAddLayer={onAddSourceLayer}
 		/>
+		<button
+			type="button"
+			disabled={busy}
+			onclick={onOpenSoundStudio}
+			class="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10 disabled:opacity-40"
+		>
+			<Icon name="i-lucide-music" class="size-3.5" />
+			My sounds
+		</button>
 	</div>
 	{#if showUrl}
 		<form

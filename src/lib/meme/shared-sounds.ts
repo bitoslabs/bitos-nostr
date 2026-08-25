@@ -35,6 +35,11 @@ export interface SharedSound {
 	/** Library-facing stable id (the d-tag suffix). */
 	soundId: string;
 	label: string;
+	/** Optional public-post body supplied by the publisher. */
+	description: string;
+	/** Nostr `t` topics, normalized for discovery. */
+	topics: string[];
+	coverUrl: string;
 	durationSec: number;
 	mime: string;
 	url: string;
@@ -50,6 +55,7 @@ interface SoundContent {
 	label: string;
 	durationSec: number;
 	mime: string;
+	description?: string;
 }
 
 /** Build the d-tag + content + tags for publishing a library sound. */
@@ -62,6 +68,9 @@ export function sharedSoundEventParts(input: {
 	sha256: string;
 	license: ShareableLicense;
 	attribution?: string;
+	description?: string;
+	topics?: string[];
+	coverUrl?: string;
 	clientTag: string[][];
 }): { d: string; content: string; tags: string[][] } {
 	const tags: string[][] = [
@@ -72,11 +81,17 @@ export function sharedSoundEventParts(input: {
 	];
 	if (input.sha256) tags.push(['x', input.sha256]);
 	if (input.attribution?.trim()) tags.push(['attribution', input.attribution.trim().slice(0, 140)]);
+	const topics = [...new Set((input.topics ?? []).map((topic) => topic.trim().toLowerCase()))]
+		.filter((topic) => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(topic))
+		.slice(0, 10);
+	for (const topic of topics) tags.push(['t', topic]);
+	if (input.coverUrl?.trim()) tags.push(['image', input.coverUrl.trim().slice(0, 2048)]);
 	const content: SoundContent = {
 		label: input.label.trim().slice(0, 40) || 'Shared sound',
 		durationSec: Math.round(Math.min(input.durationSec, 15) * 1000) / 1000,
 		mime: input.mime.slice(0, 64) || 'audio/webm'
 	};
+	if (input.description?.trim()) content.description = input.description.trim().slice(0, 500);
 	return {
 		d: `${SOUND_D_PREFIX}${input.soundId}`,
 		content: JSON.stringify({ schema: SOUND_SCHEMA, version: SOUND_SCHEMA_VERSION, ...content }),
@@ -125,6 +140,17 @@ export function parseSharedSound(event: {
 			(typeof content.label === 'string' && content.label.trim().slice(0, 40)) || 'Shared sound',
 		durationSec: Math.round(duration * 1000) / 1000,
 		mime: (typeof content.mime === 'string' && content.mime.slice(0, 64)) || 'audio/webm',
+		description:
+			(typeof content.description === 'string' && content.description.trim().slice(0, 500)) || '',
+		topics: [
+			...new Set(
+				event.tags
+					.filter((tag) => tag[0] === 't' && /^[a-z0-9][a-z0-9_-]{0,39}$/i.test(tag[1] ?? ''))
+					.map((tag) => tag[1]!.toLowerCase())
+			)
+		].slice(0, 10),
+		coverUrl:
+			event.tags.find((tag) => tag[0] === 'image' && /^https?:\/\//i.test(tag[1] ?? ''))?.[1] ?? '',
 		url,
 		sha256: HEX64.test(sha) ? sha.toLowerCase() : '',
 		license,

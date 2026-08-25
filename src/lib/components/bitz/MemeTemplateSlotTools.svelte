@@ -7,6 +7,8 @@
 	import { memeTemplates } from '$lib/stores/meme-templates.svelte';
 	import { memeSlots } from '$lib/stores/meme-slots.svelte';
 	import { sharedTemplatesStore } from '$lib/stores/meme-shared-templates.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
 	import { templateMarketplace } from '$lib/stores/template-marketplace.svelte';
 	import MemeTemplateMarketplace from './MemeTemplateMarketplace.svelte';
 	import MemeTemplateDialog from './MemeTemplateDialog.svelte';
@@ -119,8 +121,12 @@
 	/** NIP-78 import: save the shared layout locally, then apply it onto the
 	 * stage through the same append-safe path as any saved template. */
 	async function importSharedTemplate(template: SharedTemplate) {
+		popovers.close();
 		const saved = await sharedTemplatesStore.import(template);
-		if (saved) applySavedTemplate(saved.id);
+		if (saved) {
+			applySavedTemplate(saved.id);
+			toasts.success(`Imported “${saved.label}” — applied to your meme`);
+		}
 	}
 
 	/** Slot panels are floated/ported to document.body. Native listeners stay
@@ -143,9 +149,6 @@
 <!-- Templates: the 48 builtins live in a categorized dialog (UX pass
      2026-08-25) — inline chips pushed the real tools below the fold. -->
 <div class="flex flex-wrap items-center gap-1.5">
-	<span class="text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase">
-		Template
-	</span>
 	<button
 		type="button"
 		onclick={() => (templatesOpen = true)}
@@ -374,7 +377,7 @@
 	>
 		{#snippet trigger()}
 			<Icon name="i-lucide-globe-2" class="size-3.5" />
-			Shared
+			Shared templates
 			{#if sharedTemplatesStore.list.length}
 				<span class="rounded-full bg-primary-500/15 px-1.5 font-mono text-[10px] text-primary-600">
 					{sharedTemplatesStore.list.length}
@@ -385,7 +388,7 @@
 			type="button"
 			class="flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
 			disabled={sharedTemplatesStore.loading}
-			onclick={() => sharedTemplatesStore.load()}
+			use:nativeClick={() => sharedTemplatesStore.load()}
 		>
 			<Icon
 				name="i-lucide-refresh-cw"
@@ -397,11 +400,10 @@
 			<MenuDivider />
 			<div class="max-h-64 overflow-y-auto p-1">
 				{#each sharedTemplatesStore.list as shared (shared.eventId)}
-					<MenuItem
-						onclick={() =>
-							sharedTemplatesStore
-								.import(shared)
-								.then((saved) => saved && applySavedTemplate(saved.id))}
+					<button
+						type="button"
+						use:nativeClick={() => void importSharedTemplate(shared)}
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
 					>
 						<span class="flex min-w-0 items-center gap-2">
 							<Icon name={shared.icon} class="size-3.5 shrink-0 text-primary-600" />
@@ -413,7 +415,7 @@
 								</span>
 							</span>
 						</span>
-						{#snippet trailing()}
+						<span class="ml-auto shrink-0">
 							{#if sharedTemplatesStore.importingId === shared.eventId}
 								<Icon
 									name="i-lucide-loader-circle"
@@ -426,13 +428,12 @@
 									+ add
 								</span>
 							{/if}
-						{/snippet}
-					</MenuItem>
+						</span>
+					</button>
 				{/each}
 			</div>
 		{/if}
 	</Popover>
-
 	<!-- Slots: named checkpoints inside the current work, like save points. -->
 	<Popover
 		id={slotsMenuId}

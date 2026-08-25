@@ -4252,7 +4252,6 @@
 				onSkip={() => void stageNextQueued()}
 				onClear={() => batch.clear()}
 			/>
-
 			<div class="flex min-h-0 flex-1 flex-col">
 				{#if !file}
 					<MemeStudioEmptyState
@@ -4278,6 +4277,7 @@
 							void addImageLayer({ url: source.url }, undefined, {
 								atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
 							})}
+						onOpenSoundStudio={() => (soundDialogOpen = true)}
 					/>
 				{:else}
 					<!-- Panes as snippets — one markup source, two layouts: the dialog grid
