@@ -3214,6 +3214,9 @@
 	 * attachment (imeta + url line) so every Nostr client renders it inline.
 	 */
 	async function publishNote(uploaded: UploadedMediaLike): Promise<string> {
+		// Public notes use the same NIP-92 `thumb` metadata as Bitz/Stories, so
+		// clients can show the creator-selected video poster before decoding it.
+		const thumb = await posterThumbUrl();
 		return feed.post(caption, {
 			sensitive,
 			attachments: [
@@ -3222,7 +3225,8 @@
 					kind: uploaded.kind as 'image' | 'video',
 					mimeType: uploaded.mimeType,
 					bytes: uploaded.bytes,
-					sha256: uploaded.sha256
+					sha256: uploaded.sha256,
+					thumb
 				}
 			],
 			pow: showPow ? pow : 0,

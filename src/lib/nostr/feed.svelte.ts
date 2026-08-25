@@ -58,7 +58,10 @@ const FEED_POST_KINDS = [
 ];
 const MAX_BUFFERED_REACTIONS = 2_000;
 
-type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes' | 'sha256'>;
+type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes' | 'sha256'> & {
+	/** Optional public poster/cover URL for video `imeta` metadata (NIP-92). */
+	thumb?: string;
+};
 
 type ReactionEvent = {
 	id: string;
@@ -783,6 +786,7 @@ class FeedStore {
 				const imeta = [`url ${attachment.url}`];
 				if (attachment.mimeType) imeta.push(`m ${attachment.mimeType}`);
 				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
+				if (attachment.thumb) imeta.push(`thumb ${attachment.thumb}`);
 				if (attachment.sha256) imeta.push(`x ${attachment.sha256}`);
 				tags.push(['imeta', ...imeta]);
 			}

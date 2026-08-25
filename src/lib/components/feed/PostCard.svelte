@@ -57,6 +57,7 @@
 		fallbacks?: string[];
 		embedUrl?: string;
 		provider?: string;
+		isGif?: boolean;
 	};
 
 	let {
@@ -505,6 +506,10 @@
 		return 'link';
 	}
 
+	function isGif(url: string) {
+		return /\.gif(?:[?#]|$)/i.test(url);
+	}
+
 	function markMediaFailed(url: string) {
 		failedMedia = { ...failedMedia, [url]: true };
 	}
@@ -523,7 +528,8 @@
 				type: item.kind === 'video' ? 'video' : 'image',
 				url: item.url,
 				host: hostFromUrl(item.url),
-				fallbacks: item.fallbacks
+				fallbacks: item.fallbacks,
+				isGif: item.kind === 'gif'
 			});
 		}
 
@@ -534,7 +540,7 @@
 			const type = mediaType(core);
 			const embed = type === 'embed' ? embedForUrl(core) : null;
 			if (type === 'link' && attachments.some((item) => item.type !== 'link')) continue;
-			attachments.push({ type, url: core, host: hostFromUrl(core), ...embed });
+			attachments.push({ type, url: core, host: hostFromUrl(core), isGif: isGif(core), ...embed });
 		}
 		return attachments.slice(0, 9);
 	}
@@ -1194,7 +1200,9 @@
 									loading="lazy"
 									referrerpolicy="no-referrer"
 									onerror={() => markMediaFailed(media.url)}
-									class="{contentClass} object-cover transition group-hover:scale-[1.02]"
+									class="{contentClass} {media.isGif
+										? 'object-contain'
+										: 'object-cover'} transition group-hover:scale-[1.02]"
 								/>
 								<span
 									class="absolute right-3 bottom-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white opacity-0 transition group-hover:opacity-100"
