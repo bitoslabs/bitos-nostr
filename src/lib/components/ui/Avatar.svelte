@@ -16,6 +16,11 @@
 	 * The verified (NIP-05) badge sits on an unclipped layer above everything
 	 * (`z-index: 2` + surface ring), matching the design's
 	 * `.hex-avatar.verified::after`.
+	 *
+	 * `orbit` recycles the boot splash's perimeter trace (`.bs-boot-orbit`)
+	 * as ambient motion: the border draws itself, holds, and discharges in a
+	 * slow loop. Use it sparingly — one orbiting avatar per surface reads as
+	 * a brand flourish; several read as noise.
 	 */
 	let {
 		pubkey,
@@ -24,7 +29,9 @@
 		size = 40,
 		shape = 'hex',
 		frame = false,
+		orbit = false,
 		verified = false,
+		lightning = false,
 		class: cls
 	}: {
 		pubkey: string;
@@ -33,7 +40,9 @@
 		size?: number;
 		shape?: 'hex' | 'squircle' | 'circle';
 		frame?: boolean;
+		orbit?: boolean;
 		verified?: boolean;
+		lightning?: boolean;
 		class?: string;
 	} = $props();
 
@@ -82,6 +91,37 @@
 		{/if}
 	</div>
 
+	{#if orbit}
+		<!-- Perimeter trace (splash-screen language). pathLength normalizes the
+		     dash math per shape; non-scaling-stroke keeps the line hairline-fine
+		     at any avatar size. -->
+		<svg class="avatar-orbit" viewBox="0 0 100 100" aria-hidden="true">
+			{#if shape === 'hex'}
+				<polygon points="25,6.7 75,6.7 100,50 75,93.3 25,93.3 0,50" pathLength="100" />
+			{:else if shape === 'circle'}
+				<circle cx="50" cy="50" r="47.5" pathLength="100" />
+			{:else}
+				<rect x="3" y="3" width="94" height="94" rx="26" pathLength="100" />
+			{/if}
+		</svg>
+	{/if}
+
+	{#if lightning}
+		<!-- Lightning badge — green chip with the zap bolt -->
+		<span
+			class="absolute -right-0.5 -bottom-0.5 z-[1] grid place-items-center rounded-full bg-green-500 text-[var(--ui-text-inverted)] ring-[1.5px] ring-[var(--surface-bg)] drop-shadow-[0_0_3px_rgba(34,197,94,0.55)]"
+			style="width:{badgeSize}px;height:{badgeSize}px;font-size:{Math.round(badgeSize * 0.5)}px"
+			aria-label="Lightning address"
+			title="Lightning address"
+		>
+			<svg viewBox="0 0 24 24" class="size-[62%]" fill="currentColor" aria-hidden="true">
+				<path
+					d="M13.26 1.8a.6.6 0 0 1 1.07.51L12.96 9h4.99c.5 0 .76.6.42.98l-8.63 9.72a.6.6 0 0 1-1.05-.45L9.2 13H4.44a.6.6 0 0 1-.44-1.01l9.26-10.2Z"
+				/>
+			</svg>
+		</span>
+	{/if}
+
 	{#if verified}
 		<!-- NIP-05 verified badge — unclipped, above the hexagon layers -->
 		<span
@@ -90,8 +130,8 @@
 			aria-label="Verified (NIP-05)"
 			title="Verified (NIP-05)"
 		>
-			<svg viewBox="0 0 24 24" class="size-[60%]" fill="currentColor" aria-hidden="true">
-				<path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z" />
+			<svg viewBox="0 0 24 24" class="size-[62%]" fill="currentColor" aria-hidden="true">
+				<path d="M9.6 16.6 5.4 12.4 4 13.8l5.6 5.6 10.4-10.4L18.6 7.6 9.6 16.6Z" />
 			</svg>
 		</span>
 	{/if}

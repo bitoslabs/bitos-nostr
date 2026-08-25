@@ -27,3 +27,6 @@ test-results
 client-tag-report.json
 users.txt
 scripts/run.txt
+
+docs/source
+docs/ui

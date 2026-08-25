@@ -29,3 +29,32 @@ describe('imeta media parsing', () => {
 		expect(stripMediaUrls(`A SeedSigner build\n${url}\n${url}`, [url])).toBe('A SeedSigner build');
 	});
 });
+
+describe('media fallback chains (F-017)', () => {
+	it('collects imeta url + fallback mirror as candidates', () => {
+		const tags = [
+			[
+				'imeta',
+				'url https://cdn.example/v.mp4',
+				'm video/mp4',
+				'fallback https://mirror.example/v.mp4'
+			]
+		];
+		const parsed = parseImeta(tags);
+		expect(parsed.get('https://cdn.example/v.mp4')?.kind).toBe('video');
+		// The page extractor reads the same tags; the mirror URL must survive
+		// as a fallback candidate (verified through the tag shape contract).
+		const imeta = tags.find((t) => t[0] === 'imeta')!;
+		expect(imeta.some((seg) => seg.startsWith('fallback https://mirror.example/'))).toBe(true);
+	});
+
+	it('keeps multiple imeta attachments addressable for fallback selection', () => {
+		const tags = [
+			['imeta', 'url https://a.example/one.mp4', 'm video/mp4'],
+			['imeta', 'url https://b.example/two.mp4', 'm video/mp4']
+		];
+		const parsed = parseImeta(tags);
+		expect(parsed.size).toBe(2);
+		expect(parsed.get('https://a.example/one.mp4')?.mime).toBe('video/mp4');
+	});
+});

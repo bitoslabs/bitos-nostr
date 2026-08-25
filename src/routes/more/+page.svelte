@@ -1,12 +1,14 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import AccountIdentityBadges from '$lib/components/ui/AccountIdentityBadges.svelte';
 	import HexIcon from '$lib/components/ui/HexIcon.svelte';
 	import PageHeader from '$lib/components/ui/PageHeader.svelte';
 	import StatTile from '$lib/components/ui/StatTile.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
+	import { accountSwitcher } from '$lib/stores/account-switch.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
@@ -44,7 +46,13 @@
 			icon: 'i-lucide-users-round',
 			requiresAuth: true
 		},
-		{ to: '/bitz', label: 'Bitz', caption: 'Short video reels', icon: 'i-lucide-circle-play' }
+		{ to: '/bitz', label: 'Bitz', caption: 'Short video reels', icon: 'i-lucide-circle-play' },
+		{
+			to: '/more/sounds',
+			label: 'Trending sounds',
+			caption: 'Most-used meme SFX',
+			icon: 'i-lucide-audio-lines'
+		}
 	];
 	const libraryTiles: Tile[] = [
 		{
@@ -118,12 +126,7 @@
 
 	function switchAccount(pubkey: string) {
 		if (identity.current?.pk === pubkey) return;
-		try {
-			identity.switchTo(pubkey);
-			toasts.info('Switched account');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
+		void accountSwitcher.switchTo(pubkey);
 	}
 
 	function signOut() {
@@ -173,7 +176,7 @@
 					pubkey={me.pk}
 					name={displayName}
 					picture={myProfile?.picture}
-					verified={hasNip05(myProfile)}
+					lightning={!!(myProfile?.lud16 || myProfile?.lud06)}
 					size={56}
 					frame
 				/>
@@ -376,27 +379,23 @@
 									pubkey={account.pk}
 									name={accountName(account)}
 									picture={accountPicture(account)}
-									verified={hasNip05(profiles.get(account.pk) ?? account.profile)}
+									lightning={!!(
+										(profiles.get(account.pk) ?? account.profile)?.lud16 ||
+										(profiles.get(account.pk) ?? account.profile)?.lud06
+									)}
 									size={34}
 									frame
 								/>
 								<span class="min-w-0 flex-1">
-									<span
-										class="flex items-center gap-1 text-[13px] font-bold text-[var(--ui-text)]"
-										title={hasNip05(profiles.get(account.pk) ?? account.profile)
-											? 'NIP-05 verified'
-											: undefined}
-									>
+									<span class="flex items-center gap-1 text-[13px] font-bold text-[var(--ui-text)]">
 										<span class="truncate">{accountName(account)}</span>
-										{#if hasNip05(profiles.get(account.pk) ?? account.profile)}
-											<Icon
-												name="i-lucide-badge-check"
-												class="size-3.5 shrink-0 text-[var(--tone-success-text)]"
-											/>
-										{/if}
+									<AccountIdentityBadges
+										profile={profiles.get(account.pk) ?? account.profile}
+										showLightning={false}
+									/>
 									</span>
 									<span class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]">
-										{shortKey(account.npub, 8, 5)}
+										{profiles.get(account.pk)?.nip05?.trim() || shortKey(account.npub, 8, 5)}
 									</span>
 								</span>
 								{#if account.active}

@@ -45,7 +45,17 @@
 
 	function hasPreviewImage(author: StoryAuthor) {
 		const slide = latestSlide(author);
-		return !!slide?.imageUrl && !failedPreviewIds.has(slide.id);
+		return !!(slide?.imageUrl || slide?.videoPoster) && !failedPreviewIds.has(slide.id);
+	}
+
+	function previewImage(author: StoryAuthor) {
+		const slide = latestSlide(author);
+		return slide?.videoPoster ?? slide?.imageUrl ?? '';
+	}
+
+	/** True when the newest slide is a video — the tile gets a play badge. */
+	function isVideoTile(author: StoryAuthor) {
+		return !!latestSlide(author)?.videoUrl;
 	}
 
 	function markPreviewImageFailed(author: StoryAuthor) {
@@ -87,7 +97,7 @@
 	>
 		{#if hasPreviewImage(author)}
 			<img
-				src={latestSlide(author)?.imageUrl}
+				src={previewImage(author)}
 				alt=""
 				onerror={() => markPreviewImageFailed(author)}
 				class="absolute inset-0 size-full object-cover object-center transition duration-300 group-hover:scale-105"
@@ -109,6 +119,15 @@
 		{/if}
 
 		<div class="absolute inset-0 bg-gradient-to-b from-black/5 via-transparent to-black/70"></div>
+
+		{#if isVideoTile(author)}
+			<span
+				class="absolute top-2.5 right-2.5 grid size-6 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm"
+				aria-label="Video story"
+			>
+				<Icon name="i-lucide-play" class="size-3.5 translate-x-px" />
+			</span>
+		{/if}
 
 		<div class="story-ring-frame hex-clip absolute top-3 left-3 p-[3px] {ringClass(author)}">
 			<div class="story-ring-inner hex-clip bg-[var(--ui-bg-elevated)] p-[2px] shadow-sm">

@@ -21,6 +21,10 @@
 	import { decode as decodeBech32 } from 'nostr-tools/nip19';
 	import { getPow } from 'nostr-tools/nip13';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
+	import { feed } from '$lib/nostr/feed.svelte';
+	import { BITZ_MEDIA_KINDS } from '$lib/nostr/bitz-codec';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
+	import { npubEncode } from 'nostr-tools/nip19';
 	import type { NotificationItem } from '$lib/nostr/types';
 
 	type Filter = 'all' | 'unread' | 'mention' | 'zap' | 'like' | 'repost' | 'follow' | 'comment';
@@ -258,8 +262,24 @@
 		return `/profile/${pubkey}`;
 	}
 
+	/** When the notification targets a bitz (NIP-68/71 media event) we already
+	 *  hold in the feed, link straight into the shared player — author mode
+	 *  fetches reliably from relays and the `#bitz=` deep link lands on the
+	 *  exact bitz. Unknown targets fall through to the note route, which
+	 *  redirects media events into the player after loading them. */
+	function bitzPlayerLink(item: NotificationItem): string | undefined {
+		const targetId = item.targetId ?? (item.type === 'mention' ? item.id : undefined);
+		if (!targetId) return undefined;
+		const target = feed.notes.find((note) => note.id === targetId);
+		const kind = target?.raw?.kind;
+		if (!target || kind === undefined || !BITZ_MEDIA_KINDS.includes(kind)) return undefined;
+		return `/bitz?author=${npubEncode(target.pubkey)}${bitzHashLink(targetId)}`;
+	}
+
 	/** Link the notification body to the note/event that caused it, when available. */
 	function sourceLink(item: NotificationItem) {
+		const player = bitzPlayerLink(item);
+		if (player) return player;
 		const sourceId = item.targetId ?? (item.type === 'mention' ? item.id : undefined);
 		return sourceId ? `/note/${sourceId}` : undefined;
 	}

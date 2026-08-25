@@ -9,9 +9,11 @@ import { browser } from '$app/environment';
 import { identity } from '$lib/nostr/identity.svelte';
 import { sanitizeMediaForUpload } from '$lib/media/privacy';
 import {
+	uploadBlob,
 	uploadViaServer,
 	uploadToBlossom,
 	uploadWithProvider,
+	uploadWithRetries,
 	type CloudinaryConfig,
 	type MediaProviderId,
 	type MediaSettings,
@@ -131,16 +133,40 @@ class MediaStore {
 	): Promise<UploadedMedia> => {
 		const sanitized = await sanitizeMediaForUpload(file);
 		const id = provider ?? this.state.defaultProvider;
-		if (id === 'none') {
-			return uploadViaServer(sanitized, options);
-		}
-		if (id === 'blossom') {
-			const account = identity.current;
-			if (!account) throw new Error('Sign in to Nostr before uploading to Blossom');
-			return uploadToBlossom(sanitized, account.sk, options.onProgress);
-		}
-		if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
-		return uploadWithProvider(sanitized, id, this.state, options.onProgress);
+		// Retryable providers only: the server route is our own infra and its
+		// failures are visible there, so keep it as a single attempt (plan §11.3).
+		const perform = async (candidate: File): Promise<UploadedMedia> => {
+			if (id === 'none') {
+				return uploadViaServer(candidate, options);
+			}
+			if (id === 'blossom') {
+				const account = identity.current;
+				if (!account) throw new Error('Sign in to Nostr before uploading to Blossom');
+				return uploadToBlossom(candidate, account.sk, options.onProgress);
+			}
+			if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
+			// Same bytes + purpose retry to the same S3 object key (idempotent).
+			return uploadWithProvider(
+				candidate,
+				id,
+				{
+					...this.state,
+					s3: { ...this.state.s3, idempotencyKey: options.purpose ?? 'media' }
+				},
+				options.onProgress
+			);
+		};
+		// uploadBlob (PUB-005/006): every provider flows through the
+		// hash-normalizing wrapper so descriptors carry a verified `sha256`.
+		return uploadWithRetries(
+			() => uploadBlob({ ...options, file: sanitized, provider: id }, perform),
+			{
+				onProgress: options.onProgress,
+				onRetry: options.onRetry,
+				signal: options.signal,
+				attempts: id === 'none' ? 1 : 3
+			}
+		);
 	};
 }
 

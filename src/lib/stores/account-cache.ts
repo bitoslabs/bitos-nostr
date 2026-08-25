@@ -21,6 +21,7 @@ const EXACT_KEYS = [
 	'bitos:media-settings',
 	'bitos:blocked-pubkeys',
 	'bitos:relays',
+	'bitos:event-outbox',
 	'bitos:feed-preferences',
 	'bitos:call-settings',
 	'bitos:followed-hashtags'

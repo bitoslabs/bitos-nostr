@@ -25,6 +25,9 @@ export interface ImageMeta {
 	size?: number;
 	/** alt text (NIP-92 `alt`). */
 	alt?: string;
+	/** Ordered mirror URLs (NIP-92 `fallback` segments + extra same-kind
+	 *  content URLs) for the player's failure chain (F-017 / READ-003). */
+	fallbacks?: string[];
 	/** Per-attachment content warning metadata. */
 	contentWarning?: string;
 	sensitive?: string;
@@ -124,6 +127,14 @@ export function parseImeta(tags: string[][]): Map<string, ImageMeta> {
 				case 'sensitive':
 					meta.sensitive = value || 'true';
 					break;
+				case 'fallback': {
+					// NIP-92 mirrors: keep order, drop dupes + self-references
+					// (mirrors bitz-codec semantics for the reel pipeline).
+					if (value && value !== url && !meta.fallbacks?.includes(value)) {
+						(meta.fallbacks ??= []).push(value);
+					}
+					break;
+				}
 			}
 		}
 
@@ -148,6 +159,22 @@ export function extractNotificationMedia(ev: Pick<Event, 'content' | 'tags'>): I
 		if (!isMediaUrl(meta.url, meta)) continue;
 		seen.add(meta.url);
 		out.push(meta);
+	}
+
+	// F-017 / READ-003: extra same-kind content URLs (no imeta of their own)
+	// act as mirrors of the primary attachment — a dead CDN link then fails
+	// over inside the player instead of rendering a broken card.
+	const playerChained = out.filter(
+		(m) => (m.kind === 'video' || m.kind === 'gif') && !m.fallbacks?.length
+	);
+	for (const meta of playerChained) {
+		for (const match of ev.content.matchAll(URL_RE)) {
+			const core = splitTrailingPunctuation(match[0]);
+			if (seen.has(core) || imeta.has(core) || !isMediaUrl(core)) continue;
+			if (classify(core) !== meta.kind) continue;
+			seen.add(core);
+			(meta.fallbacks ??= []).push(core);
+		}
 	}
 
 	for (const match of ev.content.matchAll(URL_RE)) {

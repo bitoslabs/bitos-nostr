@@ -1,0 +1,217 @@
+{
+	"meta": {
+		"schemaVersion": 1,
+		"reviewedAt": "2026-08-22",
+		"provenance": "generated",
+		"anonymized": true,
+		"specRefs": [
+			"NIP-71 Short-form Video (draft) \u2014 kinds 21/22 and addressable 34235/34236",
+			"NIP-92 Media Attachments \u2014 imeta url/m/size/dim/thumb/fallback/x/duration",
+			"NIP-01 events \u2014 content/tags/kind semantics"
+		],
+		"reviewNotes": "Deterministic outputs of BitzEventCodec.buildKind22 with created_at pinned (2025-01-01T00:00:00Z). The goldenEncode entry must match buildKind22 byte-for-byte; codec drift fails the protocol-fixtures test and forces a review + regeneration. Ids/pubkeys are fixed placeholderhex, intentionally NOT content hashes, because the corpus is anonymized."
+	},
+	"fixtures": [
+		{
+			"id": "kind22-golden-roundtrip",
+			"note": "Plan \u00a76.2 golden kind-22 shape with every imeta segment present, built by buildKind22 (goldenEncode below).",
+			"event": {
+				"id": "ababababababababababababababababababababababababababababababababab",
+				"pubkey": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+				"kind": 22,
+				"content": "golden caption\n\nhttps://media.example/p.mp4",
+				"tags": [
+					[
+						"client",
+						"bitos/web"
+					],
+					[
+						"t",
+						"bitz"
+					],
+					[
+						"imeta",
+						"url https://media.example/p.mp4",
+						"m video/mp4",
+						"size 204800",
+						"dim 720x1280",
+						"thumb https://media.example/p.jpg",
+						"fallback https://mirror.example/p.mp4",
+						"x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+						"duration 12.500",
+						"bitrate 1200000"
+					]
+				],
+				"created_at": 1735689600
+			},
+			"expect": {
+				"media": {
+					"url": "https://media.example/p.mp4",
+					"type": "video",
+					"fallbacks": [
+						"https://mirror.example/p.mp4"
+					],
+					"address": "",
+					"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"dim": "720x1280",
+					"duration": 12.5
+				}
+			}
+		},
+		{
+			"id": "kind20-picture-multi-url",
+			"note": "Kind-20 picture with imeta primary plus a second content image URL that becomes the fallback chain.",
+			"event": {
+				"id": "0101010101010101010101010101010101010101010101010101010101010101",
+				"pubkey": "0202020202020202020202020202020202020202020202020202020202020202",
+				"kind": 20,
+				"content": "album drop https://cdn.example/a.jpg https://cdn.example/b.jpg",
+				"tags": [
+					[
+						"imeta",
+						"url https://cdn.example/a.jpg",
+						"m image/jpeg",
+						"dim 1080x1350"
+					],
+					[
+						"t",
+						"photo"
+					]
+				],
+				"created_at": 1735689600
+			},
+			"expect": {
+				"media": {
+					"url": "https://cdn.example/a.jpg",
+					"type": "image",
+					"fallbacks": [
+						"https://cdn.example/b.jpg"
+					],
+					"address": ""
+				}
+			}
+		},
+		{
+			"id": "kind22-content-url-only",
+			"note": "Legacy-shaped kind-22 without imeta: the content .mp4 URL must still resolve (ADR-002 content fallback).",
+			"event": {
+				"id": "0303030303030303030303030303030303030303030303030303030303030303",
+				"pubkey": "0404040404040404040404040404040404040404040404040404040404040404",
+				"kind": 22,
+				"content": "Check this out https://cdn.example/video.mp4",
+				"tags": [],
+				"created_at": 1735689600
+			},
+			"expect": {
+				"media": {
+					"url": "https://cdn.example/video.mp4",
+					"type": "video",
+					"fallbacks": [],
+					"address": ""
+				}
+			}
+		},
+		{
+			"id": "kind22-fallbackrendition-ladder",
+			"note": "READ-002/F-019 golden: imeta fallbackrendition variant: segments parse into an ordered rendition ladder; fallback mirrors stay a separate channel.",
+			"event": {
+				"id": "0505050505050505050505050505050505050505050505050505050505050505",
+				"pubkey": "0606060606060606060606060606060606060606060606060606060606060606",
+				"kind": 22,
+				"content": "render test https://cdn.example/1080.mp4",
+				"tags": [
+					[
+						"imeta",
+						"url https://cdn.example/1080.mp4",
+						"m video/mp4",
+						"dim 1080x1920",
+						"fallback https://mirror.example/1080.mp4",
+						"fallbackrendition variant:https://cdn.example/720.mp4 m video/mp4 dim 720x1280 bitrate 2500k",
+						"fallbackrendition variant:https://cdn.example/480.mp4 m video/mp4 dim 480x854 bitrate 1000k"
+					]
+				],
+				"created_at": 1735689600
+			},
+			"expect": {
+				"media": {
+					"url": "https://cdn.example/1080.mp4",
+					"type": "video",
+					"fallbacks": [
+						"https://mirror.example/1080.mp4"
+					],
+					"renditions": [
+						{
+							"url": "https://cdn.example/720.mp4",
+							"height": 1280,
+							"bitrate": 2500000
+						},
+						{
+							"url": "https://cdn.example/480.mp4",
+							"height": 854,
+							"bitrate": 1000000
+						}
+					],
+					"address": "",
+					"dim": "1080x1920"
+				}
+			}
+		}
+	],
+	"goldenEncode": {
+		"note": "buildKind22(params) must equal `expected` exactly. Regenerate only through a reviewed codec change.",
+		"params": {
+			"pubkey": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+			"caption": "golden caption",
+			"media": {
+				"url": "https://media.example/p.mp4",
+				"mimeType": "video/mp4",
+				"bytes": 204800,
+				"dim": "720x1280",
+				"thumb": "https://media.example/p.jpg",
+				"fallback": "https://mirror.example/p.mp4",
+				"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"duration": 12.5,
+				"bitrate": 1200000
+			},
+			"prefixTags": [
+				[
+					"client",
+					"bitos/web"
+				],
+				[
+					"t",
+					"bitz"
+				]
+			],
+			"created_at": 1735689600
+		},
+		"expected": {
+			"pubkey": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+			"kind": 22,
+			"content": "golden caption\n\nhttps://media.example/p.mp4",
+			"created_at": 1735689600,
+			"tags": [
+				[
+					"client",
+					"bitos/web"
+				],
+				[
+					"t",
+					"bitz"
+				],
+				[
+					"imeta",
+					"url https://media.example/p.mp4",
+					"m video/mp4",
+					"size 204800",
+					"dim 720x1280",
+					"thumb https://media.example/p.jpg",
+					"fallback https://mirror.example/p.mp4",
+					"x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					"duration 12.500",
+					"bitrate 1200000"
+				]
+			]
+		}
+	}
+}

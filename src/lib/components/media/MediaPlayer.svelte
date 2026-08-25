@@ -6,6 +6,10 @@
 
 	let {
 		src,
+		/** Ordered fallback URLs tried automatically when `src` fails to load
+		 * (dead CDN, mirrored media, …). Mirrors the NIP-92 idea that the same
+		 * bytes may live at several addresses. */
+		fallbackSrcs = [],
 		kind = 'video',
 		label = kind === 'video' ? 'Video player' : 'Audio player',
 		class: className = '',
@@ -27,6 +31,7 @@
 		onDoubleTap
 	}: {
 		src: string;
+		fallbackSrcs?: string[];
 		kind?: MediaKind;
 		label?: string;
 		class?: string;
@@ -74,6 +79,10 @@
 	let playbackRate = $state<number>(readStoredRate());
 	let isFullscreen = $state(false);
 	let hasError = $state(false);
+	/** Candidate URLs: primary first, then fallbacks. Index 0 = the given src. */
+	let srcIndex = $state(0);
+	const candidates = $derived([src, ...fallbackSrcs]);
+	const activeSrc = $derived(candidates[Math.min(srcIndex, candidates.length - 1)]);
 	let isBuffering = $state(false);
 	let bufferedPct = $state(0);
 	let controlsVisible = $state(true);
@@ -216,6 +225,9 @@
 
 	async function toggleFullscreen() {
 		if (!media || kind !== 'video') return;
+		const video = media as HTMLVideoElement & {
+			webkitEnterFullscreen?: () => void;
+		};
 		try {
 			if (document.fullscreenElement) {
 				await document.exitFullscreen();
@@ -224,7 +236,18 @@
 			// Reels retain their whole card. Elsewhere fullscreen the shared player
 			// shell, keeping our BitOS control overlay visible with the video.
 			const stage = media.closest('.reel-card') ?? player ?? media;
-			await stage.requestFullscreen();
+			if (typeof stage.requestFullscreen === 'function') {
+				await stage.requestFullscreen();
+				return;
+			}
+		} catch {
+			// Some WebKit builds expose the standard method but reject it for video.
+		}
+
+		// iOS Safari uses the video-specific WebKit fullscreen API instead of
+		// Element.requestFullscreen(). It must run directly from the button tap.
+		try {
+			video.webkitEnterFullscreen?.();
 		} catch {
 			// Fullscreen is optional and can be disabled by an embedded browser.
 		}
@@ -277,6 +300,17 @@
 		if (onDoubleTap) event.preventDefault();
 	}
 
+	/** Advance to the next candidate URL; called on load errors. Returns true
+	 * when a fallback was armed, false when the chain is exhausted (→ error UI). */
+	function tryNextCandidate() {
+		if (srcIndex < candidates.length - 1) {
+			srcIndex += 1;
+			isBuffering = true;
+			return true;
+		}
+		return false;
+	}
+
 	function retryLoad() {
 		hasError = false;
 		isBuffering = true;
@@ -316,7 +350,7 @@
 		<!-- svelte-ignore a11y_media_has_caption -->
 		<video
 			bind:this={media}
-			{src}
+			src={activeSrc}
 			class={mediaClass}
 			{loop}
 			{playsinline}
@@ -333,6 +367,7 @@
 			onplaying={() => (isBuffering = false)}
 			oncanplay={() => (isBuffering = false)}
 			onerror={() => {
+				if (tryNextCandidate()) return; // dead URL — quietly try the mirror
 				hasError = true;
 				isBuffering = false;
 			}}
@@ -348,7 +383,7 @@
 	{:else}
 		<audio
 			bind:this={media}
-			{src}
+			src={activeSrc}
 			{loop}
 			{preload}
 			onplay={() => (isPlaying = true)}
@@ -358,7 +393,10 @@
 			ontimeupdate={updateState}
 			onvolumechange={updateState}
 			onratechange={updateState}
-			onerror={() => (hasError = true)}
+			onerror={() => {
+				if (tryNextCandidate()) return;
+				hasError = true;
+			}}
 			aria-label={label}
 		></audio>
 	{/if}
@@ -381,7 +419,7 @@
 				<span class="min-w-0">Couldn't play this video.</span>
 				<div class="ml-auto flex shrink-0 items-center gap-1">
 					<button type="button" class="media-reel-error-action" onclick={retryLoad}> Retry </button>
-					<a href={src} target="_blank" rel="noreferrer" class="media-reel-error-action">
+					<a href={activeSrc} target="_blank" rel="noreferrer" class="media-reel-error-action">
 						Open ↗
 					</a>
 				</div>
@@ -611,7 +649,11 @@
 		background: #000;
 	}
 	.media-player:fullscreen video {
+		width: auto !important;
+		height: auto !important;
+		max-width: 100vw !important;
 		max-height: 100vh !important;
+		object-fit: contain !important;
 	}
 	.media-player audio {
 		display: block;

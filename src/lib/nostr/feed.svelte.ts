@@ -5,30 +5,39 @@
  * newest-first and capped to a sane window.
  */
 import { browser } from '$app/environment';
-import { finalizeEvent, getPublicKey } from 'nostr-tools/pure';
 import type { UnsignedEvent } from 'nostr-tools/pure';
+import { signMined } from '$lib/auth/signer';
 import { subscribe, publish, queryPrimaryFirst } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
 import { mutes } from '$lib/stores/mutes.svelte';
-import { hexToBytes } from './hex';
 import {
 	NOSTR_KINDS,
 	MAX_POLL_VOTERS,
 	repostTarget,
 	repostTags,
+	addressKey,
 	type FeedNote,
 	type PollVoter,
 	parsePoll,
 	pollClosedAt
 } from './types';
 import { toFeedNote } from './feed-note';
+import { buildKind22, validateBitzMedia } from './bitz-codec';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
+import { stageEvent, recordFailure as outboxFailure } from '$lib/stores/event-outbox';
+import {
+	bitzSession,
+	optimisticReelFromEvent,
+	reconcileOptimisticReel
+} from '$lib/stores/bitz-session.svelte';
+import { relays } from './relays.svelte';
 import { clientTag } from './client-tag';
 import { extractHashtagTags } from '$lib/utils/note-content';
+import { defaultBitzTags } from '$lib/utils/bitz-links';
 import { minePowAsync, eventPow, type PowProgress } from './pow';
 
 export type { PowProgress } from './pow';
@@ -49,7 +58,10 @@ const FEED_POST_KINDS = [
 ];
 const MAX_BUFFERED_REACTIONS = 2_000;
 
-type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes'>;
+type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes' | 'sha256'> & {
+	/** Optional public poster/cover URL for video `imeta` metadata (NIP-92). */
+	thumb?: string;
+};
 
 type ReactionEvent = {
 	id: string;
@@ -102,6 +114,10 @@ class FeedStore {
 	/** Map note.id → index for O(1) updates when reactions arrive. */
 	private byId = new Map<string, number>();
 	private pendingById = new Map<string, number>();
+	/** Addressable (34235/34236) `kind:pubkey:d` → visible-note index, so a
+	 * metadata/URL update event REPLACES its older version in place instead of
+	 * appearing as a duplicate reel (ADR-002 addressable semantics). */
+	private byAddress = new Map<string, number>();
 	private seenZapIds = new Set<string>();
 	/** pollNoteId → (pubkey → latest vote) for one-vote-per-user aggregation. */
 	private pollVotes = new Map<
@@ -177,6 +193,7 @@ class FeedStore {
 		this.hasMore = true;
 		this.connected = false;
 		this.byId.clear();
+		this.byAddress.clear();
 		this.pendingById.clear();
 		this.seenZapIds.clear();
 		this.pollVotes.clear();
@@ -236,6 +253,35 @@ class FeedStore {
 		if (blocks.has(ev.pubkey) || mutes.has(ev.pubkey)) return;
 		if (isStoryReply(ev)) return;
 		if (this.byId.has(ev.id) || this.pendingById.has(ev.id)) return;
+		// Addressable (34235/34236) update semantics (ADR-002 / F-016): a newer
+		// event with the SAME `kind:pubkey:d` coordinate supersedes the stored
+		// version in place — same slot, fresh content/'raw'. Older or same-second
+		// updates are dropped (relays replay out of order).
+		const address =
+			'kind' in ev ? addressKey((ev as { kind: number }).kind, ev.pubkey, ev.tags) : '';
+		if (address) {
+			const existingIdx = this.byAddress.get(address);
+			if (existingIdx !== undefined) {
+				const current = this.notes[existingIdx];
+				const newer =
+					ev.created_at > current.createdAt ||
+					(ev.created_at === current.createdAt && ev.id !== current.id);
+				if (newer && !this.byId.has(ev.id)) {
+					const updated: FeedNote = {
+						...current,
+						id: ev.id,
+						content: ev.content,
+						createdAt: ev.created_at,
+						pow: eventPow(ev),
+						tags: ev.tags,
+						raw: 'sig' in ev ? (ev as FeedNote['raw']) : undefined
+					};
+					this.notes = this.notes.map((n, i) => (i === existingIdx ? updated : n));
+					this.rebuildIndex();
+				}
+				return;
+			}
+		}
 		const replyTag = ev.tags.find((t) => t[0] === 'e' && t[3] === 'reply');
 		const pollOptions = parsePoll(ev.tags);
 		const note: FeedNote = {
@@ -514,7 +560,12 @@ class FeedStore {
 
 	private rebuildIndex() {
 		this.byId.clear();
-		this.notes.forEach((n, i) => this.byId.set(n.id, i));
+		this.byAddress.clear();
+		this.notes.forEach((n, i) => {
+			this.byId.set(n.id, i);
+			const address = addressKey(n.raw?.kind ?? 0, n.pubkey, n.tags);
+			if (address) this.byAddress.set(address, i);
+		});
 	}
 
 	private rebuildPendingIndex() {
@@ -617,6 +668,21 @@ class FeedStore {
 			this.rebuildIndex();
 			return;
 		}
+		// Addressable update path (F-016): hydrating a newer 34235/34236 version
+		// (e.g. bitz page building reels from a fresh relay query) replaces the
+		// stored version in its slot; a same/stale version is ignored.
+		const address = addressKey(note.raw?.kind ?? 0, note.pubkey, note.tags);
+		if (address) {
+			const existingIdx = this.byAddress.get(address);
+			if (existingIdx !== undefined) {
+				const current = this.notes[existingIdx];
+				if (note.createdAt > current.createdAt) {
+					this.notes = this.notes.map((item, index) => (index === existingIdx ? note : item));
+					this.rebuildIndex();
+				}
+				return;
+			}
+		}
 		const pending = this.pendingById.get(note.id);
 		if (pending !== undefined) {
 			this.pendingNotes = this.pendingNotes.map((item, index) =>
@@ -658,15 +724,12 @@ class FeedStore {
 		const id = identity.current;
 		if (!id) throw new Error('No identity');
 		if (id.pk !== note.pubkey) throw new Error('You can only delete your own notes');
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.DELETE,
-				content: 'Deleted from BitOS',
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [['e', note.id]]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.DELETE,
+			content: 'Deleted from BitOS',
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [['e', note.id]]
+		});
 		await publish(event);
 		this.hideNote(note.id);
 	}
@@ -715,11 +778,16 @@ class FeedStore {
 		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
 		const tags: string[][] = [...clientTag(), ...extractHashtagTags(body)];
 		if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
+		// NIP-31 alt (screen readers read this instead of the picture/video).
+		const alt = text.trim().slice(0, 200);
+		if (alt) tags.push(['alt', alt]);
 		for (const attachment of attachments) {
 			if (attachment.kind === 'image' || attachment.kind === 'video') {
 				const imeta = [`url ${attachment.url}`];
 				if (attachment.mimeType) imeta.push(`m ${attachment.mimeType}`);
 				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
+				if (attachment.thumb) imeta.push(`thumb ${attachment.thumb}`);
+				if (attachment.sha256) imeta.push(`x ${attachment.sha256}`);
 				tags.push(['imeta', ...imeta]);
 			}
 		}
@@ -735,7 +803,7 @@ class FeedStore {
 			);
 		}
 		const unsigned = {
-			pubkey: getPublicKey(hexToBytes(id.sk)),
+			pubkey: id.pk,
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: body,
 			created_at: Math.floor(Date.now() / 1000),
@@ -750,7 +818,7 @@ class FeedStore {
 						signal: options.signal
 					})
 				: unsigned;
-		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		const event = await signMined(mined);
 		options.onPhase?.('publishing');
 		await publish(event);
 		// show immediately (the subscription will also re-deliver it, dedup by id)
@@ -777,6 +845,13 @@ class FeedStore {
 			dim?: string;
 			/** Optional poster/cover frame URL added to the imeta (`thumb`). */
 			thumb?: string;
+			/** Duration in seconds for the imeta `duration` segment (§6.4 checked). */
+			duration?: number;
+			/** Average bitrate in bits/second for the imeta `bitrate` segment. */
+			bitrate?: number;
+			/** Accessibility text (NIP-31) — defaults to the caption's first 200
+			 *  chars so screen readers and picky clients always find an alt. */
+			alt?: string;
 			pow?: number;
 			/** Live stats while the NIP-13 worker mines. */
 			onPowProgress?: (progress: PowProgress) => void;
@@ -784,6 +859,9 @@ class FeedStore {
 			onPhase?: (phase: 'mining' | 'publishing') => void;
 			/** Aborts mining (worker is terminated, nothing is published). */
 			signal?: AbortSignal;
+			/** Extra event tags appended after the defaults — e.g. remix lineage
+			 *  ("remix"/"meme" tags) so remixed memes credit the source event. */
+			extraTags?: string[][];
 		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
@@ -801,26 +879,87 @@ class FeedStore {
 				: options.portrait === false
 					? NOSTR_KINDS.VIDEO
 					: NOSTR_KINDS.SHORT_VIDEO;
-		const tags: string[][] = [...clientTag(), ...extractHashtagTags(caption)];
-		const imeta = [`url ${url}`];
-		if (media.mimeType) imeta.push(`m ${media.mimeType}`);
-		if (media.bytes > 0) imeta.push(`size ${media.bytes}`);
-		if (options.dim) imeta.push(`dim ${options.dim}`);
-		if (options.thumb) imeta.push(`thumb ${options.thumb}`);
-		tags.push(['imeta', ...imeta]);
-		if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
+		// NIP-71 encoding lives in BitzEventCodec (ADR-002: isolate the draft
+		// NIP). Images share the same imeta-first shape; video events embed the
+		// primary URL in content for legacy-client compatibility.
+		// #bitz community tag (PUB-014): user hashtags stay authoritative —
+		// defaultBitzTags only fills in `t bitz` when the caption tagged nothing.
+		const prefixTags: string[][] = [
+			...defaultBitzTags(extractHashtagTags(caption)),
+			...clientTag(),
+			...(options.extraTags ?? [])
+		];
+		// NIP-31 alt: screen readers and preview-deprived clients read this
+		// instead of the burned-in caption. Never empty when a caption exists.
+		const alt = (options.alt ?? caption).trim().slice(0, 200);
+		if (alt) prefixTags.push(['alt', alt]);
+		let unsignedBody: {
+			pubkey: string;
+			kind: number;
+			content: string;
+			created_at: number;
+			tags: string[][];
+		};
+		if (kind === NOSTR_KINDS.PICTURE) {
+			const imeta = [`url ${url}`];
+			if (media.mimeType) imeta.push(`m ${media.mimeType}`);
+			if (media.bytes > 0) imeta.push(`size ${media.bytes}`);
+			if (options.dim) imeta.push(`dim ${options.dim}`);
+			if (options.thumb) imeta.push(`thumb ${options.thumb}`);
+			const tags = [...prefixTags, ['imeta', ...imeta]];
+			if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
+			unsignedBody = {
+				pubkey: id.pk,
+				kind,
+				content: caption,
+				created_at: Math.floor(Date.now() / 1000),
+				tags
+			};
+		} else {
+			// Plan §6.4 "validation before signing": malformed optional metadata
+			// must never reach a signed kind 22. HTTPS is enforced only in
+			// production builds where media URLs come from configured CDNs.
+			const issues = validateBitzMedia(
+				{
+					url,
+					hash: media.sha256,
+					dim: options.dim,
+					duration: options.duration
+				},
+				{ httpsOnly: import.meta.env.PROD }
+			);
+			if (issues.length) {
+				throw new Error(
+					`Media failed validation: ${issues.map((i) => `${i.field}: ${i.reason}`).join('; ')}`
+				);
+			}
+			unsignedBody = buildKind22({
+				pubkey: id.pk,
+				caption,
+				media: {
+					url,
+					mimeType: media.mimeType,
+					bytes: media.bytes,
+					dim: options.dim,
+					thumb: options.thumb,
+					hash: media.sha256,
+					duration: options.duration,
+					bitrate: options.bitrate
+				},
+				sensitive: options.sensitive,
+				// Kinds 21/34235/34236 share the kind-22 event shape; only the
+				// kind number differs.
+				created_at: Math.floor(Date.now() / 1000)
+			});
+			unsignedBody.tags = [...prefixTags, ...unsignedBody.tags];
+			unsignedBody.kind = kind;
+		}
 		// NIP-27: back every inline `nostr:` mention with matching p / e tags so
 		// the referenced profiles / notes are notified.
 		const { pubkeys, noteIds } = extractMentionEntities(caption);
-		for (const pubkey of pubkeys) tags.push(['p', pubkey]);
-		for (const eventId of noteIds) tags.push(['e', eventId]);
-		const unsigned = {
-			pubkey: getPublicKey(hexToBytes(id.sk)),
-			kind,
-			content: caption,
-			created_at: Math.floor(Date.now() / 1000),
-			tags
-		};
+		for (const pubkey of pubkeys) unsignedBody.tags.push(['p', pubkey]);
+		for (const eventId of noteIds) unsignedBody.tags.push(['e', eventId]);
+		const unsigned = unsignedBody;
 		if (options.pow && options.pow > 0) options.onPhase?.('mining');
 		const mined =
 			options.pow && options.pow > 0
@@ -829,13 +968,37 @@ class FeedStore {
 						signal: options.signal
 					})
 				: unsigned;
-		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		const event = await signMined(mined);
 		options.onPhase?.('publishing');
-		await publish(event);
+		// PUB-012 §12.2: the signed event enters the local outbox before the
+		// first relay write, and stays until the durability threshold is met
+		// (ACKs are recorded by the pool observer wired in the layout). Retries
+		// resend this exact object — it is never rebuilt or re-signed.
+		stageEvent(event);
+		try {
+			await publish(event);
+		} catch (e) {
+			for (const url of relays.orderedWriteUrls) outboxFailure(event.id, url, (e as Error).message);
+			throw e;
+		}
 		// Media kinds are feed post kinds too, so the bitz shows immediately in
 		// the home timeline; the Bitz route picks it up from relays on next load.
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
+		// PUB-013: also stage the optimistic reel so the Bitz player (and the
+		// #bitz=<id> deep link) renders instantly; the relay echo reconciles
+		// into the same id — idempotent by event id, never a duplicate.
+		this.stageOptimisticReel(event);
 		return event.id;
+	}
+
+	/** Place a just-published bitz event into the Bitz session optimistically
+	 *  (PUB-013 §21.4). Reconciliation with the relay echo happens where reels
+	 *  live: the route merges by event id / addressable coordinate. */
+	stageOptimisticReel(event: NonNullable<FeedNote['raw']>) {
+		const reel = optimisticReelFromEvent(event);
+		if (!reel) return;
+		const { reels } = reconcileOptimisticReel(bitzSession.reels, reel);
+		bitzSession.reels = reels;
 	}
 
 	/** Publish a NIP-18 repost (kind 6) of the original signed event. */
@@ -844,16 +1007,14 @@ class FeedStore {
 		const id = identity.current;
 		if (!id) throw new Error('No identity — create or import a key first');
 		if (!note.raw) throw new Error('This note cannot be reposted from the current view');
-		const repostKind = note.raw.kind === NOSTR_KINDS.TEXT_NOTE ? NOSTR_KINDS.REPOST : NOSTR_KINDS.GENERIC_REPOST;
-		const event = finalizeEvent(
-			{
-				kind: repostKind,
-				content: JSON.stringify(note.raw),
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ...repostTags(note.raw)]
-			},
-			hexToBytes(id.sk)
-		);
+		const repostKind =
+			note.raw.kind === NOSTR_KINDS.TEXT_NOTE ? NOSTR_KINDS.REPOST : NOSTR_KINDS.GENERIC_REPOST;
+		const event = await signMined({
+			kind: repostKind,
+			content: JSON.stringify(note.raw),
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [...clientTag(), ...repostTags(note.raw)]
+		});
 		await publish(event);
 		return event.id;
 	}
@@ -882,7 +1043,7 @@ class FeedStore {
 			);
 		}
 		const unsigned = {
-			pubkey: getPublicKey(hexToBytes(id.sk)),
+			pubkey: id.pk,
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: prompt,
 			created_at: Math.floor(Date.now() / 1000),
@@ -901,7 +1062,7 @@ class FeedStore {
 			publishOptions.pow && publishOptions.pow > 0
 				? await minePowAsync(unsigned, publishOptions.pow)
 				: unsigned;
-		const event = finalizeEvent(mined, hexToBytes(id.sk));
+		const event = await signMined(mined);
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return event.id;
@@ -918,15 +1079,12 @@ class FeedStore {
 		if (!id) throw new Error('No identity');
 		if (!note.poll?.options.some((o) => o.id === optionId)) throw new Error('Invalid option');
 		if (note.poll.myVote === optionId) return note; // already voted this option
-		const event = finalizeEvent(
-			{
-				kind: NOSTR_KINDS.POLL_RESPONSE,
-				content: '',
-				created_at: Math.floor(Date.now() / 1000),
-				tags: [...clientTag(), ['e', note.id], ['response', optionId]]
-			},
-			hexToBytes(id.sk)
-		);
+		const event = await signMined({
+			kind: NOSTR_KINDS.POLL_RESPONSE,
+			content: '',
+			created_at: Math.floor(Date.now() / 1000),
+			tags: [...clientTag(), ['e', note.id], ['response', optionId]]
+		});
 		await publish(event);
 		// Optimistic local application (subscription will also confirm, idempotent).
 		this.applyPollVote(note.id, {
@@ -1022,7 +1180,7 @@ class FeedStore {
 
 		// NIP-13 mining is opt-in; ordinary replies remain immediate.
 		let unsigned: UnsignedEvent = {
-			pubkey: getPublicKey(hexToBytes(id.sk)),
+			pubkey: id.pk,
 			kind: NOSTR_KINDS.TEXT_NOTE,
 			content: body,
 			created_at: Math.floor(Date.now() / 1000),
@@ -1036,7 +1194,96 @@ class FeedStore {
 			});
 		}
 		options.onPhase?.('publishing');
-		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
+		const event = await signMined(unsigned);
+		await publish(event);
+		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
+		return toFeedNote(event);
+	}
+
+	/**
+	 * Publish a NIP-22 comment (kind 1111) on a non-kind-1 event — the correct
+	 * reply form for bitz/videos (plan ADR-003). Root tags are uppercase
+	 * `E/K/P` pointing at the commented event; parent tags are lowercase
+	 * `e/k/p` pointing at the comment being replied to (the root itself for
+	 * top-level comments), so readers keep precise root/parent semantics.
+	 */
+	async comment(
+		target: { id: string; pubkey: string; kind: number },
+		content: string,
+		parent: { id: string; pubkey: string; kind?: number } | undefined,
+		options: {
+			/** Media attached to the comment (URLs folded into content + imeta). */
+			attachments?: PostMediaAttachment[];
+			/** NIP-13 difficulty to mine before publishing. */
+			pow?: number;
+			onPowProgress?: (progress: PowProgress) => void;
+			onPhase?: (phase: 'mining' | 'publishing') => void;
+			signal?: AbortSignal;
+		} = {}
+	): Promise<FeedNote> {
+		if (!browser) throw new Error('browser only');
+		const id = identity.current;
+		if (!id) throw new Error('No identity — create or import a key first');
+		const text = content.trim();
+		const attachments = (options.attachments ?? []).filter((attachment) => attachment?.url);
+		const attachmentLines = attachments.map((attachment) => attachment.url.trim()).filter(Boolean);
+		const body = [text, attachmentLines.join('\n')].filter(Boolean).join('\n\n').trim();
+		if (!body) throw new Error('Nothing to comment');
+		if (body.length > MAX_TEXT_NOTE_CHARS) {
+			throw new Error(`Comments are limited to ${MAX_TEXT_NOTE_CHARS.toLocaleString()} characters`);
+		}
+		if (target.kind === NOSTR_KINDS.TEXT_NOTE) {
+			throw new Error('Use reply() for kind-1 threads (NIP-10)');
+		}
+
+		const taggedPubkeys = [target.pubkey, ...(parent ? [parent.pubkey] : [])].filter(
+			(pubkey, index, all) => pubkey && all.indexOf(pubkey) === index
+		);
+		// Relay hints help readers find the referenced events (NIP-22 E tags).
+		// A single well-known read relay keeps tags small; empty is legal too.
+		const relayHint = 'wss://relay.damus.io';
+
+		const tags: string[][] = [
+			...clientTag(),
+			...extractHashtagTags(body),
+			// NIP-22 root: uppercase E/K/P anchored to the commented event.
+			['E', target.id, relayHint, target.pubkey],
+			['K', String(target.kind)],
+			['P', target.pubkey, relayHint],
+			// NIP-22 parent: lowercase e/k/p. Top-level → the target itself;
+			// nested → the comment being answered.
+			parent
+				? (['e', parent.id, relayHint, parent.pubkey] as string[])
+				: (['e', target.id, relayHint, target.pubkey] as string[]),
+			['k', String(parent?.kind ?? (parent ? NOSTR_KINDS.COMMENT : target.kind))],
+			...taggedPubkeys.map((pubkey) => ['p', pubkey, relayHint])
+		];
+
+		// NIP-27 inline `nostr:` mentions become extra p/e tags.
+		const { pubkeys, noteIds } = extractMentionEntities(text);
+		for (const pubkey of pubkeys) {
+			if (!taggedPubkeys.includes(pubkey)) tags.push(['p', pubkey]);
+		}
+		for (const eventId of noteIds) {
+			if (eventId !== target.id && eventId !== parent?.id) tags.push(['e', eventId]);
+		}
+
+		let unsigned: UnsignedEvent = {
+			pubkey: id.pk,
+			kind: NOSTR_KINDS.COMMENT,
+			content: body,
+			created_at: Math.floor(Date.now() / 1000),
+			tags
+		};
+		if (options.pow && options.pow > 0) {
+			options.onPhase?.('mining');
+			unsigned = await minePowAsync(unsigned, options.pow, {
+				onProgress: options.onPowProgress,
+				signal: options.signal
+			});
+		}
+		options.onPhase?.('publishing');
+		const event = await signMined(unsigned);
 		await publish(event);
 		this.ingestNote(event, { queueIfLive: false, preferNewestOnEqual: true });
 		return toFeedNote(event);
@@ -1062,19 +1309,16 @@ class FeedStore {
 		if (!id) throw new Error('No identity');
 		const existing = note.reactions.find((reaction) => reaction.emoji === emoji && reaction.byMe);
 		if (existing?.myEventId) {
-			const deleteEvent = finalizeEvent(
-				{
-					kind: NOSTR_KINDS.DELETE,
-					content: 'Deleted reaction from BitOS',
-					created_at: Math.floor(Date.now() / 1000),
-					tags: [
-						['e', existing.myEventId],
-						['e', note.id],
-						['p', note.pubkey]
-					]
-				},
-				hexToBytes(id.sk)
-			);
+			const deleteEvent = await signMined({
+				kind: NOSTR_KINDS.DELETE,
+				content: 'Deleted reaction from BitOS',
+				created_at: Math.floor(Date.now() / 1000),
+				tags: [
+					['e', existing.myEventId],
+					['e', note.id],
+					['p', note.pubkey]
+				]
+			});
 			await publish(deleteEvent);
 			this.removeMyReaction(note.id, emoji);
 			return;
@@ -1084,7 +1328,7 @@ class FeedStore {
 			return;
 		}
 		let unsigned: UnsignedEvent = {
-			pubkey: getPublicKey(hexToBytes(id.sk)),
+			pubkey: id.pk,
 			kind: NOSTR_KINDS.REACTION,
 			content: emoji,
 			created_at: Math.floor(Date.now() / 1000),
@@ -1096,7 +1340,7 @@ class FeedStore {
 				signal: options.signal
 			});
 		}
-		const event = finalizeEvent(unsigned, hexToBytes(id.sk));
+		const event = await signMined(unsigned);
 		await publish(event);
 		this.ingestReaction(event);
 	}

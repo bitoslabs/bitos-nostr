@@ -1,0 +1,229 @@
+{
+  "meta": {
+    "schemaVersion": 1,
+    "reviewedAt": "2026-08-22",
+    "provenance": "public-shaped",
+    "anonymized": true,
+    "specRefs": [
+      "NIP-92 Media Attachments (imeta) — malformed-value tolerance derived from the spec's key-value segment grammar",
+      "NIP-71 draft — kind 21/22 reel shapes observed in the wild",
+      "Plan §6.4 optional-metadata validation (x/dim/duration dropped, parse never fails)"
+    ],
+    "reviewNotes": "Hand-crafted to mirror real-world relay shapes: trailing punctuation on content URLs, multi-fallback imeta, garbage optional segments, mixed-kind feeds. Keys and hosts are anonymized placeholders on public shapes; no real event ids/signatures. 'expect.null' entries assert the parse contract for non-renderable media."
+  },
+  "fixtures": [
+    {
+      "id": "kind22-multi-fallback-ordered",
+      "note": "Public-shaped kind-22 whose imeta lists three fallback mirrors in order; duplicates and the primary are excluded from the chain.",
+      "event": {
+        "id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "pubkey": "1212121212121212121212121212121212121212121212121212121212121212",
+        "kind": 22,
+        "content": "stored in multiple places\n\nhttps://primary.example/v.mp4",
+        "tags": [
+          [
+            "imeta",
+            "url https://primary.example/v.mp4",
+            "m video/mp4",
+            "fallback https://primary.example/v.mp4",
+            "fallback https://f1.example/v.mp4",
+            "fallback https://f2.example/v.mp4",
+            "fallback https://f1.example/v.mp4"
+          ]
+        ],
+        "created_at": 1735689600
+      },
+      "expect": {
+        "media": {
+          "url": "https://primary.example/v.mp4",
+          "type": "video",
+          "fallbacks": [
+            "https://f1.example/v.mp4",
+            "https://f2.example/v.mp4"
+          ],
+          "address": ""
+        }
+      }
+    },
+    {
+      "id": "kind21-trailing-punctuation-content-url",
+      "note": "Kind-21 caption whose URL has a trailing ')' and '.' — the codec must strip them before use.",
+      "event": {
+        "id": "1313131313131313131313131313131313131313131313131313131313131313",
+        "pubkey": "1414141414141414141414141414141414141414141414141414141414141414",
+        "kind": 21,
+        "content": "wild clip (see https://cdn.example/w.mp4).",
+        "tags": [],
+        "created_at": 1735689600
+      },
+      "expect": {
+        "media": {
+          "url": "https://cdn.example/w.mp4",
+          "type": "video",
+          "fallbacks": [],
+          "address": ""
+        }
+      }
+    },
+    {
+      "id": "kind22-image-mime-imeta-is-not-video",
+      "note": "Video-kind event whose imeta declares an image MIME: imeta is authoritative, so this must NOT parse as a video reel (ADR-002).",
+      "event": {
+        "id": "1515151515151515151515151515151515151515151515151515151515151515",
+        "pubkey": "1616161616161616161616161616161616161616161616161616161616161616",
+        "kind": 22,
+        "content": "misconfigured https://cdn.example/x.mp4",
+        "tags": [
+          [
+            "imeta",
+            "url https://cdn.example/x.mp4",
+            "m image/jpeg"
+          ]
+        ],
+        "created_at": 1735689600
+      },
+      "expect": null
+    },
+    {
+      "id": "kind34236-addressable-d-tag",
+      "note": "Addressable short video with a d-tag; parse must surface the 34236:pubkey:d coordinate.",
+      "event": {
+        "id": "1717171717171717171717171717171717171717171717171717171717171717",
+        "pubkey": "1818181818181818181818181818181818181818181818181818181818181818",
+        "kind": 34236,
+        "content": "addressable reel https://v.example/r.mp4",
+        "tags": [
+          [
+            "d",
+            "profile-reel"
+          ],
+          [
+            "imeta",
+            "url https://v.example/r.mp4",
+            "m video/mp4"
+          ]
+        ],
+        "created_at": 1735689600
+      },
+      "expect": {
+        "media": {
+          "address": "34236:1818181818181818181818181818181818181818181818181818181818181818:profile-reel",
+          "fallbacks": [],
+          "type": "video",
+          "url": "https://v.example/r.mp4"
+        }
+      }
+    },
+    {
+      "id": "kind22-malformed-optional-metadata",
+      "note": "Garbage x/dim/duration segments must be dropped while the media still parses (§6.4 tolerance). Expected media carries NO hash/dim/duration keys.",
+      "event": {
+        "id": "1919191919191919191919191919191919191919191919191919191919191919",
+        "pubkey": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "kind": 22,
+        "tags": [
+          [
+            "imeta",
+            "url https://v.example/m.mp4",
+            "x not-a-hash",
+            "dim 0x0",
+            "duration -5"
+          ]
+        ],
+        "content": "https://v.example/m.mp4",
+        "created_at": 1735689600
+      },
+      "expect": {
+        "media": {
+          "url": "https://v.example/m.mp4",
+          "type": "video",
+          "fallbacks": [],
+          "address": ""
+        }
+      }
+    },
+    {
+      "id": "kind34236-replacement-pair-newest-wins",
+      "note": "Two versions of one (kind,pubkey,d) coordinate: READ-004 selection must keep only the newest created_at, and parseBitz must surface the newer URL.",
+      "events": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "pubkey": "1818181818181818181818181818181818181818181818181818181818181818",
+          "kind": 34236,
+          "content": "superseded reel https://v.example/old.mp4",
+          "tags": [
+            [
+              "d",
+              "profile-reel"
+            ],
+            [
+              "imeta",
+              "url https://v.example/old.mp4",
+              "m video/mp4"
+            ]
+          ],
+          "created_at": 1735689600
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "pubkey": "1818181818181818181818181818181818181818181818181818181818181818",
+          "kind": 34236,
+          "content": "replacement reel https://v.example/new.mp4",
+          "tags": [
+            [
+              "d",
+              "profile-reel"
+            ],
+            [
+              "imeta",
+              "url https://v.example/new.mp4",
+              "m video/mp4",
+              "dim 720x1280"
+            ]
+          ],
+          "created_at": 1735693200
+        }
+      ],
+      "expect": {
+        "media": {
+          "url": "https://v.example/new.mp4",
+          "type": "video",
+          "address": "34236:1818181818181818181818181818181818181818181818181818181818181818:profile-reel",
+          "fallbacks": [],
+          "dim": "720x1280"
+        }
+      },
+      "event": {
+        "id": "2222222222222222222222222222222222222222222222222222222222222222",
+        "pubkey": "1818181818181818181818181818181818181818181818181818181818181818",
+        "kind": 34236,
+        "content": "replacement reel https://v.example/new.mp4",
+        "tags": [
+          [
+            "d",
+            "profile-reel"
+          ],
+          [
+            "imeta",
+            "url https://v.example/new.mp4",
+            "m video/mp4",
+            "dim 720x1280"
+          ]
+        ],
+        "created_at": 1735693200
+      },
+      "expectSelection": {
+        "winnerIds": [
+          "2222222222222222222222222222222222222222222222222222222222222222"
+        ],
+        "winnerMedia": [
+          {
+            "id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "url": "https://v.example/new.mp4",
+            "address": "34236:1818181818181818181818181818181818181818181818181818181818181818:profile-reel"
+          }
+        ]
+      }
+    }
+  ]
+}

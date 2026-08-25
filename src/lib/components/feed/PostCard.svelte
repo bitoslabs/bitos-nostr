@@ -25,7 +25,7 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { shortKey, timeAgo, timeFull } from '$lib/utils/format';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasNip05, hasLightning } from '$lib/utils/verification';
 	import { makeParticles, type Particle } from '$lib/utils/burst';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
@@ -53,8 +53,11 @@
 		type: 'image' | 'video' | 'audio' | 'embed' | 'link';
 		url: string;
 		host: string;
+		/** Ordered mirror URLs — player failover chain (F-017 / READ-003). */
+		fallbacks?: string[];
 		embedUrl?: string;
 		provider?: string;
+		isGif?: boolean;
 	};
 
 	let {
@@ -291,6 +294,12 @@
 		return `--video-cover-opacity: ${opacity};`;
 	}
 
+	function singleVideoStyle() {
+		// Keep the post-player stage consistently sized; the contained video still
+		// preserves its source proportions within this 500px default surface.
+		return 'width: 100%; height: 500px;';
+	}
+
 	function compactSats(count: number) {
 		if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
 		if (count >= 1000) return `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}K`;
@@ -497,6 +506,10 @@
 		return 'link';
 	}
 
+	function isGif(url: string) {
+		return /\.gif(?:[?#]|$)/i.test(url);
+	}
+
 	function markMediaFailed(url: string) {
 		failedMedia = { ...failedMedia, [url]: true };
 	}
@@ -514,7 +527,9 @@
 			attachments.push({
 				type: item.kind === 'video' ? 'video' : 'image',
 				url: item.url,
-				host: hostFromUrl(item.url)
+				host: hostFromUrl(item.url),
+				fallbacks: item.fallbacks,
+				isGif: item.kind === 'gif'
 			});
 		}
 
@@ -525,7 +540,7 @@
 			const type = mediaType(core);
 			const embed = type === 'embed' ? embedForUrl(core) : null;
 			if (type === 'link' && attachments.some((item) => item.type !== 'link')) continue;
-			attachments.push({ type, url: core, host: hostFromUrl(core), ...embed });
+			attachments.push({ type, url: core, host: hostFromUrl(core), isGif: isGif(core), ...embed });
 		}
 		return attachments.slice(0, 9);
 	}
@@ -759,7 +774,7 @@
 				pubkey={comment.pubkey}
 				name={commentName}
 				picture={commentProfile?.picture}
-				verified={hasNip05(commentProfile)}
+				lightning={hasLightning(commentProfile)}
 				size={22}
 			/>
 		</a>
@@ -772,7 +787,11 @@
 					{commentName}
 				</a>
 				{#if hasNip05(commentProfile)}
-					<Icon name="i-lucide-badge-check" class="size-3 shrink-0 text-primary-500" />
+					<Icon
+						name="i-lucide-badge-check"
+						class="size-3 shrink-0 text-primary-500"
+						title="NIP-05 verified: {commentProfile?.nip05}"
+					/>
 				{/if}
 				{#if identity.current?.pk === comment.pubkey}
 					<span
@@ -875,7 +894,7 @@
 				pubkey={note.pubkey}
 				name={displayName}
 				picture={profile?.picture}
-				verified={hasNip05(profile)}
+				lightning={hasLightning(profile)}
 				size={44}
 			/>
 		</StoryRing>
@@ -890,6 +909,7 @@
 					{#if hasNip05(profile)}<Icon
 							name="i-lucide-badge-check"
 							class="size-4 shrink-0 text-primary-500"
+							title="NIP-05 verified: {profile?.nip05}"
 						/>{/if}
 					{#if isMe}
 						<span
@@ -913,8 +933,7 @@
 						<span>·</span>
 						<span
 							class="shrink-0 text-primary-500"
-							title="In your feed because you follow this hashtag"
-							>{followedTagLabel}</span
+							title="In your feed because you follow this hashtag">{followedTagLabel}</span
 						>
 					{/if}
 				</p>
@@ -1181,7 +1200,9 @@
 									loading="lazy"
 									referrerpolicy="no-referrer"
 									onerror={() => markMediaFailed(media.url)}
-									class="{contentClass} object-cover transition group-hover:scale-[1.02]"
+									class="{contentClass} {media.isGif
+										? 'object-contain'
+										: 'object-cover'} transition group-hover:scale-[1.02]"
 								/>
 								<span
 									class="absolute right-3 bottom-3 rounded-full bg-black/55 px-3 py-1 text-[11px] font-bold text-white opacity-0 transition group-hover:opacity-100"
@@ -1198,17 +1219,21 @@
 							</button>
 						{/if}
 					{:else if media.type === 'video'}
-						<div class="{tileClass} relative overflow-hidden bg-black">
+						<div
+							class="{tileClass} relative overflow-hidden bg-black"
+							style={singleVideoMedia ? singleVideoStyle() : undefined}
+						>
 							{#if singleVideoMedia && inlineVideoActive && !shouldHideVideo(media.url)}
 								<!-- Single-video note: the full player lives inline in the card
 									(X-style). Mounted on first tap so the feed stays light to scan. -->
 								<MediaPlayer
 									src={media.url}
 									label={`Video from ${media.host}`}
+									fallbackSrcs={media.fallbacks}
 									variant="reel"
 									autoplay
 									class="absolute inset-0"
-									mediaClass="size-full object-cover"
+									mediaClass="size-full object-contain"
 									onMediaElement={(node) => {
 										const registration = trackFeedVideo(node as HTMLVideoElement);
 										return () => registration.destroy();
@@ -1233,7 +1258,9 @@
 									muted
 									playsinline
 									preload="metadata"
-									class="size-full object-cover transition {!shouldHideVideo(media.url)
+									class="size-full {singleVideoMedia
+										? 'object-contain'
+										: 'object-cover'} transition {!shouldHideVideo(media.url)
 										? ''
 										: 'scale-105 blur-2xl saturate-50'}"
 								></video>
@@ -1471,7 +1498,7 @@
 								pubkey={reply.pubkey}
 								name={replyName}
 								picture={replyProfile?.picture}
-								verified={hasNip05(replyProfile)}
+								lightning={hasLightning(replyProfile)}
 								size={28}
 							/>
 						</a>
@@ -1484,7 +1511,11 @@
 									{replyName}
 								</a>
 								{#if hasNip05(replyProfile)}
-									<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-primary-500" />
+									<Icon
+										name="i-lucide-badge-check"
+										class="size-3.5 shrink-0 text-primary-500"
+										title="NIP-05 verified: {replyProfile?.nip05}"
+									/>
 								{/if}
 								{#if identity.current?.pk === reply.pubkey}
 									<span
@@ -1777,8 +1808,9 @@
 				<MediaPlayer
 					src={selectedViewerMedia.url}
 					label={`Video from ${selectedViewerMedia.host}`}
+					fallbackSrcs={selectedViewerMedia.fallbacks}
 					class="relative mx-auto w-full max-w-5xl"
-					mediaClass="mx-auto max-h-[76vh] w-full bg-black object-contain"
+					mediaClass="mx-auto max-h-[76vh] max-w-full bg-black object-contain"
 					overlayControls
 					onMediaElement={(node) => {
 						const registration = trackFeedVideo(node as HTMLVideoElement);

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { SvelteMap } from 'svelte/reactivity';
-	import { noteEncode, npubEncode } from 'nostr-tools/nip19';
+	import { npubEncode, decode as nip19Decode } from 'nostr-tools/nip19';
 	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
@@ -25,7 +27,9 @@
 	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
+	import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { latestAddressableEvents, selectRendition } from '$lib/nostr/bitz-codec';
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
@@ -33,21 +37,28 @@
 	import { interactionProfile, extractTags } from '$lib/algorithm';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import { shortKey, timeAgo, formatDuration } from '$lib/utils/format';
+	import { shortKey, timeAgo, formatDuration, formatCompact } from '$lib/utils/format';
 	import { lazyVideoMetadata } from '$lib/utils/media';
 	import { isEventReference, parseContent } from '$lib/utils/note-content';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasLightning } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { compactSats } from '$lib/utils/profile-stats';
+	import { shareEntity, sharePayload, shareWebLink } from '$lib/utils/bitz-links';
 	import { BitzSearchStore } from '$lib/stores/bitz-search.svelte';
 	import {
 		bitzSession,
 		BITZ_SESSION_REFRESH_MS,
+		reconcileOptimisticReel,
+		toReelNote,
 		type BitzMode,
 		type ReelNote
 	} from '$lib/stores/bitz-session.svelte';
-
+	import { pendingOutbox } from '$lib/stores/event-outbox';
+	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
+	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
+	import { remixLayoutOf, remixOf, rightsOf, canRemix } from '$lib/meme/remix';
+	import { splitsOf } from '$lib/meme/splits';
 	type Burst = {
 		id: number;
 		reelId: string;
@@ -124,20 +135,113 @@
 		{ key: 'foryou', label: 'For you' }
 	];
 
+	// --- Author mode (profile → Bitz tab → tile tap) -------------------------
+	// The shared reels player scoped to one author (`/bitz?author=<npub>`):
+	// same snap-scroll surface, same action rail — like/comments/zap/share/
+	// remix all work. The tab bar is replaced by a back-to-profile bar and the
+	// feed stays in loaded (chronological) order so the deep-linked tile lands
+	// exactly where the user tapped in the profile grid (TikTok/Instagram grid
+	// → player pattern: one player surface, context-aware data).
+	function resolveAuthorParam(value: string | null): string {
+		if (!value) return '';
+		if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
+		if (value.startsWith('npub1')) {
+			try {
+				const decoded = nip19Decode(value);
+				if (decoded.type === 'npub') return decoded.data as string;
+			} catch {
+				return '';
+			}
+		}
+		return '';
+	}
+
+	const authorPubkey = $derived(resolveAuthorParam(page.url.searchParams.get('author')));
+	const authorMode = $derived(!!authorPubkey);
+	const authorProfile = $derived(authorPubkey ? profiles.get(authorPubkey) : undefined);
+	const authorDisplayName = $derived(
+		authorProfile?.display_name ||
+			authorProfile?.name ||
+			(authorPubkey ? shortKey(authorPubkey) : '')
+	);
+
+	function exitAuthorMode() {
+		if (history.length > 1) history.back();
+		else if (authorPubkey) goto(`/profile/${npubEncode(authorPubkey)}`);
+	}
+
 	let loading = $state(true);
 	let loadingComments = $state(false);
 	let deletingCommentId = $state('');
 	let loadingMoreReels = $state(false);
 	let hasMoreReels = $state(true);
+	/** Long-edge render target for adaptive rendition picks (READ-002/F-019).
+	 * Reels render near full-viewport height; 25% selection headroom in
+	 * selectRendition absorbs DPR rounding, so screen CSS pixels suffice. */
+	const reelDisplayHeight = $derived.by(() => {
+		if (typeof window === 'undefined') return 1280;
+		return Math.max(window.screen?.height ?? window.innerHeight ?? 1280, 640);
+	});
+
+	/** Adaptive source for a reel: the rendition closest to the display
+	 * without grossly exceeding it; mirrors stay the failure chain. */
+	function reelSource(reel: ReelNote) {
+		const pick = selectRendition(
+			{ url: reel.mediaUrl, renditions: reel.mediaRenditions ?? [] },
+			reelDisplayHeight
+		);
+		return pick.url;
+	}
+
 	let reelScroller: HTMLDivElement | undefined = $state();
 	let reels = $state<ReelNote[]>([]);
 	let bitzMode = $state<BitzMode>('foryou');
 	let exploreScroller: HTMLDivElement | undefined = $state();
 	let exploreVisible = $state(EXPLORE_INITIAL_VISIBLE);
 	let gridVideoDurations = $state<Record<string, number>>({});
+	/** Reel view mode: 'fill' = crop-to-fill (default), 'full' = letterbox the
+	 * whole video. Global — one choice applies to every reel while swiping and
+	 * persists across sessions (same pattern as the playback-rate pref). */
+	const REEL_VIEW_MODE_KEY = 'bitos:reel-view-mode';
+	function loadReelViewMode(): 'fill' | 'full' {
+		try {
+			return localStorage.getItem(REEL_VIEW_MODE_KEY) === 'full' ? 'full' : 'fill';
+		} catch {
+			return 'full';
+		}
+	}
+	let reelViewMode = $state<'fill' | 'full'>(loadReelViewMode());
+	function toggleReelViewMode() {
+		reelViewMode = reelViewMode === 'full' ? 'fill' : 'full';
+		try {
+			localStorage.setItem(REEL_VIEW_MODE_KEY, reelViewMode);
+		} catch {
+			/* best-effort persistence */
+		}
+	}
+	/** Reel sound preference: once the user turns sound ON it stays on across
+	 *  reel swipes, tab switches and app restarts — nothing is more annoying
+	 *  than re-tapping the speaker on every page (TikTok/IG both remember it).
+	 *  Default remains muted — the polite default for public feeds. */
+	const REEL_MUTED_KEY = 'bitos:reel-muted';
+	function loadReelMuted(): boolean {
+		try {
+			return localStorage.getItem(REEL_MUTED_KEY) !== '0';
+		} catch {
+			return true;
+		}
+	}
+	function setReelMuted(next: boolean) {
+		activeReelMuted = next;
+		try {
+			localStorage.setItem(REEL_MUTED_KEY, next ? '1' : '0');
+		} catch {
+			/* best-effort persistence */
+		}
+	}
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let activeReelId = $state('');
-	let activeReelMuted = $state(true);
+	let activeReelMuted = $state(loadReelMuted());
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
@@ -147,8 +251,13 @@
 	 * chain NIP-10 tags to this comment so they land nested under it — exactly
 	 * how feed-card comment replies are saved. Null = replying to the reel. */
 	let commentReplyTarget = $state<FeedNote | null>(null);
+	// Element/observer registries are non-reactive by design (no re-render on
+	// media wiring) — plain Maps are intentional.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	let reelVideos = new Map<string, HTMLVideoElement>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	let reelCards = new Map<string, HTMLDivElement>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	let reelVisibility = new Map<string, number>();
 	let visibilityObserver: IntersectionObserver | null = null;
 	let oldestReelEventCreatedAt = $state(0);
@@ -164,12 +273,19 @@
 	let deleteReelOpen = $state(false);
 	let pendingDeleteReel = $state<ReelNote | null>(null);
 	let deletingReel = $state(false);
+	// --- Remix chain (plan §17 creator economy rec #1) ---
+	/** Which action rail is currently opening the studio (prevents double taps). */
+	let remixStartingId = $state('');
 	const rankedReels = $derived.by(() => {
 		if (!reels.length) return reels;
+		// Author mode keeps the loaded (chronological) order — the profile grid
+		// deep-links to an exact index, so re-ranking would land elsewhere.
+		if (authorMode) return reels;
 		if (!algorithmPreferences.isEnabled('reels')) return reels;
 		// Fold the current watch-time proxy into engagement. Snap a copy so dwell is a
 		// soft, best-effort input (re-ranking only fires when `reels`/config change,
 		// never on every visibility tick — that would jitter the scroll snap).
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const dwell = new Map<string, number>();
 		for (const [id, ratio] of reelVisibility) dwell.set(id, ratio);
 		const ctx = buildScoringContext('reels', reels, { dwell });
@@ -189,6 +305,9 @@
 		...rankedReels.filter((reel) => reel.mediaType === 'video'),
 		...rankedReels.filter((reel) => reel.mediaType !== 'video')
 	]);
+	// Explore is page chrome on the themed background (light/dark aware);
+	// the player tabs float over video and stay dark-media chrome.
+	const isExplore = $derived(bitzMode === 'explore');
 	const visibleExploreReels = $derived(exploreReels.slice(0, exploreVisible));
 
 	function bitzAuthorName(reel: ReelNote) {
@@ -203,7 +322,7 @@
 		relaySearch: (requests) =>
 			queryUrls(relays.orderedReadUrls, requests as Filter[], { maxWait: REELS_PAGE_MAX_WAIT_MS }),
 		eventsToReels: async (events) => {
-			const mediaEvents = events.filter((event) => !!extractReelMedia(event));
+			const mediaEvents = events.filter((event) => !!toReelNote(event));
 			return mediaEvents.length ? await buildReelsFromEvents(mediaEvents, new Set()) : [];
 		},
 		captionOf: captionFor,
@@ -262,49 +381,6 @@
 		}
 	}
 
-	function imetaValue(tag: string[], key: string) {
-		const line = tag.find((segment) => segment.startsWith(`${key} `));
-		return line?.slice(key.length + 1).trim();
-	}
-
-	function extractVideo(event: { content: string; tags: string[][] }) {
-		for (const tag of event.tags.filter((tag) => tag[0] === 'imeta')) {
-			const url = imetaValue(tag, 'url');
-			const mime = imetaValue(tag, 'm');
-			// NIP-92 metadata is authoritative when present. In particular, some
-			// image CDNs use /upload/ in their paths, which must not turn an image
-			// attachment into a reel just because its URL looks video-ish.
-			if (url && (mime ? mime.startsWith('video/') : looksLikeVideoUrl(url))) return url;
-		}
-		for (const match of event.content.matchAll(urlPattern)) {
-			const { core } = splitTrailingPunctuation(match[0]);
-			if (looksLikeVideoUrl(core)) return core;
-		}
-		return '';
-	}
-
-	function extractImage(event: { content: string; tags: string[][] }) {
-		for (const tag of event.tags.filter((tag) => tag[0] === 'imeta')) {
-			const url = imetaValue(tag, 'url');
-			const mime = imetaValue(tag, 'm');
-			if (url && (mime?.startsWith('image/') || imagePattern.test(url))) return url;
-		}
-		for (const match of event.content.matchAll(urlPattern)) {
-			const { core } = splitTrailingPunctuation(match[0]);
-			if (imagePattern.test(core)) return core;
-		}
-		return '';
-	}
-
-	function extractReelMedia(event: { kind: number; content: string; tags: string[][] }) {
-		if (event.kind === NOSTR_KINDS.PICTURE) {
-			const url = extractImage(event);
-			return url ? { url, type: 'image' as const } : null;
-		}
-		const url = extractVideo(event);
-		return url ? { url, type: 'video' as const } : null;
-	}
-
 	function captionFor(reel: ReelNote) {
 		// The reel itself is the media presentation. Do not repeat source URLs in
 		// the caption, including additional image/video URLs from multi-media notes.
@@ -325,6 +401,45 @@
 
 	function reelMenuId(reel: ReelNote) {
 		return `bitz-menu:${reel.id}`;
+	}
+
+	/** Open the Meme Studio with this reel's meme layout pre-applied — the
+	 *  remix chain (§17 creator economy). Non-meme bitz still work: the studio
+	 *  opens with the source media only and the creator adds their own spin. */
+	async function remixReel(reel: ReelNote) {
+		if (remixStartingId) return;
+		popovers.close();
+		const layout = remixLayoutOf(reel.tags);
+		const reelRights = rightsOf(reel.tags);
+		// S-013 advisory gate: restrictive licenses never hide the feature —
+		// the creator is asked first, then the studio opens as usual (§17.3:
+		// policy is advisory across the open network).
+		if (canRemix(reelRights).requiresAsk) {
+			const proceed = window.confirm(
+				`This creator marked this bitz “${reelRights.license}”.\n\nRemix anyway? (Credit is added automatically when you publish.)`
+			);
+			if (!proceed) return;
+		}
+		const remixHandoff: RemixHandoff = {
+			eventId: reel.id,
+			pubkey: reel.pubkey,
+			label: bitzAuthorName(reel) || captionFor(reel).slice(0, 40) || 'a bitz',
+			mediaUrl: reel.mediaUrl,
+			mediaType: reel.mediaType,
+			overlays: layout?.overlays ?? [],
+			sfxCues: layout?.sfxCues ?? [],
+			relays: [...new Set([...(remixOf(reel.tags)?.relays ?? []), ...relays.writeUrls])].slice(0, 3)
+		};
+		// /studio/create owns the lazy editor bundle. Keep the button visibly busy
+		// until SvelteKit confirms the route transition; previously its rejected
+		// navigation promise was discarded, which looked exactly like a dead tap.
+		remixStartingId = reel.id;
+		try {
+			await studioHandoff.openInStudio('meme', remixHandoff);
+		} catch {
+			toasts.error('Could not open Meme Studio. Please try Remix again.');
+			remixStartingId = '';
+		}
 	}
 
 	async function copyText(value: string, label: string) {
@@ -419,6 +534,8 @@
 	}
 
 	function mergeReelLists(existing: ReelNote[], incoming: ReelNote[]) {
+		// Transient merge index — discarded per call.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const merged = new Map<string, ReelNote>();
 		for (const reel of existing) merged.set(reel.id, reel);
 		for (const reel of incoming) merged.set(reel.id, reel);
@@ -434,14 +551,13 @@
 		configured: Awaited<ReturnType<typeof queryPrimaryFirst>>,
 		discovered: Awaited<ReturnType<typeof queryUrls>>
 	) {
+		// Transient dedupe index — discarded per call.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const newestByKey = new Map<string, (typeof configured)[number]>();
 		for (const event of [...configured, ...discovered]) {
-			const d = event.tags.find((tag) => tag[0] === 'd')?.[1];
-			const addressable =
-				(event.kind === NOSTR_KINDS.ADDRESSABLE_VIDEO ||
-					event.kind === NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO) &&
-				d;
-			const key = addressable ? `${event.kind}:${event.pubkey}:${d}` : event.id;
+			// Addressable reels (34235/34236) dedupe by their NostrEventRef key
+			// so only the newest version survives the merge (F-016).
+			const key = eventRefKey(eventRefFor(event)!);
 			const current = newestByKey.get(key);
 			if (
 				!current ||
@@ -465,7 +581,18 @@
 	}
 
 	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
-		reels = options.append ? mergeReelLists(reels, next) : next;
+		// PUB-013: a just-published bitz stages its optimistic reel immediately,
+		// but relay refreshes can lag behind it. Carry reels whose event is still
+		// pending in the PUB-012 outbox through a full refresh so the player never
+		// flashes the fresh bitz away; the relay echo carries the same event id
+		// and reconciles in place — never a duplicate entry.
+		const pendingIds = new Set(pendingOutbox().map((entry) => entry.event.id));
+		const carried = options.append
+			? []
+			: reels.filter(
+					(reel) => pendingIds.has(reel.id) && !next.some((incoming) => incoming.id === reel.id)
+				);
+		reels = options.append ? mergeReelLists(reels, next) : [...carried, ...next];
 		renderedReelCount = options.append
 			? Math.min(reels.length, Math.max(renderedReelCount, INITIAL_RENDERED_REELS))
 			: Math.min(INITIAL_RENDERED_REELS, reels.length);
@@ -474,6 +601,9 @@
 			reels.slice(0, Math.max(renderedReelCount, INITIAL_RENDERED_REELS)).map((reel) => reel.pubkey)
 		);
 		for (const reel of next) feed.upsertNote(reel);
+		// Author playback never overwrites the global Bitz session — returning
+		// to /bitz must restore the user's own feed, tabs and scroll position.
+		if (authorMode) return;
 		bitzSession.reels = reels;
 		bitzSession.renderedReelCount = renderedReelCount;
 	}
@@ -497,6 +627,7 @@
 	}
 
 	function saveReelsCache(next: ReelNote[]) {
+		if (authorMode) return; // never seed the global cache from author playback
 		try {
 			localStorage.setItem(
 				REELS_CACHE_KEY,
@@ -524,12 +655,14 @@
 		oldestReelEventCreatedAt = oldestReelEventCreatedAt
 			? Math.min(oldestReelEventCreatedAt, oldestSeen || oldestReelEventCreatedAt)
 			: oldestSeen;
-		bitzSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
-		bitzSession.hasMoreReels = hasMoreReels;
+		if (!authorMode) {
+			bitzSession.oldestReelEventCreatedAt = oldestReelEventCreatedAt;
+			bitzSession.hasMoreReels = hasMoreReels;
+		}
 		// Relays may return short pages even when older events remain. Keep the
 		// cursor alive until a subsequent all-relays request returns nothing.
 		hasMoreReels = !!oldestReelEventCreatedAt;
-		saveReelsCache(options.append ? reels : nextReels);
+		if (!authorMode) saveReelsCache(options.append ? reels : nextReels);
 	}
 
 	async function buildReelsFromEvents(
@@ -537,25 +670,19 @@
 		discoveryIds = new Set<string>()
 	) {
 		const seen: Record<string, true> = {};
-		const baseReels = events
+		const baseReels = latestAddressableEvents(events)
 			.sort((a, b) => b.created_at - a.created_at)
-			.map((event) => ({ event, media: extractReelMedia(event) }))
-			.filter(({ event, media }) => {
-				const d = event.tags.find((tag) => tag[0] === 'd')?.[1];
-				const key =
-					(event.kind === NOSTR_KINDS.ADDRESSABLE_VIDEO ||
-						event.kind === NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO) &&
-					d
-						? `${event.kind}:${event.pubkey}:${d}`
-						: event.id;
-				if (!media || seen[key]) return false;
+			// READ-001: parsing lives in the repository fn — the route consumes
+			// domain ReelNotes, never raw events (mirrors plan §6.2 BitzVideo).
+			.map((event) => ({ event, reel: toReelNote(event) }))
+			.filter(({ event, reel }) => {
+				const key = eventRefKey(eventRefFor(event)!);
+				if (!reel || seen[key]) return false;
 				seen[key] = true;
 				return true;
 			})
-			.map(({ event, media }) => ({
-				...toFeedNote(event),
-				mediaUrl: media!.url,
-				mediaType: media!.type,
+			.map(({ event, reel }) => ({
+				...reel!,
 				source: discoveryIds.has(event.id) ? ('discovery' as const) : ('configured' as const)
 			}));
 		const reelIds = baseReels.map((reel) => reel.id);
@@ -566,7 +693,9 @@
 							NOSTR_KINDS.REACTION,
 							NOSTR_KINDS.POLL_RESPONSE,
 							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.GENERIC_REPOST,
 							NOSTR_KINDS.ZAP,
+							NOSTR_KINDS.COMMENT,
 							NOSTR_KINDS.TEXT_NOTE
 						],
 						'#e': reelIds,
@@ -578,10 +707,13 @@
 			(note) => ({
 				...note,
 				mediaUrl: baseReels.find((reel) => reel.id === note.id)?.mediaUrl ?? '',
-				mediaType: baseReels.find((reel) => reel.id === note.id)?.mediaType ?? 'video'
+				mediaType: baseReels.find((reel) => reel.id === note.id)?.mediaType ?? 'video',
+				mediaFallbacks: baseReels.find((reel) => reel.id === note.id)?.mediaFallbacks ?? []
 			})
 		);
-		for (const event of activity.filter((event) => event.kind === NOSTR_KINDS.TEXT_NOTE)) {
+		for (const event of activity.filter(
+			(event) => event.kind === NOSTR_KINDS.TEXT_NOTE || event.kind === NOSTR_KINDS.COMMENT
+		)) {
 			const reply = toFeedNote(event);
 			if (reply.replyTo && reelIds.includes(reply.replyTo)) feed.upsertNote(reply);
 		}
@@ -591,11 +723,14 @@
 	async function loadReels(options: { background?: boolean } = {}) {
 		if (!options.background) loading = true;
 		try {
+			// Author mode: every filter is scoped to one author; discovery relays
+			// never contribute (the profile grid is configured-relay territory).
+			const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
 			const filters = [
-				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT }
+				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter },
+				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT, ...authorFilter }
 			];
-			const discoveryPromise = queryUrls(discoveryUrls(), filters);
+			const discoveryPromise = queryUrls(authorMode ? [] : discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
 					void discoveryPromise.then((discovered) =>
@@ -613,7 +748,9 @@
 			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
 			loading = false;
-			bitzSession.lastRefreshedAt = Date.now();
+			// Author playback must not mark the global session fresh — returning to
+			// /bitz should still get its own background refresh when stale.
+			if (!authorMode) bitzSession.lastRefreshedAt = Date.now();
 		}
 	}
 
@@ -630,16 +767,19 @@
 			) {
 				// Media kinds come back as ready-made bitz (no walking needed); the
 				// kind-1 window is what the cursor walks past. Same round trip.
+				const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
 				const filters = [
 					{
 						kinds: REEL_MEDIA_KINDS,
 						limit: REELS_MEDIA_PAGE_LIMIT,
-						until: oldestReelEventCreatedAt - 1
+						until: oldestReelEventCreatedAt - 1,
+						...authorFilter
 					},
 					{
 						kinds: [NOSTR_KINDS.TEXT_NOTE],
 						limit: REELS_QUERY_BATCH_LIMIT,
-						until: oldestReelEventCreatedAt - 1
+						until: oldestReelEventCreatedAt - 1,
+						...authorFilter
 					}
 				];
 				// Match Discover pagination: query every configured read relay together,
@@ -658,7 +798,7 @@
 				const known: Record<string, true> = {};
 				for (const reel of reels) known[reel.id] = true;
 				const fresh = events.filter((event) => !known[event.id]);
-				foundMedia += fresh.filter((event) => !!extractReelMedia(event)).length;
+				foundMedia += fresh.filter((event) => !!toReelNote(event)).length;
 				// Apply each batch as it lands so bitz stream in immediately instead
 				// of appearing only after the whole backwards walk finishes.
 				if (fresh.length) await updateReelWindow(mergeEvents(fresh, []), { append: true });
@@ -715,7 +855,8 @@
 
 	function handleReelScroll() {
 		if (!reelScroller) return;
-		bitzSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
+		if (!authorMode)
+			bitzSession.activeReelIndex = Math.round(reelScroller.scrollTop / reelScroller.clientHeight);
 		const remaining =
 			reelScroller.scrollHeight - reelScroller.scrollTop - reelScroller.clientHeight;
 		if (remaining < reelScroller.clientHeight * 2) renderMoreReels();
@@ -824,7 +965,17 @@
 			try {
 				await video.play();
 			} catch {
-				/* Autoplay can be blocked until the browser allows playback. */
+				// Autoplay WITH sound can be blocked before the first user gesture
+				// (fresh tab, strict browser). Fall back to muted playback instead of
+				// freezing the reel — the stored preference still applies next mount.
+				if (!video.muted) {
+					video.muted = true;
+					try {
+						await video.play();
+					} catch {
+						/* blocked entirely — the tap-to-play overlay stays usable */
+					}
+				}
 			}
 		}
 	}
@@ -918,7 +1069,7 @@
 				break;
 			case 'm':
 			case 'M':
-				activeReelMuted = !activeReelMuted;
+				setReelMuted(!activeReelMuted);
 				break;
 			case 'f':
 			case 'F':
@@ -944,12 +1095,15 @@
 	}
 
 	/** Every reply in the reel's thread: top-level comments carry the reel as
-	 * their reply tag, nested replies carry it as their NIP-10 root tag. Powers
+	 * their reply tag, nested replies carry it as their NIP-10 root tag. NIP-22
+	 * comments reference the reel via the uppercase E root tag instead. Powers
 	 * the comment counters. */
 	function commentsFor(reelId: string) {
 		return feed.notes
 			.filter(
-				(note) => note.id !== reelId && note.tags.some((tag) => tag[0] === 'e' && tag[1] === reelId)
+				(note) =>
+					note.id !== reelId &&
+					note.tags.some((tag) => (tag[0] === 'e' || tag[0] === 'E') && tag[1] === reelId)
 			)
 			.sort((a, b) => a.createdAt - b.createdAt);
 	}
@@ -1002,7 +1156,9 @@
 	}
 
 	/** Double-tap anywhere on the video: like (never unlike) + a burst of
-	 * hearts at the tap point — the reflex interaction every reels app needs. */
+	 * hearts at the tap point — the reflex interaction every reels app needs.
+	 * The video element always fills the card (letterboxed inside when in full
+	 * view), so video-relative coords are card-relative too. */
 	async function likeAtTap(reel: ReelNote, x: number, y: number) {
 		spawnBurst(reel.id, '❤️', `${x}px`, `${y}px`, 9);
 		if (reel.reactions.some((reaction) => reaction.byMe)) return;
@@ -1055,6 +1211,38 @@
 		toasts.success(isSaved ? 'Saved' : 'Removed from saved');
 	}
 
+	/** SOC-007/PUB-014: share a reel via Web Share (url + nostr entity text)
+	 * and publish a NIP-18 kind-16 generic repost (correct form for non-kind-1
+	 * events per S-002). Falls back to clipboard when the Share sheet is
+	 * unavailable (desktop browsers). */
+	async function shareReel(reel: ReelNote) {
+		const webUrl = shareWebLink({ eventId: reel.id }, location.origin);
+		if (navigator.share) {
+			try {
+				await navigator.share(sharePayload({ eventId: reel.id }, location.origin));
+				toasts.success('Shared');
+			} catch {
+				// user dismissed the sheet — still fire the repost? No: dismissal
+				// is not intent. Only abort quietly.
+			}
+			try {
+				await feed.repost(reel);
+			} catch {
+				// Repost is best-effort; sharing itself succeeded.
+			}
+			return;
+		}
+		navigator.clipboard.writeText(webUrl);
+		try {
+			await feed.repost(reel);
+			toasts.success('Reposted · Link copied');
+		} catch {
+			// The link is already useful on its own; a publish failure (e.g. no
+			// raw event in this view) must not break sharing.
+			toasts.success('Link copied');
+		}
+	}
+
 	async function openComments(reel: ReelNote) {
 		commentReel = reel;
 		commentReplyTarget = null;
@@ -1067,23 +1255,29 @@
 		if (options.more && (!page?.hasMore || !page.oldestCreatedAt)) return;
 		loadingComments = true;
 		try {
+			// ADR-003 migration window: read both NIP-22 comments (kind 1111,
+			// uppercase E root) and legacy kind-1 replies so old and new clients
+			// see one merged thread.
 			const filter: {
 				kinds: number[];
 				'#e': string[];
 				limit: number;
 				until?: number;
 			} = {
-				kinds: [NOSTR_KINDS.TEXT_NOTE],
+				kinds: [NOSTR_KINDS.COMMENT, NOSTR_KINDS.TEXT_NOTE],
 				'#e': [reel.id],
 				limit: COMMENTS_PAGE_SIZE
 			};
 			if (options.more) filter.until = page!.oldestCreatedAt - 1;
 			const replyEvents = await queryPrimaryFirst([filter]);
 			// Keep the whole thread, not just direct replies: nested replies-to-
-			// comments reference the reel through their NIP-10 root tag.
+			// comments reference the reel through their NIP-10 root tag (or the
+			// uppercase E tag on kind-1111 comments).
 			const replies = replyEvents
 				.map(toFeedNote)
-				.filter((note) => note.tags.some((tag) => tag[0] === 'e' && tag[1] === reel.id));
+				.filter((note) =>
+					note.tags.some((tag) => (tag[0] === 'e' || tag[0] === 'E') && tag[1] === reel.id)
+				);
 			const replyIds = replies.map((reply) => reply.id);
 			const reactions = replyIds.length
 				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
@@ -1264,7 +1458,7 @@
 		});
 	}
 
-	// --- Deep link: /bitz#reel=<event id> opens that bitz in the player -------
+	// --- Deep link: /bitz#bitz=<event id> opens that bitz in the player -------
 	// “View in Bitz” in the post-success toast lands here. The just-published
 	// event may take a moment to come back from the relays, so the pending id
 	// waits (bounded) for any reels refresh to deliver it.
@@ -1272,8 +1466,21 @@
 	let deepLinkTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	function deepLinkReelIdFromHash() {
-		const match = /^#reel=([0-9a-f]{64})$/i.exec(window.location.hash);
-		return match ? match[1].toLowerCase() : '';
+		const hash = window.location.hash;
+		// #bitz=<hex> is the canonical keyword (feature name); #reel=<hex> stays
+		// readable as a legacy alias for links shared before the rename.
+		const match = /^#(?:bitz|reel)=([0-9a-f]{64})$/i.exec(hash);
+		if (match) return match[1].toLowerCase();
+		const entity = /^#(?:bitz|reel)=(nevent1[02-9a-z]+)$/i.exec(hash);
+		if (entity) {
+			try {
+				const decoded = nip19Decode(entity[1].toLowerCase());
+				return decoded.type === 'nevent' ? decoded.data.id : '';
+			} catch {
+				return '';
+			}
+		}
+		return '';
 	}
 
 	function handleDeepLinkHash() {
@@ -1305,6 +1512,9 @@
 	// exactly this view. (reels/cursor mirror imperatively in applyReels —
 	// async relay loads can land after this component unmounts.)
 	$effect(() => {
+		// Author playback is a transient view — it must never leak its tab,
+		// reveal or render state into the global Bitz session.
+		if (authorMode) return;
 		bitzSession.bitzMode = bitzMode;
 		bitzSession.exploreVisible = exploreVisible;
 		bitzSession.revealedSensitiveReels = revealedSensitiveReels;
@@ -1322,6 +1532,7 @@
 
 	onMount(() => {
 		handleDeepLinkHash();
+		if (authorPubkey) void profiles.ensure([authorPubkey]);
 		visibilityObserver = createVisibilityObserver();
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
 		// The former cache could retain 120 items. Drop it once after moving to
@@ -1340,10 +1551,18 @@
 
 		// Returning from another page: hydrate the in-memory session for an
 		// instant paint with the previous tab, position, and cursor intact.
+		// Author mode starts from its own author-scoped fetch instead.
 		let hydrated = false;
-		if (bitzSession.reels.length) {
+		if (!authorMode && bitzSession.reels.length) {
 			loading = false;
-			reels = bitzSession.reels;
+			// PUB-013: an optimistic reel staged by a fresh publish (feed.postBitz
+			// → stageOptimisticReel) reconciles here — same-id entries are
+			// idempotent no-ops, so the optimistic copy and the relay echo never
+			// produce a duplicate player entry. Fold oldest→newest so the
+			// head-prepend reconciliation restores newest-first order.
+			reels = [...bitzSession.reels]
+				.reverse()
+				.reduce<ReelNote[]>((acc, reel) => reconcileOptimisticReel(acc, reel).reels, []);
 			renderedReelCount = Math.max(
 				INITIAL_RENDERED_REELS,
 				Math.min(bitzSession.renderedReelCount || INITIAL_RENDERED_REELS, reels.length)
@@ -1369,7 +1588,7 @@
 				void loadReels({ background: true });
 			}
 		}
-		const hasCache = hydrated ? false : loadCachedReels();
+		const hasCache = hydrated || authorMode ? false : loadCachedReels();
 		if (hasCache) {
 			loading = false;
 			void loadReels({ background: true });
@@ -1405,7 +1624,7 @@
 		<!-- Explore: video-first grid, TikTok-discover style -->
 		<div
 			bind:this={exploreScroller}
-			class="h-full [scrollbar-width:none] overflow-y-auto bg-black [&::-webkit-scrollbar]:hidden"
+			class="h-full [scrollbar-width:none] overflow-y-auto bg-[var(--ui-bg)] [&::-webkit-scrollbar]:hidden"
 			onscroll={handleExploreScroll}
 		>
 			{#if visibleExploreReels.length}
@@ -1421,7 +1640,7 @@
 						<button
 							type="button"
 							onclick={() => openFromExplore(reel)}
-							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-black text-left"
+							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-[var(--ui-bg-muted)] text-left"
 							aria-label="Open bitz by {name}"
 						>
 							{#if reel.mediaType === 'video'}
@@ -1433,6 +1652,7 @@
 										: ''}"
 									playsinline
 									preload="none"
+									muted
 									onmouseenter={(event) => {
 										if (reelCovered) return;
 										const video = event.currentTarget as HTMLVideoElement;
@@ -1506,15 +1726,19 @@
 											{captionFor(reel)}
 										</span>
 									{/if}
-									<span class="flex min-w-0 items-center gap-1">
+									<span class="flex min-w-0 items-center gap-1.5">
 										<Avatar
 											pubkey={reel.pubkey}
 											{name}
 											picture={profile?.picture}
-											size={16}
+											lightning={hasLightning(profile)}
+											size={20}
 											shape="hex"
 										/>
 										<span class="truncate text-[10px] font-bold">{name}</span>
+										{#if profile?.nip05}
+											<Icon name="i-lucide-badge-check" class="size-2.5 shrink-0 text-white/85" />
+										{/if}
 									</span>
 									<span class="flex items-center gap-2 text-[10px] font-bold">
 										<span class="inline-flex items-center gap-0.5">
@@ -1542,7 +1766,7 @@
 									exploreReels.length,
 									exploreVisible + EXPLORE_PAGE_SIZE
 								))}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 text-[13px] font-bold text-white transition hover:bg-white/20"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)]"
 						>
 							<Icon name="i-lucide-plus" class="size-4" />
 							Load more bitz
@@ -1552,7 +1776,7 @@
 							type="button"
 							onclick={() => void loadMoreExploreReels()}
 							disabled={loadingMoreReels}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 text-[13px] font-bold text-white transition hover:bg-white/20 disabled:cursor-default disabled:opacity-60"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60"
 						>
 							<Icon
 								name="i-lucide-loader-circle"
@@ -1561,26 +1785,30 @@
 							{loadingMoreReels ? 'Loading older bitz' : 'Load older bitz'}
 						</button>
 					{:else}
-						<p class="text-[11px] font-semibold text-white/50">That's all the bitz for now</p>
+						<p class="text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+							That's all the bitz for now
+						</p>
 					{/if}
 				</div>
 			{:else}
 				<div
-					class="flex h-full flex-col items-center justify-center gap-3 px-6 pb-16 text-center text-white"
+					class="flex h-full flex-col items-center justify-center gap-3 px-6 pb-16 text-center text-[var(--ui-text)]"
 				>
-					<div class="grid size-14 place-items-center rounded-2xl bg-white/10 text-white/70">
+					<div
+						class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)] ring-1 ring-[var(--ui-border-muted)]"
+					>
 						<Icon name="i-lucide-clapperboard" class="size-7" />
 					</div>
 					<div>
 						<p class="text-[15px] font-bold">No bitz to explore yet</p>
-						<p class="mt-1 text-[13px] text-white/60">
+						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
 							Short videos and pictures from your relays will appear here.
 						</p>
 					</div>
 					<button
 						type="button"
 						onclick={() => loadReels()}
-						class="mt-2 rounded-full bg-white px-5 py-2.5 text-[13px] font-bold text-black transition hover:opacity-90"
+						class="mt-2 rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-bold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
 					>
 						Refresh
 					</button>
@@ -1610,13 +1838,18 @@
 						class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
 					>
 						{#if reel.mediaType === 'video'}
+							{@const fullView = reelViewMode === 'full'}
 							<MediaPlayer
-								src={reel.mediaUrl}
+								src={reelSource(reel)}
+								fallbackSrcs={reel.mediaFallbacks}
 								label="Relay video note"
-								class="absolute inset-0"
-								mediaClass="absolute inset-0 size-full object-cover {reelCovered
-									? 'scale-105 blur-2xl saturate-50'
-									: ''}"
+								mediaClass={fullView
+									? `absolute inset-0 size-full object-contain ${
+											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+										}`
+									: `absolute inset-0 size-full object-cover ${
+											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+										}`}
 								variant="reel"
 								loop
 								muted={reel.id === activeReelId ? activeReelMuted : true}
@@ -1625,7 +1858,7 @@
 									return () => registerReelVideo(reel.id, null);
 								}}
 								onMutedChange={(nextMuted) => {
-									if (reel.id === activeReelId) activeReelMuted = nextMuted;
+									if (reel.id === activeReelId) setReelMuted(nextMuted);
 								}}
 								onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
 							/>
@@ -1639,7 +1872,7 @@
 							/>
 						{/if}
 						<div
-							class="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+							class="pointer-events-none absolute inset-0 z-40 overflow-hidden"
 							aria-hidden="true"
 						>
 							{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
@@ -1653,7 +1886,7 @@
 						{#if reelCovered}
 							<button
 								type="button"
-								class="absolute inset-0 z-20 grid place-items-center bg-black/20 p-4 text-center text-white"
+								class="absolute inset-0 z-30 grid place-items-center bg-black/20 p-4 text-center text-white"
 								onclick={() =>
 									(revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true })}
 								aria-label="Show sensitive reel"
@@ -1676,10 +1909,33 @@
 						></div>
 
 						<div
-							class="absolute right-4 bottom-24 z-10 flex flex-col gap-5 transition-[right] duration-200 {commentReel
+							class="pointer-events-auto absolute right-4 bottom-24 z-20 flex flex-col gap-5 transition-[right] duration-200 {commentReel
 								? 'lg:right-24'
 								: ''}"
 						>
+							<!-- Remix is a primary creation action, so keep it at the top of
+							     the rail. On short mobile screens the old bottom position could
+							     sit beneath caption/bottom-player chrome and feel untappable. -->
+							<button
+								type="button"
+								onclick={() => void remixReel(reel)}
+								class="reel-action"
+								disabled={!!remixStartingId}
+								aria-busy={remixStartingId === reel.id}
+								aria-label="Remix this bitz in the Meme Studio"
+							>
+								<span class="icon-circle is-remix">
+									<Icon
+										name={remixStartingId === reel.id
+											? 'i-lucide-loader-circle'
+											: 'i-lucide-wand-sparkles'}
+										class="size-5 {remixStartingId === reel.id ? 'animate-spin' : ''}"
+									/>
+								</span>
+								<span class="text-[11px] font-semibold">
+									{remixStartingId === reel.id ? 'Opening' : 'Remix'}
+								</span>
+							</button>
 							<button
 								type="button"
 								onclick={() => openZap(reel)}
@@ -1724,16 +1980,11 @@
 									{commentsFor(reel.id).length || 'Comment'}
 								</span>
 							</button>
-							<button
-								type="button"
-								onclick={() => {
-									navigator.clipboard.writeText(`nostr:${noteEncode(reel.id)}`);
-									toasts.success('Note ID copied');
-								}}
-								class="reel-action"
-							>
+							<button type="button" onclick={() => void shareReel(reel)} class="reel-action">
 								<span class="icon-circle"><Icon name="i-lucide-share" class="size-5" /></span>
-								<span class="text-[11px] font-semibold">Share</span>
+								<span class="text-[11px] font-semibold">
+									{reel.repostCount ? formatCompact(reel.repostCount) : 'Share'}
+								</span>
 							</button>
 							<button type="button" onclick={() => toggleSave(reel)} class="reel-action">
 								<span class="icon-circle">
@@ -1744,12 +1995,13 @@
 								</span>
 								<span class="text-[11px] font-semibold">Save</span>
 							</button>
-							<a href={`/profile/${reel.pubkey}`} class="spin-slow mt-2" aria-label="Open profile">
+							<a href={`/profile/${reel.pubkey}`} class="mt-2" aria-label="Open profile">
 								<Avatar
 									pubkey={reel.pubkey}
 									{name}
 									picture={profile?.picture}
-									verified={hasNip05(profile)}
+									lightning={hasLightning(profile)}
+									orbit
 									size={40}
 									frame
 								/>
@@ -1763,7 +2015,7 @@
 									pubkey={reel.pubkey}
 									{name}
 									picture={profile?.picture}
-									verified={hasNip05(profile)}
+									lightning={hasLightning(profile)}
 									size={40}
 									frame
 								/>
@@ -1813,11 +2065,35 @@
 											>
 												{bookmarks.has(reel.id) ? 'Unsave bitz' : 'Save bitz'}
 											</MenuItem>
+											<!-- Remix chain (§17): open the meme studio with this bitz's
+											     layout + media pre-loaded — one tap to riff on a meme. -->
+											{#if reel.mediaType === 'video'}
+												<!-- Whole-video view vs the default crop-to-fill. Global:
+												     applies to every reel while swiping, and persists. -->
+												<MenuItem
+													icon={reelViewMode === 'full' ? 'i-lucide-shrink' : 'i-lucide-expand'}
+													onclick={() => {
+														toggleReelViewMode();
+														popovers.close();
+													}}
+												>
+													{reelViewMode === 'full'
+														? 'Fill screen · all bitz'
+														: 'View full video · all bitz'}
+												</MenuItem>
+											{/if}
 											<MenuItem
 												icon="i-lucide-link"
-												onclick={() => copyText(`nostr:${noteEncode(reel.id)}`, 'Note link')}
+												onclick={() =>
+													copyText(shareWebLink({ eventId: reel.id }, location.origin), 'Web link')}
 											>
-												Copy note link
+												Copy web link
+											</MenuItem>
+											<MenuItem
+												icon="i-lucide-at-sign"
+												onclick={() => copyText(shareEntity({ eventId: reel.id }), 'Nostr link')}
+											>
+												Copy nostr link
 											</MenuItem>
 											<MenuItem
 												icon="i-lucide-fingerprint"
@@ -1945,6 +2221,48 @@
 									{/each}
 								</p>
 							{/if}
+							{#if remixOf(reel.tags)}
+								<!-- Remix lineage chip (§17 creator economy): links the derivative to
+								     its source. Protocol provenance only — rights live upstream. -->
+								<a
+									href={`/note/${remixOf(reel.tags)!.eventId}?from=bitz`}
+									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-white/25"
+								>
+									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
+									<span class="truncate">Remixed</span>
+								</a>
+							{/if}
+							{#if rightsOf(reel.tags).license}
+								<!-- Advisory rights badge (S-013, §17.3): provenance, not legal advice. -->
+								{@const reelRights = rightsOf(reel.tags)}
+								<span
+									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
+									title={`License ${reelRights.license}${reelRights.attribution ? ` · ${reelRights.attribution}` : ''}`}
+								>
+									<Icon name="i-lucide-scale" class="size-3.5 shrink-0" />
+									<span class="truncate">{reelRights.license}</span>
+								</span>
+							{/if}
+							{#if splitsOf(reel.tags)}
+								<!-- Value-split chip (CRE-008): how this bitz declares its value graph.
+							         Display only in V1 - store/display/validate, payment comes later. -->
+								<span
+									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
+									title={`Value splits (display only)\n${splitsOf(reel.tags)!
+										.rows.map(
+											(r) =>
+												`${r.role.replace(/_/g, ' ')}: ${(r.basisPoints / 100).toFixed(1)}%${r.beneficiary ? ` - ${r.beneficiary.slice(0, 12)}` : ''}`
+										)
+										.join('\n')}`}
+								>
+									<Icon name="i-lucide-git-fork" class="size-3.5 shrink-0" />
+									<span class="truncate"
+										>{splitsOf(reel.tags)!.rows.length} split{splitsOf(reel.tags)!.rows.length > 1
+											? 's'
+											: ''} declared</span
+									>
+								</span>
+							{/if}
 							{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
 								<div
 									class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur"
@@ -2019,50 +2337,103 @@
 	{/if}
 
 	<!-- Sticky top bar: Bitz wordmark · view tabs · refresh. Shrinks with the
-	     comments panel so the tabs stay centered over the video area (lg). -->
+	     comments panel so the tabs stay centered over the video area (lg).
+	     Over the player it is dark media chrome (gradient over video); on the
+	     Explore grid it follows the theme so light mode gets a themed page. -->
 	<div
-		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 bg-gradient-to-b from-black/55 via-black/25 to-transparent px-4 pt-4 pb-12 text-white transition-[padding] duration-200 {commentReel
+		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 pt-4 pb-12 transition-[padding] duration-200 {isExplore
+			? 'bg-gradient-to-b from-[var(--ui-bg)] via-[color-mix(in_oklab,var(--ui-bg)_72%,transparent)] to-transparent text-[var(--ui-text)]'
+			: 'bg-gradient-to-b from-black/55 via-black/25 to-transparent text-white'} {commentReel
 			? 'lg:pr-[390px]'
 			: ''}"
 	>
-		<h2
-			class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold text-white drop-shadow sm:block"
-		>
-			Bitz
-		</h2>
-		<div
-			class="pointer-events-auto flex items-center gap-0.5 rounded-full bg-black/40 p-1 backdrop-blur-md"
-			role="tablist"
-			aria-label="Bitz views"
-		>
-			{#each bitzTabs as tab (tab.key)}
+		{#if authorMode}
+			<!-- Author mode: back-to-profile bar replaces the wordmark. Tapping the
+			     identity opens the full profile; bitz count frames the swipe deck. -->
+			<div class="pointer-events-auto flex min-w-0 items-center gap-2 justify-self-start">
 				<button
 					type="button"
-					role="tab"
-					aria-selected={bitzMode === tab.key}
-					onclick={() => switchBitzMode(tab.key)}
-					class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
-					tab.key
-						? 'bg-white text-black'
-						: 'text-white/75 hover:text-white'}"
+					onclick={exitAuthorMode}
+					class="grid size-9 shrink-0 place-items-center rounded-full bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+					aria-label="Back to profile"
 				>
-					{tab.label}
+					<Icon name="i-lucide-arrow-left" class="size-5" />
 				</button>
-			{/each}
-		</div>
-		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
-			<button
-				type="button"
-				onclick={() => search.openOverlay()}
-				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
-				aria-label="Search bitz"
+				<a
+					href={authorPubkey ? `/profile/${npubEncode(authorPubkey)}` : '#'}
+					class="flex min-w-0 items-center gap-2 rounded-full bg-black/30 p-1 pr-3 text-white backdrop-blur-md transition hover:bg-black/50"
+				>
+					<Avatar
+						pubkey={authorPubkey}
+						name={authorDisplayName}
+						picture={authorProfile?.picture}
+						size={28}
+						shape="hex"
+					/>
+					<span class="min-w-0 leading-tight">
+						<span class="block max-w-[120px] truncate text-[13px] font-bold sm:max-w-[200px]"
+							>{authorDisplayName}</span
+						>
+						<span class="block text-[10.5px] text-white/65 tabular-nums">{reels.length} bitz</span>
+					</span>
+				</a>
+			</div>
+		{:else}
+			<h2
+				class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold sm:block {isExplore
+					? 'text-[var(--ui-text-highlighted)]'
+					: 'text-white drop-shadow'}"
 			>
-				<Icon name="i-lucide-search" class="size-5" />
-			</button>
+				Bitz
+			</h2>
+		{/if}
+		{#if !authorMode}
+			<div
+				class="pointer-events-auto flex items-center gap-0.5 rounded-full p-1 {isExplore
+					? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
+					: 'bg-black/40 backdrop-blur-md'}"
+				role="tablist"
+				aria-label="Bitz views"
+			>
+				{#each bitzTabs as tab (tab.key)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={bitzMode === tab.key}
+						onclick={() => switchBitzMode(tab.key)}
+						class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
+						tab.key
+							? isExplore
+								? 'bg-[var(--ui-bg)] text-[var(--ui-text-highlighted)] shadow-sm ring-1 ring-[var(--ui-border-muted)]'
+								: 'bg-white text-black'
+							: isExplore
+								? 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+								: 'text-white/75 hover:text-white'}"
+					>
+						{tab.label}
+					</button>
+				{/each}
+			</div>
+		{/if}
+		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
+			{#if !authorMode}
+				<button
+					type="button"
+					onclick={() => search.openOverlay()}
+					class="grid size-10 place-items-center rounded-xl transition {isExplore
+						? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
+						: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
+					aria-label="Search bitz"
+				>
+					<Icon name="i-lucide-search" class="size-5" />
+				</button>
+			{/if}
 			<button
 				type="button"
 				onclick={() => loadReels()}
-				class="grid size-10 place-items-center rounded-xl bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+				class="grid size-10 place-items-center rounded-xl transition {isExplore
+					? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
+					: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
 				aria-label="Refresh bitz"
 			>
 				<Icon name="i-lucide-rotate-cw" class="size-5" />
@@ -2159,7 +2530,7 @@
 											pubkey={comment.pubkey}
 											name={commentName}
 											picture={commentProfile?.picture}
-											verified={hasNip05(commentProfile)}
+											lightning={hasLightning(commentProfile)}
 											size={nested ? 22 : 34}
 											frame={!nested}
 										/>
@@ -2188,7 +2559,7 @@
 												<PowBadge bits={comment.pow} micro id={comment.id} />
 											{/if}
 											<a
-												href={`/note/${comment.id}?from=reels`}
+												href={`/note/${comment.id}?from=bitz`}
 												class="ml-auto shrink-0 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)] hover:text-primary-500"
 											>
 												{timeAgo(comment.createdAt)}
@@ -2278,6 +2649,11 @@
 						: ''}
 					<ReplyComposer
 						parent={commentReplyTarget ?? commentReel}
+						commentTarget={{
+							id: commentReel.id,
+							pubkey: commentReel.pubkey,
+							kind: commentReel.raw?.kind ?? NOSTR_KINDS.TEXT_NOTE
+						}}
 						placeholder={commentReplyTarget ? `Reply to ${replyTargetName}…` : 'Add a comment…'}
 						autofocus={!!commentReplyTarget}
 						initialMention={commentReplyTarget
@@ -2407,4 +2783,7 @@
 			</Button>
 		{/snippet}
 	</Dialog>
+
+	<!-- Remix chain (§17 creator economy rec #1): the studio opens with the
+	     remixed bitz media + layout pre-applied, lineage publishes as tags. -->
 </div>

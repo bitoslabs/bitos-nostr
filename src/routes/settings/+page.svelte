@@ -7,6 +7,7 @@
 	import Input from '$lib/components/ui/Input.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import AccountIdentityBadges from '$lib/components/ui/AccountIdentityBadges.svelte';
 	import AppearanceSettings from '$lib/components/settings/AppearanceSettings.svelte';
 	import AlgorithmSettings from '$lib/components/settings/AlgorithmSettings.svelte';
 	import MediaSettings from '$lib/components/settings/MediaSettings.svelte';
@@ -29,6 +30,7 @@
 	import { shortKey } from '$lib/utils/format';
 	import { hexToBytes } from '$lib/nostr/hex';
 	import type { AccountSummary } from '$lib/nostr/identity.svelte';
+	import { accountSwitcher } from '$lib/stores/account-switch.svelte';
 
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
@@ -192,12 +194,7 @@
 
 	function switchAccount(pubkey: string) {
 		if (identity.current?.pk === pubkey) return;
-		try {
-			identity.switchTo(pubkey);
-			toasts.info('Switched account');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
+		void accountSwitcher.switchTo(pubkey);
 	}
 
 	function createAccount() {
@@ -318,11 +315,13 @@
 							pubkey={me.pk}
 							name={myProfile?.display_name || myProfile?.name}
 							picture={myProfile?.picture}
+							lightning={!!(myProfile?.lud16 || myProfile?.lud06)}
 							size={44}
 						/>
 						<div class="min-w-0 flex-1">
 							<p class="truncate text-[17px] font-bold tracking-tight">
 								{myProfile?.display_name || myProfile?.name || 'You'}
+								<AccountIdentityBadges profile={myProfile} showLightning={false} />
 							</p>
 							<p class="truncate font-mono text-[12px] text-[var(--ui-text-muted)]">
 								{shortKey(me.npub)}
@@ -649,14 +648,16 @@
 									pubkey={account.pk}
 									name={accountDisplayName(account)}
 									picture={account.profile?.picture}
+									lightning={!!(account.profile?.lud16 || account.profile?.lud06)}
 									size={40}
 								/>
 								<div class="min-w-0 flex-1">
-									<p class="truncate text-[13.5px] font-bold">
-										{accountDisplayName(account)}
+									<p class="flex items-center gap-1 text-[13.5px] font-bold">
+										<span class="truncate">{accountDisplayName(account)}</span>
+										<AccountIdentityBadges profile={account.profile} showLightning={false} />
 									</p>
 									<p class="truncate font-mono text-[11px] text-[var(--ui-text-muted)]">
-										{shortKey(account.npub, 10, 8)}
+										{account.profile?.nip05?.trim() || shortKey(account.npub, 10, 8)}
 									</p>
 								</div>
 								{#if account.active}

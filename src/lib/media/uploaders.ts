@@ -25,6 +25,10 @@ export interface UploadOptions {
 	purpose?: UploadPurpose;
 	/** Called as bytes leave the browser. `percent` is 0–100 when deterministic. */
 	onProgress?: (progress: UploadProgress) => void;
+	/** Notified before each retryable failure is retried. */
+	onRetry?: (info: { attempt: number; delayMs: number; error: UploadError }) => void;
+	/** Aborts the upload attempt sequence where providers support it. */
+	signal?: AbortSignal;
 }
 
 export interface UploadProgress {
@@ -61,6 +65,8 @@ export interface S3Config {
 	publicUrlBase?: string;
 	/** Optional key prefix (folder). */
 	folder?: string;
+	/** Stability hint folded into the object key so retries reuse the same path. */
+	idempotencyKey?: string;
 }
 
 export const FREE_BLOSSOM_SERVER = 'https://blossom.nostr.build';
@@ -77,6 +83,8 @@ export interface UploadedMedia {
 	mimeType: string;
 	bytes: number;
 	provider: UploadedMediaProviderId;
+	/** Verified SHA-256 blob hash when the flow could confirm bytes. */
+	sha256?: string;
 }
 
 type BlossomDescriptor = {
@@ -148,13 +156,22 @@ export async function uploadToBlossom(
 	const tags = descriptor.nip94?.tags ?? [];
 	const url = descriptor.url ?? tags.find(([name]) => name === 'url')?.[1];
 	if (!url) throw new Error('Blossom upload succeeded without a media URL');
+	// Verify the server stored the exact bytes we sent (plan §11.3 hash check).
+	const returnedHash = descriptor.sha256 ?? tags.find(([name]) => name === 'x')?.[1];
+	if (returnedHash && returnedHash.toLowerCase() !== hash) {
+		throw new UploadError('Blossom stored different bytes than were uploaded', {
+			retryable: true
+		});
+	}
 	onProgress?.({ loaded: file.size, total: file.size, percent: 100, deterministic: true });
 	return {
 		url,
 		kind: classifyMime(descriptor.type ?? file.type),
 		mimeType: descriptor.type ?? file.type ?? 'application/octet-stream',
 		bytes: descriptor.size ?? file.size,
-		provider: 'blossom'
+		provider: 'blossom',
+		// Locally computed and server-confirmed (when the server echoed it).
+		sha256: hash
 	};
 }
 
@@ -447,9 +464,17 @@ export async function uploadToS3(
 	const endpoint = cfg.endpoint?.trim().replace(/\/+$/, '') || '';
 	const folderPrefix = cfg.folder?.trim().replace(/^\/+|\/+$/g, '');
 
+	// Content-derived stem makes retries idempotent: the same bytes + hint PUT
+	// to the same object key instead of orphaning duplicate copies (plan §11.3).
+	const fileBuffer = await file.arrayBuffer();
+	const payloadHash = toHex(await crypto.subtle.digest('SHA-256', fileBuffer));
+	const idem = cfg.idempotencyKey?.trim();
+	const uniquePart = idem
+		? `${payloadHash.slice(0, 24)}-${sanitizeName(idem).slice(0, 40)}`
+		: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 	const objectKey = [
 		...(folderPrefix ? folderPrefix.split('/') : []),
-		`${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${sanitizeName(file.name)}`
+		`${uniquePart}-${sanitizeName(file.name)}`
 	].join('/');
 	const encodedKey = encodePath(objectKey);
 
@@ -472,10 +497,6 @@ export async function uploadToS3(
 
 	const canonicalUri = `${pathPrefix}/${encodedKey}`;
 	const canonicalQueryString = '';
-
-	// Payload hash (SHA-256 of the file body).
-	const fileBuffer = await file.arrayBuffer();
-	const payloadHash = toHex(await crypto.subtle.digest('SHA-256', fileBuffer));
 
 	// Dates.
 	const now = new Date();
@@ -601,4 +622,170 @@ export async function uploadWithProvider(
 	if (provider === 'cloudinary') return uploadToCloudinary(file, settings.cloudinary, onProgress);
 	if (provider === 's3') return uploadToS3(file, settings.s3, onProgress);
 	throw new Error(`Unknown media provider: ${provider}`);
+}
+
+/** Normalized input accepted by `uploadBlob` (plan §6.3 publish pipeline). */
+export interface BlobUploadInput {
+	/** The exact bytes to upload (`File` — a `Blob` with a name). */
+	file: File;
+	/** Provider dispatch, mirroring `MediaStore.upload` semantics. */
+	provider?: MediaProviderId | 'none';
+	pubkey?: string;
+	purpose?: UploadPurpose;
+	onProgress?: (progress: UploadProgress) => void;
+	onRetry?: (info: { attempt: number; delayMs: number; error: UploadError }) => void;
+	signal?: AbortSignal;
+}
+
+/**
+ * Generic blob upload (plan PUB-005) — provider-agnostic, content-addressed.
+ *
+ * Wraps any provider call so every descriptor is normalized and hash-verified
+ * (PUB-006):
+ *   • the SHA-256 of the bytes we sent is computed locally, always
+ *   • when a provider reports its own hash (Blossom descriptor / `x` tag), a
+ *     mismatch is a retryable error — the stored copy is corrupt or the
+ *     server raced a concurrent upload of different bytes
+ *   • the verified local hash rides on the descriptor as `sha256`, ready for
+ *     the kind-22 `imeta x` segment
+ *
+ * `perform` executes ONE provider attempt; retries/backoff/readability are
+ * handled by `uploadWithRetries` exactly as before — no caller breaks.
+ */
+export async function uploadBlob(
+	input: BlobUploadInput,
+	perform: (file: File) => Promise<UploadedMedia>
+): Promise<UploadedMedia> {
+	// Hash once, before any network attempt: retries reuse identical bytes.
+	const localHash = await sha256(input.file);
+	const uploaded = await perform(input.file);
+	const reported = (uploaded as { sha256?: string }).sha256;
+	if (reported && reported.toLowerCase() !== localHash) {
+		// Server-side bytes differ from what we sent — never sign against them.
+		throw new UploadError('Provider stored different bytes than were uploaded', {
+			retryable: true
+		});
+	}
+	return { ...uploaded, sha256: localHash };
+}
+
+/* --------------------------------------------------------------------------
+   Upload resilience (plan §11.3)
+
+   Wraps any provider upload with:
+     • exponential backoff + jitter for retryable failures (network errors,
+       HTTP 408/429 and 5xx)
+     • permanent failures (4xx other than 408/429, invalid responses) that
+       fail fast without retrying
+     • idempotency: an explicit `idempotencyKey` is hashed into the S3 object
+       key so a retry PUTs to the *same* URL instead of leaving orphan copies
+     • verification: the returned descriptor URL is HEAD-checked so we never
+       sign a publish event pointing at bytes nobody can fetch
+---------------------------------------------------------------------------- */
+
+/** Error with an explicit retryability classification (plan §11.3). */
+export class UploadError extends Error {
+	/** False for permanent failures (bad config, auth, invalid request). */
+	readonly retryable: boolean;
+	/** HTTP status when the failure came from a response. */
+	readonly status?: number;
+
+	constructor(message: string, opts: { retryable: boolean; status?: number; cause?: unknown }) {
+		super(message);
+		this.name = 'UploadError';
+		this.retryable = opts.retryable;
+		this.status = opts.status;
+		if (opts.cause !== undefined) this.cause = opts.cause;
+	}
+}
+
+/** Classify a thrown value from a provider upload as retryable or permanent. */
+export function classifyUploadError(error: unknown): UploadError {
+	if (error instanceof UploadError) return error;
+	const message = error instanceof Error ? error.message : String(error);
+	// `\bload failed` (Safari fetch) must not match the tail of "upload failed".
+	if (/network error|failed to fetch|\bload failed|\btimeout\b|aborted|cancelled/i.test(message)) {
+		return new UploadError(message, { retryable: true, cause: error });
+	}
+	// Provider messages carry their status inline, e.g. "S3 upload failed: 503 ...".
+	const statusMatch = message.match(/\b(4\d\d|5\d\d)\b/);
+	if (statusMatch) {
+		const status = Number(statusMatch[1]);
+		const retryable = status === 408 || status === 429 || status >= 500;
+		return new UploadError(message, { retryable, status, cause: error });
+	}
+	// Configuration/validation messages ("not configured", "without a media URL") are permanent.
+	return new UploadError(message, { retryable: false, cause: error });
+}
+
+export interface ResilientUploadOptions {
+	/** Called before each retry attempt with 1-based attempt numbers. */
+	onRetry?: (info: { attempt: number; delayMs: number; error: UploadError }) => void;
+	/** Progress passthrough. */
+	onProgress?: (progress: UploadProgress) => void;
+	/** Total attempts including the first (default 3). */
+	attempts?: number;
+	/** Base backoff in ms; doubles per attempt with ±25% jitter (default 800). */
+	baseDelayMs?: number;
+	/** Abort the whole upload (checked between attempts). */
+	signal?: AbortSignal;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) return reject(new UploadError('Upload cancelled', { retryable: false }));
+		const timer = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			'abort',
+			() => {
+				clearTimeout(timer);
+				reject(new UploadError('Upload cancelled', { retryable: false }));
+			},
+			{ once: true }
+		);
+	});
+}
+
+/** True when the URL responds to a HEAD/CORS probe without a terminal status. */
+export async function isUrlReadable(url: string, signal?: AbortSignal): Promise<boolean> {
+	try {
+		const res = await fetch(url, { method: 'HEAD', mode: 'cors', signal });
+		// 405/... ⇒ be lenient: some providers reject HEAD but serve GET fine.
+		return res.ok || res.status === 405 || res.status === 501;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Upload with retries, backoff+jitter, and a post-upload readability check.
+ * `perform` must run one full provider attempt and return the descriptor.
+ */
+export async function uploadWithRetries(
+	perform: () => Promise<UploadedMedia>,
+	options: ResilientUploadOptions = {}
+): Promise<UploadedMedia> {
+	const attempts = Math.max(1, options.attempts ?? 3);
+	const baseDelayMs = Math.max(0, options.baseDelayMs ?? 800);
+
+	for (let attempt = 1; ; attempt++) {
+		options.signal?.throwIfAborted();
+		try {
+			const uploaded = await perform();
+			// Never hand back a URL we cannot read — the publish event is signed
+			// against these bytes (plan §11.3 "readable before signing").
+			if (!(await isUrlReadable(uploaded.url, options.signal))) {
+				throw new UploadError('Uploaded media is not readable at its URL', { retryable: true });
+			}
+			return uploaded;
+		} catch (error) {
+			const classified = classifyUploadError(error);
+			if (!classified.retryable || attempt >= attempts) throw classified;
+			// Exponential backoff with ±25% jitter so many clients never sync up.
+			const jitter = 0.75 + Math.random() * 0.5;
+			const delayMs = Math.round(baseDelayMs * 2 ** (attempt - 1) * jitter);
+			options.onRetry?.({ attempt, delayMs, error: classified });
+			await sleep(delayMs, options.signal);
+		}
+	}
 }

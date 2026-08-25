@@ -76,10 +76,8 @@ export function mergeNip65Recommendations(
 
 /* ------------------------------- publishing ------------------------------ */
 
-import { finalizeEvent } from 'nostr-tools/pure';
+import { activeSigner } from '$lib/auth/signer';
 import { publish } from './pool';
-import { identity } from './identity.svelte';
-import { hexToBytes } from './hex';
 import { clientTag } from './client-tag';
 import type { RelayRecord } from './types';
 
@@ -119,19 +117,16 @@ export function buildNip65Tags(
 export async function publishNip65List(
 	relays: Array<Pick<RelayRecord, 'url' | 'read' | 'write'>>
 ): Promise<boolean> {
-	const id = identity.current;
-	if (!id) return false;
+	const signer = activeSigner();
+	if (!(await signer.isAvailable())) return false;
 	const tags = buildNip65Tags(relays);
 	if (!tags.length) return false;
-	const event = finalizeEvent(
-		{
-			kind: NOSTR_KINDS.RELAY_LIST,
-			content: '',
-			created_at: Math.floor(Date.now() / 1000),
-			tags: [...tags, ...clientTag()]
-		},
-		hexToBytes(id.sk)
-	);
+	const event = await signer.sign({
+		kind: NOSTR_KINDS.RELAY_LIST,
+		content: '',
+		created_at: Math.floor(Date.now() / 1000),
+		tags: [...tags, ...clientTag()]
+	});
 	await publish(event);
 	return true;
 }

@@ -13,12 +13,43 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
 	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
+	import { DEFAULT_PROBE_LIMITS, probeMedia } from '$lib/media/video-probe';
+	import {
+		adjustTrim,
+		coverScrubBounds,
+		defaultTrim,
+		isTrimmlable,
+		validateTrim
+	} from '$lib/media/video-trim';
+	import { canRenderVideoCut, renderVideoCut, browserEnvironment } from '$lib/media/video-cut';
+	import {
+		DEFAULT_VIDEO_OUTPUT_POLICY,
+		decideRender,
+		trimCuts
+	} from '$lib/media/video-output-policy';
+	import {
+		INITIAL_PUBLISH_STATE,
+		type PublishState,
+		beginRender,
+		cancel as cancelMachine,
+		completePublish,
+		completeRender,
+		completeSign,
+		failSign,
+		verifyDescriptor
+	} from '$lib/media/publish-machine';
+	import {
+		createBitzDraftWriter,
+		draftTrimToSeconds,
+		readBitzDraft
+	} from '$lib/stores/bitz-drafts';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import type { UploadedMedia } from '$lib/media/uploaders';
 	import { humanBytes } from '$lib/media/uploaders';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { formatDuration } from '$lib/utils/format';
+	import { bitzHashLink } from '$lib/utils/bitz-links';
 
 	/**
 	 * Bitz Studio — create a short-form bitz straight from the post form.
@@ -31,8 +62,12 @@
 	 */
 	let {
 		open = $bindable(false),
-		onposted = () => {}
-	}: { open?: boolean; onposted?: (eventId: string) => void } = $props();
+		onposted = () => {},
+		/** Page variant (/studio/create): render as a full-bleed editing surface
+		 * instead of a floating dialog — no backdrop, no own close chrome, the
+		 * route owns navigation (tabs, ESC → back to the studio home). */
+		full = false
+	}: { open?: boolean; onposted?: (eventId: string) => void; full?: boolean } = $props();
 
 	// ---- media state -------------------------------------------------------
 	type BitKind = 'video' | 'image';
@@ -63,6 +98,65 @@
 	let scrubSeconds = $state(0);
 	let cover = $state<string | null>(null);
 	let coverUploading = $state(false);
+
+	// ---- trim draft (video bitz, PUB-008) ------------------------------------
+	/** Draft in/out points — bind scrubbing and drive the PUB-009 render pass
+	 *  when the cut is not the whole file (see `renderAtPost`). */
+	let trim = $state({ inSeconds: 0, outSeconds: 0 });
+	const trimmable = $derived(mediaKind === 'video' && isTrimmlable(meta?.duration));
+	const trimValidation = $derived(trimmable ? validateTrim(trim) : null);
+	const trimDuration = $derived(trimValidation?.durationSeconds ?? 0);
+
+	// ---- render-at-post (video bitz, PUB-009) ---------------------------------
+	/** Whether this draft needs the device render pass (cut/resize/cap). */
+	const renderDecision = $derived.by(() => {
+		if (!trimmable || !meta?.duration) return null;
+		return decideRender(
+			{
+				trim,
+				sourceDurationSeconds: meta.duration,
+				width: meta.width,
+				height: meta.height
+			},
+			browserEnvironment()
+		);
+	});
+	/** A cut only counts when it is not effectively the whole file. */
+	const needsRender = $derived(
+		!!renderDecision &&
+			renderDecision.render &&
+			trimCuts(trim, meta?.duration ?? 0) &&
+			canRenderVideoCut()
+	);
+	let rendering = $state(false);
+	let renderPercent = $state(0);
+
+	// ---- publish state machine (PUB-011) ---------------------------------------
+	/** Explicit render → verify → sign → publish tracking for this run. The
+	 *  transitions guard ordering (never sign before the descriptor verified);
+	 *  effects stay in this component so toasts keep their context. */
+	let machine = $state<PublishState>(INITIAL_PUBLISH_STATE);
+	/** One-word stage label for the busy UI, null when nothing is running. */
+	const machineStageLabel = $derived.by(() => {
+		switch (machine.stage) {
+			case 'rendering':
+				return 'Rendering';
+			case 'verifying':
+				return 'Verifying';
+			case 'signing':
+				return 'Signing';
+			case 'publishing':
+				return 'Publishing';
+			default:
+				return null;
+		}
+	});
+
+	// ---- draft persistence (PUB-010) ------------------------------------------
+	/** Debounced localStorage writer; flush on close, clear on publish. */
+	const draftWriter = createBitzDraftWriter();
+	/** Restored-from-crash banner text; null until the user dismisses it. */
+	let draftRestored = $state<string | null>(null);
 
 	// ---- reach ----------------------------------------------------------------
 	// Opt-in: also publish a kind-1 quote note linking the fresh bitz so it
@@ -108,7 +202,7 @@
 	});
 	const aspectLabel = $derived(meta ? `${meta.width}×${meta.height}` : '');
 	const dirty = $derived(!!file || !!caption.trim());
-	const busy = $derived(uploading || posting);
+	const busy = $derived(uploading || rendering || posting);
 	const overSoft = $derived(caption.length > SOFT_CAP);
 	const overHard = $derived(caption.length > HARD_CAP);
 	const canPost = $derived(!!uploaded && !posting && !uploadError && !overHard && !!mediaKind);
@@ -185,6 +279,70 @@
 		lastOpen = open;
 	});
 
+	// PUB-010: restore a persisted draft once, the first time the composer
+	// opens — media must be re-picked (bytes never persist), everything else
+	// (caption, trim, cover, upload checkpoint) comes back.
+	let restoredOnce = false;
+	$effect(() => {
+		if (!open || restoredOnce || file) return;
+		restoredOnce = true;
+		const draft = readBitzDraft();
+		if (!draft) return;
+		caption = draft.caption;
+		sensitive = draft.sensitive;
+		cover = draft.cover;
+		if (draft.meta) meta = draft.meta;
+		if (draft.mediaKind === 'video' && draft.meta?.duration) {
+			trim = draftTrimToSeconds(draft.trim);
+			mediaKind = 'video';
+		}
+		if (draft.upload) {
+			// Checkpoint (§11.3): the bytes are already on the provider — mark
+			// the upload complete so publishing never re-PUTs them.
+			uploaded = {
+				url: draft.upload.url,
+				kind: draft.upload.mimeType.startsWith('video/') ? 'video' : 'image',
+				mimeType: draft.upload.mimeType,
+				bytes: draft.upload.bytes,
+				provider: draft.upload.providerId as UploadedMedia['provider'],
+				sha256: draft.upload.sha256
+			};
+		}
+		draftRestored = draft.file
+			? `Restored your last draft — re-pick “${draft.file.name}” to publish, or start fresh`
+			: 'Restored your last draft';
+	});
+
+	// PUB-010: autosave the edit state; queued writes avoid re-encoding storms.
+	$effect(() => {
+		if (!open) return;
+		draftWriter.write({
+			mediaKind: mediaKind ?? 'video',
+			file: file ? { name: file.name, size: file.size, mimeType: file.type } : null,
+			meta: meta
+				? {
+						width: meta.width,
+						height: meta.height,
+						duration: meta.duration
+					}
+				: null,
+			trim,
+			cover,
+			caption,
+			sensitive,
+			upload: uploaded
+				? {
+						providerId: uploaded.provider,
+						url: uploaded.url,
+						sha256: uploaded.sha256,
+						mimeType: uploaded.mimeType,
+						bytes: uploaded.bytes,
+						uploadedAt: Date.now()
+					}
+				: null
+		});
+	});
+
 	onMount(() => {
 		return () => {
 			mineController?.abort();
@@ -220,6 +378,10 @@
 		scrubSeconds = 0;
 		cover = null;
 		coverUploading = false;
+		trim = { inSeconds: 0, outSeconds: 0 };
+		rendering = false;
+		renderPercent = 0;
+		machine = INITIAL_PUBLISH_STATE;
 		quoteTimeline = false;
 	}
 
@@ -242,6 +404,18 @@
 		}
 		if (busy) return;
 		confirmDiscard = false;
+		// PUB-007: probe before anything is accepted or uploaded. Limits
+		// (duration, megapixels, decode health) reject unsuitable files with
+		// actionable copy instead of failing later inside the reel pipeline.
+		void acceptProbed(next, kind);
+	}
+
+	async function acceptProbed(next: File, kind: BitKind) {
+		const result = await probeMedia(next);
+		if (!result.ok) {
+			toasts.error(probeErrorCopy(result));
+			return;
+		}
 		// Replace any previous selection (upload result is token-guarded).
 		uploadToken++;
 		revokePreview();
@@ -249,13 +423,36 @@
 		uploadError = null;
 		uploadPercent = 0;
 		uploadDeterministic = false;
-		meta = null;
+		meta = {
+			width: result.width,
+			height: result.height,
+			duration: result.kind === 'video' ? result.duration : undefined
+		};
+		trim = defaultTrim(meta.duration ?? 0);
+		scrubSeconds = 0;
 		cover = null;
 		scrubSeconds = 0;
 		file = next;
 		mediaKind = kind;
 		previewUrl = URL.createObjectURL(next);
 		void runUpload(next);
+	}
+
+	function probeErrorCopy(error: { reason: string; detail?: string }) {
+		switch (error.reason) {
+			case 'too-long':
+				return `Bitz top out at ${DEFAULT_PROBE_LIMITS.maxDurationSeconds}s — trim the video first`;
+			case 'too-many-megapixels':
+				return 'That media is too large dimensionally — export a smaller copy';
+			case 'too-large':
+				return `That file is too big — bitz top out at ${humanBytes(DEFAULT_PROBE_LIMITS.maxBytes)}`;
+			case 'no-tracks':
+				return 'That file has no playable media track';
+			case 'unsupported-type':
+				return 'Bitz support videos and pictures';
+			default:
+				return 'Could not read that file — it may be corrupted or an unsupported codec';
+		}
 	}
 
 	function onFileInput(e: Event) {
@@ -362,42 +559,164 @@
 	}
 
 	function scrubCover(event: Event) {
-		const seconds = Number((event.currentTarget as HTMLInputElement).value);
+		const seconds = clampToTrim(Number((event.currentTarget as HTMLInputElement).value));
 		scrubSeconds = seconds;
 		if (stageVideoEl) stageVideoEl.currentTime = seconds;
 	}
 
+	function clampToTrim(seconds: number) {
+		if (!trimmable || !meta?.duration) return seconds;
+		const { min, max } = coverScrubBounds(trim);
+		return Math.min(Math.max(seconds, min), Math.max(min, max));
+	}
+
 	function onStageTimeUpdate(e: Event) {
 		const video = e.currentTarget as HTMLVideoElement;
-		scrubSeconds = video.currentTime;
+		scrubSeconds = clampToTrim(video.currentTime);
 	}
 
 	function cancelMining() {
 		mineController?.abort();
 	}
 
+	// ---- trim draft handlers (PUB-008) ----------------------------------------
+	function setTrimEdge(edge: 'in' | 'out', raw: string | number) {
+		if (!meta?.duration) return;
+		trim = adjustTrim(trim, edge, Number(raw), meta.duration);
+		// Keep the scrub head inside the (possibly moved) window.
+		scrubSeconds = clampToTrim(scrubSeconds);
+		if (stageVideoEl) stageVideoEl.currentTime = scrubSeconds;
+	}
+
+	function resetTrim() {
+		if (!meta?.duration) return;
+		trim = defaultTrim(meta.duration);
+		scrubSeconds = clampToTrim(scrubSeconds);
+	}
+
 	async function submit() {
 		if (!canPost || !uploaded || !mediaKind) return;
 		posting = true;
+		machine = INITIAL_PUBLISH_STATE;
 		mining = showPow && pow > 0;
 		const minedBits = pow;
 		const controller = new AbortController();
 		mineController = controller;
 		powProgress = null;
 		try {
+			// PUB-011: run the explicit stage machine alongside the effects so
+			// ordering is enforced (never sign an unverified descriptor).
+			machine = beginRender(machine);
+			// PUB-009: when the draft trims/needs resizing, render the cut
+			// through the VideoOutputPolicy BEFORE publishing so the signed
+			// imeta describes the exact uploaded bytes.
+			let publishUploaded = uploaded;
+			let publishMeta = meta;
+			let publishCover = cover;
+			if (needsRender && stageVideoEl && meta?.duration) {
+				rendering = true;
+				renderPercent = 0;
+				try {
+					const cut = await renderVideoCut(
+						stageVideoEl,
+						{
+							trim,
+							width: meta.width,
+							height: meta.height,
+							durationSeconds: meta.duration
+						},
+						{
+							policy: DEFAULT_VIDEO_OUTPUT_POLICY,
+							signal: controller.signal,
+							onProgress: (p) => {
+								renderPercent = p.percent;
+							}
+						}
+					);
+					// Upload the rendered bytes (hash chain from PUB-006 keeps
+					// the descriptor honest), then re-capture the cover from the
+					// rendered pixels so `thumb` matches what clients decode.
+					const provider = selectedProvider;
+					const renderedFile = new File(
+						[cut.blob],
+						`bitz-cut-${Date.now()}.${cut.mimeType.includes('mp4') ? 'mp4' : 'webm'}`,
+						{ type: cut.mimeType }
+					);
+					publishUploaded = await media.upload(
+						renderedFile,
+						provider === 'none' ? undefined : provider,
+						{ pubkey: me?.pk, purpose: 'note' }
+					);
+					publishMeta = {
+						width: cut.width,
+						height: cut.height,
+						duration: cut.durationMs / 1000
+					};
+					if (cut.coverBlob) {
+						const coverFile = new File([cut.coverBlob], `bitz-cover-${Date.now()}.jpg`, {
+							type: 'image/jpeg'
+						});
+						try {
+							const shot = await media.upload(
+								coverFile,
+								provider === 'none' ? undefined : provider,
+								{ pubkey: me?.pk, purpose: 'note' }
+							);
+							publishCover = shot.url;
+						} catch {
+							/* keep any existing cover — rendering to HD matters more */
+						}
+					}
+					if (!cut.portable) {
+						toasts.warning('Rendered as WebM — some clients may prefer MP4');
+					}
+				} finally {
+					rendering = false;
+					renderPercent = 0;
+				}
+			}
+			// Verify the descriptor before anything is signed (§5.1: publish
+			// waits for media readiness; a broken hash chain blocks here).
+			machine = completeRender(machine, {
+				url: publishUploaded.url,
+				sha256: publishUploaded.sha256,
+				mimeType: publishUploaded.mimeType,
+				bytes: publishUploaded.bytes
+			});
+			machine = verifyDescriptor(machine, {});
+			if (machine.stage === 'blocked') {
+				throw new Error(machine.error ?? 'The uploaded media failed verification');
+			}
 			// Let the browser paint the mining state before starting the worker.
 			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
-			const eventId = await feed.postBitz(uploaded, {
-				caption,
-				sensitive,
-				portrait,
-				dim: meta ? `${meta.width}x${meta.height}` : undefined,
-				thumb: cover ?? undefined,
-				pow: showPow ? pow : 0,
-				onPowProgress: (progress) => (powProgress = progress),
-				onPhase: (phase) => (postPhase = phase),
-				signal: controller.signal
-			});
+			// Sign then publish, mirrored as guarded machine transitions —
+			// feed's coarse onPhase callbacks mark the sub-stages.
+			let eventId: string;
+			try {
+				eventId = await feed.postBitz(publishUploaded, {
+					caption,
+					sensitive,
+					portrait: publishMeta ? publishMeta.height >= publishMeta.width : portrait,
+					dim: publishMeta ? `${publishMeta.width}x${publishMeta.height}` : undefined,
+					duration: publishMeta?.duration,
+					thumb: publishCover ?? undefined,
+					pow: showPow ? pow : 0,
+					onPowProgress: (progress) => (powProgress = progress),
+					onPhase: (phase) => {
+						postPhase = phase;
+						// feed reports signing (mining) then relay publishing; the
+						// machine treats the pair as its signing → publishing handoff.
+						if (phase === 'publishing') machine = completeSign(machine);
+					},
+					signal: controller.signal
+				});
+			} catch (e) {
+				// Signing (with PoW) happens inside postBitz before any relay
+				// write — classify by whether relays were already involved.
+				machine = failSign(machine, (e as Error).message);
+				throw e;
+			}
+			machine = completePublish(machine, eventId);
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
 			// Opt-in reach: quote-post the fresh bitz as a kind-1 note (NIP-27
@@ -417,16 +736,25 @@
 					: `${kindInfo?.label ?? 'Bitz'} published to Nostr`,
 				'success',
 				6000,
-				{ label: 'View in Bitz', run: () => goto(`/bitz#reel=${eventId}`) }
+				{ label: 'View in Bitz', run: () => goto(`/bitz${bitzHashLink(eventId)}`) }
 			);
 			if (quoteError) toasts.warning(`Bitz posted, but the timeline quote failed — ${quoteError}`);
 			onposted(eventId);
+			// PUB-010: the draft graduated into an event — drop the checkpoint.
+			draftWriter.clear();
 			reset();
 			open = false;
 		} catch (e) {
 			const message = (e as Error).message;
-			if (/cancelled/i.test(message)) toasts.info('Mining cancelled — nothing was posted');
-			else toasts.error(message);
+			if (/cancelled/i.test(message)) {
+				machine = cancelMachine(machine, message);
+				toasts.info('Mining cancelled — nothing was posted');
+			} else {
+				// Stage guards make this a no-op when the failure was already
+				// recorded at the exact stage it happened.
+				machine = failSign(machine, message);
+				toasts.error(message);
+			}
 		} finally {
 			mineController = undefined;
 			powProgress = null;
@@ -450,17 +778,22 @@
 			confirmDiscard = true;
 			return;
 		}
+		// PUB-010: keep clean closes cheap — nothing to resume later.
+		draftWriter.clear();
 		open = false;
 		reset();
 	}
 
 	function discard() {
 		confirmDiscard = false;
+		// PUB-010: explicit discard forgets the draft entirely.
+		draftWriter.clear();
 		reset();
 		open = false;
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		if (full) return; // the route owns keys in page mode
 		if (confirmDiscard) {
 			if (event.key === 'Escape') {
 				event.preventDefault();
@@ -499,52 +832,81 @@
 />
 
 {#if open}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex(dialog-mode focus trap target) -->
 	<div
-		class="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Create a bitz"
-		tabindex="-1"
-		onkeydown={handleKeydown}
-		onclick={(event) => {
-			if (event.target === event.currentTarget) requestClose();
-		}}
+		class={full
+			? 'h-full'
+			: 'fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-6'}
+		role={full ? undefined : 'dialog'}
+		aria-modal={full ? undefined : 'true'}
+		aria-label={full ? undefined : 'Create a bitz'}
+		tabindex={full ? undefined : -1}
+		onkeydown={full ? undefined : handleKeydown}
+		onclick={full
+			? undefined
+			: (event) => {
+					if (event.target === event.currentTarget) requestClose();
+				}}
 	>
 		<div
-			class="bitz-studio-panel flex h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 sm:h-[min(780px,92vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]"
+			class="bitz-studio-panel flex max-h-full w-full flex-col overflow-hidden bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/40 {full
+				? 'h-full'
+				: 'sm:h-[min(780px,92vh)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-[var(--ui-border-muted)]'}"
 			aria-busy={busy}
 		>
-			<!-- Header -->
-			<header
-				class="flex h-14 shrink-0 items-center gap-2.5 border-b border-[var(--ui-border-muted)] px-4"
-			>
-				<span
-					class="grid size-9 shrink-0 place-items-center rounded-xl bg-warm-500/12 text-warm-500"
+			{#if !full}
+				<!-- Header (dialog mode: owns its close) -->
+				<header
+					class="flex h-14 shrink-0 items-center gap-2.5 border-b border-[var(--ui-border-muted)] px-4"
 				>
-					<Icon name="i-lucide-circle-play" class="size-5" />
-				</span>
-				<div class="min-w-0 flex-1">
-					<h2 class="text-[15px] leading-tight font-bold text-[var(--ui-text-highlighted)]">
-						Create a bitz
-					</h2>
-					<p class="truncate text-[11px] text-[var(--ui-text-dimmed)]">
-						{kindInfo
-							? `${kindInfo.label} · kind ${kindInfo.kind} · ${kindInfo.nip}`
-							: 'Short-form video or picture for the Bitz feed'}
-					</p>
-				</div>
-				<button
-					type="button"
-					onclick={requestClose}
-					aria-label="Close bitz studio"
-					class="grid size-9 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] active:scale-95"
-				>
-					<Icon name="i-lucide-x" class="size-5" />
-				</button>
-			</header>
+					<span
+						class="grid size-9 shrink-0 place-items-center rounded-xl bg-warm-500/12 text-warm-500"
+					>
+						<Icon name="i-lucide-circle-play" class="size-5" />
+					</span>
+					<div class="min-w-0 flex-1">
+						<h2 class="text-[15px] leading-tight font-bold text-[var(--ui-text-highlighted)]">
+							Create a bitz
+						</h2>
+						<p class="truncate text-[11px] text-[var(--ui-text-dimmed)]">
+							{kindInfo
+								? `${kindInfo.label} · kind ${kindInfo.kind} · ${kindInfo.nip}`
+								: 'Short-form video or picture for the Bitz feed'}
+						</p>
+					</div>
+					<button
+						type="button"
+						onclick={requestClose}
+						aria-label="Close bitz studio"
+						class="grid size-9 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] active:scale-95"
+					>
+						<Icon name="i-lucide-x" class="size-5" />
+					</button>
+				</header>
+			{/if}
 
 			<!-- Body -->
 			<div class="min-h-0 flex-1 overflow-y-auto">
+				{#if draftRestored}
+					<!-- PUB-010: crash/refresh recovery banner -->
+					<div
+						class="mx-4 mt-3 flex items-start justify-between gap-2 rounded-xl border border-warm-500/40 bg-warm-500/10 p-2.5"
+						role="status"
+					>
+						<p class="flex items-center gap-2 text-[12px] font-semibold text-warm-500">
+							<Icon name="i-lucide-history" class="size-4 shrink-0" />
+							{draftRestored}
+						</p>
+						<button
+							type="button"
+							onclick={() => (draftRestored = null)}
+							aria-label="Dismiss draft notice"
+							class="shrink-0 rounded-full p-1 text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
+						>
+							<Icon name="i-lucide-x" class="size-3.5" />
+						</button>
+					</div>
+				{/if}
 				{#if !file}
 					<!-- Empty state: drag & drop picker -->
 					<div class="flex h-full min-h-[420px] flex-col items-center justify-center p-6">
@@ -787,6 +1149,97 @@
 									Large file — some upload providers may reject it.
 								</p>
 							{/if}
+							{#if trimmable}
+								<!-- Trim draft (PUB-008): in/out points bind scrubbing today and
+								     drive the cut when the render policy (PUB-009) lands. -->
+								<div
+									class="mt-2 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-2.5"
+								>
+									<div class="flex items-center justify-between gap-2">
+										<p
+											class="flex items-center gap-1.5 text-[11px] font-bold text-[var(--ui-text-muted)]"
+										>
+											<Icon name="i-lucide-scissors" class="size-3.5 text-warm-500" />
+											Trim
+											<span class="font-mono tabular-nums">
+												{formatDuration(trim.inSeconds)}–{formatDuration(trim.outSeconds)}
+											</span>
+										</p>
+										<div class="flex items-center gap-2">
+											<span
+												class="shrink-0 font-mono text-[10px] font-bold tabular-nums {trimValidation?.valid
+													? 'text-[var(--ui-text-dimmed)]'
+													: 'text-[var(--tone-error-text)]'}"
+											>
+												{formatDuration(trimDuration)}
+											</span>
+											<button
+												type="button"
+												onclick={resetTrim}
+												disabled={posting}
+												class="rounded-full px-2 py-0.5 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)] disabled:opacity-40"
+											>
+												Reset
+											</button>
+										</div>
+									</div>
+									<div class="mt-2 flex items-center gap-2">
+										<input
+											type="range"
+											min="0"
+											max={meta?.duration ?? 0}
+											step="0.05"
+											value={trim.inSeconds}
+											oninput={(e) => setTrimEdge('in', e.currentTarget.value)}
+											disabled={posting}
+											aria-label="Trim start"
+											class="h-1.5 min-w-0 flex-1 accent-[var(--color-warm-500)]"
+										/>
+										<input
+											type="range"
+											min="0"
+											max={meta?.duration ?? 0}
+											step="0.05"
+											value={trim.outSeconds}
+											oninput={(e) => setTrimEdge('out', e.currentTarget.value)}
+											disabled={posting}
+											aria-label="Trim end"
+											class="h-1.5 min-w-0 flex-1 accent-[var(--color-warm-500)]"
+										/>
+									</div>
+									{#if trimValidation && !trimValidation.valid}
+										<p
+											class="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--tone-error-text)]"
+										>
+											<Icon name="i-lucide-triangle-alert" class="size-3.5 shrink-0" />
+											{#if trimValidation.reason === 'too-short' || trimValidation.reason === 'inverted'}
+												Cuts need at least 1 second
+											{:else}
+												Keep the cut at 60s or less to publish
+											{/if}
+										</p>
+									{/if}
+									{#if needsRender && !rendering}
+										<p
+											class="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-warm-500"
+										>
+											<Icon name="i-lucide-clapperboard" class="size-3.5 shrink-0" />
+											Publishing renders this cut ({formatDuration(trimDuration)}, up to 720p)
+										</p>
+									{/if}
+									{#if rendering}
+										<div class="mt-1.5">
+											<p class="flex items-center gap-1.5 text-[11px] font-semibold text-warm-500">
+												<Icon
+													name="i-lucide-loader-circle"
+													class="size-3.5 shrink-0 animate-spin"
+												/>
+												Rendering cut… {Math.round(renderPercent)}%
+											</p>
+										</div>
+									{/if}
+								</div>
+							{/if}
 							{#if mediaKind === 'video' && meta?.duration}
 								<!-- Cover frame: scrub the stage, capture a poster frame -->
 								<div
@@ -833,8 +1286,8 @@
 									<div class="mt-2 flex items-center gap-2">
 										<input
 											type="range"
-											min="0"
-											max={meta.duration}
+											min={coverScrubBounds(trim).min}
+											max={coverScrubBounds(trim).max}
 											step="0.05"
 											value={scrubSeconds}
 											oninput={scrubCover}
@@ -1036,11 +1489,13 @@
 							class="size-4 {posting || uploading ? 'animate-spin' : ''}"
 						/>
 						{#if posting}
-							{postPhase === 'mining'
-								? 'Mining…'
-								: postPhase === 'publishing'
-									? 'Publishing…'
-									: 'Posting…'}
+							{machineStageLabel && machineStageLabel !== 'Signing'
+								? `${machineStageLabel}…`
+								: postPhase === 'mining'
+									? 'Mining…'
+									: postPhase === 'publishing'
+										? 'Publishing…'
+										: 'Posting…'}
 						{:else if uploading}
 							Uploading {uploadPercent}%
 						{:else}

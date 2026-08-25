@@ -10,11 +10,10 @@
 	import { dms } from '$lib/nostr/dms.svelte';
 	import { nip29 } from '$lib/nostr/groups.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
-	import { popovers } from '$lib/stores/popovers.svelte';
+	import { accountSwitcher } from '$lib/stores/account-switch.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
-	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey } from '$lib/utils/format';
-	import { hasNip05 } from '$lib/utils/verification';
+	import { hasNip05, hasLightning } from '$lib/utils/verification';
 
 	// Full section list. Guests see every item; `requiresAuth` items render
 	// locked (not clickable) until login.
@@ -35,6 +34,7 @@
 			requiresAuth: true
 		},
 		{ to: '/bitz', label: 'Bitz', icon: 'i-lucide-circle-play' },
+		{ to: '/studio', label: 'Create', icon: 'i-lucide-clapperboard' },
 		{ to: '/discover', label: 'Discover', icon: 'i-lucide-compass' },
 		{
 			to: '/communities',
@@ -60,60 +60,6 @@
 	const unread = $derived(privacyNotificationSettings.state.dms ? dms.unreadCount : 0);
 	const notificationUnread = $derived(notifications.unreadCount);
 	const communitiesUnread = $derived(nip29.groups.reduce((sum, g) => sum + g.unread, 0));
-	const accountMenuId = 'nav-account-switcher';
-	const accountMenuOpen = $derived(popovers.isOpen(accountMenuId));
-	let accountButton = $state<HTMLButtonElement | null>(null);
-	let accountMenuPosition = $state({ left: 12, bottom: 12 });
-
-	function positionAccountMenu() {
-		if (!accountButton) return;
-		const rect = accountButton.getBoundingClientRect();
-		accountMenuPosition = {
-			left: Math.max(12, Math.min(rect.right + 12, window.innerWidth - 268)),
-			bottom: Math.max(12, window.innerHeight - rect.bottom)
-		};
-	}
-
-	function portal(node: HTMLElement) {
-		if (!browser) return;
-		document.body.appendChild(node);
-		return {
-			destroy() {
-				node.remove();
-			}
-		};
-	}
-
-	$effect(() => {
-		if (!accountMenuOpen || !browser) return;
-		positionAccountMenu();
-		window.addEventListener('resize', positionAccountMenu);
-		window.addEventListener('scroll', positionAccountMenu, true);
-		return () => {
-			window.removeEventListener('resize', positionAccountMenu);
-			window.removeEventListener('scroll', positionAccountMenu, true);
-		};
-	});
-
-	function accountName(account: (typeof identity.accounts)[number]) {
-		const profile = profiles.get(account.pk) ?? account.profile;
-		return profile?.display_name || profile?.name || shortKey(account.npub, 8, 6);
-	}
-
-	function accountPicture(account: (typeof identity.accounts)[number]) {
-		return (profiles.get(account.pk) ?? account.profile)?.picture;
-	}
-
-	function switchAccount(pubkey: string) {
-		if (identity.current?.pk === pubkey) return;
-		try {
-			identity.switchTo(pubkey);
-			popovers.close();
-			toasts.info('Switched account');
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
-	}
 
 	function focusComposer(event: MouseEvent) {
 		// A repeat click on /#composer does not emit `hashchange`, so explicitly
@@ -260,109 +206,41 @@
 		{#if me}
 			<div class="relative">
 				<button
-					bind:this={accountButton}
 					type="button"
-					onclick={(event) => {
-						event.stopPropagation();
-						positionAccountMenu();
-						popovers.toggle(accountMenuId);
-					}}
+					onclick={() => accountSwitcher.open()}
 					class="ui4-account relative w-full overflow-hidden rounded-xl p-2.5 text-left transition-all hover:bg-[var(--interactive-hover-bg)]"
 					aria-label="Account menu"
-					aria-expanded={accountMenuOpen}
+					aria-expanded={accountSwitcher.dialogOpen}
 				>
 					<div class="flex items-center gap-2.5">
 						<Avatar
 							pubkey={me.pk}
 							name={displayName}
 							picture={myProfile?.picture}
-							verified={hasNip05(myProfile)}
+							lightning={hasLightning(myProfile)}
 							size={44}
 							frame
 						/>
 						<span class="min-w-0 flex-1">
-							<span class="block truncate text-sm font-semibold">{displayName}</span>
+							<span class="block truncate text-sm font-semibold">
+								{displayName}
+								<!-- nip-05 icon -->
+								{#if hasNip05(myProfile)}
+									<Icon
+										name="i-lucide-badge-check"
+										class="size-3 shrink-0 text-primary-500 dark:text-white"
+										title="NIP-05 verified: {myProfile?.nip05}"
+									/>
+								{/if}
+							</span>
 							<span class="block truncate font-mono text-[11px] text-[var(--ui-text-muted)]"
 								>{shortKey(me.pk, 8, 5)}</span
 							>
 						</span>
+
 						<Icon name="i-lucide-ellipsis" class="size-4 text-[var(--ui-text-muted)]" />
 					</div>
 				</button>
-				{#if accountMenuOpen}
-					<div
-						use:portal
-						class="fixed z-[60] w-64 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-2 shadow-[var(--shadow-pop)]"
-						style:left={`${accountMenuPosition.left}px`}
-						style:bottom={`${accountMenuPosition.bottom}px`}
-					>
-						<a
-							href="/profile"
-							onclick={() => popovers.close()}
-							class="mb-1 flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-[var(--interactive-hover-bg)]"
-						>
-							<Avatar
-								pubkey={me.pk}
-								name={displayName}
-								picture={myProfile?.picture}
-								verified={hasNip05(myProfile)}
-								size={34}
-								frame
-							/>
-							<span class="min-w-0">
-								<span class="block truncate text-[13px] font-bold text-[var(--ui-text)]">
-									{displayName}
-								</span>
-								<span class="block text-[11px] text-[var(--ui-text-muted)]">View profile</span>
-							</span>
-						</a>
-						{#if identity.accounts.length > 1}
-							<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
-							<p class="px-2 py-1 text-[10.5px] font-bold text-[var(--ui-text-dimmed)] uppercase">
-								Switch account
-							</p>
-							{#each identity.accounts as account (account.pk)}
-								<button
-									type="button"
-									onclick={() => switchAccount(account.pk)}
-									disabled={account.active}
-									class="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition hover:bg-[var(--interactive-hover-bg)] disabled:cursor-default disabled:opacity-70 disabled:hover:bg-transparent"
-								>
-									<Avatar
-										pubkey={account.pk}
-										name={accountName(account)}
-										picture={accountPicture(account)}
-										verified={hasNip05(profiles.get(account.pk) ?? account.profile)}
-										size={30}
-										frame
-									/>
-									<span class="min-w-0 flex-1">
-										<span class="block truncate text-[12.5px] font-bold text-[var(--ui-text)]">
-											{accountName(account)}
-										</span>
-										<span
-											class="block truncate font-mono text-[10.5px] text-[var(--ui-text-muted)]"
-										>
-											{shortKey(account.npub, 8, 5)}
-										</span>
-									</span>
-									{#if account.active}
-										<Icon name="i-lucide-check" class="size-4 shrink-0 text-primary-500" />
-									{/if}
-								</button>
-							{/each}
-						{/if}
-						<div class="my-1 h-px bg-[var(--ui-border-muted)]"></div>
-						<a
-							href="/settings/account"
-							onclick={() => popovers.close()}
-							class="flex items-center gap-2 rounded-xl px-2 py-2 text-[12.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
-						>
-							<Icon name="i-lucide-user-plus" class="size-4" />
-							Manage accounts
-						</a>
-					</div>
-				{/if}
 			</div>
 		{:else}
 			<!-- Guest: full login card with help text (replaces icon-only button). -->

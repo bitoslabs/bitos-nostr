@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import type { Filter } from 'nostr-tools/filter';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -144,13 +145,18 @@
 	 *  pool changes (interaction, followed-tag merge, activity arrival) — the
 	 *  rest of the list follows the new order below the stable visible window. */
 	function applyStableWindow(nextNotes: FeedNote[]): FeedNote[] {
-		const visibleIds = new Set(rankedFeed.notes.slice(0, renderedCount).map((note) => note.id));
+		// This is a snapshot used only to preserve the visible ordering. In
+		// particular, the ranking effect writes `rankedFeed`; tracking this read
+		// would make that effect subscribe to — and immediately re-trigger on —
+		// its own write when switching to the Following tab.
+		const previousNotes = untrack(() => rankedFeed.notes);
+		const visibleIds = new Set(previousNotes.slice(0, renderedCount).map((note) => note.id));
 		if (!visibleIds.size) return nextNotes;
 		// Keep the current order for cards already on screen, but take the note
 		// objects from the new list. The feed store updates reactions optimistically;
 		// reusing the old objects here would restore the pre-like state after every pass.
 		const nextById = new Map(nextNotes.map((note) => [note.id, note]));
-		const stableVisible = rankedFeed.notes
+		const stableVisible = previousNotes
 			.filter((note) => visibleIds.has(note.id) && nextById.has(note.id))
 			.map((note) => nextById.get(note.id)!);
 		const stableIds = new Set(stableVisible.map((note) => note.id));
@@ -345,7 +351,17 @@
 		const noteIds = nextNotes.map((note) => note.id);
 		const activity = noteIds.length
 			? await queryPrimaryFirst([
-					{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': noteIds, limit: 1000 }
+					{
+						kinds: [
+							NOSTR_KINDS.REACTION,
+							NOSTR_KINDS.POLL_RESPONSE,
+							NOSTR_KINDS.REPOST,
+							NOSTR_KINDS.GENERIC_REPOST,
+							NOSTR_KINDS.ZAP
+						],
+						'#e': noteIds,
+						limit: 1000
+					}
 				])
 			: [];
 		return applyActivityToNotes(nextNotes, activity, identity.current?.pk);
@@ -430,7 +446,17 @@
 			const ids = notes.map((note) => note.id);
 			const activity = ids.length
 				? await queryPrimaryFirst([
-						{ kinds: [NOSTR_KINDS.REACTION, NOSTR_KINDS.POLL_RESPONSE, NOSTR_KINDS.REPOST, NOSTR_KINDS.ZAP], '#e': ids, limit: 1000 }
+						{
+							kinds: [
+								NOSTR_KINDS.REACTION,
+								NOSTR_KINDS.POLL_RESPONSE,
+								NOSTR_KINDS.REPOST,
+								NOSTR_KINDS.GENERIC_REPOST,
+								NOSTR_KINDS.ZAP
+							],
+							'#e': ids,
+							limit: 1000
+						}
 					])
 				: [];
 			if (discoverySignature !== signature || revision !== discoveryRevision) return;
@@ -462,17 +488,18 @@
 			const ids = notes.map((note) => note.id);
 			const activity = ids.length
 				? await queryPrimaryFirst([
-							{
-								kinds: [
-									NOSTR_KINDS.REACTION,
-									NOSTR_KINDS.POLL_RESPONSE,
-									NOSTR_KINDS.REPOST,
-									NOSTR_KINDS.ZAP
-								],
-								'#e': ids,
-								limit: 1000
-							}
-						])
+						{
+							kinds: [
+								NOSTR_KINDS.REACTION,
+								NOSTR_KINDS.POLL_RESPONSE,
+								NOSTR_KINDS.REPOST,
+								NOSTR_KINDS.GENERIC_REPOST,
+								NOSTR_KINDS.ZAP
+							],
+							'#e': ids,
+							limit: 1000
+						}
+					])
 				: [];
 			if (followedTagSignature !== signature || revision !== followedTagRevision) return;
 			followedTagNotes = applyActivityToNotes(notes, activity, identity.current?.pk);

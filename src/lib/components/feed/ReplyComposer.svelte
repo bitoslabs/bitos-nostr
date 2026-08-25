@@ -68,6 +68,7 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import { shortKey } from '$lib/utils/format';
+	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import type { FeedNote } from '$lib/nostr/types';
 	import type { UploadedMedia } from '$lib/media/uploaders';
 
@@ -87,6 +88,7 @@
 		autofocus = false,
 		focusTick = 0,
 		initialMention,
+		commentTarget,
 		onSubmitted,
 		onCancel
 	}: {
@@ -97,6 +99,12 @@
 		focusTick?: number;
 		/** Pre-fill the editor with an @mention (e.g. when replying to a comment). */
 		initialMention?: { pubkey: string; name: string };
+		/**
+		 * NIP-22 mode (ADR-003): when set, submitting publishes a kind-1111
+		 * comment on this non-kind-1 event instead of a kind-1 reply.
+		 * `parent` still drives mention suggestions and the privacy gate.
+		 */
+		commentTarget?: { id: string; pubkey: string; kind: number };
 		onSubmitted?: (reply: FeedNote) => void;
 		onCancel?: () => void;
 	} = $props();
@@ -428,18 +436,39 @@
 			if (mining) await new Promise((resolve) => setTimeout(resolve, 50));
 			const allMentions = ensureMentionTracking(text, mentions, candidates);
 			const body = rewriteMentions(text, allMentions);
-			const reply = await feed.reply(parent, body, {
-				attachments: attachments.map((a) => ({
-					url: a.url,
-					kind: a.kind,
-					mimeType: a.mimeType,
-					bytes: a.bytes
-				})),
-				pow: showPow ? pow : 0,
-				onPowProgress: (progress) => (powProgress = progress),
-				onPhase: (phase) => (postPhase = phase),
-				signal: controller.signal
-			});
+			const attachmentsPayload = attachments.map((a) => ({
+				url: a.url,
+				kind: a.kind,
+				mimeType: a.mimeType,
+				bytes: a.bytes
+			}));
+			const reply = commentTarget
+				? await feed.comment(
+						commentTarget,
+						body,
+						// The comment being answered, when nesting.
+						parent.id !== commentTarget.id
+							? {
+									id: parent.id,
+									pubkey: parent.pubkey,
+									kind: parent.raw?.kind ?? NOSTR_KINDS.COMMENT
+								}
+							: undefined,
+						{
+							attachments: attachmentsPayload,
+							pow: showPow ? pow : 0,
+							onPowProgress: (progress) => (powProgress = progress),
+							onPhase: (phase) => (postPhase = phase),
+							signal: controller.signal
+						}
+					)
+				: await feed.reply(parent, body, {
+						attachments: attachmentsPayload,
+						pow: showPow ? pow : 0,
+						onPowProgress: (progress) => (powProgress = progress),
+						onPhase: (phase) => (postPhase = phase),
+						signal: controller.signal
+					});
 			// Persist the difficulty actually used (0 when PoW was off).
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);

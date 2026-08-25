@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { browser } from '$app/environment';
+	import { browser, dev } from '$app/environment';
 	import { page } from '$app/state';
 	import { registerIcons } from '$lib/icons';
 	import { preferences } from '$lib/theme/preferences.svelte';
@@ -31,7 +31,8 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
-	import { ensureConnected } from '$lib/nostr/pool';
+	import { ensureConnected, onRelayAck, publish as publishEvent } from '$lib/nostr/pool';
+	import { DEFAULT_MIN_ACKS, pendingOutbox, recordAck } from '$lib/stores/event-outbox';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { callAlerts } from '$lib/stores/call-alerts.svelte';
@@ -46,6 +47,8 @@
 	import AppRightRail from '$lib/components/shell/AppRightRail.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+	import AccountSwitcherDialog from '$lib/components/ui/AccountSwitcherDialog.svelte';
+	import AccountSwitcherOverlay from '$lib/components/ui/AccountSwitcherOverlay.svelte';
 
 	let { children } = $props();
 	const favicon = '/favicon.ico';
@@ -62,7 +65,10 @@
 
 	const CALL_SIGNAL_PREFIX = 'bitos://call-signal?';
 	const SETTINGS_AUTO_RESTORE_ACCOUNT_KEY = 'bitos:settings-auto-restore-account';
+	// Deliberately non-reactive: call de-dup bookkeeping only.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const alertedCallOffers = new Set<string>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const closedCallIds = new Set<string>();
 
 	registerIcons();
@@ -115,6 +121,8 @@
 	}
 
 	function openMessagesForCall(signal: CallSignal) {
+		// Built once per navigation — never reactive state.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const params = new URLSearchParams({ to: signal.from, answer: signal.callId });
 		if (signal.groupId) params.set('group', signal.groupId);
 		void goto(`/messages?${params.toString()}`);
@@ -232,10 +240,27 @@
 			setTimeout(() => splash.remove(), 400);
 		}
 		if ('serviceWorker' in navigator) {
-			void navigator.serviceWorker.register('/service-worker.js', { type: 'module' }).catch((e) => {
-				/* PWA support is best-effort. */
-				console.error('Failed to register service worker:', e);
-			});
+			if (dev) {
+				// The SW is cache-first for same-origin GETs — in dev that caches
+				// Vite module URLs and serves stale code after every edit (broken
+				// HMR, phantom old UI). Never register it in dev, and unregister
+				// any copy left over from a previous production run.
+				void navigator.serviceWorker
+					.getRegistrations()
+					.then((registrations) => {
+						for (const registration of registrations) void registration.unregister();
+					})
+					.catch(() => {
+						/* best-effort cleanup */
+					});
+			} else {
+				void navigator.serviceWorker
+					.register('/service-worker.js', { type: 'module' })
+					.catch((e) => {
+						/* PWA support is best-effort. */
+						console.error('Failed to register service worker:', e);
+					});
+			}
 		}
 		preferences.load();
 		preferences.apply();
@@ -252,6 +277,28 @@
 		identity.load();
 		algorithmPreferences.load();
 		interactionProfile.load();
+
+		// PUB-012 (§12.2): record relay ACKs into the local outbox so signed
+		// events graduate once the durability threshold is met, then drain
+		// anything still short of it by re-sending the SAME signed events —
+		// never re-signed, never rebuilt. Closes over the app lifetime.
+		const stopAckObserver = onRelayAck((eventId, relayUrl) => {
+			recordAck(eventId, relayUrl, { minAcks: DEFAULT_MIN_ACKS });
+		});
+		const outboxDrain = setInterval(() => {
+			const pending = pendingOutbox(DEFAULT_MIN_ACKS);
+			for (const entry of pending) {
+				// pendingOutbox has already validated the shape — this event was
+				// signed by us and previously agreed to publish.
+				void publishEvent(entry.event as import('nostr-tools/pure').Event).catch(() => {
+					/* stays pending; the next drain retries */
+				});
+			}
+		}, 15_000);
+		return () => {
+			stopAckObserver();
+			clearInterval(outboxDrain);
+		};
 	});
 
 	// React to login/logout (onboarding) at runtime: start/stop subscriptions.
@@ -420,7 +467,11 @@
 	// routes. Multi-pane routes (messages, settings, reels) own their own layout
 	// and opt out so their internal columns get the full center width. Home uses
 	// the same consolidated AppRightRail as the rest of the content routes.
-	const railHiddenPrefixes = ['/messages', '/settings', '/bitz'];
+	const railHiddenPrefixes = ['/messages', '/settings', '/bitz', '/studio/create'];
+	// Full-bleed editor surfaces (studio) drop the centered container clamp too —
+	// their panels stretch to the whole main column like messages/settings panes.
+	const breakoutRoutes = /^\/studio\/create\/?$/;
+	const isBreakout = $derived(breakoutRoutes.test(page.url.pathname));
 	const publicRailRoutes = new Set(['/', '/discover']);
 	const showRail = $derived(
 		(hasIdentity || publicRailRoutes.has(page.url.pathname)) &&
@@ -467,7 +518,13 @@
 	<!-- Keep this shell out of its own stacking context. Full-screen viewers rendered
 	     by page content must be able to layer above the mobile tab bar. -->
 	<div class="relative flex h-screen w-full justify-center overflow-hidden">
-		<div class="flex w-full max-w-[var(--ui-container)] overflow-hidden">
+		<!-- Breakout editors (studio) drop the centered container clamp too — the
+		     editing surface owns the whole width next to the nav rail. -->
+		<div
+			class={isBreakout
+				? 'flex h-full w-full overflow-hidden'
+				: 'flex w-full max-w-[var(--ui-container)] overflow-hidden'}
+		>
 			<!-- Desktop nav rail (premium icon rail) -->
 			<aside
 				class="z-20 hidden w-[260px] shrink-0 border-r border-[var(--ui-border-muted)] lg:flex lg:flex-col"
@@ -479,6 +536,9 @@
 			<main class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">
 				{#if routeNeedsAuth && !hasIdentity}
 					<AuthRequired title={authMessage.title} description={authMessage.description} />
+				{:else if isBreakout}
+					<!-- Full-bleed editors: fill the entire main column, no center clamp. -->
+					<div class="h-full">{@render children?.()}</div>
 				{:else}
 					{@render children?.()}
 				{/if}
@@ -501,4 +561,8 @@
 
 <IncomingCallOverlay />
 <Toaster />
+<!-- Global switch-account dialog + boot-style switch transition overlay.
+     Mounted before ConfirmDialog so removal confirms stack above it. -->
+<AccountSwitcherDialog />
 <ConfirmDialog />
+<AccountSwitcherOverlay />
