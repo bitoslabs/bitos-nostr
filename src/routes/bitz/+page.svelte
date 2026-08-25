@@ -274,8 +274,8 @@
 	let pendingDeleteReel = $state<ReelNote | null>(null);
 	let deletingReel = $state(false);
 	// --- Remix chain (plan §17 creator economy rec #1) ---
-	/** Pending remix handed to the Meme Studio at /create (§17 remix chain). */
-	let remixHandoff = $state<RemixHandoff | null>(null);
+	/** Which action rail is currently opening the studio (prevents double taps). */
+	let remixStartingId = $state('');
 	const rankedReels = $derived.by(() => {
 		if (!reels.length) return reels;
 		// Author mode keeps the loaded (chronological) order — the profile grid
@@ -406,7 +406,8 @@
 	/** Open the Meme Studio with this reel's meme layout pre-applied — the
 	 *  remix chain (§17 creator economy). Non-meme bitz still work: the studio
 	 *  opens with the source media only and the creator adds their own spin. */
-	function remixReel(reel: ReelNote) {
+	async function remixReel(reel: ReelNote) {
+		if (remixStartingId) return;
 		popovers.close();
 		const layout = remixLayoutOf(reel.tags);
 		const reelRights = rightsOf(reel.tags);
@@ -419,7 +420,7 @@
 			);
 			if (!proceed) return;
 		}
-		remixHandoff = {
+		const remixHandoff: RemixHandoff = {
 			eventId: reel.id,
 			pubkey: reel.pubkey,
 			label: bitzAuthorName(reel) || captionFor(reel).slice(0, 40) || 'a bitz',
@@ -429,8 +430,16 @@
 			sfxCues: layout?.sfxCues ?? [],
 			relays: [...new Set([...(remixOf(reel.tags)?.relays ?? []), ...relays.writeUrls])].slice(0, 3)
 		};
-		// /create owns the studio bundle now — hand off and navigate.
-		studioHandoff.openInStudio('meme', remixHandoff);
+		// /studio/create owns the lazy editor bundle. Keep the button visibly busy
+		// until SvelteKit confirms the route transition; previously its rejected
+		// navigation promise was discarded, which looked exactly like a dead tap.
+		remixStartingId = reel.id;
+		try {
+			await studioHandoff.openInStudio('meme', remixHandoff);
+		} catch {
+			toasts.error('Could not open Meme Studio. Please try Remix again.');
+			remixStartingId = '';
+		}
 	}
 
 	async function copyText(value: string, label: string) {
@@ -1863,7 +1872,7 @@
 							/>
 						{/if}
 						<div
-							class="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+							class="pointer-events-none absolute inset-0 z-40 overflow-hidden"
 							aria-hidden="true"
 						>
 							{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
@@ -1877,7 +1886,7 @@
 						{#if reelCovered}
 							<button
 								type="button"
-								class="absolute inset-0 z-20 grid place-items-center bg-black/20 p-4 text-center text-white"
+								class="absolute inset-0 z-30 grid place-items-center bg-black/20 p-4 text-center text-white"
 								onclick={() =>
 									(revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true })}
 								aria-label="Show sensitive reel"
@@ -1900,10 +1909,33 @@
 						></div>
 
 						<div
-							class="absolute right-4 bottom-24 z-10 flex flex-col gap-5 transition-[right] duration-200 {commentReel
+							class="pointer-events-auto absolute right-4 bottom-24 z-20 flex flex-col gap-5 transition-[right] duration-200 {commentReel
 								? 'lg:right-24'
 								: ''}"
 						>
+							<!-- Remix is a primary creation action, so keep it at the top of
+							     the rail. On short mobile screens the old bottom position could
+							     sit beneath caption/bottom-player chrome and feel untappable. -->
+							<button
+								type="button"
+								onclick={() => void remixReel(reel)}
+								class="reel-action"
+								disabled={!!remixStartingId}
+								aria-busy={remixStartingId === reel.id}
+								aria-label="Remix this bitz in the Meme Studio"
+							>
+								<span class="icon-circle is-remix">
+									<Icon
+										name={remixStartingId === reel.id
+											? 'i-lucide-loader-circle'
+											: 'i-lucide-wand-sparkles'}
+										class="size-5 {remixStartingId === reel.id ? 'animate-spin' : ''}"
+									/>
+								</span>
+								<span class="text-[11px] font-semibold">
+									{remixStartingId === reel.id ? 'Opening' : 'Remix'}
+								</span>
+							</button>
 							<button
 								type="button"
 								onclick={() => openZap(reel)}
@@ -1962,20 +1994,6 @@
 									/>
 								</span>
 								<span class="text-[11px] font-semibold">Save</span>
-							</button>
-							<!-- Remix chain (§17 creator economy): promoted to the main rail —
-								     one tap to riff on a bitz in the Meme Studio. The violet
-								     accent separates the create action from the engagement cluster. -->
-							<button
-								type="button"
-								onclick={() => remixReel(reel)}
-								class="reel-action"
-								aria-label="Remix this bitz in the Meme Studio"
-							>
-								<span class="icon-circle is-remix">
-									<Icon name="i-lucide-wand-sparkles" class="size-5" />
-								</span>
-								<span class="text-[11px] font-semibold">Remix</span>
 							</button>
 							<a href={`/profile/${reel.pubkey}`} class="mt-2" aria-label="Open profile">
 								<Avatar

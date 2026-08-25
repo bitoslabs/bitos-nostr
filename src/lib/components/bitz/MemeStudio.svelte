@@ -144,7 +144,6 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
-	import { fetchRemoteMedia } from '$lib/meme/remote-media';
 	import type { MemeMediaFormat } from '$lib/components/bitz/MemeStudioDropZone.svelte';
 	import MemeBatchQueueBar from '$lib/components/bitz/MemeBatchQueueBar.svelte';
 	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
@@ -1099,6 +1098,15 @@
 		}
 	});
 
+	// ---- pinned export length (user request: “set 3s, 5s, 10s…”) --------------
+	/** Chosen export length for GIF and sound-cue meme bases (null = auto:
+	 *  the GIF's own duration / the cue track). Shorter trims; longer loops a
+	 *  GIF to fill (the base painter modulo-repeats) or pads a cue meme with
+	 *  silence.  This must be declared before the derived timeline values that
+	 *  read it: otherwise TypeScript rejects the editor bundle before Remix can
+	 *  open it. */
+	let pinnedLengthSec = $state<number | null>(null);
+
 	/** Total timeline length the playhead scrubs over, per media kind. A pinned
 	 * Length is the project clock for GIF and image+sound projects as well as
 	 * export — selecting 10s must produce a 10s ruler, not the raw cue length. */
@@ -1184,12 +1192,6 @@
 
 	// ---- trim + speed (video sources; export-time window, preview plays it) --
 	let trimStartSec = $state(0);
-	// ---- pinned export length (user request: “set 3s, 5s, 10s…”) --------------
-	/** Chosen export length for GIF and sound-cue meme bases (null = auto:
-	 *  the GIF's own duration / the cue track). Shorter trims; longer loops a
-	 *  GIF to fill (the base painter modulo-repeats) or pads a cue meme with
-	 *  silence. */
-	let pinnedLengthSec = $state<number | null>(null);
 	let trimEndSec = $state<number | null>(null); // null = through the end
 	let playbackRate = $state(1);
 	/** Trim window in export seconds (media time − trimStart). */
@@ -2200,20 +2202,22 @@
 	 *  the composer is already usable on the fallback “pick your own clip” path. */
 	async function consumeRemixHandoff(handoff: RemixHandoff) {
 		try {
-			// wsrv.nl proxies images only — video remix sources stay direct-or-fail.
-			const res = await fetchRemoteMedia(handoff.mediaUrl, {
-				proxy: handoff.mediaType !== 'video'
+			// Use the same source-loader as the rest of the studio. Besides keeping
+			// the media/type/200 MB checks consistent, this retries CORS-hostile
+			// image sources through the approved image proxy. The old bespoke fetch
+			// attempted videos direct-only and showed a generic failure even when a
+			// valid source could otherwise be loaded.
+			const source = await fetchSourceFile(handoff.mediaUrl, {
+				label: 'remix-source',
+				accept: handoff.mediaType,
+				maxBytes: MAX_SOURCE_BYTES
 			});
-			if (!res) throw new Error('CORS-blocked host');
-			const blob = await res.blob();
-			const name = handoff.mediaUrl.split('/').pop() || 'remix-source';
-			const asFile = new File([blob], name, {
-				type: blob.type || (handoff.mediaType === 'image' ? 'image/jpeg' : 'video/mp4')
-			});
+			if (!source.ok || !source.file) throw new Error(source.error ?? 'Could not load source media');
 			// keepRemix: loading the source media IS the remix path — lineage stays.
-			await acceptFile(asFile, { keepRemix: true });
-		} catch {
-			toasts.error('Could not load the source media — pick your own clip below');
+			await acceptFile(source.file, { keepRemix: true });
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : 'Could not load source media';
+			toasts.warning(`${detail} — choose your own clip below to continue this remix`);
 		}
 		const applied = applyRemixPayload({
 			overlays: handoff.overlays,
