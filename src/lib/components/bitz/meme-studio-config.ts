@@ -16,6 +16,8 @@ import type {
 	MemeMediaFormatOption
 } from '$lib/components/bitz/MemeStudioDropZone.svelte';
 
+import type { TemplateCategoryId } from '$lib/meme/template-marketplace';
+
 export type MemeStudioPhase = 'idle' | 'rendering' | 'uploading' | 'mining' | 'publishing';
 export type MemeDestination = 'bitz' | 'story' | 'note';
 export type MemeExportFormat = 'auto' | 'image' | 'gif' | 'video';
@@ -26,6 +28,9 @@ export interface MemeStudioTemplate {
 	label: string;
 	hint: string;
 	icon: string;
+	/** Dialog category chip (reuse the marketplace vocabulary so local
+	 *  templates + shared/market listings browse consistently). */
+	category?: import('$lib/meme/template-marketplace').TemplateCategoryId;
 	overlays: () => MemeTextOverlay[];
 	/** Timed template extras (spec Layer 3): sound cues, zoom punches,
 	 *  frame-fx windows and speed ramps that ride the template's timing —
@@ -291,6 +296,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Classic',
 		hint: 'Top / bottom Impact caps',
 		icon: 'i-lucide-letter-text',
+		category: 'meme',
 		overlays: () => makeClassicPair()
 	},
 	{
@@ -298,6 +304,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Caption bar',
 		hint: 'Single subtitle-bar line',
 		icon: 'i-lucide-captions',
+		category: 'meme',
 		overlays: () => [
 			makeOverlay({
 				text: 'when the code finally runs',
@@ -313,6 +320,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Drake',
 		hint: 'No / Yes panels',
 		icon: 'i-lucide-columns-2',
+		category: 'meme',
 		overlays: () => [
 			makeOverlay({ text: 'web2 platforms', x: 0.25, y: 0.24, size: 0.05 }),
 			makeOverlay({ text: 'nostr', x: 0.75, y: 0.74, size: 0.05 })
@@ -323,6 +331,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Punchline',
 		hint: 'Timed setup → punchline (video)',
 		icon: 'i-lucide-zap',
+		category: 'meme',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'setup…', y: 0.2, size: 0.06 }), endMs: 1500 },
 			{ ...makeOverlay({ text: 'PUNCHLINE', y: 0.8, size: 0.1 }), startMs: 1500 }
@@ -337,6 +346,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Production bug',
 		hint: 'Glitch + error beep on the reveal',
 		icon: 'i-lucide-bug',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'it works on my machine', y: 0.18, size: 0.05 }), endMs: 1500 },
 			{
@@ -357,6 +367,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Funny zoom',
 		hint: 'Face punch-in + laugh on the beat',
 		icon: 'i-lucide-zoom-in',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'wait for it…', y: 0.12, size: 0.05 }), endMs: 1800 },
 			{ ...makeOverlay({ text: 'LMAO', y: 0.85, size: 0.12 }), startMs: 1800 }
@@ -372,6 +383,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'NPC mode',
 		hint: 'Pixelate + loading beeps',
 		icon: 'i-lucide-bot',
+		category: 'reaction',
 		overlays: () => [
 			{
 				...makeOverlay({
@@ -395,6 +407,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Big reveal',
 		hint: 'Strobe + drumroll → jackpot',
 		icon: 'i-lucide-eye',
+		category: 'cinematic',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'the reveal…', y: 0.2, size: 0.05 }), endMs: 2000 },
 			{ ...makeOverlay({ text: '🤑 JACKPOT', y: 0.5, size: 0.11 }), startMs: 2000 }
@@ -414,6 +427,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Ninja appear',
 		hint: 'Spotlight → anime slash',
 		icon: 'i-lucide-moon-star',
+		category: 'cinematic',
 		overlays: () => [
 			{
 				...makeOverlay({ text: ' ນິນຈາ', x: 0.5, y: 0.16, size: 0.08 }),
@@ -436,6 +450,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Money hit',
 		hint: 'Coin rain + zoom on the stack',
 		icon: 'i-lucide-bitcoin',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'when the sats stack', y: 0.14, size: 0.05 }), endMs: 1600 },
 			{ ...makeOverlay({ text: '₿₿₿ TO THE MOON', y: 0.82, size: 0.09, bar: true }), startMs: 1600 }
@@ -452,6 +467,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Plot twist',
 		hint: 'Record-scratch freeze energy',
 		icon: 'i-lucide-corner-down-right',
+		category: 'cinematic',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'everything is fine', y: 0.2, size: 0.055 }), endMs: 2000 },
 			{
@@ -473,6 +489,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Chaos mode',
 		hint: 'Everything, everywhere (all tracks maxed)',
 		icon: 'i-lucide-flame',
+		category: 'reaction',
 		overlays: () => [
 			makeOverlay({ text: 'CHAAAAOS', x: 0.5, y: 0.5, size: 0.13, color: '#f97316' })
 		],
@@ -496,6 +513,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'นั่งลง 🇹🇭',
 		hint: 'นั่งลง! flash + slam (Thai pack)',
 		icon: 'i-lucide-languages',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'นั่งลง!!', y: 0.5, size: 0.12, color: '#fde047' }), startMs: 1400 }
 		],
@@ -510,6 +528,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'ບໍ່ເປັນຫຍັງ 🇱🇦',
 		hint: 'Chill vignette + ding (Lao pack)',
 		icon: 'i-lucide-leaf',
+		category: 'lao',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'ບໍ່ເປັນຫຍັງ', y: 0.86, size: 0.07, bar: true }),
@@ -527,6 +546,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Deploy day 👨💻',
 		hint: 'Success beep + zoom-blur (Developer pack)',
 		icon: 'i-lucide-terminal',
+		category: 'meme',
 		overlays: () => [
 			{
 				...makeOverlay({ text: '$ git push --force', y: 0.18, size: 0.045, font: 'mono' }),
@@ -549,6 +569,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Wait for it…',
 		hint: 'Slow zoom → silence → boom punchline',
 		icon: 'i-lucide-hourglass',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'wait for it…', y: 0.12, size: 0.05 }), endMs: 2400 },
 			{ ...makeOverlay({ text: 'THERE IT IS', y: 0.84, size: 0.11 }), startMs: 2400 }
@@ -564,6 +585,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Brain loading',
 		hint: 'Freeze + beeps → 404 brain',
 		icon: 'i-lucide-brain-circuit',
+		category: 'reaction',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'thinking…', y: 0.14, size: 0.05, font: 'mono' }),
@@ -591,6 +613,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Expectation vs Reality',
 		hint: 'Clean cut → shake → bonk',
 		icon: 'i-lucide-git-compare',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'EXPECTATION ✨', y: 0.12, size: 0.05 }), endMs: 1600 },
 			{
@@ -609,6 +632,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'POV',
 		hint: 'Slow zoom + hit on the event',
 		icon: 'i-lucide-video',
+		category: 'cinematic',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'POV:', y: 0.1, size: 0.06 }), endMs: 2200 },
 			{
@@ -627,6 +651,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Before / After',
 		hint: 'Swipe transition + zoom finish',
 		icon: 'i-lucide-arrow-right-left',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'BEFORE', x: 0.5, y: 0.12, size: 0.055 }), endMs: 1500 },
 			{ ...makeOverlay({ text: 'AFTER 🔥', x: 0.5, y: 0.12, size: 0.055 }), startMs: 1500 }
@@ -643,6 +668,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: '0 → 100',
 		hint: 'Speed ramp + shake escalation',
 		icon: 'i-lucide-gauge',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'calm 😐', y: 0.16, size: 0.05 }), endMs: 1400 },
 			{
@@ -664,6 +690,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Pump 📈',
 		hint: 'Buddy moon-walk in, zoom + jackpot (₿ pack)',
 		icon: 'i-lucide-trending-up',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'me checking the chart', y: 0.14, size: 0.05 }), endMs: 1500 },
 			{
@@ -688,6 +715,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Dump 📉',
 		hint: 'Buddy panic face + red crash (₿ pack)',
 		icon: 'i-lucide-trending-down',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'just a small dip', y: 0.14, size: 0.05 }), endMs: 1400 },
 			{
@@ -711,6 +739,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'HODL 🧘',
 		hint: 'Zen buddy stays calm in chaos (₿ pack)',
 		icon: 'i-lucide-lotus',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'market: -20%', y: 0.12, size: 0.05 }), endMs: 2000 },
 			{
@@ -730,6 +759,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Buy the dip 🛒',
 		hint: 'Buddy thinking → shopping snap (₿ pack)',
 		icon: 'i-lucide-shopping-cart',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'it dipped again…', y: 0.14, size: 0.05 }), endMs: 1600 },
 			{
@@ -758,6 +788,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Fiat brrr 🖨️',
 		hint: 'Money printer + buddy dead inside (₿ pack)',
 		icon: 'i-lucide-printer',
+		category: 'bitcoin',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'money printer go brrr', y: 0.12, size: 0.05, font: 'mono' }),
@@ -785,6 +816,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Lightning zap ⚡',
 		hint: 'Glitch + lightning sfx, buddy shocked (₿ pack)',
 		icon: 'i-lucide-zap',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'when the invoice', y: 0.14, size: 0.05 }), endMs: 1400 },
 			{
@@ -804,6 +836,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Self custody 🔑',
 		hint: 'Not your keys → buddy angry (₿ pack)',
 		icon: 'i-lucide-key-round',
+		category: 'bitcoin',
 		overlays: () => [
 			{
 				...makeOverlay({
@@ -830,6 +863,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Number go up 🔢',
 		hint: 'Speed-ramp euphoria + buddy laughing (₿ pack)',
 		icon: 'i-lucide-bar-chart-3',
+		category: 'bitcoin',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'number go up technology', y: 0.14, size: 0.05 }), endMs: 1400 },
 			{
@@ -858,6 +892,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Works on my machine 🤷',
 		hint: 'Buddy shrug — identical envs, different results (Dev pack)',
 		icon: 'i-lucide-laptop',
+		category: 'developer',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'works on my machine', y: 0.16, size: 0.05, font: 'mono' }),
@@ -885,6 +920,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Merge conflict ⚔️',
 		hint: 'Both branches valid — buddy laughs at yours (Dev pack)',
 		icon: 'i-lucide-git-merge',
+		category: 'developer',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'git merge main', y: 0.16, size: 0.05, font: 'mono' }),
@@ -915,6 +951,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Server down 🔌',
 		hint: 'Pager fires at 3am — buddy dead inside (Dev pack)',
 		icon: 'i-lucide-server-off',
+		category: 'developer',
 		overlays: () => [
 			{
 				...makeOverlay({ text: '03:00 AM — page duty', y: 0.14, size: 0.045, font: 'mono' }),
@@ -941,6 +978,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Client: "small change" 😤',
 		hint: 'Buddy angry — the classic scope creep (Dev pack)',
 		icon: 'i-lucide-file-warning',
+		category: 'developer',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'client: just a small change', y: 0.16, size: 0.05 }),
@@ -971,6 +1009,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'อีหยังวะ 😂',
 		hint: 'Confused zoom → อีหยังวะ! (Thai pack)',
 		icon: 'i-lucide-help-circle',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: '???' }), endMs: 1200 },
 			{
@@ -991,6 +1030,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'บ่แม่นแล้ว 🙃',
 		hint: 'Slow-mo zoom + dead-inside (Thai/Lao pack)',
 		icon: 'i-lucide-meh',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'ผิดหวัง…', y: 0.14, size: 0.05 }), endMs: 1400 },
 			{
@@ -1011,6 +1051,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'เอ้า! 😤',
 		hint: 'Flash + slam + angry buddy (Thai pack)',
 		icon: 'i-lucide-zap',
+		category: 'thai',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'เอ้า!!', y: 0.5, size: 0.13, color: '#f97316' }),
@@ -1032,6 +1073,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: '555+ 🤣',
 		hint: 'Laughing caption bar escalation (Thai pack)',
 		icon: 'i-lucide-laugh',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: '555', y: 0.84, size: 0.07, bar: true }), endMs: 900 },
 			{
@@ -1053,6 +1095,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'เงินเดือนออก vs ปลายเดือน 💸',
 		hint: 'Cash hit → broke vignette (Thai pack)',
 		icon: 'i-lucide-wallet',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'เงินเดือนออก 🤑', y: 0.12, size: 0.055 }), endMs: 1600 },
 			{ ...makeOverlay({ text: 'ปลายเดือน 💀', y: 0.12, size: 0.055 }), startMs: 1600 },
@@ -1080,6 +1123,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'แม่เรียกกลับบ้าน 🏠',
 		hint: 'Notification dread → honest caption (Thai pack)',
 		icon: 'i-lucide-phone-call',
+		category: 'thai',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'แม่: กลับบ้านไหมลูก', y: 0.12, size: 0.05 }), endMs: 1800 },
 			{
@@ -1100,6 +1144,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Network 3G 🐌',
 		hint: 'Loading freeze + glitch drop (Lao pack)',
 		icon: 'i-lucide-wifi-off',
+		category: 'lao',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'ກຳລັງໂຫຼດ…', y: 0.14, size: 0.05, font: 'mono' }), endMs: 2000 },
 			{
@@ -1124,6 +1169,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Anime reaction ⚡',
 		hint: 'Speed lines + zoom + slash (spec #11)',
 		icon: 'i-lucide-swords',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'ナニ?!', y: 0.14, size: 0.07 }), endMs: 1400 },
 			{
@@ -1144,6 +1190,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Breaking news 📰',
 		hint: 'Lower-third + ticker + alert (spec #12)',
 		icon: 'i-lucide-newspaper',
+		category: 'cinematic',
 		overlays: () => [
 			{
 				...makeOverlay({
@@ -1170,6 +1217,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Mission failed 💀',
 		hint: 'Grayscale slow-mo + game over (spec #13)',
 		icon: 'i-lucide-skull',
+		category: 'reaction',
 		overlays: () => [
 			{
 				...makeOverlay({ text: 'MISSION FAILED', y: 0.5, size: 0.08, bar: true }),
@@ -1190,6 +1238,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Instant regret 😬',
 		hint: 'Freeze + zoom face + sad replay (spec #14)',
 		icon: 'i-lucide-undo-2',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: '…', y: 0.5, size: 0.12 }), startMs: 1400, endMs: 2000 },
 			{
@@ -1210,6 +1259,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Bro thought… 💭',
 		hint: 'Confident setup → BOOM skull (spec #15)',
 		icon: 'i-lucide-message-circle-warning',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'bro thought he ate 💅', y: 0.14, size: 0.05 }), endMs: 1800 },
 			{
@@ -1237,6 +1287,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Suspicious 🤨',
 		hint: 'Slow zoom + side-eye + suspicious ding (spec #17)',
 		icon: 'i-lucide-eye',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'hmm…', y: 0.16, size: 0.06 }), endMs: 2000 },
 			{ ...makeOverlay({ text: '🤨', y: 0.5, size: 0.14 }), startMs: 2000 }
@@ -1254,6 +1305,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Victory 🏆',
 		hint: 'Flash + jackpot + W caption (spec #18)',
 		icon: 'i-lucide-trophy',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'grinding arc', y: 0.14, size: 0.05 }), endMs: 1600 },
 			{
@@ -1278,6 +1330,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: "IT'S OVER 💀",
 		hint: 'Error → RGB glitch → shake sirens (spec #19)',
 		icon: 'i-lucide-siren',
+		category: 'reaction',
 		overlays: () => [
 			{
 				...makeOverlay({ text: "IT'S OVER 💀", y: 0.5, size: 0.1, color: '#ef4444', bar: true }),
@@ -1302,6 +1355,7 @@ export const TEMPLATES: ReadonlyArray<MemeStudioTemplate> = [
 		label: 'Silent judgment 🤫',
 		hint: 'Face zoom + 1s dead air + awkward (spec #20)',
 		icon: 'i-lucide-volume-x',
+		category: 'reaction',
 		overlays: () => [
 			{ ...makeOverlay({ text: 'so…', y: 0.86, size: 0.04, font: 'mono' }), startMs: 2000 }
 		],
@@ -1331,3 +1385,25 @@ export const OUTPUT_FORMATS: ReadonlyArray<{
 	{ id: 'gif', label: 'GIF', hint: 'True looping .gif (image or GIF base)' },
 	{ id: 'video', label: 'Video', hint: 'Recorded video with sound' }
 ];
+
+/** Template-dialog categories: the marketplace vocabulary minus the
+ *  listing-only buckets (trending/new), plus a fallback for untaged
+ *  templates. Order = chip order in the dialog. */
+export const TEMPLATE_DIALOG_CATEGORIES: ReadonlyArray<{
+	id: TemplateCategoryId;
+	label: string;
+	icon: string;
+}> = [
+	{ id: 'meme', label: 'Meme', icon: 'i-lucide-laugh' },
+	{ id: 'reaction', label: 'Reaction', icon: 'i-lucide-smile-plus' },
+	{ id: 'cinematic', label: 'Cinematic', icon: 'i-lucide-clapperboard' },
+	{ id: 'developer', label: 'Developer', icon: 'i-lucide-code' },
+	{ id: 'bitcoin', label: 'Bitcoin', icon: 'i-lucide-bitcoin' },
+	{ id: 'thai', label: 'Thai', icon: 'i-lucide-flag' },
+	{ id: 'lao', label: 'Lao', icon: 'i-lucide-flag' },
+	{ id: 'gaming', label: 'Gaming', icon: 'i-lucide-gamepad-2' }
+];
+
+export function templateCategoryOf(template: MemeStudioTemplate): TemplateCategoryId {
+	return template.category ?? 'meme';
+}
