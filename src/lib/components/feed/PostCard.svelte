@@ -217,6 +217,19 @@
 	let refreshingComments = $state(false);
 	let commentsLoaded = $state(false);
 	let replyingToCommentId = $state('');
+	/** Report dialog for a specific comment/reply (NIP-56 kind 1984). */
+	let reportCommentTarget = $state<FeedNote | null>(null);
+	let commentReportOpen = $state(false);
+
+	function reportComment(comment: FeedNote) {
+		reportCommentTarget = comment;
+		commentReportOpen = true;
+	}
+
+	/* Clear the target once the dialog closes so the next Report reopens fresh. */
+	$effect(() => {
+		if (!commentReportOpen) reportCommentTarget = null;
+	});
 	let optimisticReplies = $state<FeedNote[]>([]);
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
@@ -862,6 +875,15 @@
 				>
 					Hide
 				</button>
+				{#if identity.current?.pk !== comment.pubkey}
+					<button
+						type="button"
+						onclick={() => reportComment(comment)}
+						class="text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]"
+					>
+						Report
+					</button>
+				{/if}
 				{#if identity.current?.pk === comment.pubkey}
 					<button
 						type="button"
@@ -1590,6 +1612,15 @@
 								>
 									Hide
 								</button>
+								{#if identity.current?.pk !== reply.pubkey}
+									<button
+										type="button"
+										onclick={() => reportComment(reply)}
+										class="text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]"
+									>
+										Report
+									</button>
+								{/if}
 								{#if identity.current?.pk === reply.pubkey}
 									<button
 										type="button"
@@ -1870,6 +1901,18 @@
 	noteId={note.id}
 	targetLabel={`Note by ${displayName} · ${timeAgo(note.createdAt)}`}
 />
+{#if reportCommentTarget}
+	{@const targetName =
+		profiles.get(reportCommentTarget.pubkey)?.display_name ||
+		profiles.get(reportCommentTarget.pubkey)?.name ||
+		shortKey(reportCommentTarget.pubkey)}
+	<ReportDialog
+		bind:open={commentReportOpen}
+		pubkey={reportCommentTarget.pubkey}
+		noteId={reportCommentTarget.id}
+		targetLabel={`Reply by ${targetName} · ${timeAgo(reportCommentTarget.createdAt)}`}
+	/>
+{/if}
 
 <style>
 	.video-cover {

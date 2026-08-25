@@ -962,9 +962,6 @@
 						class="size-[18px] {mining ? 'animate-pulse' : ''}"
 					/>
 				</button>
-			</div>
-
-			<div class="flex flex-wrap items-center justify-end gap-1.5">
 				<button
 					type="button"
 					onclick={() => (sensitive = !sensitive)}
