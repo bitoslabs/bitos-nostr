@@ -120,6 +120,137 @@ export const PICK_FORMATS: Array<MemeMediaFormatOption & { id: MemeMediaFormat; 
 		}
 	];
 
+// ---- Image Meme layouts (spec tp-2.md p.784) ---------------------------------
+// Static-caption layout templates for the IMAGE side of the editor. Each is
+// a pure overlay list — crop → template → text → sticker → effect → publish,
+// no timed tracks. Layouts stay generic (no cloned artwork): the captions
+// scaffold the panel grid, the user's own media + words fill it.
+
+export interface MemeImageLayout {
+	id: string;
+	label: string;
+	hint: string;
+	icon: string;
+	overlays: () => MemeTextOverlay[];
+}
+
+export const IMAGE_LAYOUTS: ReadonlyArray<MemeImageLayout> = [
+	{
+		id: 'layout-two-panel',
+		label: 'Two Panel',
+		hint: 'Two stacked caption panels',
+		icon: 'i-lucide-rows-3',
+		overlays: () => [
+			makeOverlay({ text: 'PANEL 1', x: 0.5, y: 0.24, size: 0.05 }),
+			makeOverlay({ text: 'PANEL 2', x: 0.5, y: 0.74, size: 0.05 })
+		]
+	},
+	{
+		id: 'layout-four-panel',
+		label: 'Four Panel',
+		hint: 'Four-quadrant grid',
+		icon: 'i-lucide-layout-grid',
+		overlays: () => [
+			makeOverlay({ text: 'STEP 1', x: 0.25, y: 0.25, size: 0.045, bar: true }),
+			makeOverlay({ text: 'STEP 2', x: 0.75, y: 0.25, size: 0.045, bar: true }),
+			makeOverlay({ text: 'STEP 3', x: 0.25, y: 0.74, size: 0.045, bar: true }),
+			makeOverlay({ text: 'STEP 4', x: 0.75, y: 0.74, size: 0.045, bar: true })
+		]
+	},
+	{
+		id: 'layout-quote',
+		label: 'Quote',
+		hint: 'Big italic center quote + attribution',
+		icon: 'i-lucide-quote',
+		overlays: () => [
+			makeOverlay({
+				text: '“your wise words here”',
+				x: 0.5,
+				y: 0.4,
+				size: 0.065,
+				font: 'serif',
+				caps: false
+			}),
+			makeOverlay({
+				text: '— someone smart',
+				x: 0.5,
+				y: 0.55,
+				size: 0.035,
+				font: 'serif',
+				caps: false,
+				stroke: false
+			})
+		]
+	},
+	{
+		id: 'layout-screenshot',
+		label: 'Screenshot Meme',
+		hint: 'Fake UI headline + reply under it',
+		icon: 'i-lucide-monitor-smartphone',
+		overlays: () => [
+			makeOverlay({
+				text: 'YOU WON 10000 SATS',
+				x: 0.5,
+				y: 0.2,
+				size: 0.06,
+				bar: true,
+				color: '#22c55e'
+			}),
+			makeOverlay({
+				text: 'claim now → definitely real',
+				x: 0.5,
+				y: 0.32,
+				size: 0.035,
+				font: 'sans',
+				caps: false
+			})
+		]
+	},
+	{
+		id: 'layout-chat',
+		label: 'Chat Meme',
+		hint: 'Left / right chat bubbles',
+		icon: 'i-lucide-message-circle',
+		overlays: () => [
+			makeOverlay({
+				text: 'them: you around?',
+				x: 0.3,
+				y: 0.3,
+				size: 0.04,
+				font: 'sans',
+				bar: true,
+				caps: false
+			}),
+			makeOverlay({
+				text: 'me: *typing forever*',
+				x: 0.7,
+				y: 0.45,
+				size: 0.04,
+				font: 'sans',
+				bar: true,
+				caps: false
+			})
+		]
+	},
+	{
+		id: 'layout-breaking-news',
+		label: 'Breaking News',
+		hint: 'Red news bar + ticker (image side)',
+		icon: 'i-lucide-newspaper',
+		overlays: () => [
+			makeOverlay({
+				text: 'BREAKING NEWS',
+				x: 0.5,
+				y: 0.12,
+				size: 0.055,
+				bar: true,
+				color: '#ef4444'
+			}),
+			makeOverlay({ text: 'local dev ships on friday', x: 0.5, y: 0.9, size: 0.035, font: 'mono' })
+		]
+	}
+];
+
 export const DESTINATIONS: ReadonlyArray<{
 	id: MemeDestination;
 	label: string;

@@ -207,7 +207,8 @@
 		type MemeDestination as Destination,
 		type MemeExportFormat,
 		type MemeStudioPhase as Phase,
-		type MemeStudioTemplate as Template
+		type MemeStudioTemplate as Template,
+		type MemeImageLayout
 	} from '$lib/components/bitz/meme-studio-config';
 
 	const DRAWING_RECENT_COLORS_KEY = 'bitos.meme-drawing-recent-colors.v1';
@@ -2709,6 +2710,13 @@
 		toasts.info(appending ? `${label} appended to your captions` : `${label} template applied`);
 	}
 
+	/** Image Meme layouts (p.784): pure caption scaffolds — same merge path
+	 *  as video templates, minus the timed tracks. */
+	function applyImageLayout(layout: MemeImageLayout) {
+		if (busy) return;
+		addTemplateOverlays(layout.overlays(), layout.label);
+	}
+
 	function applyTemplate(template: Template) {
 		if (busy) return;
 		addTemplateOverlays(template.overlays(), template.label);
@@ -4656,6 +4664,7 @@
 						<div class="flex min-w-0 flex-col gap-3">
 							<MemeTemplateSlotTools
 								{overlays}
+								mediaKind={mediaKind ?? undefined}
 								{busy}
 								{dirty}
 								{slotBusyId}
@@ -4663,6 +4672,7 @@
 								bind:showTemplateSave
 								bind:slotName
 								{applyTemplate}
+								{applyImageLayout}
 								{addOverlay}
 								{applySavedTemplate}
 								{newDraftFromSavedTemplate}

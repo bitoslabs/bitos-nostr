@@ -8,7 +8,12 @@
 	import { sharedTemplatesStore } from '$lib/stores/meme-shared-templates.svelte';
 	import { templateMarketplace } from '$lib/stores/template-marketplace.svelte';
 	import MemeTemplateMarketplace from './MemeTemplateMarketplace.svelte';
-	import { TEMPLATES, type MemeStudioTemplate } from './meme-studio-config';
+	import {
+		TEMPLATES,
+		IMAGE_LAYOUTS,
+		type MemeStudioTemplate,
+		type MemeImageLayout
+	} from './meme-studio-config';
 	import {
 		TEMPLATE_CATEGORIES,
 		TEMPLATE_PRICE_TIERS,
@@ -39,6 +44,7 @@
 
 	let {
 		overlays,
+		mediaKind,
 		busy,
 		dirty,
 		slotBusyId,
@@ -46,6 +52,7 @@
 		showTemplateSave = $bindable(false),
 		slotName = $bindable(''),
 		applyTemplate,
+		applyImageLayout,
 		addOverlay,
 		applySavedTemplate,
 		newDraftFromSavedTemplate,
@@ -59,6 +66,7 @@
 		currentPubkey = ''
 	}: {
 		overlays: MemeTextOverlay[];
+		mediaKind?: 'image' | 'video';
 		busy: boolean;
 		dirty: boolean;
 		slotBusyId: string | null;
@@ -66,6 +74,7 @@
 		showTemplateSave: boolean;
 		slotName: string;
 		applyTemplate: (template: MemeStudioTemplate) => void;
+		applyImageLayout?: (layout: MemeImageLayout) => void;
 		addOverlay: () => void;
 		applySavedTemplate: (id: string) => void;
 		newDraftFromSavedTemplate: (id: string) => void;
@@ -137,6 +146,21 @@
 			{template.label}
 		</button>
 	{/each}
+	{#if mediaKind === 'image' && applyImageLayout}
+		<span class="text-[10px] font-bold tracking-wider text-warm-500/80 uppercase">Layouts</span>
+		{#each IMAGE_LAYOUTS as layout (layout.id)}
+			<button
+				type="button"
+				onclick={() => applyImageLayout(layout)}
+				disabled={busy}
+				title={layout.hint}
+				class="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-95 disabled:opacity-40"
+			>
+				<Icon name={layout.icon} class="size-3.5" />
+				{layout.label}
+			</button>
+		{/each}
+	{/if}
 	<button
 		type="button"
 		onclick={() => addOverlay()}
