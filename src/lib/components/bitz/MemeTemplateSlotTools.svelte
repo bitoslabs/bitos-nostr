@@ -110,6 +110,7 @@
 	<Popover
 		id={templateMenuId}
 		float
+		keepOpenOnContentClick
 		placement="bottom-start"
 		width="auto"
 		class="w-72 max-w-[80vw] p-0"
@@ -226,6 +227,7 @@
 	<Popover
 		id={slotsMenuId}
 		float
+		keepOpenOnContentClick
 		placement="bottom-start"
 		width="auto"
 		class="w-72 max-w-[80vw] p-0"

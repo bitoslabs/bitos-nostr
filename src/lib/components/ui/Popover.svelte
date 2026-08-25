@@ -66,6 +66,7 @@
 		rootClass = '',
 		triggerClass = '',
 		triggerActiveClass = '',
+		keepOpenOnContentClick = false,
 		label,
 		trigger,
 		children
@@ -79,6 +80,8 @@
 		rootClass?: string;
 		triggerClass?: string;
 		triggerActiveClass?: string;
+		/** Opt in for forms/controls that must survive content clicks. */
+		keepOpenOnContentClick?: boolean;
 		label?: string;
 		trigger?: Snippet<[boolean]>;
 		children?: Snippet;
@@ -97,6 +100,20 @@
 		// Stop the global window click handler from immediately re-closing.
 		event.stopPropagation();
 		popovers.toggle(popoverId);
+	}
+	/** Floated panels are portaled to document.body. Use a native listener so
+	 * clicks inside remain inside the popover before the app's window handler
+	 * sees them. */
+	function keepPanelOpen(node: HTMLElement, enabled: boolean) {
+		const stop = (event: MouseEvent) => event.stopPropagation();
+		if (enabled) node.addEventListener('click', stop);
+		return {
+			update(next: boolean) {
+				node.removeEventListener('click', stop);
+				if (next) node.addEventListener('click', stop);
+			},
+			destroy: () => node.removeEventListener('click', stop)
+		};
 	}
 
 	// ---- floated panel positioning -------------------------------------------
@@ -162,6 +179,7 @@
 			<div
 				bind:this={panelEl}
 				use:portalToBody
+				use:keepPanelOpen={keepOpenOnContentClick}
 				role="menu"
 				class={panelClass}
 				style={pos ? `top:${pos.top}px; left:${pos.left}px;` : 'visibility:hidden;'}
@@ -169,7 +187,7 @@
 				{@render children?.()}
 			</div>
 		{:else}
-			<div role="menu" class={panelClass}>
+			<div use:keepPanelOpen={keepOpenOnContentClick} role="menu" class={panelClass}>
 				{@render children?.()}
 			</div>
 		{/if}

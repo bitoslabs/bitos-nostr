@@ -2452,6 +2452,7 @@
 				playbackRate = slot.playbackRate;
 			}
 			toasts.info(`Save point “${slot.label}” restored`);
+			popovers.close();
 		} finally {
 			slotBusyId = '';
 		}
