@@ -18,7 +18,6 @@
 		renderSrc,
 		busy = false,
 		onPatch,
-		onRemove,
 		onDuplicate
 	}: {
 		layer: MemeImageOverlay;
@@ -28,7 +27,6 @@
 		renderSrc: string | null;
 		busy?: boolean;
 		onPatch: (id: string, patch: Partial<MemeImageOverlay>) => void;
-		onRemove: (id: string) => void;
 		onDuplicate: (id: string) => void;
 	} = $props();
 
@@ -94,16 +92,8 @@
 			>
 				<Icon name="i-lucide-flip-vertical-2" class="size-3.5" />
 			</button>
-			<button
-				type="button"
-				disabled={busy}
-				onclick={() => onRemove(layer.id)}
-				aria-label={`Remove layer ${index}`}
-				title="Remove this layer"
-				class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--tone-error-text)]/10 hover:text-[var(--tone-error-text)] disabled:opacity-40"
-			>
-				<Icon name="i-lucide-x" class="size-3.5" />
-			</button>
+			<!-- Remove lives on the layer ROW in MemeImageLayersCard — one
+			     delete button per layer, not two. -->
 		</div>
 	</div>
 

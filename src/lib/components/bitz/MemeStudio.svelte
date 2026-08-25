@@ -155,6 +155,7 @@
 		fetchLayerBlob,
 		probeAspect
 	} from '$lib/stores/meme-layer-assets.svelte';
+	import { looksLikeSvg, rasterizeSvgBlob } from '$lib/meme/svg-layer';
 	import { MemeBatchQueue } from '$lib/stores/meme-batch-queue.svelte';
 	import {
 		applyRemixPayload,
@@ -1838,6 +1839,19 @@
 		let bytes: Blob | undefined = source.bytes;
 		let url = source.url?.trim() ?? '';
 		let aspect = aspectHint ?? 1;
+		// SVG layers rasterize to PNG ONCE here: SVGs without intrinsic
+		// width/height decode as 0×0 (broken preview) and paint NOTHING on the
+		// export canvas. Every path after this point is plain-PNG. A failed
+		// raster (foreignObject, broken markup) errors out honestly.
+		if (bytes && (await looksLikeSvg(bytes))) {
+			const png = await rasterizeSvgBlob(bytes);
+			if (!png) {
+				toasts.error('That SVG could not be converted — try a PNG export from your design tool');
+				return;
+			}
+			bytes = png;
+			url = ''; // old URL is stale — the rasterized PNG below gets a fresh home
+		}
 		// URL-only: pull the bytes once so the canvas never sees a
 		// cross-origin image (the "not same origin" export failure).
 		if (!bytes && url) bytes = (await fetchLayerBlob(url)) ?? undefined;
@@ -1983,7 +1997,7 @@
 		pendingLayerAtMs = null; // one-shot, always cleared
 		const files = picked.filter((f) => f.type.startsWith('image/'));
 		if (!files.length) {
-			if (picked.length) toasts.error('Layers take PNG, GIF or JPEG images');
+			if (picked.length) toasts.error('Layers take PNG, GIF, JPEG, WebP or SVG images');
 			return;
 		}
 		const room = MAX_IMAGE_OVERLAYS - imageLayers.length;
@@ -2002,6 +2016,90 @@
 				}).catch((err) => toasts.error(err instanceof Error ? err.message : 'Layer upload failed'))
 			)
 		).finally(() => (layerBusy = false));
+	}
+
+	/** Replace a layer's image in place: keeps position, size, timing, look,
+	 *  motion, opacity and flips — only src/aspect swap (user ask
+	 *  2026-08-25: "layer image … change replaces image"). SVG inputs
+	 *  rasterize through the same addImageLayer path. */
+	async function replaceLayerImage(
+		id: string,
+		source: { url?: string; bytes?: Blob; name?: string }
+	) {
+		const original = imageLayers.find((l) => l.id === id);
+		if (!original) return;
+		let bytes: Blob | undefined = source.bytes;
+		if (bytes && (await looksLikeSvg(bytes))) {
+			const png = await rasterizeSvgBlob(bytes);
+			if (!png) {
+				toasts.error('That SVG could not be converted — try a PNG export from your design tool');
+				return;
+			}
+			bytes = png;
+		}
+		let url = source.url?.trim() ?? '';
+		if (!bytes && url) bytes = (await fetchLayerBlob(url)) ?? undefined;
+		let aspect = original.aspect;
+		if (bytes) {
+			if (bytes.size > MAX_IMAGE_OVERLAY_BYTES) {
+				toasts.error('That image is over the 8 MB layer cap');
+				return;
+			}
+			aspect = (await probeAspect(bytes)) ?? aspect;
+		}
+		let src = url;
+		if (bytes && !src) {
+			try {
+				const file = new File([bytes], source.name ?? 'layer', {
+					type: bytes.type || 'image/png'
+				});
+				const uploaded = await media.upload(file, undefined, {
+					pubkey: me?.pk,
+					purpose: 'note'
+				});
+				src = uploaded.url;
+			} catch {
+				toasts.error('Layer upload failed — check your connection and try again');
+				return;
+			}
+		}
+		if (!layerSrcOk(src)) {
+			toasts.error('Image layers need an https URL');
+			return;
+		}
+		// Swap the row; per-src assets follow (release the old src when this
+		// was its last reference, remember bytes + decode the new bitmap).
+		imageLayers = imageLayers.map((l) => (l.id === id ? { ...l, src, aspect } : l));
+		if (!imageLayers.some((l) => l.src === original.src && l.id !== id)) {
+			layerAssets.release(original.src);
+		}
+		if (bytes) layerAssets.rememberBytes(src, bytes);
+		mediaLibrary.remember(src, source.name ?? '', bytes?.type);
+		const ok = await cacheLayerBitmap(src);
+		if (!ok) toasts.warning('Image replaced — but it failed to load (will retry on export)');
+		else toasts.success('Layer image replaced');
+	}
+
+	/** One-shot layer id for the NEXT replace-image picker run (the file
+	 *  picker flow can't take arguments — set → click → consumed here). */
+	let replaceLayerForId: string | null = null;
+	let replaceLayerInput = $state<HTMLInputElement | null>(null);
+
+	function onReplaceLayerInput(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const picked = [...(input.files ?? [])];
+		input.value = '';
+		const id = replaceLayerForId;
+		replaceLayerForId = null; // one-shot, always cleared
+		const file = picked.find((f) => f.type.startsWith('image/'));
+		if (!file) {
+			if (picked.length) toasts.error('Layers take PNG, GIF, JPEG, WebP or SVG images');
+			return;
+		}
+		if (!id) return;
+		void replaceLayerImage(id, { bytes: file, name: file.name }).catch((err) =>
+			toasts.error(err instanceof Error ? err.message : 'Could not replace that image')
+		);
 	}
 
 	/** Direct-URL layer form. */
@@ -5229,24 +5327,20 @@
 								}}
 							/>
 
-							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
-							     Sources: local file, https URL, GIF library (as a sticker-sized
-							     layer — NOT the base-media swap in the footer). -->
+							<!-- Add image layers (PNG/GIF/WebP/SVG): local file, https URL or
+							     GIF library (sticker-sized layer — NOT the base-media swap).
+							     Managing layers (select/z-order/timing/replace/remove/edit)
+							     lives in the right-panel Image-layers card — one surface. -->
 							<MemeImageLayerTools
 								id={imageMenuId}
 								layers={imageLayers}
-								bind:selectedId={selectedLayerId}
-								bind:timingId={layerTimingId}
 								bind:showUrlForm={showLayerUrlForm}
 								bind:url={layerUrl}
 								{mediaKind}
 								{timelineActive}
 								{stageSeconds}
-								{busy}
 								loading={layerBusy}
 								urlBusy={layerUrlBusy}
-								loadedSources={layerAssets.bitmaps}
-								renderSrcs={layerAssets.renderSrcs}
 								onBrowse={() => {
 									pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
 									layerInput?.click();
@@ -5254,16 +5348,7 @@
 								onInsertFrame={() => void insertFrameLayer()}
 								onAddUrl={() => void addLayerFromUrl()}
 								onAddGif={(gif, atMs) => void addLayerFromGifLib(gif, atMs)}
-								onMove={moveLayerRow}
-								onPatch={patchLayer}
-								onRemove={removeLayer}
 							/>
-
-							<!-- Look picker: one-tap color presets. Preview = CSS filter,
-							     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
-							{#if looksAvailable}
-								<MemeLookPicker id={lookMenuId} {lookId} onPick={(id) => (lookId = id)} />
-							{/if}
 
 							<!-- Frame-FX picker (Meme Pack V1 Layer 2): timed windows of
 							     glitch/flash/shake/… burned into every export + remix wire. -->
@@ -5297,11 +5382,18 @@
 
 					{#snippet inspectorPane()}
 						<MemeInspectorPanel
-							{selectedLayer}
-							imageLayerIndex={imageLayers.findIndex((layer) => layer.id === selectedLayer?.id) + 1}
-							renderSrc={selectedLayer
-								? (layerAssets.renderSrcs.get(selectedLayer.src) ?? null)
-								: null}
+							{imageLayers}
+							bind:selectedLayerId
+							bind:layerTimingId
+							layerBitmaps={layerAssets.bitmaps}
+							layerRenderSrcs={layerAssets.renderSrcs}
+							{layerBusy}
+							onAddLayerImage={() => layerInput?.click()}
+							onMoveLayer={moveLayerRow}
+							onReplaceLayer={(id) => {
+								replaceLayerForId = id;
+								replaceLayerInput?.click();
+							}}
 							{busy}
 							videoExportSupported={videoMemeSupported}
 							{overlays}
@@ -5501,10 +5593,12 @@
 	bind:layerInput
 	bind:queueInput
 	bind:soundInput={soundFileInput}
+	bind:replaceInput={replaceLayerInput}
 	{pickFormat}
 	onFile={onFileInput}
 	onOtherSource={onOtherSourceInput}
 	onLayer={onLayerFileInput}
+	onReplace={onReplaceLayerInput}
 	onQueue={onQueueInput}
 	onSound={(sound) => void soundIO.importFile(sound)}
 />

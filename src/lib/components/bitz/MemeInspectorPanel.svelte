@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import MemeLayerEditor from './MemeLayerEditor.svelte';
+	import MemeImageLayersCard from './MemeImageLayersCard.svelte';
 	import MemeCaptionOverlayList from './MemeCaptionOverlayList.svelte';
 	import MemeArtboardCard from './MemeArtboardCard.svelte';
 	import MemeTrimPanel from './MemeTrimPanel.svelte';
@@ -20,9 +20,15 @@
 	import type { MemeArtboardId, MemeDestination, MemeStudioPhase } from './meme-studio-config';
 
 	let {
-		selectedLayer,
-		imageLayerIndex,
-		renderSrc,
+		imageLayers,
+		selectedLayerId = $bindable(null),
+		layerTimingId = $bindable(null),
+		layerBitmaps,
+		layerRenderSrcs,
+		layerBusy = false,
+		onAddLayerImage,
+		onMoveLayer,
+		onReplaceLayer,
 		busy,
 		videoMemeSupported,
 		overlays,
@@ -107,9 +113,15 @@
 		videoExportSupported,
 		onFormat
 	}: {
-		selectedLayer: MemeImageOverlay | null;
-		imageLayerIndex: number;
-		renderSrc: string | null;
+		imageLayers: MemeImageOverlay[];
+		selectedLayerId: string | null;
+		layerTimingId: string | null;
+		layerBitmaps: { has(key: string): boolean };
+		layerRenderSrcs: Map<string, string>;
+		layerBusy?: boolean;
+		onAddLayerImage: () => void;
+		onMoveLayer: (id: string, direction: -1 | 1) => void;
+		onReplaceLayer: (id: string) => void;
 		busy: boolean;
 		videoMemeSupported: boolean;
 		overlays: MemeTextOverlay[];
@@ -197,19 +209,26 @@
 </script>
 
 <div class="flex min-w-0 flex-col gap-3">
-	{#if selectedLayer}
-		{#key selectedLayer.id}
-			<MemeLayerEditor
-				layer={selectedLayer}
-				index={imageLayerIndex}
-				{renderSrc}
-				{busy}
-				onPatch={onPatchLayer}
-				onRemove={onRemoveLayer}
-				onDuplicate={onDuplicateLayer}
-			/>
-		{/key}
-	{/if}
+	<!-- Image layers — one widget: list + inline selected-layer editor
+	     (merge 2026-08-25: the old toolbar-popover list fought this panel
+	     for the same selection). -->
+	<MemeImageLayersCard
+		layers={imageLayers}
+		bind:selectedLayerId
+		bind:timingId={layerTimingId}
+		bitmaps={layerBitmaps}
+		renderSrcs={layerRenderSrcs}
+		{mediaKind}
+		{timelineActive}
+		busy={busy || layerBusy}
+		loading={layerBusy}
+		onAdd={onAddLayerImage}
+		onMove={onMoveLayer}
+		onPatch={onPatchLayer}
+		onRemove={onRemoveLayer}
+		onReplace={onReplaceLayer}
+		onDuplicate={onDuplicateLayer}
+	/>
 	{#if !videoMemeSupported}
 		<p
 			class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
