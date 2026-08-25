@@ -5,6 +5,7 @@
 	import type { NostrEmoji, NostrEmojiPack } from '$lib/meme/emoji-packs';
 	import { emojiPacks } from '$lib/stores/emoji-packs.svelte';
 	import MemeNostrPackDialog from '$lib/components/bitz/MemeNostrPackDialog.svelte';
+	import MemeSvgIconPicker from '$lib/components/bitz/MemeSvgIconPicker.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 
 	/**
@@ -19,16 +20,19 @@
 		id,
 		onAdd,
 		onPickCustom,
+		onPickSvg,
 		float = true
 	}: {
 		id: string;
 		onAdd: (emoji: string) => void;
 		/** Custom (kind-30030) emoji pick — becomes an image layer. */
 		onPickCustom?: (emoji: NostrEmoji) => void;
+		/** SVG catalog pick — fetched and rasterized into an image layer. */
+		onPickSvg?: (icon: { name: string; url: string }) => void;
 		float?: boolean;
 	} = $props();
 
-	let source = $state<'emoji' | 'nostr'>('emoji');
+	let source = $state<'emoji' | 'nostr' | 'svg'>('emoji');
 
 	// ---- emoji (glyph) source -------------------------------------------------
 	let customSticker = $state('');
@@ -129,6 +133,22 @@
 					</span>
 				{/if}
 			</button>
+			<button
+				type="button"
+				onclick={(e) => {
+					e.stopPropagation();
+					source = 'svg';
+				}}
+				aria-pressed={source === 'svg'}
+				title="Search SVG icons from Iconify, the catalog behind icones.js.org"
+				class="flex flex-1 items-center justify-center gap-1 rounded-full px-2 py-1 text-[11px] font-bold transition {source ===
+				'svg'
+					? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				<Icon name="i-lucide-shapes" class="size-3" />
+				SVG icons
+			</button>
 		</div>
 
 		{#if source === 'emoji'}
@@ -184,6 +204,8 @@
 					</section>
 				{/each}
 			</div>
+		{:else if source === 'svg'}
+			<MemeSvgIconPicker onPick={(icon) => onPickSvg?.(icon)} />
 		{:else if pack}
 			<!-- One installed pack: header + emoji grid -->
 			<div class="mb-1.5 flex items-center justify-between gap-2">

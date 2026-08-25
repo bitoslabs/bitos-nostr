@@ -105,7 +105,9 @@
 					placeholder="https://…/sticker.png"
 					class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-transparent px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500"
 					disabled={urlBusy}
+					onclick={(event) => event.stopPropagation()}
 					onkeydown={(e) => {
+						e.stopPropagation();
 						if (e.key === 'Enter') {
 							e.preventDefault();
 							void onAddUrl();

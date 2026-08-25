@@ -5305,6 +5305,11 @@
 										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
 									});
 								}}
+								onPickSvg={(icon) => {
+									void addImageLayer({ url: icon.url, name: icon.name }, undefined, {
+										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									});
+								}}
 							/>
 
 							<!-- Buddy picker (tp-bitcoin §16): the Bitz Buddy mascot pack as
