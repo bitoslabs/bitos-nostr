@@ -17,6 +17,7 @@
 		color = '#ffffff',
 		width = 0.012,
 		opacity = 1,
+		atMs,
 		pressureEnabled = true,
 		drawWithFinger = true,
 		smoothing = 'off',
@@ -28,6 +29,8 @@
 		color?: string;
 		width?: number;
 		opacity?: number;
+		/** Timeline position for replay/visibility previews; omitted for still canvases. */
+		atMs?: number;
 		pressureEnabled?: boolean;
 		drawWithFinger?: boolean;
 		smoothing?: DrawingSmoothing;
@@ -53,7 +56,7 @@
 		const ctx = el.getContext('2d');
 		if (!ctx) return;
 		ctx.clearRect(0, 0, w, h);
-		paintDrawingGroups(ctx, groups, el);
+		paintDrawingGroups(ctx, groups, el, atMs);
 		if (activePoints.length) {
 			paintDrawingGroups(
 				ctx,
@@ -79,6 +82,7 @@
 		void color;
 		void width;
 		void opacity;
+		void atMs;
 		void tick().then(redraw);
 	});
 

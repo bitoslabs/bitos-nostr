@@ -173,6 +173,21 @@
 		type MemeStudioTemplate as Template
 	} from '$lib/components/bitz/meme-studio-config';
 
+	const DRAWING_RECENT_COLORS_KEY = 'bitos.meme-drawing-recent-colors.v1';
+	const DRAWING_RECOMMENDED_COLORS = [
+		'#ffffff',
+		'#111827',
+		'#ef4444',
+		'#f97316',
+		'#facc15',
+		'#22c55e',
+		'#06b6d4',
+		'#3b82f6',
+		'#8b5cf6',
+		'#ec4899'
+	] as const;
+	const DRAWING_COLOR = /^#[0-9a-f]{6}$/i;
+
 	/**
 	 * Meme Studio — create video/image memes and publish them as standard
 	 * Nostr media events. Overlays are burned into the pixels at export (image
@@ -248,7 +263,9 @@
 		performanceTakes.find((take) => take.id === performanceReviewId) ?? null
 	);
 	function performanceClockMs(): number {
-		return performanceRecording ? performanceElapsedMs : Math.max(0, Math.round(stageSeconds * 1000));
+		return performanceRecording
+			? performanceElapsedMs
+			: Math.max(0, Math.round(stageSeconds * 1000));
 	}
 	function stopPerformanceRecording() {
 		if (performanceCountdownTimer !== undefined) {
@@ -266,12 +283,11 @@
 			drawingGroupIds: drawingGroups
 				.filter((group) => !performanceInitialDrawingIds.includes(group.id))
 				.map((group) => group.id),
-			cueIds: sfxCues.filter((cue) => !performanceInitialCueIds.includes(cue.id)).map((cue) => cue.id)
+			cueIds: sfxCues
+				.filter((cue) => !performanceInitialCueIds.includes(cue.id))
+				.map((cue) => cue.id)
 		};
-		performanceTakes = [
-			...performanceTakes,
-			take
-		];
+		performanceTakes = [...performanceTakes, take];
 		performanceReviewId = take.id;
 		toasts.success(`Performance take saved (${formatDuration(performanceElapsedMs / 1000)})`);
 	}
@@ -684,6 +700,7 @@
 	let drawActive = $state(false);
 	let drawingTool = $state<DrawingTool>('pen');
 	let drawingColor = $state('#ffffff');
+	let drawingRecentColors = $state<string[]>([]);
 	let drawingWidth = $state(0.012);
 	let drawingOpacity = $state(1);
 	let drawingPressureEnabled = $state(true);
@@ -710,6 +727,29 @@
 	function copyDrawings(): DrawingGroup[] {
 		return normalizeDrawingGroups(drawingGroups);
 	}
+	function rememberDrawingColor(color: string) {
+		const normalized = color.toLowerCase();
+		if (!DRAWING_COLOR.test(normalized)) return;
+		drawingRecentColors = [
+			normalized,
+			...drawingRecentColors.filter((item) => item !== normalized)
+		].slice(0, 8);
+		try {
+			localStorage.setItem(DRAWING_RECENT_COLORS_KEY, JSON.stringify(drawingRecentColors));
+		} catch {
+			/* private mode — colors remain available for this session */
+		}
+	}
+	function selectDrawingColor(color: string) {
+		drawingColor = color;
+		rememberDrawingColor(color);
+	}
+	function setSelectedDrawingColor(color: string) {
+		const stroke = selectedDrawingStroke;
+		if (!stroke) return;
+		rememberDrawingColor(color);
+		patchSelectedDrawingStyle({ color, width: stroke.width, opacity: stroke.opacity });
+	}
 	function addDrawingStroke(stroke: DrawingStroke) {
 		if (drawingGroups.length >= MAX_DRAWING_GROUPS) {
 			toasts.warning(`You can add up to ${MAX_DRAWING_GROUPS} drawing layers`);
@@ -720,7 +760,7 @@
 		const group: DrawingGroup = {
 			id: drawingId(),
 			label: `Drawing ${drawingGroups.length + 1}`,
-			playback: 'static',
+			playback: 'replay',
 			startMs: atMs,
 			visibleFromMs: 0,
 			strokes: [stroke]
@@ -779,7 +819,10 @@
 	 * reversible without creating one undo step for every pointer-move event. */
 	function commitDrawingGroupPatch(id: string, patch: Partial<DrawingGroup>) {
 		const group = drawingGroups.find((item) => item.id === id);
-		if (!group || !Object.entries(patch).some(([key, value]) => group[key as keyof DrawingGroup] !== value))
+		if (
+			!group ||
+			!Object.entries(patch).some(([key, value]) => group[key as keyof DrawingGroup] !== value)
+		)
 			return;
 		snapshotDrawings();
 		patchDrawingGroup(id, patch);
@@ -1065,9 +1108,9 @@
 				? clipsDuration(videoClips)
 				: (meta?.duration ?? 0)
 			: mediaKind === 'image'
-				? (gif
-						? (pinnedLengthSec ?? gif.duration)
-						: (pinnedLengthSec ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0)))
+				? gif
+					? (pinnedLengthSec ?? gif.duration)
+					: (pinnedLengthSec ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0))
 				: 0
 	);
 	/** True when the timeline has a real clock (video trim duration, GIF, or
@@ -1201,7 +1244,10 @@
 		if (mediaKind !== 'video') return;
 		const end = trimEndSec ?? meta?.duration ?? 0;
 		if (!end) return;
-		const next = Math.max(trimStartSec, Math.min(stageSeconds, Math.max(trimStartSec, end - 0.001)));
+		const next = Math.max(
+			trimStartSec,
+			Math.min(stageSeconds, Math.max(trimStartSec, end - 0.001))
+		);
 		if (Math.abs(next - stageSeconds) < 0.0005) return;
 		stageSeconds = next;
 		previewSeconds = next;
@@ -3359,6 +3405,22 @@
 		} catch {
 			/* ignore */
 		}
+		// Drawing colors are a lightweight per-device preference. Keep only valid
+		// swatches so an old or manually edited value cannot affect the canvas.
+		try {
+			const saved = JSON.parse(localStorage.getItem(DRAWING_RECENT_COLORS_KEY) ?? '[]');
+			if (Array.isArray(saved)) {
+				drawingRecentColors = saved
+					.filter(
+						(color): color is string => typeof color === 'string' && DRAWING_COLOR.test(color)
+					)
+					.map((color) => color.toLowerCase())
+					.filter((color, index, colors) => colors.indexOf(color) === index)
+					.slice(0, 8);
+			}
+		} catch {
+			/* ignore malformed or unavailable storage */
+		}
 		// Draft recovery (plan F-010): restore work-in-progress after a crash,
 		// refresh or accidental close. Runs once per component lifetime.
 		const draft = readMemeDraft();
@@ -3669,6 +3731,7 @@
 											color={drawingColor}
 											width={drawingWidth}
 											opacity={drawingOpacity}
+											atMs={timelineActive ? Math.round(stageSeconds * 1000) : undefined}
 											pressureEnabled={drawingPressureEnabled}
 											{drawWithFinger}
 											smoothing={drawingSmoothing}
@@ -4045,16 +4108,16 @@
 												<span class={capability[1] ? 'text-emerald-600' : 'text-red-500'}
 													>● {capability[0]}</span
 												>
-										{/each}
-									</div>
-									<button
-										type="button"
-										disabled={!recordingCapabilities?.pointer}
-										onclick={beginPerformanceCountdown}
-										class="mt-2 w-full rounded-full bg-warm-500 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-40"
-										>Start drawing take</button
-									>
-									<button
+											{/each}
+										</div>
+										<button
+											type="button"
+											disabled={!recordingCapabilities?.pointer}
+											onclick={beginPerformanceCountdown}
+											class="mt-2 w-full rounded-full bg-warm-500 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-40"
+											>Start drawing take</button
+										>
+										<button
 											type="button"
 											disabled={!recordingCapabilities?.microphone}
 											onclick={() => {
@@ -4062,31 +4125,71 @@
 												soundDialogOpen = true;
 											}}
 											class="mt-2 w-full rounded-full bg-warm-500 px-2 py-1 text-[10px] font-bold text-white disabled:opacity-40"
-										>Continue to microphone</button
-									>
-								</div>
+											>Continue to microphone</button
+										>
+									</div>
 								{/if}
 								{#if performanceCountdown !== null || performanceRecording}
-									<div class="mt-2 rounded-lg border border-red-500/35 bg-red-500/10 px-2 py-1.5 text-[10px] font-bold text-red-500" role="status">
+									<div
+										class="mt-2 rounded-lg border border-red-500/35 bg-red-500/10 px-2 py-1.5 text-[10px] font-bold text-red-500"
+										role="status"
+									>
 										{#if performanceCountdown !== null}
 											Starting performance in {performanceCountdown}…
-											<button type="button" onclick={stopPerformanceRecording} class="ml-2 rounded border border-red-500/35 px-1.5 py-0.5 text-[9px]">Cancel</button>
+											<button
+												type="button"
+												onclick={stopPerformanceRecording}
+												class="ml-2 rounded border border-red-500/35 px-1.5 py-0.5 text-[9px]"
+												>Cancel</button
+											>
 										{:else}
-											<span class="inline-flex items-center gap-1"><span class="size-1.5 animate-pulse rounded-full bg-red-500"></span>Recording {formatDuration(performanceElapsedMs / 1000)}</span>
-											<button type="button" onclick={stopPerformanceRecording} class="ml-2 rounded bg-red-500 px-1.5 py-0.5 text-[9px] text-white">Stop</button>
+											<span class="inline-flex items-center gap-1"
+												><span class="size-1.5 animate-pulse rounded-full bg-red-500"
+												></span>Recording {formatDuration(performanceElapsedMs / 1000)}</span
+											>
+											<button
+												type="button"
+												onclick={stopPerformanceRecording}
+												class="ml-2 rounded bg-red-500 px-1.5 py-0.5 text-[9px] text-white"
+												>Stop</button
+											>
 										{/if}
 									</div>
 								{/if}
 								{#if performanceReview}
-									<div class="mt-2 rounded-lg border border-warm-500/30 bg-warm-500/10 p-2 text-[10px]">
+									<div
+										class="mt-2 rounded-lg border border-warm-500/30 bg-warm-500/10 p-2 text-[10px]"
+									>
 										<div class="font-bold text-[var(--ui-text)]">Review latest take</div>
 										<p class="mt-0.5 text-[var(--ui-text-muted)]">
-											{formatDuration(performanceReview.durationMs / 1000)} · {performanceReview.drawingGroupIds.length} drawing{performanceReview.drawingGroupIds.length === 1 ? '' : 's'} · {performanceReview.cueIds.length} cue{performanceReview.cueIds.length === 1 ? '' : 's'}
+											{formatDuration(performanceReview.durationMs / 1000)} · {performanceReview
+												.drawingGroupIds.length} drawing{performanceReview.drawingGroupIds
+												.length === 1
+												? ''
+												: 's'} · {performanceReview.cueIds.length} cue{performanceReview.cueIds
+												.length === 1
+												? ''
+												: 's'}
 										</p>
 										<div class="mt-1.5 flex gap-1">
-											<button type="button" onclick={() => (performanceReviewId = null)} class="rounded-full bg-warm-500 px-2 py-1 text-[9px] font-bold text-white">Keep</button>
-											<button type="button" onclick={() => retryPerformanceTake(performanceReview!.id)} class="rounded-full px-2 py-1 text-[9px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]">Retry</button>
-											<button type="button" onclick={() => discardPerformanceTake(performanceReview!.id)} class="rounded-full px-2 py-1 text-[9px] font-bold text-red-500 hover:bg-red-500/10">Discard</button>
+											<button
+												type="button"
+												onclick={() => (performanceReviewId = null)}
+												class="rounded-full bg-warm-500 px-2 py-1 text-[9px] font-bold text-white"
+												>Keep</button
+											>
+											<button
+												type="button"
+												onclick={() => retryPerformanceTake(performanceReview!.id)}
+												class="rounded-full px-2 py-1 text-[9px] font-bold text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-accented)]"
+												>Retry</button
+											>
+											<button
+												type="button"
+												onclick={() => discardPerformanceTake(performanceReview!.id)}
+												class="rounded-full px-2 py-1 text-[9px] font-bold text-red-500 hover:bg-red-500/10"
+												>Discard</button
+											>
 										</div>
 									</div>
 								{/if}
@@ -4106,10 +4209,50 @@
 										<input
 											type="color"
 											bind:value={drawingColor}
+											onchange={(event) =>
+												rememberDrawingColor((event.currentTarget as HTMLInputElement).value)}
 											aria-label="Drawing color"
 											class="ml-1 size-6 cursor-pointer rounded border-0 bg-transparent p-0"
 										/>
 									</div>
+									<div class="mt-1.5 flex flex-wrap items-center gap-1">
+										<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
+											>Colors</span
+										>
+										{#each DRAWING_RECOMMENDED_COLORS as paletteColor (paletteColor)}
+											<button
+												type="button"
+												onclick={() => selectDrawingColor(paletteColor)}
+												aria-label={`Use ${paletteColor} drawing color`}
+												aria-pressed={drawingColor.toLowerCase() === paletteColor}
+												class="size-4 rounded-full border border-black/25 ring-offset-1 ring-offset-[var(--ui-bg)] {drawingColor.toLowerCase() ===
+												paletteColor
+													? 'ring-2 ring-warm-500'
+													: 'hover:scale-110'}"
+												style={`background-color: ${paletteColor}`}
+											></button>
+										{/each}
+									</div>
+									{#if drawingRecentColors.length}
+										<div class="mt-1 flex flex-wrap items-center gap-1">
+											<span class="mr-1 text-[10px] font-bold text-[var(--ui-text-muted)]"
+												>Recent</span
+											>
+											{#each drawingRecentColors as recentColor (recentColor)}
+												<button
+													type="button"
+													onclick={() => selectDrawingColor(recentColor)}
+													aria-label={`Use recent ${recentColor} drawing color`}
+													aria-pressed={drawingColor.toLowerCase() === recentColor}
+													class="size-4 rounded-full border border-black/25 ring-offset-1 ring-offset-[var(--ui-bg)] {drawingColor.toLowerCase() ===
+													recentColor
+														? 'ring-2 ring-warm-500'
+														: 'hover:scale-110'}"
+													style={`background-color: ${recentColor}`}
+												></button>
+											{/each}
+										</div>
+									{/if}
 									<label
 										class="mt-2 flex items-center gap-2 text-[10.5px] font-bold text-[var(--ui-text-muted)]"
 										>Size <input
@@ -4180,7 +4323,7 @@
 												>Live sound pad</span
 											>
 											<span class="font-mono text-[9px] text-[var(--ui-text-dimmed)]"
-											>@ {formatDuration(performanceClockMs() / 1000)}</span
+												>@ {formatDuration(performanceClockMs() / 1000)}</span
 											>
 										</div>
 										<div class="grid grid-cols-3 gap-1">
@@ -4206,19 +4349,20 @@
 												>
 													<button
 														type="button"
-									onclick={() => {
-										selectedDrawingGroupId = group.id;
-										selectedCueId = null;
-										selectedId = null;
-										selectedLayerId = null;
-										selectedBaseTrack = false;
-									}}
+														onclick={() => {
+															selectedDrawingGroupId = group.id;
+															selectedCueId = null;
+															selectedId = null;
+															selectedLayerId = null;
+															selectedBaseTrack = false;
+														}}
 														class="min-w-0 flex-1 truncate text-left text-[10px] font-bold text-[var(--ui-text)]"
 														>{group.label}</button
 													>
 													<button
 														type="button"
-								onclick={() => commitDrawingGroupPatch(group.id, { hidden: !group.hidden })}
+														onclick={() =>
+															commitDrawingGroupPatch(group.id, { hidden: !group.hidden })}
 														aria-label={group.hidden
 															? `Show ${group.label}`
 															: `Hide ${group.label}`}
@@ -4230,7 +4374,8 @@
 													>
 													<button
 														type="button"
-								onclick={() => commitDrawingGroupPatch(group.id, { locked: !group.locked })}
+														onclick={() =>
+															commitDrawingGroupPatch(group.id, { locked: !group.locked })}
 														aria-label={group.locked
 															? `Unlock ${group.label}`
 															: `Lock ${group.label}`}
@@ -4271,10 +4416,10 @@
 											>Name <input
 												value={selectedDrawingGroup?.label ?? ''}
 												disabled={!selectedDrawingGroup}
-								onchange={(event) => {
+												onchange={(event) => {
 													const group = selectedDrawingGroup;
 													if (group)
-										commitDrawingGroupPatch(group.id, {
+														commitDrawingGroupPatch(group.id, {
 															label: (event.currentTarget as HTMLInputElement).value.slice(0, 40)
 														});
 												}}
@@ -4291,11 +4436,9 @@
 														type="color"
 														value={selectedDrawingStroke.color}
 														onchange={(event) =>
-															patchSelectedDrawingStyle({
-																color: (event.currentTarget as HTMLInputElement).value,
-																width: selectedDrawingStroke.width,
-																opacity: selectedDrawingStroke.opacity
-															})}
+															setSelectedDrawingColor(
+																(event.currentTarget as HTMLInputElement).value
+															)}
 														aria-label="Selected drawing color"
 														class="size-5 cursor-pointer rounded border-0 bg-transparent p-0"
 													/>
