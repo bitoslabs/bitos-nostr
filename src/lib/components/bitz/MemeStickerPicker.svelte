@@ -31,8 +31,6 @@
 	let source = $state<'emoji' | 'nostr'>('emoji');
 
 	// ---- emoji (glyph) source -------------------------------------------------
-	let activePackId = $state(STICKER_PACKS[0]?.id ?? '');
-	const activePack = $derived(STICKER_PACKS.find((p) => p.id === activePackId));
 	let customSticker = $state('');
 
 	function addCustom(): void {
@@ -163,37 +161,29 @@
 					<Icon name="i-lucide-plus" class="size-4" />
 				</button>
 			</div>
-			<div class="flex items-center gap-1 overflow-x-auto pb-1.5">
-				{#each STICKER_PACKS as p (p.id)}
-					<button
-						type="button"
-						onclick={(e) => {
-							e.stopPropagation();
-							activePackId = p.id;
-						}}
-						class="shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition {activePackId ===
-						p.id
-							? 'bg-warm-500 text-white'
-							: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
-					>
-						{p.label}
-					</button>
+			<div class="max-h-64 space-y-2 overflow-y-auto pr-0.5">
+				{#each STICKER_PACKS as pack (pack.id)}
+					<section>
+						<h3
+							class="mb-1 text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
+						>
+							{pack.label}
+						</h3>
+						<div class="grid grid-cols-8 gap-1">
+							{#each pack.stickers as emoji (emoji)}
+								<button
+									type="button"
+									onclick={() => onAdd(emoji)}
+									aria-label={`Add ${emoji} sticker`}
+									class="grid size-7 place-items-center rounded-lg text-[17px] leading-none transition hover:scale-110 hover:bg-[var(--ui-bg-muted)] active:scale-95"
+								>
+									{emoji}
+								</button>
+							{/each}
+						</div>
+					</section>
 				{/each}
 			</div>
-			{#if activePack}
-				<div class="grid grid-cols-8 gap-1">
-					{#each activePack.stickers as emoji (emoji)}
-						<button
-							type="button"
-							onclick={() => onAdd(emoji)}
-							aria-label={`Add ${emoji} sticker`}
-							class="grid size-7 place-items-center rounded-lg text-[17px] leading-none transition hover:scale-110 hover:bg-[var(--ui-bg-muted)] active:scale-95"
-						>
-							{emoji}
-						</button>
-					{/each}
-				</div>
-			{/if}
 		{:else if pack}
 			<!-- One installed pack: header + emoji grid -->
 			<div class="mb-1.5 flex items-center justify-between gap-2">

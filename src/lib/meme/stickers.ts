@@ -17,6 +17,11 @@ export interface StickerPack {
 /** Curated packs — punchy meme vocabulary, no licensing (system emoji). */
 export const STICKER_PACKS: StickerPack[] = [
 	{
+		id: 'crypto',
+		label: 'Crypto',
+		stickers: ['₿', '🚀', '🌕', '⚡', '🟠', '📈', '💎', '🙌']
+	},
+	{
 		id: 'reactions',
 		label: 'Reactions',
 		stickers: ['😂', '💀', '😈', '🤡', '👀', '🔥', '💯', '🫡']
@@ -68,6 +73,12 @@ export function isEmojiOnly(text: string): boolean {
 	const graphemes = [...trimmed];
 	for (const g of graphemes) {
 		if (g === '\u200d' || g === '\ufe0f') continue;
+		// Bitcoin's official sign is a currency symbol rather than Unicode emoji,
+		// but it is a first-class meme sticker alongside regular emoji.
+		if (g === '₿') {
+			sawEmoji = true;
+			continue;
+		}
 		if (!/\p{Extended_Pictographic}|\p{Emoji_Presentation}/u.test(g)) return false;
 		sawEmoji = true;
 	}
