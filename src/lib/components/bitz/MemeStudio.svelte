@@ -1007,12 +1007,26 @@
 	const mediaFrame = $derived.by(() => {
 		const frame = sourceFrame;
 		if (!frame) return null;
-		const rect = coverRect(frame.width, frame.height, 1000, 1000, mediaTransform);
+		// Percentages are relative to the stage, but the cover calculation itself
+		// must use the real artboard ratio. Using a fixed square here made a
+		// landscape remix look horizontally cropped in its source/16:9 preview,
+		// even though the exporter correctly rendered the whole artboard.
+		const rect = coverRect(
+			frame.width,
+			frame.height,
+			renderTarget.width,
+			renderTarget.height,
+			mediaTransform
+		);
 		return {
-			left: (rect.x / 10).toFixed(3),
-			top: (rect.y / 10).toFixed(3),
-			width: (rect.w / 10).toFixed(3),
-			height: (rect.h / 10).toFixed(3)
+			// A CSS percentage is relative to its own axis. Normalizing all four
+			// values against 1000 (the old square reference) stretches/crops one
+			// axis whenever the artboard is not square — exactly the black right
+			// strip in the Remix preview.
+			left: ((rect.x / renderTarget.width) * 100).toFixed(3),
+			top: ((rect.y / renderTarget.height) * 100).toFixed(3),
+			width: ((rect.w / renderTarget.width) * 100).toFixed(3),
+			height: ((rect.h / renderTarget.height) * 100).toFixed(3)
 		};
 	});
 
