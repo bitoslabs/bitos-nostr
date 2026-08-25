@@ -58,6 +58,7 @@
 		embedUrl?: string;
 		provider?: string;
 		isGif?: boolean;
+		dim?: { w: number; h: number };
 	};
 
 	let {
@@ -280,13 +281,22 @@
 	}
 
 	function mediaTileClass(index: number, count: number) {
-		if (count <= 2) return 'aspect-video';
+		if (count === 2) return 'aspect-video';
 		if ((count === 3 || count === 5) && index === 0) return 'row-span-2';
 		return '';
 	}
 
 	function mediaContentClass(count: number) {
-		return count <= 2 ? 'aspect-video' : 'size-full';
+		return count === 1
+			? 'h-auto max-h-[min(500px,65vh)] w-full'
+			: count === 2
+				? 'aspect-video'
+				: 'size-full';
+	}
+
+	function mediaAspectStyle(media: MediaAttachment, count: number) {
+		if (count !== 1 || !media.dim || media.dim.w <= 0 || media.dim.h <= 0) return undefined;
+		return `aspect-ratio: ${media.dim.w} / ${media.dim.h};`;
 	}
 
 	function videoCoverStyle() {
@@ -529,7 +539,8 @@
 				url: item.url,
 				host: hostFromUrl(item.url),
 				fallbacks: item.fallbacks,
-				isGif: item.kind === 'gif'
+				isGif: item.kind === 'gif',
+				dim: item.dim
 			});
 		}
 
@@ -1161,7 +1172,10 @@
 								</span>
 							</a>
 						{:else if shouldHideImage(media.url)}
-							<div class="{tileClass} relative block bg-black">
+							<div
+								class="{tileClass} relative block"
+								style={mediaAspectStyle(media, visibleMediaAttachments.length)}
+							>
 								<img
 									src={media.url}
 									alt="Blurred sensitive attachment"
@@ -1191,7 +1205,8 @@
 						{:else}
 							<button
 								type="button"
-								class="{tileClass} group relative block w-full bg-black"
+								class="{tileClass} group relative block w-full"
+								style={mediaAspectStyle(media, visibleMediaAttachments.length)}
 								onclick={() => openMediaViewer(media)}
 							>
 								<img
@@ -1200,7 +1215,7 @@
 									loading="lazy"
 									referrerpolicy="no-referrer"
 									onerror={() => markMediaFailed(media.url)}
-									class="{contentClass} {media.isGif
+									class="{contentClass} {media.isGif || visibleMediaAttachments.length === 1
 										? 'object-contain'
 										: 'object-cover'} transition group-hover:scale-[1.02]"
 								/>
