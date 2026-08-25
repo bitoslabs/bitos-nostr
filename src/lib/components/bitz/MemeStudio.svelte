@@ -2760,10 +2760,20 @@
 		const layerFrameSets = imageLayers
 			.map((layer) => layerAssets.gifs.get(layer.src)?.frames)
 			.filter((f): f is NonNullable<typeof f> => !!f && f.length > 0);
+		// Replay drawings are timeline content too. Without a GIF base, animated
+		// layer, or sound cue, they used to produce only the t=0 still frame.
+		const replayEndMs = drawingGroups.reduce((latest, group) => {
+			if (group.playback !== 'replay') return latest;
+			const strokeEnd = group.strokes.reduce(
+				(end, stroke) => Math.max(end, stroke.points[stroke.points.length - 1]?.atMs ?? 0),
+				0
+			);
+			return Math.max(latest, group.startMs + strokeEnd);
+		}, 0);
 		const plan = planGifExport(
 			gif?.frames,
 			layerFrameSets,
-			sfxCues.length ? cueTrackDurationSec(sfxCues) : 0,
+			Math.max(sfxCues.length ? cueTrackDurationSec(sfxCues) : 0, replayEndMs / 1000),
 			pinnedLengthSec
 		);
 		// GIFs stay light: ≤640px long edge, ≤360 frames.
@@ -2778,17 +2788,8 @@
 			toasts.info('GIF capped at 360 frames — trim or drop cues for a shorter loop');
 		}
 		const frames: GifEncodeFrame[] = [];
-		// GIF plans sample frame *starts*. A replay stroke can finish during the
-		// final frame's hold, leaving its tail absent before the loop restarts.
-		// Settle the final canvas through the last recorded replay point.
-		const replayEndMs = drawingGroups.reduce((latest, group) => {
-			if (group.playback !== 'replay') return latest;
-			const strokeEnd = group.strokes.reduce(
-				(end, stroke) => Math.max(end, stroke.points[stroke.points.length - 1]?.atMs ?? 0),
-				0
-			);
-			return Math.max(latest, group.startMs + strokeEnd);
-		}, 0);
+		// GIF plans sample frame *starts*. Settle the last canvas through the
+		// final replay point so a line ending during the last frame hold is kept.
 		for (let i = 0; i < frameCount; i++) {
 			const step = plan.steps[i]!;
 			const t = step.atSec;
