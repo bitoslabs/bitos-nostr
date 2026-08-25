@@ -10,6 +10,7 @@ import {
 	type SharedTemplate
 } from '$lib/meme/shared-templates';
 import { memeTemplates, type SavedMemeTemplate } from '$lib/stores/meme-templates.svelte';
+import type { TemplateCategoryId } from '$lib/meme/template-marketplace';
 
 /**
  * Shared templates (NIP-78 kind:30078) — the template-creator-economy half
@@ -47,8 +48,12 @@ class SharedTemplatesStore {
 		}
 	}
 
-	/** Publish a saved local template as a kind-30078 shared-template event. */
-	async share(id: string): Promise<void> {
+	/** Publish a saved local template as a kind-30078 shared-template event.
+	 * Marketplace options (v3) attach a zap price + category to the listing. */
+	async share(
+		id: string,
+		market?: { priceSats?: number; category?: TemplateCategoryId }
+	): Promise<void> {
 		const me = identity.current;
 		if (!me) {
 			toasts.error('Sign in to share templates');
@@ -72,6 +77,8 @@ class SharedTemplatesStore {
 				fxWindows: saved.fxWindows,
 				speedWindows: saved.speedWindows,
 				imageLayers: saved.imageLayers,
+				...(market?.priceSats ? { priceSats: market.priceSats } : {}),
+				...(market?.category ? { category: market.category } : {}),
 				clientTag: clientTag()
 			});
 			const event = await signMined({

@@ -6,9 +6,36 @@
 	import { memeTemplates } from '$lib/stores/meme-templates.svelte';
 	import { memeSlots } from '$lib/stores/meme-slots.svelte';
 	import { sharedTemplatesStore } from '$lib/stores/meme-shared-templates.svelte';
+	import { templateMarketplace } from '$lib/stores/template-marketplace.svelte';
+	import MemeTemplateMarketplace from './MemeTemplateMarketplace.svelte';
 	import { TEMPLATES, type MemeStudioTemplate } from './meme-studio-config';
+	import {
+		TEMPLATE_CATEGORIES,
+		TEMPLATE_PRICE_TIERS,
+		type TemplateCategoryId
+	} from '$lib/meme/template-marketplace';
 	import type { MemeTextOverlay } from '$lib/meme/schema';
 	import type { SharedTemplate } from '$lib/meme/shared-templates';
+
+	let marketOpen = $state(false);
+	let listingFor = $state('');
+	let listingPrice = $state(0);
+	let listingCategory = $state<TemplateCategoryId>('meme');
+
+	function openListing(id: string) {
+		listingFor = id;
+		listingPrice = 0;
+		listingCategory = 'meme';
+	}
+
+	function shareWithListing() {
+		const id = listingFor;
+		listingFor = '';
+		void sharedTemplatesStore.share(id, {
+			...(listingPrice ? { priceSats: listingPrice } : {}),
+			category: listingCategory
+		});
+	}
 
 	let {
 		overlays,
@@ -190,6 +217,16 @@
 						</button>
 						<button
 							type="button"
+							onclick={() => openListing(saved.id)}
+							disabled={busy || sharedTemplatesStore.sharingId === saved.id}
+							aria-label={`Share template ${saved.label} with a market price`}
+							title="List on the marketplace with a zap price"
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-primary-600 focus-visible:opacity-100 disabled:opacity-40"
+						>
+							<Icon name="i-lucide-store" class="size-3.5" />
+						</button>
+						<button
+							type="button"
 							onclick={() => removeSavedTemplate(saved.id)}
 							aria-label={`Delete template ${saved.label}`}
 							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-[var(--tone-error-text)] focus-visible:opacity-100"
@@ -250,6 +287,16 @@
 			{/if}
 		</div>
 	</Popover>
+
+	<!-- Marketplace: priced/zapped community templates (tp-2 p.733) -->
+	<button
+		type="button"
+		onclick={() => templateMarketplace.openMarket()}
+		class="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"
+	>
+		<Icon name="i-lucide-store" class="size-3.5" />
+		Market
+	</button>
 
 	<!-- Shared templates: NIP-78 layouts from other bitz creators -->
 	<Popover
@@ -467,4 +514,68 @@
 			</div>
 		</div>
 	</Popover>
+
+	<MemeTemplateMarketplace bind:open={marketOpen} onImport={() => (marketOpen = false)} />
+
+	<!-- Market listing: price + category for the next shared template -->
+	{#if listingFor}
+		<div class="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+			<div class="w-full max-w-sm rounded-2xl bg-[var(--ui-bg)] p-4 shadow-xl">
+				<p class="pb-2 text-[13px] font-bold">List on Bitz Templates</p>
+				<p class="pb-3 text-[11.5px] text-[var(--ui-text-dimmed)]">
+					Buyers zap you directly to unlock — you keep the full amount.
+				</p>
+				<div class="flex flex-wrap gap-1.5 pb-3">
+					{#each TEMPLATE_PRICE_TIERS as tier (tier)}
+						<button
+							type="button"
+							onclick={() => (listingPrice = tier)}
+							class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition {listingPrice ===
+							tier
+								? 'bg-primary-500/20 text-primary-600'
+								: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-primary-500/10'}"
+						>
+							{tier === 0 ? 'Free' : `⚡${tier}`}
+						</button>
+					{/each}
+				</div>
+				<div class="flex flex-wrap gap-1.5 pb-4">
+					{#each TEMPLATE_CATEGORIES.filter((c) => c.id !== 'trending' && c.id !== 'new') as cat (cat.id)}
+						<button
+							type="button"
+							onclick={() => (listingCategory = cat.id)}
+							class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition {listingCategory ===
+							cat.id
+								? 'bg-warm-500/20 text-warm-600'
+								: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-warm-500/10'}"
+						>
+							{cat.label}
+						</button>
+					{/each}
+				</div>
+				<div class="flex justify-end gap-2">
+					<button
+						type="button"
+						onclick={() => (listingFor = '')}
+						class="rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)]"
+						>Cancel</button
+					>
+					<button
+						type="button"
+						onclick={shareWithListing}
+						disabled={sharedTemplatesStore.sharingId === listingFor}
+						class="flex items-center gap-1 rounded-full bg-primary-500 px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+					>
+						<Icon
+							name={sharedTemplatesStore.sharingId === listingFor
+								? 'i-lucide-loader-circle animate-spin'
+								: 'i-lucide-zap'}
+							class="size-3.5 {sharedTemplatesStore.sharingId === listingFor ? 'animate-spin' : ''}"
+						/>
+						Share
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

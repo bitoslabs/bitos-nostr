@@ -9,6 +9,11 @@ import {
 import { MAX_IMAGE_OVERLAYS, normalizeImageOverlay, type MemeImageOverlay } from './image-overlay';
 import { MAX_FX_WINDOWS, normalizeFxWindows, type FrameFxWindow } from './fx-track';
 import { MAX_ZOOM_WINDOWS, normalizeZoomWindows } from './zoom-track';
+import {
+	isTemplateCategory,
+	normalizePriceSats,
+	type TemplateCategoryId
+} from './template-marketplace';
 import type { ZoomWindow } from '$lib/ai/suggest';
 import { normalizeSpeedWindows, type SpeedWindow } from './speed-track';
 
@@ -68,6 +73,9 @@ export interface SharedTemplate {
 	fxWindows?: FrameFxWindow[];
 	speedWindows?: SpeedWindow[];
 	imageLayers?: MemeImageOverlay[];
+	/** Marketplace (v3): zap price in sats (0/absent = free) + category. */
+	priceSats?: number;
+	category?: TemplateCategoryId;
 	creatorPubkey: string;
 	createdAt: number;
 }
@@ -81,6 +89,9 @@ interface TemplateContent {
 	fxWindows?: unknown[];
 	speedWindows?: unknown[];
 	imageLayers?: unknown[];
+	/** Marketplace (v3) — optional, absent on older events. */
+	price_sats?: unknown;
+	category?: unknown;
 }
 
 /** Sanitize timed extras (v2 content). Every row re-validates — readers
@@ -114,6 +125,9 @@ export function sharedTemplateEventParts(input: {
 	fxWindows?: FrameFxWindow[];
 	speedWindows?: SpeedWindow[];
 	imageLayers?: MemeImageOverlay[];
+	/** Marketplace (v3): publish with a zap price + category. */
+	priceSats?: number;
+	category?: TemplateCategoryId;
 	clientTag: string[][];
 }): { d: string; content: string; tags: string[][] } {
 	const overlays = input.overlays
@@ -129,7 +143,9 @@ export function sharedTemplateEventParts(input: {
 		...(input.zoomWindows?.length ? { zoomWindows: input.zoomWindows } : {}),
 		...(input.fxWindows?.length ? { fxWindows: input.fxWindows } : {}),
 		...(input.speedWindows?.length ? { speedWindows: input.speedWindows } : {}),
-		...(input.imageLayers?.length ? { imageLayers: input.imageLayers } : {})
+		...(input.imageLayers?.length ? { imageLayers: input.imageLayers } : {}),
+		...(input.category ? { category: input.category } : {}),
+		...(input.priceSats ? { price_sats: normalizePriceSats(input.priceSats) } : {})
 	};
 	const tags: string[][] = [
 		...input.clientTag,
@@ -184,6 +200,16 @@ export function parseSharedTemplate(event: {
 		icon: isTemplateIcon(content.icon) ? content.icon : 'i-lucide-bookmark',
 		overlays,
 		...normalizeTimedExtras(content),
+		// Marketplace (v3) — only attach when the event actually carries one of
+		// the fields so v1/v2 shapes stay byte-identical on parse.
+		...(content.price_sats !== undefined || content.category !== undefined
+			? {
+					priceSats: normalizePriceSats(content.price_sats),
+					...(isTemplateCategory(String(content.category))
+						? { category: content.category as TemplateCategoryId }
+						: {})
+				}
+			: {}),
 		creatorPubkey: event.pubkey,
 		createdAt: event.created_at
 	};
