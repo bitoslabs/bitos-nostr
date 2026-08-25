@@ -15,13 +15,15 @@
 		templateName = $bindable(''),
 		showTemplateSave = $bindable(false),
 		slotName = $bindable(''),
-		showSlotSave = $bindable(false),
 		applyTemplate,
 		addOverlay,
 		applySavedTemplate,
+		newDraftFromSavedTemplate,
 		removeSavedTemplate,
 		saveCurrentTemplate,
 		openSlot,
+		duplicateSlot,
+		renameSlot,
 		removeSlot,
 		saveCurrentSlot
 	}: {
@@ -32,19 +34,50 @@
 		templateName: string;
 		showTemplateSave: boolean;
 		slotName: string;
-		showSlotSave: boolean;
 		applyTemplate: (template: MemeStudioTemplate) => void;
 		addOverlay: () => void;
 		applySavedTemplate: (id: string) => void;
+		newDraftFromSavedTemplate: (id: string) => void;
 		removeSavedTemplate: (id: string) => void;
 		saveCurrentTemplate: () => void;
 		openSlot: (id: string) => void | Promise<void>;
+		duplicateSlot: (id: string) => void;
+		renameSlot: (id: string, label: string) => void;
 		removeSlot: (id: string) => void;
 		saveCurrentSlot: () => void | Promise<void>;
 	} = $props();
 
 	const templateMenuId = `meme-templates-${Math.random().toString(36).slice(2, 8)}`;
 	const slotsMenuId = `meme-slots-${Math.random().toString(36).slice(2, 8)}`;
+	let renamingSlotId = $state<string | null>(null);
+	let renamingSlotLabel = $state('');
+
+	function beginRenameSlot(id: string, label: string) {
+		renamingSlotId = id;
+		renamingSlotLabel = label;
+	}
+	function commitRenameSlot() {
+		if (!renamingSlotId) return;
+		renameSlot(renamingSlotId, renamingSlotLabel);
+		renamingSlotId = null;
+		renamingSlotLabel = '';
+	}
+
+	/** Slot panels are floated/ported to document.body. Native listeners stay
+	 * attached after that move, unlike delegated component click handlers. */
+	function nativeClick(node: HTMLElement, handler: () => void) {
+		node.addEventListener('click', handler);
+		return {
+			update(next: () => void) {
+				node.removeEventListener('click', handler);
+				handler = next;
+				node.addEventListener('click', handler);
+			},
+			destroy() {
+				node.removeEventListener('click', handler);
+			}
+		};
+	}
 </script>
 
 <!-- Templates -->
@@ -118,6 +151,16 @@
 						</button>
 						<button
 							type="button"
+							onclick={() => newDraftFromSavedTemplate(saved.id)}
+							disabled={busy}
+							aria-label={`Create a new meme from template ${saved.label}`}
+							title="Create a new meme from this template"
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-warm-500 focus-visible:opacity-100 disabled:opacity-40"
+						>
+							<Icon name="i-lucide-copy-plus" class="size-3.5" />
+						</button>
+						<button
+							type="button"
 							onclick={() => removeSavedTemplate(saved.id)}
 							aria-label={`Delete template ${saved.label}`}
 							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-[var(--tone-error-text)] focus-visible:opacity-100"
@@ -171,7 +214,7 @@
 					class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-warm-500/12 text-[12px] font-bold text-warm-500 transition hover:bg-warm-500/20 active:scale-[0.98] disabled:opacity-40"
 				>
 					<Icon name="i-lucide-bookmark-plus" class="size-4" />
-					Save current layout{overlays.length
+					Save as template{overlays.length
 						? ` (${overlays.length} caption${overlays.length === 1 ? '' : 's'})`
 						: ''}
 				</button>
@@ -179,14 +222,14 @@
 		</div>
 	</Popover>
 
-	<!-- Draft slots: named WIP snapshots (save now, resume later) -->
+	<!-- Slots: named checkpoints inside the current work, like save points. -->
 	<Popover
 		id={slotsMenuId}
 		float
 		placement="bottom-start"
 		width="auto"
 		class="w-72 max-w-[80vw] p-0"
-		label="Draft slots"
+		label="Save points"
 		triggerClass="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-primary-500/15 hover:text-primary-600"
 		triggerActiveClass="bg-primary-500/15 text-primary-600"
 	>
@@ -207,9 +250,11 @@
 					>
 						<button
 							type="button"
-							onclick={() => void openSlot(slot.id)}
+							use:nativeClick={() => {
+								if (renamingSlotId !== slot.id) void openSlot(slot.id);
+							}}
 							disabled={busy || !!slotBusyId}
-							title="Restore this work-in-progress"
+							title="Restore this save point"
 							class="flex min-w-0 flex-1 items-center gap-2 text-left"
 						>
 							<Icon
@@ -219,9 +264,20 @@
 									: ''}"
 							/>
 							<span class="min-w-0 flex-1">
-								<span class="block truncate text-[12.5px] font-bold">
-									{slot.label}
-								</span>
+								{#if renamingSlotId === slot.id}
+									<input
+										bind:value={renamingSlotLabel}
+										maxlength="40"
+										aria-label="Save point name"
+										onkeydown={(event) => {
+											if (event.key === 'Enter') commitRenameSlot();
+											if (event.key === 'Escape') renamingSlotId = null;
+										}}
+										class="h-6 w-full rounded border border-primary-500/50 bg-[var(--ui-bg)] px-1.5 text-[12.5px] font-bold outline-none"
+									/>
+								{:else}
+									<span class="block truncate text-[12.5px] font-bold">{slot.label}</span>
+								{/if}
 								<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
 									{new Date(slot.savedAt).toLocaleDateString()} ·
 									{slot.overlays.length} caption{slot.overlays.length === 1 ? '' : 's'}
@@ -236,8 +292,36 @@
 						</button>
 						<button
 							type="button"
-							onclick={() => removeSlot(slot.id)}
-							aria-label={`Delete slot ${slot.label}`}
+							use:nativeClick={() => duplicateSlot(slot.id)}
+							aria-label={`Duplicate save point ${slot.label}`}
+							title="Duplicate this save point"
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-primary-600 focus-visible:opacity-100"
+						>
+							<Icon name="i-lucide-copy" class="size-3.5" />
+						</button>
+						<button
+							type="button"
+							use:nativeClick={() => beginRenameSlot(slot.id, slot.label)}
+							aria-label={`Rename save point ${slot.label}`}
+							title="Rename this save point"
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-primary-600 focus-visible:opacity-100"
+						>
+							<Icon name="i-lucide-pencil" class="size-3.5" />
+						</button>
+						{#if renamingSlotId === slot.id}
+							<button
+								type="button"
+								use:nativeClick={commitRenameSlot}
+								aria-label={`Save name for ${slot.label}`}
+								class="grid size-6 shrink-0 place-items-center rounded-full text-primary-600 hover:bg-primary-500/10"
+							>
+								<Icon name="i-lucide-check" class="size-3.5" />
+							</button>
+						{/if}
+						<button
+							type="button"
+							use:nativeClick={() => removeSlot(slot.id)}
+							aria-label={`Delete save point ${slot.label}`}
 							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-[var(--tone-error-text)] focus-visible:opacity-100"
 						>
 							<Icon name="i-lucide-trash-2" class="size-3.5" />
@@ -246,7 +330,7 @@
 				{/each}
 			{:else}
 				<p class="px-2 py-3 text-center text-[12px] text-[var(--ui-text-muted)]">
-					No slots yet — save a work-in-progress and pick it back up later.
+					No save points yet — save your work and return to it later.
 				</p>
 			{/if}
 		</div>
@@ -256,41 +340,28 @@
 			</div>
 		{/if}
 		<div class="p-1.5 pt-0">
-			{#if showSlotSave}
-				<div class="flex items-center gap-1.5">
-					<input
-						type="text"
-						bind:value={slotName}
-						maxlength="40"
-						placeholder="Slot name"
-						aria-label="Slot name"
-						onkeydown={(e) => {
-							if (e.key === 'Enter') void saveCurrentSlot();
-							if (e.key === 'Escape') showSlotSave = false;
-						}}
-						class="h-8 min-w-0 flex-1 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary-500/60"
-					/>
-					<button
-						type="button"
-						onclick={() => void saveCurrentSlot()}
-						disabled={busy || !dirty}
-						class="grid size-8 shrink-0 place-items-center rounded-lg bg-primary-500 text-white transition hover:brightness-110 active:scale-95 disabled:opacity-40"
-						aria-label="Save slot"
-					>
-						<Icon name="i-lucide-check" class="size-4" />
-					</button>
-				</div>
-			{:else}
+			<div class="flex items-center gap-1.5">
+				<input
+					type="text"
+					bind:value={slotName}
+					maxlength="40"
+					placeholder="Name this save point"
+					aria-label="Save point name"
+					disabled={busy || !dirty}
+					onkeydown={(e) => {
+						if (e.key === 'Enter') void saveCurrentSlot();
+					}}
+					class="h-8 min-w-0 flex-1 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary-500/60 disabled:opacity-40"
+				/>
 				<button
 					type="button"
-					onclick={() => (showSlotSave = true)}
+					use:nativeClick={() => void saveCurrentSlot()}
 					disabled={busy || !dirty}
-					class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-500/12 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-[0.98] disabled:opacity-40"
+					class="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-primary-500 px-2.5 text-[11px] font-bold text-white transition hover:brightness-110 active:scale-95 disabled:opacity-40"
 				>
-					<Icon name="i-lucide-save" class="size-4" />
-					Save work-in-progress
+					<Icon name="i-lucide-save" class="size-3.5" /> Save
 				</button>
-			{/if}
+			</div>
 		</div>
 	</Popover>
 </div>

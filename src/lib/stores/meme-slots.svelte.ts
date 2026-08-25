@@ -14,6 +14,7 @@ import { browser } from '$app/environment';
 import { normalizeOverlay, type MemeTextOverlay, type MemeSfxCue } from '$lib/meme/schema';
 import { normalizeSfxCues } from '$lib/meme/schema';
 import { normalizeImageOverlay, type MemeImageOverlay } from '$lib/meme/image-overlay';
+import { normalizeDrawingGroups, type DrawingGroup } from '$lib/meme/drawing';
 
 export const MEME_SLOTS_KEY = 'bitos:meme-slots';
 export const MEME_SLOTS_VERSION = 1;
@@ -21,9 +22,12 @@ export const MEME_SLOTS_VERSION = 1;
 export const MAX_MEME_SLOTS = 6;
 /** localStorage-safe media budget per slot (data URLs inflate ~33%). */
 export const MAX_SLOT_BYTES = 1.5 * 1024 * 1024;
+const PROJECT_MEDIA_DB = 'bitos-meme-project-media';
+const PROJECT_MEDIA_STORE = 'files';
 
 export interface MemeSlotMedia {
-	dataUrl: string;
+	dataUrl?: string;
+	blobId?: string;
 	name: string;
 	mimeType: string;
 }
@@ -37,6 +41,8 @@ export interface MemeSlot {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
 	imageLayers: MemeImageOverlay[];
+	/** Draw & Record layers are part of the editable work-in-progress. */
+	drawingGroups: DrawingGroup[];
 	caption: string;
 	sensitive: boolean;
 	destination: 'bitz' | 'story' | 'note';
@@ -63,21 +69,31 @@ function clampRate(value: unknown): number {
 	return Number.isFinite(n) ? Math.min(2, Math.max(0.5, n)) : 1;
 }
 
+function openProjectMediaDb(): Promise<IDBDatabase> {
+	return new Promise((resolve, reject) => {
+		const request = indexedDB.open(PROJECT_MEDIA_DB, 1);
+		request.onupgradeneeded = () => request.result.createObjectStore(PROJECT_MEDIA_STORE);
+		request.onsuccess = () => resolve(request.result);
+		request.onerror = () => reject(request.error);
+	});
+}
+
 /** Tolerant parse of one stored slot — drop bad pieces, keep the rest. */
 function parseSlot(raw: unknown): MemeSlot | null {
 	if (!raw || typeof raw !== 'object') return null;
 	const s = raw as Record<string, unknown>;
+	const mediaRaw = s.media && typeof s.media === 'object' ? (s.media as MemeSlotMedia) : null;
+	const mediaDataUrl = typeof mediaRaw?.dataUrl === 'string' ? mediaRaw.dataUrl : null;
+	const mediaBlobId = typeof mediaRaw?.blobId === 'string' ? mediaRaw.blobId : null;
 	const media =
-		s.media && typeof s.media === 'object' && typeof (s.media as MemeSlotMedia).dataUrl === 'string'
+		mediaDataUrl || mediaBlobId
 			? {
-					dataUrl: (s.media as MemeSlotMedia).dataUrl.slice(0, MAX_SLOT_BYTES * 2),
-					name:
-						typeof (s.media as MemeSlotMedia).name === 'string'
-							? (s.media as MemeSlotMedia).name.slice(0, 80)
-							: 'meme',
+					...(mediaDataUrl ? { dataUrl: mediaDataUrl.slice(0, MAX_SLOT_BYTES * 2) } : {}),
+					...(mediaBlobId ? { blobId: mediaBlobId.slice(0, 96) } : {}),
+					name: typeof mediaRaw?.name === 'string' ? mediaRaw.name.slice(0, 80) : 'meme',
 					mimeType:
-						typeof (s.media as MemeSlotMedia).mimeType === 'string'
-							? (s.media as MemeSlotMedia).mimeType.slice(0, 64)
+						typeof mediaRaw?.mimeType === 'string'
+							? mediaRaw.mimeType.slice(0, 64)
 							: 'application/octet-stream'
 				}
 			: null;
@@ -107,6 +123,7 @@ function parseSlot(raw: unknown): MemeSlot | null {
 		imageLayers: (Array.isArray(s.imageLayers) ? s.imageLayers : [])
 			.map((l) => normalizeImageOverlay(l))
 			.filter((l): l is MemeImageOverlay => l !== null),
+		drawingGroups: normalizeDrawingGroups(s.drawingGroups),
 		caption: typeof s.caption === 'string' ? s.caption.slice(0, 2000) : '',
 		sensitive: s.sensitive === true,
 		destination,
@@ -176,10 +193,68 @@ export class MemeSlotsStore {
 		this.persist();
 	}
 
+	rename(id: string, label: string): MemeSlot | null {
+		const clean = label.trim().slice(0, 40);
+		if (!clean) return null;
+		const current = this.list.find((slot) => slot.id === id);
+		if (!current) return null;
+		const renamed = { ...current, label: clean, savedAt: Date.now() };
+		this.list = this.list.map((slot) => (slot.id === id ? renamed : slot));
+		this.persist();
+		return renamed;
+	}
+
+	/** Create an independent saved-project copy. The editable arrays are copied
+	 * when restored; this method gives the copy its own id and save timestamp. */
+	duplicate(id: string): MemeSlot | null {
+		const source = this.list.find((slot) => slot.id === id);
+		if (!source) return null;
+		return this.save({
+			...source,
+			id: undefined,
+			label: `Copy of ${source.label}`.slice(0, 40)
+		});
+	}
+
+	/** Full project sources live in IndexedDB, not the tiny localStorage budget. */
+	async saveMediaFile(file: File): Promise<MemeSlotMedia> {
+		if (!browser || typeof indexedDB === 'undefined')
+			throw new Error('Project media storage is unavailable');
+		const blobId = `project-media:${newId()}`;
+		const db = await openProjectMediaDb();
+		await new Promise<void>((resolve, reject) => {
+			const request = db
+				.transaction(PROJECT_MEDIA_STORE, 'readwrite')
+				.objectStore(PROJECT_MEDIA_STORE)
+				.put(file, blobId);
+			request.onsuccess = () => resolve();
+			request.onerror = () => reject(request.error);
+		});
+		db.close();
+		return { blobId, name: file.name, mimeType: file.type };
+	}
+
 	/** Restore a slot's media as a File (null when the slot skipped media). */
 	async slotMediaFile(slot: MemeSlot): Promise<File | null> {
-		if (!slot.media?.dataUrl) return null;
+		if (!slot.media) return null;
 		try {
+			if (slot.media.blobId && browser && typeof indexedDB !== 'undefined') {
+				const db = await openProjectMediaDb();
+				const blob = await new Promise<Blob | undefined>((resolve, reject) => {
+					const request = db
+						.transaction(PROJECT_MEDIA_STORE)
+						.objectStore(PROJECT_MEDIA_STORE)
+						.get(slot.media!.blobId!);
+					request.onsuccess = () => resolve(request.result as Blob | undefined);
+					request.onerror = () => reject(request.error);
+				});
+				db.close();
+				if (!blob) return null;
+				return new File([blob], slot.media.name || 'meme', {
+					type: slot.media.mimeType || blob.type
+				});
+			}
+			if (!slot.media.dataUrl) return null;
 			const res = await fetch(slot.media.dataUrl);
 			const blob = await res.blob();
 			return new File([blob], slot.media.name || 'meme', {

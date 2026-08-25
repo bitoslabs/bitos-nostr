@@ -1503,8 +1503,9 @@
 	/** Saved-template popover id + inline save-name input. */
 	let showTemplateSave = $state(false);
 	let templateName = $state('');
+	/** A saved template becomes the starting layout for the next chosen media. */
+	let preserveLayoutOnNextMedia = $state(false);
 	/** Draft-slot popover: named WIP snapshots (save now, resume later). */
-	let showSlotSave = $state(false);
 	let slotName = $state('');
 	let slotBusyId = $state('');
 
@@ -1831,7 +1832,12 @@
 	const me = $derived(identity.current);
 	const busy = $derived(phase !== 'idle');
 	const dirty = $derived(
-		!!file || overlays.some((o) => o.text.trim()) || !!caption.trim() || drawingGroups.length > 0
+		!!file ||
+			overlays.some((o) => o.text.trim()) ||
+			!!caption.trim() ||
+			drawingGroups.length > 0 ||
+			imageLayers.length > 0 ||
+			sfxCues.length > 0
 	);
 	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
@@ -1966,6 +1972,7 @@
 		confirmDiscard = false;
 		showTemplateSave = false;
 		templateName = '';
+		preserveLayoutOnNextMedia = false;
 		remixSource = null;
 		remixLabel = '';
 		sourceCredit = '';
@@ -2067,6 +2074,7 @@
 			return;
 		}
 		if (busy) return;
+		const keepLayout = opts.keepLayout || preserveLayoutOnNextMedia;
 		confirmDiscard = false;
 		revokePreview();
 		file = next;
@@ -2090,7 +2098,7 @@
 		selectedClipId = null;
 		// Swaps may keep the caption layout + layers + cues (normalized coords
 		// make them media-agnostic); a fresh pick starts clean, as before.
-		if (!opts.keepLayout) {
+		if (!keepLayout) {
 			overlays = [];
 			imageLayers = [];
 			selectedLayerId = null;
@@ -2098,6 +2106,9 @@
 			selectedId = null;
 			timingId = null;
 		}
+		// A new draft created from a saved template keeps its layout for exactly
+		// one source selection, then fresh picks return to their normal behavior.
+		preserveLayoutOnNextMedia = false;
 		previewUrl = URL.createObjectURL(next);
 		// Animated GIFs decode into a timed frame reel (overlay timing + SFX cues
 		// ride the stage clock). Static images and videos skip this entirely.
@@ -2368,10 +2379,18 @@
 			toasts.error('Nothing to save yet — pick media or add captions first');
 			return;
 		}
-		let media: { dataUrl: string; name: string; mimeType: string } | null = null;
-		if (file && file.size <= MAX_SLOT_BYTES) {
-			// Small media ride along (same data-URL pattern as the autosave draft).
-			media = await mediaToDraftDataUrl(file);
+		let media: { dataUrl?: string; blobId?: string; name: string; mimeType: string } | null = null;
+		if (file) {
+			try {
+				media = await memeSlots.saveMediaFile(file);
+			} catch {
+				// Fallback keeps small projects usable in browsers that block IndexedDB.
+				if (file.size <= MAX_SLOT_BYTES) media = await mediaToDraftDataUrl(file);
+				else
+					toasts.warning(
+						'Project saved without its source file — this browser blocked project media storage'
+					);
+			}
 		}
 		const saved = memeSlots.save({
 			label: slotName,
@@ -2380,6 +2399,7 @@
 			overlays,
 			sfxCues,
 			imageLayers,
+			drawingGroups,
 			caption,
 			sensitive,
 			destination,
@@ -2388,9 +2408,8 @@
 			trimEndSec,
 			playbackRate
 		});
-		showSlotSave = false;
 		slotName = '';
-		toasts.success(`Saved “${saved.label}” to slots`);
+		toasts.success(`Save point “${saved.label}” created`);
 	}
 
 	/** Restore a slot onto the stage — a full WIP handoff, not a layout swap. */
@@ -2401,24 +2420,38 @@
 		slotBusyId = id;
 		try {
 			const mediaFile = await memeSlots.slotMediaFile(slot);
+			// A slot is a complete WIP snapshot, not an overlay to merge onto the
+			// current editor. Clear first so a caption-only/large-media slot cannot
+			// accidentally inherit the previous meme's source or layers.
+			reset();
 			if (mediaFile) {
 				await acceptFile(mediaFile, { keepRemix: false, keepLayout: false });
+			} else if (slot.media) {
+				toasts.warning('The saved media could not be restored — choose the source again');
+			} else {
+				toasts.info('This slot has no embedded media — choose the source to continue');
 			}
 			overlays = slot.overlays.map((o) => ({ ...o }));
 			sfxCues = slot.sfxCues.map((c) => ({ ...c }));
 			imageLayers = slot.imageLayers.map((l) => ({ ...l }));
+			drawingGroups = normalizeDrawingGroups(slot.drawingGroups);
+			for (const layer of imageLayers) {
+				void cacheLayerBitmap(layer.src);
+				void layerAssets.cacheGif(layer.src);
+			}
 			caption = slot.caption;
 			sensitive = slot.sensitive;
 			destination = slot.destination;
 			lookId = memeLookOf(slot.lookId);
 			selectedId = overlays[0]?.id ?? null;
+			selectedDrawingGroupId = drawingGroups[0]?.id ?? null;
 			timingId = null;
 			if (slot.mediaKindValue === 'video') {
 				trimStartSec = slot.trimStartSec;
 				trimEndSec = slot.trimEndSec;
 				playbackRate = slot.playbackRate;
 			}
-			toasts.info(`“${slot.label}” restored`);
+			toasts.info(`Save point “${slot.label}” restored`);
 		} finally {
 			slotBusyId = '';
 		}
@@ -2426,6 +2459,21 @@
 
 	function removeSlot(id: string) {
 		memeSlots.remove(id);
+	}
+
+	function duplicateSlot(id: string) {
+		const copy = memeSlots.duplicate(id);
+		if (!copy) return;
+		toasts.success(`Save point duplicated as “${copy.label}”`);
+	}
+
+	function renameSlot(id: string, label: string) {
+		const renamed = memeSlots.rename(id, label);
+		if (!renamed) {
+			toasts.error('A save point name is required');
+			return;
+		}
+		toasts.success(`Renamed to “${renamed.label}”`);
 	}
 
 	function saveCurrentTemplate() {
@@ -3262,14 +3310,27 @@
 	 *  start panel (the page NEVER blanks), `new` is the "Start over" action
 	 *  (also stays). Both keep the page mounted — the route owns leaving. */
 	let discardIntent = $state<'close' | 'new'>('close');
+	let pendingNewTemplateId = $state<string | null>(null);
 
 	/** Shared wipe: clears everything (media, captions, layers, sounds, remix
 	 *  lineage, queue, draft) and lands on the start panel. */
 	function startFresh() {
+		const templateId = pendingNewTemplateId;
+		pendingNewTemplateId = null;
 		confirmDiscard = false;
 		batch.clear();
 		reset();
 		draftWriter.clear();
+		if (!templateId) return;
+		const saved = memeTemplates.list.find((template) => template.id === templateId);
+		if (!saved) {
+			toasts.error('That saved template is no longer available');
+			return;
+		}
+		overlays = memeTemplates.apply(saved);
+		selectedId = overlays[0]?.id ?? null;
+		preserveLayoutOnNextMedia = true;
+		toasts.success(`New draft created from “${saved.label}” — choose media to continue`);
 	}
 
 	/** "Start over" — a functional reset/create-new from inside the editor
@@ -3279,6 +3340,7 @@
 			toasts.info('Still working on your meme — one moment…');
 			return;
 		}
+		pendingNewTemplateId = null;
 		if (dirty) {
 			draftWriter.flush();
 			discardIntent = 'new';
@@ -3287,6 +3349,26 @@
 		}
 		discardIntent = 'new';
 		startFresh();
+	}
+
+	/** Start a fresh, editable composition from a saved caption layout. The
+	 * current source and edits are intentionally cleared, just like Start over. */
+	function newDraftFromSavedTemplate(id: string) {
+		if (busy) return;
+		if (!memeTemplates.list.some((template) => template.id === id)) return;
+		pendingNewTemplateId = id;
+		discardIntent = 'new';
+		if (dirty) {
+			draftWriter.flush();
+			confirmDiscard = true;
+			return;
+		}
+		startFresh();
+	}
+
+	function keepEditing() {
+		pendingNewTemplateId = null;
+		confirmDiscard = false;
 	}
 
 	function discard() {
@@ -4050,13 +4132,15 @@
 								bind:templateName
 								bind:showTemplateSave
 								bind:slotName
-								bind:showSlotSave
 								{applyTemplate}
 								{addOverlay}
 								{applySavedTemplate}
+								{newDraftFromSavedTemplate}
 								{removeSavedTemplate}
 								{saveCurrentTemplate}
 								{openSlot}
+								{duplicateSlot}
+								{renameSlot}
 								{removeSlot}
 								{saveCurrentSlot}
 							/>
@@ -4804,7 +4888,7 @@
 		{#if confirmDiscard}
 			<MemeDiscardDialog
 				intent={discardIntent}
-				onKeep={() => (confirmDiscard = false)}
+				onKeep={keepEditing}
 				onDiscard={discard}
 				onSave={() => {
 					void saveCurrentSlot().then(startFresh);

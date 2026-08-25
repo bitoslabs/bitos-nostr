@@ -20,6 +20,7 @@ function slot(overrides: Record<string, unknown> = {}) {
 		overlays: [],
 		sfxCues: [],
 		imageLayers: [],
+		drawingGroups: [],
 		caption: 'hello',
 		sensitive: false,
 		destination: 'bitz' as const,
@@ -49,6 +50,39 @@ describe('meme slots', () => {
 		expect(reopened.list[0]?.caption).toBe('caption A');
 		expect(reopened.list[0]?.overlays[0]?.text).toBe('top');
 		expect(reopened.list[0]?.id).toBe(saved.id);
+	});
+
+	it('round-trips editable drawing layers', () => {
+		const store = new MemeSlotsStore();
+		store.save(
+			slot({
+				drawingGroups: [
+					{
+						id: 'drawing-1',
+						label: 'Arrow',
+						playback: 'replay',
+						startMs: 300,
+						visibleFromMs: 300,
+						strokes: [
+							{
+								id: 'stroke-1',
+								tool: 'arrow',
+								color: '#ffffff',
+								width: 0.012,
+								opacity: 1,
+								points: [
+									{ x: 0.1, y: 0.2, atMs: 0 },
+									{ x: 0.8, y: 0.7, atMs: 400 }
+								]
+							}
+						]
+					}
+				]
+			})
+		);
+		const restored = new MemeSlotsStore().list[0];
+		expect(restored?.drawingGroups[0]?.playback).toBe('replay');
+		expect(restored?.drawingGroups[0]?.strokes[0]?.points).toHaveLength(2);
 	});
 
 	it('rejects foreign schema and malformed rows', () => {
@@ -87,6 +121,23 @@ describe('meme slots', () => {
 		store.save({ ...slot({ caption: 'second' }), id: saved.id });
 		expect(store.list).toHaveLength(1);
 		expect(store.list[0]?.caption).toBe('second');
+	});
+
+	it('duplicates a saved project with an independent id and label', () => {
+		const store = new MemeSlotsStore();
+		const saved = store.save(slot({ label: 'Launch', caption: 'original' }));
+		const copy = store.duplicate(saved.id);
+		expect(copy?.id).not.toBe(saved.id);
+		expect(copy?.label).toBe('Copy of Launch');
+		expect(copy?.caption).toBe('original');
+		expect(store.list).toHaveLength(2);
+	});
+
+	it('renames a save point and persists the label', () => {
+		const store = new MemeSlotsStore();
+		const saved = store.save(slot({ label: 'First' }));
+		expect(store.rename(saved.id, '  Final cut  ')?.label).toBe('Final cut');
+		expect(new MemeSlotsStore().list[0]?.label).toBe('Final cut');
 	});
 
 	it('removes slots and persists removals', () => {

@@ -493,7 +493,11 @@
 </svelte:head>
 
 <svelte:window
-	onclick={() => popovers.close()}
+	onclick={(event) => {
+		if (!(event.target instanceof Element) || !event.target.closest('[data-popover-panel]')) {
+			popovers.close();
+		}
+	}}
 	onkeydown={(event) => {
 		if (event.key === 'Escape') popovers.close();
 	}}
