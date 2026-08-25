@@ -99,6 +99,7 @@
 	} = $props();
 
 	const templateMenuId = `meme-templates-${Math.random().toString(36).slice(2, 8)}`;
+	const layoutsMenuId = `meme-image-layouts-${Math.random().toString(36).slice(2, 8)}`;
 	const sharedMenuId = `meme-shared-templates-${Math.random().toString(36).slice(2, 8)}`;
 	const slotsMenuId = `meme-slots-${Math.random().toString(36).slice(2, 8)}`;
 	let renamingSlotId = $state<string | null>(null);
@@ -159,19 +160,44 @@
 		</span>
 	</button>
 	{#if mediaKind === 'image' && applyImageLayout}
-		<span class="text-[10px] font-bold tracking-wider text-warm-500/80 uppercase">Layouts</span>
-		{#each IMAGE_LAYOUTS as layout (layout.id)}
-			<button
-				type="button"
-				onclick={() => applyImageLayout(layout)}
-				disabled={busy}
-				title={layout.hint}
-				class="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 active:scale-95 disabled:opacity-40"
-			>
-				<Icon name={layout.icon} class="size-3.5" />
-				{layout.label}
-			</button>
-		{/each}
+		<!-- Layouts popover (UX pass 2026-08-25): 7 inline chips → one
+		     trigger; hints + a caption-count line ride along. -->
+		<Popover
+			id={layoutsMenuId}
+			float
+			placement="bottom-start"
+			width="auto"
+			class="w-72 max-w-[80vw] p-0"
+			label="Image layouts"
+			triggerClass="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+			triggerActiveClass="bg-primary-500/20 text-primary-600"
+		>
+			{#snippet trigger()}
+				<Icon name="i-lucide-layout-grid" class="size-3.5" />
+				Layouts
+				<span class="rounded-full bg-primary-500/15 px-1.5 font-mono text-[10px]">
+					{IMAGE_LAYOUTS.length}
+				</span>
+			{/snippet}
+			<div class="p-1">
+				{#each IMAGE_LAYOUTS as layout (layout.id)}
+					<MenuItem onclick={() => applyImageLayout?.(layout)} disabled={busy}>
+						<span class="flex min-w-0 items-center gap-2">
+							<Icon name={layout.icon} class="size-4 shrink-0 text-primary-600" />
+							<span class="min-w-0">
+								<span class="block truncate text-[12.5px] font-bold">{layout.label}</span>
+								<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+									{layout.hint}
+								</span>
+							</span>
+						</span>
+					</MenuItem>
+				{/each}
+			</div>
+			<p class="px-2.5 pb-2 text-[10.5px] text-[var(--ui-text-dimmed)]">
+				A layout scaffolds caption slots — your picture and words fill it.
+			</p>
+		</Popover>
 	{/if}
 	<button
 		type="button"
