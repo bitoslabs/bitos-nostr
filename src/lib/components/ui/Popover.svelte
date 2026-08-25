@@ -99,17 +99,6 @@
 		popovers.toggle(popoverId);
 	}
 
-	/** The app shell closes popovers from a window click handler. Panels must
-	 * consume their own clicks first — especially floated panels, which are
-	 * portaled to document.body and are no longer inside this component's root. */
-	function keepPanelOpen(event: MouseEvent) {
-		event.stopPropagation();
-	}
-	function stopPanelClicks(node: HTMLElement) {
-		node.addEventListener('click', keepPanelOpen);
-		return { destroy: () => node.removeEventListener('click', keepPanelOpen) };
-	}
-
 	// ---- floated panel positioning -------------------------------------------
 	let triggerEl = $state<HTMLButtonElement | null>(null);
 	let panelEl = $state<HTMLDivElement | null>(null);
@@ -173,8 +162,6 @@
 			<div
 				bind:this={panelEl}
 				use:portalToBody
-				use:stopPanelClicks
-				data-popover-panel
 				role="menu"
 				class={panelClass}
 				style={pos ? `top:${pos.top}px; left:${pos.left}px;` : 'visibility:hidden;'}
@@ -182,7 +169,7 @@
 				{@render children?.()}
 			</div>
 		{:else}
-			<div use:stopPanelClicks data-popover-panel role="menu" class={panelClass}>
+			<div role="menu" class={panelClass}>
 				{@render children?.()}
 			</div>
 		{/if}

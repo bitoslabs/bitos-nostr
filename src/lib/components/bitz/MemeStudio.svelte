@@ -2777,9 +2777,21 @@
 			toasts.info('GIF capped at 360 frames — trim or drop cues for a shorter loop');
 		}
 		const frames: GifEncodeFrame[] = [];
+		// GIF plans sample frame *starts*. A replay stroke can finish during the
+		// final frame's hold, leaving its tail absent before the loop restarts.
+		// Settle the final canvas through the last recorded replay point.
+		const replayEndMs = drawingGroups.reduce((latest, group) => {
+			if (group.playback !== 'replay') return latest;
+			const strokeEnd = group.strokes.reduce(
+				(end, stroke) => Math.max(end, stroke.points[stroke.points.length - 1]?.atMs ?? 0),
+				0
+			);
+			return Math.max(latest, group.startMs + strokeEnd);
+		}, 0);
 		for (let i = 0; i < frameCount; i++) {
 			const step = plan.steps[i]!;
 			const t = step.atSec;
+			const drawingAtMs = i === frameCount - 1 ? Math.max(t * 1000, replayEndMs) : t * 1000;
 			track(
 				'rendering',
 				`Painting GIF frame ${i + 1}/${frameCount}…`,
@@ -2807,7 +2819,7 @@
 				t * 1000,
 				layerAssets.painterFor
 			);
-			paintDrawingGroups(ctx, drawingGroups, a, t * 1000);
+			paintDrawingGroups(ctx, drawingGroups, a, drawingAtMs);
 			paintAll(ctx, overlays, a, t * 1000);
 			frames.push({ source: await createImageBitmap(a), delayMs: step.delayMs });
 		}
