@@ -12,7 +12,7 @@
 		busy,
 		canPost,
 		progressLabel,
-		destination,
+		destinations,
 		exportFormat,
 		outputFormatLabel,
 		videoExportSupported,
@@ -30,7 +30,7 @@
 		busy: boolean;
 		canPost: boolean;
 		progressLabel: string;
-		destination: 'bitz' | 'story' | 'note';
+		destinations: Array<'bitz' | 'story' | 'note'>;
 		exportFormat: MemeExportFormat;
 		outputFormatLabel: 'Image' | 'GIF' | 'Video';
 		videoExportSupported: boolean;
@@ -42,11 +42,13 @@
 
 	const exportActionLabel = $derived(`Export ${outputFormatLabel}`);
 	const publishActionLabel = $derived(
-		destination === 'story'
-			? `Post ${outputFormatLabel} story`
-			: destination === 'note'
-				? `Post ${outputFormatLabel} note`
-				: `Publish ${outputFormatLabel} meme`
+		destinations.length > 1
+			? `Publish to ${destinations.length} places`
+			: destinations[0] === 'story'
+				? `Post ${outputFormatLabel} story`
+				: destinations[0] === 'note'
+					? `Post ${outputFormatLabel} note`
+					: `Publish ${outputFormatLabel} meme`
 	);
 </script>
 

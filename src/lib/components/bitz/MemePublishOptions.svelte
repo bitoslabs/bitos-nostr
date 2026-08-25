@@ -4,309 +4,39 @@
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import PowCard from '$lib/components/ui/PowCard.svelte';
+	import MemePostCaption from './MemePostCaption.svelte';
 	import type { PowProgress } from '$lib/nostr/feed.svelte';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
 	import { SPLIT_ROLES, TOTAL_BASIS_POINTS, validateSplits, type SplitRow } from '$lib/meme/splits';
 	import type { RemixLicense } from '$lib/meme/remix';
-	import {
-		DESTINATIONS,
-		LICENSE_OPTIONS,
-		type MemeDestination,
-		type MemeStudioPhase
-	} from './meme-studio-config';
+	import { DESTINATIONS, LICENSE_OPTIONS, OUTPUT_FORMATS, type MemeDestination, type MemeExportFormat, type MemeStudioPhase } from './meme-studio-config';
 
-	let {
-		destination = $bindable(),
-		sensitive = $bindable(),
-		showPow = $bindable(),
-		license = $bindable(),
-		aiAssisted = $bindable(),
-		splitsOpen = $bindable(),
-		splitRows = $bindable(),
-		selectedProvider = $bindable(),
-		pow = $bindable(),
-		busy,
-		phase,
-		powProgress,
-		writeRelayCount,
-		kindNip,
-		onCancelMining
-	}: {
-		destination: MemeDestination;
-		sensitive: boolean;
-		showPow: boolean;
-		license: RemixLicense;
-		aiAssisted: boolean;
-		splitsOpen: boolean;
-		splitRows: SplitRow[];
-		selectedProvider: MediaProviderId | 'none';
-		pow: number;
-		busy: boolean;
-		phase: MemeStudioPhase;
-		powProgress: PowProgress | null;
-		writeRelayCount: number;
-		kindNip?: string;
-		onCancelMining: () => void;
-	} = $props();
-
-	const destinationMenuId = `meme-dest-${Math.random().toString(36).slice(2, 8)}`;
+	let { destinations = $bindable<MemeDestination[]>(['bitz']), caption = $bindable(''), open = $bindable(false), sensitive = $bindable(), showPow = $bindable(), license = $bindable(), aiAssisted = $bindable(), splitsOpen = $bindable(), splitRows = $bindable(), selectedProvider = $bindable(), pow = $bindable(), busy, phase, powProgress, writeRelayCount, kindNip, exportFormat, mediaKind, videoExportSupported, softCaptionLimit = 300, hardCaptionLimit = 1000, onCancelMining, onPublish, onFormat }: { destinations: MemeDestination[]; caption: string; open: boolean; sensitive: boolean; showPow: boolean; license: RemixLicense; aiAssisted: boolean; splitsOpen: boolean; splitRows: SplitRow[]; selectedProvider: MediaProviderId | 'none'; pow: number; busy: boolean; phase: MemeStudioPhase; powProgress: PowProgress | null; writeRelayCount: number; kindNip?: string; exportFormat: MemeExportFormat; mediaKind: 'image' | 'video' | null; videoExportSupported: boolean; softCaptionLimit?: number; hardCaptionLimit?: number; onCancelMining: () => void; onPublish: () => void; onFormat: (format: MemeExportFormat) => void } = $props();
 	const providerMenuId = `meme-provider-${Math.random().toString(36).slice(2, 8)}`;
-	const splitCheck = $derived(
-		splitRows.length ? validateSplits(splitRows) : ({ ok: true } as const)
-	);
+	const splitCheck = $derived(splitRows.length ? validateSplits(splitRows) : ({ ok: true } as const));
 	const splitTotal = $derived(splitRows.reduce((sum, row) => sum + row.basisPoints, 0));
-
-	function addSplitRow(): void {
-		splitRows = [...splitRows, { role: 'video_creator', basisPoints: 0 }];
-	}
-
-	function removeSplitRow(row: SplitRow): void {
-		splitRows = splitRows.filter(
-			(candidate) =>
-				!(candidate.role === row.role && (candidate.beneficiary ?? '') === (row.beneficiary ?? ''))
-		);
-	}
+	function toggleDestination(id: MemeDestination) { destinations = destinations.includes(id) ? (destinations.length > 1 ? destinations.filter((value) => value !== id) : destinations) : [...destinations, id]; }
+	function addSplitRow() { splitRows = [...splitRows, { role: 'video_creator', basisPoints: 0 }]; }
+	function removeSplitRow(row: SplitRow) { splitRows = splitRows.filter((candidate) => !(candidate.role === row.role && (candidate.beneficiary ?? '') === (row.beneficiary ?? ''))); }
 </script>
 
-<div class="flex flex-wrap items-center gap-1.5">
-	<Popover
-		id={destinationMenuId}
-		float
-		placement="top-start"
-		width="auto"
-		label="Post destination"
-		triggerClass="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition {destination ===
-		'bitz'
-			? 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'
-			: 'bg-primary-500/10 text-primary-600'}"
-		triggerActiveClass="bg-primary-500/10 text-primary-600"
-	>
-		{#snippet trigger()}
-			<Icon
-				name={destination === 'story'
-					? 'i-lucide-circle-dot-dashed'
-					: destination === 'note'
-						? 'i-lucide-message-square-text'
-						: 'i-lucide-clapperboard'}
-				class="size-4"
-			/>
-			{destination === 'story'
-				? 'To story · 24h'
-				: destination === 'note'
-					? 'To note'
-					: 'To Bitz feed'}
-		{/snippet}
-		{#each DESTINATIONS as option (option.id)}
-			<MenuItem
-				icon={option.icon}
-				tone={destination === option.id ? 'accent' : 'default'}
-				onclick={() => (destination = option.id)}
-			>
-				<div class="min-w-0">
-					<div>{option.label}</div>
-					<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-						{option.hint}
-					</div>
-				</div>
-				{#snippet trailing()}
-					{#if destination === option.id}
-						<Icon name="i-lucide-check" class="size-4 shrink-0" />
-					{/if}
-				{/snippet}
-			</MenuItem>
-		{/each}
-	</Popover>
-	<button
-		type="button"
-		onclick={() => (sensitive = !sensitive)}
-		aria-pressed={sensitive}
-		title="Mark as sensitive content"
-		class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:opacity-40 {sensitive
-			? 'bg-warm-500/15 text-warm-500'
-			: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-	>
-		<Icon name="i-lucide-eye-off" class="size-4" />
-		Sensitive
-	</button>
-	<button
-		type="button"
-		onclick={() => (showPow = !showPow)}
-		disabled={busy}
-		aria-pressed={showPow}
-		title="Mine a rare meme — NIP-13 proof of work"
-		class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {showPow
-			? 'bg-primary-500/10 text-primary-600'
-			: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-	>
-		<Icon name="i-lucide-gem" class="size-4" />
-		Rare meme
-	</button>
-	<label
-		class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-		title="Remix rights — advisory license for this bitz"
-	>
-		<Icon name="i-lucide-scale" class="size-4" />
-		<select
-			bind:value={license}
-			disabled={busy}
-			class="cursor-pointer appearance-none bg-transparent text-[12px] font-bold outline-none"
-			aria-label="Remix rights license"
-		>
-			{#each LICENSE_OPTIONS as option (option.code)}
-				<option value={option.code}>{option.label}</option>
-			{/each}
-		</select>
-	</label>
-	<button
-		type="button"
-		onclick={() => (aiAssisted = !aiAssisted)}
-		disabled={busy}
-		aria-pressed={aiAssisted}
-		title="AI-assisted — adds an `ai` provenance tag so clients can badge it"
-		class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {aiAssisted
-			? 'bg-primary-500/10 text-primary-600'
-			: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-	>
-		<Icon name="i-lucide-sparkles" class="size-4" />
-		{aiAssisted ? 'AI-assisted ✓' : 'AI-assisted'}
-	</button>
-	<button
-		type="button"
-		onclick={() => (splitsOpen = !splitsOpen)}
-		disabled={busy}
-		aria-pressed={splitsOpen}
-		title="Value splits - who gets paid when this bitz earns"
-		class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold transition disabled:pointer-events-none disabled:opacity-40 {splitsOpen
-			? 'bg-primary-500/10 text-primary-600'
-			: 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]'}"
-	>
-		<Icon name="i-lucide-git-fork" class="size-4" />
-		Splits {splitRows.length ? `(${splitRows.length})` : ''}
-	</button>
-	{#if splitsOpen}
-		<div class="flex w-full flex-col gap-2 rounded-xl bg-[var(--ui-bg-muted)]/60 p-3 text-left">
-			{#each splitRows as row, index (index)}
-				<div class="flex items-center gap-2">
-					<select
-						bind:value={row.role}
-						disabled={busy}
-						aria-label="Split role"
-						class="min-w-0 flex-1 cursor-pointer appearance-none rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-[12px] font-semibold outline-none"
-					>
-						{#each SPLIT_ROLES as role (role)}
-							<option value={role}>{role.replace(/_/g, ' ')}</option>
-						{/each}
-					</select>
-					<input
-						type="number"
-						bind:value={row.basisPoints}
-						min="0"
-						max="10000"
-						step="50"
-						disabled={busy}
-						aria-label="Share in basis points"
-						class="w-24 rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-right text-[12px] font-semibold outline-none"
-					/>
-					<span class="text-[11px] font-bold text-[var(--ui-text-muted)]">bps</span>
-					<button
-						type="button"
-						onclick={() => removeSplitRow(row)}
-						disabled={busy}
-						aria-label="Remove split row"
-						class="rounded-lg p-1 text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-					>
-						<Icon name="i-lucide-x" class="size-4" />
-					</button>
-				</div>
-			{/each}
-			<button
-				type="button"
-				onclick={addSplitRow}
-				disabled={busy}
-				class="self-start rounded-full px-3 py-1 text-[12px] font-bold text-primary-600 transition hover:bg-primary-500/10"
-			>
-				+ Add row
-			</button>
-			<p
-				class="text-[11px] font-bold {splitRows.length === 0 || splitCheck.ok
-					? 'text-[var(--ui-text-muted)]'
-					: 'text-primary-600'}"
-			>
-				{splitTotal.toLocaleString()} / {TOTAL_BASIS_POINTS.toLocaleString()} bps
-				{#if splitRows.length > 0 && !splitCheck.ok}
-					- {splitCheck.error}
-				{/if}
-			</p>
+{#if open}
+	<!-- Do not use the native dialog element here: it is rendered inside the
+	     studio's scrolling panes and some WebKit builds fail to promote it. -->
+	<div class="fixed inset-0 z-[100] grid h-full w-full place-items-center bg-black/50 p-3 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="publish-details-title">
+		<div class="surface-card flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-2xl shadow-2xl">
+			<header class="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--ui-border-muted)] p-4 sm:p-5"><div><h2 id="publish-details-title" class="text-base font-bold">Public publishing details</h2><p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">Review your public post, settings and destinations before publishing.</p></div><button type="button" onclick={() => (open = false)} aria-label="Close publishing details" class="rounded-full p-1 text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-muted)]"><Icon name="i-lucide-x" class="size-4" /></button></header>
+			<div class="scrollbar-thin min-h-0 space-y-5 overflow-y-auto p-4 sm:p-5">
+				<section aria-label="Public post preview" class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 p-3.5"><p class="flex items-center gap-1.5 text-[10.5px] font-bold tracking-wide text-primary-600"><Icon name="i-lucide-eye" class="size-3.5" />PUBLIC POST PREVIEW</p><div class="mt-2.5 flex gap-2"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-primary-500 text-white"><Icon name="i-lucide-user" class="size-4" /></span><div><p class="text-[12px] font-bold">You</p><p class="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed">{caption.trim() || 'No public description — the meme will be posted without a caption.'}</p><div class="mt-2 flex flex-wrap gap-1.5">{#each destinations as id (id)}<span class="rounded-full bg-primary-500/10 px-2 py-0.5 text-[10px] font-bold text-primary-600">{DESTINATIONS.find((item) => item.id === id)?.label}</span>{/each}{#if sensitive}<span class="rounded-full bg-warm-500/15 px-2 py-0.5 text-[10px] font-bold text-warm-600">Sensitive</span>{/if}</div></div></div></section>
+				<section><h3 class="text-[12px] font-bold">Public description</h3><p class="mt-0.5 text-[11px] text-[var(--ui-text-muted)]">This accompanies the finished meme in each selected destination.</p><div class="mt-2"><MemePostCaption bind:value={caption} {busy} softLimit={softCaptionLimit} hardLimit={hardCaptionLimit} /></div></section>
+				<section><h3 class="text-[12px] font-bold">Publish to</h3><div class="mt-2 grid gap-2 sm:grid-cols-3">{#each DESTINATIONS as option (option.id)}<button type="button" onclick={() => toggleDestination(option.id)} aria-pressed={destinations.includes(option.id)} class="flex items-center gap-2 rounded-xl border p-3 text-left transition {destinations.includes(option.id) ? 'border-primary-500 bg-primary-500/10' : 'border-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-muted)]'}"><Icon name={option.icon} class="size-4 text-primary-500" /><span class="min-w-0 flex-1"><span class="block text-[12px] font-bold">{option.label}</span><span class="block text-[10px] text-[var(--ui-text-muted)]">{option.hint}</span></span><Icon name={destinations.includes(option.id) ? 'i-lucide-check-circle-2' : 'i-lucide-circle'} class="size-4 {destinations.includes(option.id) ? 'text-primary-500' : 'text-[var(--ui-text-dimmed)]'}" /></button>{/each}</div></section>
+				<section><h3 class="text-[12px] font-bold">Public media mode</h3><p class="mt-0.5 text-[11px] text-[var(--ui-text-muted)]">Choose the file format people will receive.</p><div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{#each OUTPUT_FORMATS as option (option.id)}{@const unavailable = (option.id === 'gif' && mediaKind === 'video') || (option.id === 'video' && !videoExportSupported)}<button type="button" onclick={() => onFormat(option.id)} disabled={busy || unavailable} aria-pressed={exportFormat === option.id} title={unavailable ? 'This mode is not available for the current media' : option.hint} class="rounded-xl border p-2.5 text-left transition {exportFormat === option.id ? 'border-primary-500 bg-primary-500/10 text-primary-600' : 'border-[var(--ui-border-muted)]'} disabled:cursor-not-allowed disabled:opacity-40"><span class="block text-[12px] font-bold">{option.label}</span><span class="mt-0.5 block text-[10px] text-[var(--ui-text-muted)]">{option.hint}</span></button>{/each}</div></section>
+				<section class="grid gap-3 sm:grid-cols-2"><button type="button" onclick={() => (sensitive = !sensitive)} aria-pressed={sensitive} class="flex items-start gap-2 rounded-xl border p-3 text-left {sensitive ? 'border-warm-500 bg-warm-500/10 text-warm-600' : 'border-[var(--ui-border-muted)]'}"><Icon name="i-lucide-eye-off" class="mt-0.5 size-4" /><span><span class="block text-[12px] font-bold">Sensitive content</span><span class="block text-[10.5px] text-[var(--ui-text-muted)]">Add a public content warning.</span></span></button><label class="rounded-xl border border-[var(--ui-border-muted)] p-3"><span class="flex items-center gap-2 text-[12px] font-bold"><Icon name="i-lucide-scale" class="size-4" />Remix license</span><select bind:value={license} disabled={busy} class="mt-2 w-full bg-transparent text-[11px] font-semibold outline-none">{#each LICENSE_OPTIONS as option (option.code)}<option value={option.code}>{option.label}</option>{/each}</select></label></section>
+				<section class="rounded-xl border border-[var(--ui-border-muted)] p-3"><div class="flex flex-wrap gap-2"><button type="button" onclick={() => (showPow = !showPow)} disabled={busy} aria-pressed={showPow} class="rounded-full px-3 py-1.5 text-[11px] font-bold {showPow ? 'bg-primary-500/10 text-primary-600' : 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-muted)]'}"><Icon name="i-lucide-gem" class="mr-1 inline size-3.5" />Rare meme / PoW</button><button type="button" onclick={() => (aiAssisted = !aiAssisted)} disabled={busy} aria-pressed={aiAssisted} class="rounded-full px-3 py-1.5 text-[11px] font-bold {aiAssisted ? 'bg-primary-500/10 text-primary-600' : 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-muted)]'}"><Icon name="i-lucide-sparkles" class="mr-1 inline size-3.5" />AI-assisted</button><button type="button" onclick={() => (splitsOpen = !splitsOpen)} disabled={busy} aria-pressed={splitsOpen} class="rounded-full px-3 py-1.5 text-[11px] font-bold {splitsOpen ? 'bg-primary-500/10 text-primary-600' : 'bg-[var(--ui-bg-muted)] text-[var(--ui-text-muted)]'}"><Icon name="i-lucide-git-fork" class="mr-1 inline size-3.5" />Splits {splitRows.length ? `(${splitRows.length})` : ''}</button></div>{#if showPow && destinations.some((destination) => destination !== 'story')}<div class="mt-3"><PowCard bind:pow mining={phase === 'mining'} progress={powProgress} oncancel={onCancelMining} /></div>{/if}{#if splitsOpen}<div class="mt-3 space-y-2 rounded-lg bg-[var(--ui-bg-muted)] p-2.5">{#each splitRows as row, index (index)}<div class="flex items-center gap-2"><select bind:value={row.role} disabled={busy} aria-label="Split role" class="min-w-0 flex-1 rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-[11px] font-semibold outline-none">{#each SPLIT_ROLES as role (role)}<option value={role}>{role.replace(/_/g, ' ')}</option>{/each}</select><input type="number" bind:value={row.basisPoints} min="0" max="10000" step="50" disabled={busy} aria-label="Share in basis points" class="w-20 rounded-lg bg-[var(--ui-bg)] px-2 py-1 text-right text-[11px] font-semibold outline-none" /><button type="button" onclick={() => removeSplitRow(row)} disabled={busy} aria-label="Remove split row"><Icon name="i-lucide-x" class="size-4" /></button></div>{/each}<button type="button" onclick={addSplitRow} disabled={busy} class="text-[11px] font-bold text-primary-600">+ Add split</button><p class="text-[10.5px] font-bold text-[var(--ui-text-muted)]">{splitTotal.toLocaleString()} / {TOTAL_BASIS_POINTS.toLocaleString()} bps {#if splitRows.length > 0 && !splitCheck.ok}· {splitCheck.error}{/if}</p></div>{/if}</section>
+				<section><h3 class="text-[12px] font-bold">Upload provider</h3><Popover id={providerMenuId} float placement="bottom-start" width="lg" label="Upload provider" triggerClass="mt-2 flex items-center gap-1.5 rounded-lg border border-[var(--ui-border-muted)] px-3 py-2 text-[11px] font-bold" triggerActiveClass="border-primary-500 text-primary-600">{#snippet trigger()}<Icon name="i-lucide-cloud-upload" class="size-4 text-primary-500" />{providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)}{/snippet}<MenuItem icon="i-lucide-hard-drive-upload" onclick={() => (selectedProvider = 'none')} tone={selectedProvider === 'none' ? 'accent' : 'default'}>BitOS uploads</MenuItem><MenuDivider />{#each MEDIA_PROVIDERS as provider (provider.id)}<MenuItem icon={provider.icon} disabled={!media.isConfigured(provider.id)} tone={selectedProvider === provider.id ? 'accent' : 'default'} onclick={() => (selectedProvider = provider.id)}>{provider.label}</MenuItem>{/each}</Popover></section>
+			</div>
+			<footer class="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] p-4 sm:px-5"><p class="flex min-w-0 items-center gap-1.5 text-[10.5px] text-[var(--ui-text-dimmed)]"><Icon name="i-lucide-globe" class="size-3.5 shrink-0 text-primary-500" />Public to {writeRelayCount} {writeRelayCount === 1 ? 'relay' : 'relays'} · {kindNip ?? 'Nostr'}</p><div class="flex items-center gap-2"><button type="button" onclick={() => (open = false)} class="rounded-full px-3 py-2 text-[12px] font-bold text-[var(--ui-text-muted)]">Keep editing</button><button type="button" onclick={() => { open = false; onPublish(); }} disabled={busy || !splitCheck.ok} class="rounded-full bg-warm-500 px-4 py-2 text-[12px] font-bold text-white disabled:opacity-40"><Icon name="i-lucide-send" class="mr-1 inline size-3.5" />Publish publicly</button></div></footer>
 		</div>
-	{/if}
-	<Popover
-		id={providerMenuId}
-		float
-		placement="top-start"
-		width="lg"
-		label="Upload provider"
-		triggerClass="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-		triggerActiveClass="bg-primary-500/10 text-primary-600"
-	>
-		{#snippet trigger()}
-			<Icon name="i-lucide-cloud-upload" class="size-4 text-primary-500" />
-			<span class="max-w-[110px] truncate">
-				{providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)}
-			</span>
-		{/snippet}
-		<MenuItem
-			icon="i-lucide-hard-drive-upload"
-			onclick={() => (selectedProvider = 'none')}
-			tone={selectedProvider === 'none' ? 'accent' : 'default'}
-		>
-			BitOS uploads
-			{#snippet trailing()}
-				{#if selectedProvider === 'none'}
-					<Icon name="i-lucide-check" class="size-4 shrink-0" />
-				{/if}
-			{/snippet}
-		</MenuItem>
-		<MenuDivider />
-		{#each MEDIA_PROVIDERS as provider (provider.id)}
-			<MenuItem
-				icon={provider.icon}
-				disabled={!media.isConfigured(provider.id)}
-				tone={selectedProvider === provider.id ? 'accent' : 'default'}
-				onclick={() => (selectedProvider = provider.id)}
-			>
-				<div class="min-w-0">
-					<div>{provider.label}</div>
-					<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-						{media.isConfigured(provider.id)
-							? provider.description
-							: 'Configure this provider in Settings first'}
-					</div>
-				</div>
-				{#snippet trailing()}
-					{#if selectedProvider === provider.id}
-						<Icon name="i-lucide-check" class="size-4 shrink-0" />
-					{/if}
-				{/snippet}
-			</MenuItem>
-		{/each}
-	</Popover>
-</div>
-
-{#if showPow && destination !== 'story'}
-	<PowCard bind:pow mining={phase === 'mining'} progress={powProgress} oncancel={onCancelMining} />
+	</div>
 {/if}
-
-<p class="flex items-center gap-1.5 text-[11px] text-[var(--ui-text-dimmed)]">
-	<Icon name="i-lucide-globe" class="size-3.5 shrink-0 text-primary-500" />
-	{#if destination === 'story'}
-		Publishes a 24h story (kind 30315) — video memes loop in the story viewer.
-	{:else if destination === 'note'}
-		Publishes a kind-1 note with the meme attached as standard media — renders in every Nostr
-		client.
-	{:else}
-		Publishes to {writeRelayCount}
-		{writeRelayCount === 1 ? 'relay' : 'relays'} — a standard
-		{kindNip ?? 'Nostr'} event with captions burned in.
-	{/if}
-</p>

@@ -46,6 +46,7 @@ export interface MemeSlot {
 	caption: string;
 	sensitive: boolean;
 	destination: 'bitz' | 'story' | 'note';
+	destinations?: Array<'bitz' | 'story' | 'note'>;
 	lookId: string;
 	/** Video window settings (ignored by image media on restore). */
 	trimStartSec: number;
@@ -101,6 +102,12 @@ function parseSlot(raw: unknown): MemeSlot | null {
 		s.mediaKindValue === 'image' || s.mediaKindValue === 'video' ? s.mediaKindValue : null;
 	const destination =
 		s.destination === 'story' || s.destination === 'note' ? s.destination : 'bitz';
+	const destinations: MemeSlot['destination'][] = Array.isArray(s.destinations)
+		? s.destinations.filter(
+			(value): value is MemeSlot['destination'] =>
+				value === 'bitz' || value === 'story' || value === 'note'
+		)
+		: [destination];
 	const hasWork =
 		!!media ||
 		(Array.isArray(s.overlays) && s.overlays.length > 0) ||
@@ -127,6 +134,7 @@ function parseSlot(raw: unknown): MemeSlot | null {
 		caption: typeof s.caption === 'string' ? s.caption.slice(0, 2000) : '',
 		sensitive: s.sensitive === true,
 		destination,
+		destinations: destinations.length ? [...new Set(destinations)] : [destination],
 		lookId: typeof s.lookId === 'string' ? s.lookId.slice(0, 32) : 'none',
 		trimStartSec: Number.isFinite(trimStart) && trimStart > 0 ? trimStart : 0,
 		trimEndSec: trimEnd !== null && Number.isFinite(trimEnd) && trimEnd > 0 ? trimEnd : null,

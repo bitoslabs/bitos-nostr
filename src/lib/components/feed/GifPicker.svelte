@@ -13,6 +13,8 @@
 	import { browser } from '$app/environment';
 	import { SvelteMap } from 'svelte/reactivity';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { emojiPacks } from '$lib/stores/emoji-packs.svelte';
+	import type { NostrEmojiPack } from '$lib/meme/emoji-packs';
 
 	const GIPHY_KEY =
 		(import.meta.env.VITE_GIPHY_API_KEY as string | undefined) ||
@@ -74,7 +76,7 @@
 	let tab = $state<'recent' | 'trending'>('trending');
 	/** GIFs vs Stickers — Giphy's sticker endpoints return transparent
 	 *  cut-outs, exactly what meme layers want on top of the media. */
-	let kind = $state<'gifs' | 'stickers'>('gifs');
+	let kind = $state<'gifs' | 'stickers' | 'packs'>('gifs');
 	let loading = $state(false);
 	let loadingMore = $state(false);
 	let loaded = $state(false);
@@ -87,6 +89,22 @@
 	/** Multi-select: id → item, insertion order = pick order. */
 	const selected = new SvelteMap<string, GifItem>();
 	const atCapacity = $derived(multiple && selected.size >= max);
+	/** Installed Nostr emoji packs are image stickers. Keep their pack grouping
+	 *  intact, rather than flattening them into a second anonymous GIF feed. */
+	const filteredPacks = $derived.by(() => {
+		const needle = query.trim().toLowerCase();
+		return emojiPacks.list
+			.map((pack) => ({
+				pack,
+				emojis: pack.emojis.filter(
+					(emoji) =>
+						!needle ||
+						pack.title.toLowerCase().includes(needle) ||
+						emoji.name.toLowerCase().includes(needle)
+				)
+			}))
+			.filter(({ emojis }) => emojis.length);
+	});
 
 	function trendingCache(): TrendingCache | undefined {
 		return kind === 'stickers' ? storage.trendingStickers : storage.trending;
@@ -202,6 +220,7 @@
 
 	function onInput() {
 		tab = 'trending';
+		if (kind === 'packs') return;
 		clearTimeout(debounce);
 		debounce = setTimeout(() => fetchGifs(query), 350);
 	}
@@ -272,17 +291,32 @@
 
 	/** Switch GIFs ⇄ Stickers — keeps the query (searching the same words in
 	 *  stickers is the whole point) and reloads the grid for the new kind. */
-	function switchKind(next: 'gifs' | 'stickers') {
+	function switchKind(next: 'gifs' | 'stickers' | 'packs') {
 		if (kind === next) return;
+		controller?.abort();
 		kind = next;
-		storage = { ...storage, kind };
+		// Packs are a local installed source, not a Giphy endpoint. Preserve the
+		// last remote source so reopening the picker restores a meaningful feed.
+		if (next !== 'packs') storage = { ...storage, kind: next };
 		writeStorage();
 		tab = 'trending';
 		nextOffset = 0;
-		hasMore = true;
+		hasMore = next !== 'packs';
 		items = [];
 		selected.clear();
-		void fetchGifs(query);
+		error = '';
+		if (next !== 'packs') void fetchGifs(query);
+	}
+
+	function packItem(pack: NostrEmojiPack, emoji: NostrEmojiPack['emojis'][number]): GifItem {
+		return {
+			id: `pack:${pack.eventId}:${emoji.name}`,
+			preview: emoji.url,
+			url: emoji.url,
+			w: 1,
+			h: 1,
+			title: `:${emoji.name}:`
+		};
 	}
 
 	function loadMore() {
@@ -326,7 +360,7 @@
 			bind:value={query}
 			oninput={onInput}
 			onclick={(e) => e.stopPropagation()}
-			placeholder="Search GIFs…"
+			placeholder={kind === 'packs' ? 'Search installed packs…' : 'Search GIFs…'}
 			class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 		/>
 		{#if loading}
@@ -334,8 +368,8 @@
 		{/if}
 	</div>
 
-	<!-- Filter row: recents (when any) + the GIFs ⇄ Stickers kind toggle —
-	     stickers are transparent cut-outs made for layering on media. -->
+	<!-- Source tabs. Packs are locally installed Nostr emoji packs, whose items
+	     are image stickers rather than a remote Giphy result. -->
 	<div class="flex items-center gap-1 border-b border-[var(--ui-border-muted)] px-2 py-1.5">
 		{#if recent.length}
 			<button
@@ -396,6 +430,22 @@
 				<Icon name="i-lucide-sticker" class="size-3" />
 				Stickers
 			</button>
+			<button
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					switchKind('packs');
+				}}
+				aria-pressed={kind === 'packs'}
+				title="Image stickers from your installed Nostr packs"
+				class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition {kind ===
+				'packs'
+					? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm'
+					: 'text-[var(--ui-text-dimmed)]'}"
+			>
+				<Icon name="i-lucide-package" class="size-3" />
+				P
+			</button>
 		</div>
 	</div>
 
@@ -404,7 +454,76 @@
 			? 'max-h-[280px]'
 			: 'max-h-[42vh] sm:max-h-[52vh]'} overflow-y-auto p-2"
 	>
-		{#if error}
+		{#if kind === 'packs'}
+			{#if !filteredPacks.length}
+				<p
+					class="grid place-items-center gap-2 py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]"
+				>
+					<Icon name="i-lucide-package-open" class="size-6" />
+					{query.trim()
+						? 'No installed pack stickers match your search'
+						: 'No image sticker packs installed yet'}
+				</p>
+			{:else}
+				<div class="space-y-4">
+					{#each filteredPacks as { pack, emojis } (pack.eventId)}
+						<section>
+							<div class="mb-2 flex items-center gap-2">
+								{#if pack.cover}
+									<img src={pack.cover} alt="" class="size-5 rounded object-cover" />
+								{/if}
+								<p class="min-w-0 truncate text-[11px] font-bold text-[var(--ui-text)]">
+									{pack.title}
+								</p>
+								<span class="text-[10px] text-[var(--ui-text-dimmed)]">{emojis.length}</span>
+							</div>
+							<div class="grid grid-cols-4 gap-2 sm:grid-cols-5">
+								{#each emojis as emoji (`${pack.eventId}:${emoji.name}`)}
+									{@const item = packItem(pack, emoji)}
+									{@const isSelected = selected.has(item.id)}
+									{@const isDisabled = multiple && !isSelected && atCapacity}
+									<button
+										type="button"
+										onclick={(event) => {
+											if (multiple) {
+												event.stopPropagation();
+												toggle(item);
+											} else pick(item);
+										}}
+										disabled={isDisabled}
+										aria-pressed={multiple ? isSelected : undefined}
+										title={multiple
+											? isSelected
+												? 'Deselect sticker'
+												: 'Select sticker'
+											: `Insert :${emoji.name}:`}
+										class="group relative aspect-square overflow-hidden rounded-lg transition {isSelected
+											? 'ring-2 ring-primary-500'
+											: isDisabled
+												? 'cursor-not-allowed opacity-40'
+												: ''}"
+										style="background-image:repeating-conic-gradient(rgba(127,127,127,0.18) 0% 25%, transparent 0% 50%); background-size:12px 12px;"
+									>
+										<img
+											src={emoji.url}
+											alt={`:${emoji.name}:`}
+											loading="lazy"
+											class="size-full object-contain p-1"
+										/>
+										{#if multiple && isSelected}
+											<span
+												class="absolute top-1 right-1 grid size-5 place-items-center rounded-full bg-primary-500 text-[10px] font-bold text-white"
+												>{selectionOrder(item.id)}</span
+											>
+										{/if}
+									</button>
+								{/each}
+							</div>
+						</section>
+					{/each}
+				</div>
+			{/if}
+		{:else if error}
 			<p
 				class="grid place-items-center gap-2 py-10 text-center text-[12px] text-[var(--ui-text-dimmed)]"
 			>
@@ -518,7 +637,7 @@
 				<p class="text-[12px] font-semibold text-[var(--ui-text)]">
 					{selected.size
 						? `${selected.size} selected${atCapacity ? ` · max ${max}` : ''}`
-						: `Tap GIFs to select up to ${max}`}
+						: `Tap ${kind === 'gifs' ? 'GIFs' : 'stickers'} to select up to ${max}`}
 				</p>
 			</div>
 			{#if selected.size}

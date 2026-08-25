@@ -2,8 +2,8 @@
  * Fetch a remote image or GIF for the studio.
  *
  * This policy deliberately lives outside the editor: callers can choose
- * whether an image-proxy retry is appropriate, while media loading, layer
- * loading, and remix loading all share the same CORS behaviour.
+ * whether a proxy retry is appropriate, while media loading, layer loading,
+ * and remix loading all share the same CORS behaviour.
  */
 export interface RemoteMediaFetchOptions {
 	/** Retry image requests through wsrv when the source refuses browser CORS. */
@@ -13,6 +13,7 @@ export interface RemoteMediaFetchOptions {
 }
 
 const WSRV_URL = 'https://wsrv.nl/?url=';
+const LOCAL_PROXY_URL = '/api/media/proxy?url=';
 
 function isWsrvUrl(url: string): boolean {
 	return /^https:\/\/wsrv\.nl\//i.test(url);
@@ -27,7 +28,13 @@ export async function fetchRemoteMedia(
 	url: string,
 	{ proxy = true, fetch: fetchImpl = globalThis.fetch }: RemoteMediaFetchOptions = {}
 ): Promise<Response | null> {
-	const targets = proxy && !isWsrvUrl(url) ? [url, `${WSRV_URL}${encodeURIComponent(url)}`] : [url];
+	// Use our server relay first: CORS-hostile CDNs (notably BTTV) otherwise
+	// fail before wsrv gets a chance to help. The direct source stays available
+	// only for callers that explicitly opt out of proxying.
+	const targets =
+		proxy && !isWsrvUrl(url)
+			? [`${LOCAL_PROXY_URL}${encodeURIComponent(url)}`, `${WSRV_URL}${encodeURIComponent(url)}`]
+			: [url];
 
 	for (const target of targets) {
 		try {
