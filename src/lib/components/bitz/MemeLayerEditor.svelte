@@ -17,7 +17,8 @@
 		renderSrc,
 		busy = false,
 		onPatch,
-		onRemove
+		onRemove,
+		onDuplicate
 	}: {
 		layer: MemeImageOverlay;
 		/** 1-based display number of this layer. */
@@ -27,6 +28,7 @@
 		busy?: boolean;
 		onPatch: (id: string, patch: Partial<MemeImageOverlay>) => void;
 		onRemove: (id: string) => void;
+		onDuplicate: (id: string) => void;
 	} = $props();
 
 	const sizePct = $derived(Math.round(layer.size * 100));
@@ -56,6 +58,16 @@
 			Layer {index}
 		</p>
 		<div class="flex items-center gap-1">
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onDuplicate(layer.id)}
+				aria-label={`Duplicate layer ${index}`}
+				title="Duplicate this image layer"
+				class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+			>
+				<Icon name="i-lucide-copy" class="size-3.5" />
+			</button>
 			<!-- Mirror flips — instant, reversible, wire-cheap. -->
 			<button
 				type="button"

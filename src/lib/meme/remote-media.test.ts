@@ -3,20 +3,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { fetchRemoteMedia } from './remote-media';
 
 describe('fetchRemoteMedia', () => {
-	it('returns the direct response when it succeeds', async () => {
+	it('uses the same-origin relay for proxyable media', async () => {
 		const fetch = vi.fn().mockResolvedValue(new Response('ok'));
 
 		const result = await fetchRemoteMedia('https://media.example/meme.gif', { fetch });
 
 		expect(result?.ok).toBe(true);
 		expect(fetch).toHaveBeenCalledTimes(1);
-		expect(fetch).toHaveBeenCalledWith('https://media.example/meme.gif', { mode: 'cors' });
+		expect(fetch).toHaveBeenCalledWith(
+			'/api/media/proxy?url=https%3A%2F%2Fmedia.example%2Fmeme.gif',
+			{ mode: 'cors' }
+		);
 	});
 
 	it('retries a failed image request through the proxy', async () => {
 		const fetch = vi
 			.fn()
-			.mockResolvedValueOnce(new Response('', { status: 403 }))
+			.mockResolvedValueOnce(new Response('', { status: 502 }))
 			.mockResolvedValueOnce(new Response('proxied'));
 
 		const result = await fetchRemoteMedia('https://media.example/a b.gif', { fetch });

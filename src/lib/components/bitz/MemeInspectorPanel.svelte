@@ -2,7 +2,6 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import MemeLayerEditor from './MemeLayerEditor.svelte';
 	import MemeCaptionOverlayList from './MemeCaptionOverlayList.svelte';
-	import MemePostCaption from './MemePostCaption.svelte';
 	import MemeArtboardCard from './MemeArtboardCard.svelte';
 	import MemeTrimPanel from './MemeTrimPanel.svelte';
 	import MemeSoundPanel from './MemeSoundPanel.svelte';
@@ -82,7 +81,8 @@
 		onApplySuggestion,
 		onSeek,
 		onRemoveCue,
-		destination = $bindable<MemeDestination>('bitz'),
+		destinations = $bindable<MemeDestination[]>(['bitz']),
+		publishDetailsOpen = $bindable(false),
 		sensitive = $bindable(false),
 		showPow = $bindable(false),
 		license = $bindable<RemixLicense>('CC-BY-4.0'),
@@ -97,7 +97,12 @@
 		kindNip,
 		onCancelMining,
 		onPatchLayer,
-		onRemoveLayer
+		onRemoveLayer,
+		onDuplicateLayer,
+		onPublish,
+		exportFormat,
+		videoExportSupported,
+		onFormat
 	}: {
 		selectedLayer: MemeImageOverlay | null;
 		imageLayerIndex: number;
@@ -161,7 +166,8 @@
 		onApplySuggestion: (suggestion: MemeSuggestion) => void;
 		onSeek: (seconds: number) => void;
 		onRemoveCue: (id: string) => void;
-		destination: MemeDestination;
+		destinations: MemeDestination[];
+		publishDetailsOpen: boolean;
 		sensitive: boolean;
 		showPow: boolean;
 		license: RemixLicense;
@@ -177,6 +183,11 @@
 		onCancelMining: () => void;
 		onPatchLayer: (id: string, patch: Partial<MemeImageOverlay>) => void;
 		onRemoveLayer: (id: string) => void;
+		onDuplicateLayer: (id: string) => void;
+		onPublish: () => void;
+		exportFormat: import('./meme-studio-config').MemeExportFormat;
+		videoExportSupported: boolean;
+		onFormat: (format: import('./meme-studio-config').MemeExportFormat) => void;
 	} = $props();
 </script>
 
@@ -190,6 +201,7 @@
 				{busy}
 				onPatch={onPatchLayer}
 				onRemove={onRemoveLayer}
+				onDuplicate={onDuplicateLayer}
 			/>
 		{/key}
 	{/if}
@@ -214,12 +226,6 @@
 		{moveOverlayRow}
 		{removeOverlay}
 		{onAddClassic}
-	/>
-	<MemePostCaption
-		bind:value={caption}
-		{busy}
-		softLimit={softCaptionLimit}
-		hardLimit={hardCaptionLimit}
 	/>
 	{#if mediaKind}
 		<MemeArtboardCard
@@ -310,7 +316,9 @@
 		/>
 	{/if}
 	<MemePublishOptions
-		bind:destination
+		bind:destinations
+		bind:caption
+		bind:open={publishDetailsOpen}
 		bind:sensitive
 		bind:showPow
 		bind:license
@@ -324,6 +332,13 @@
 		{powProgress}
 		{writeRelayCount}
 		{kindNip}
+		{softCaptionLimit}
+		{hardCaptionLimit}
+		{exportFormat}
+		{mediaKind}
+		{videoExportSupported}
+		{onFormat}
 		{onCancelMining}
+		{onPublish}
 	/>
 </div>

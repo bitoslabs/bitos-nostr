@@ -1498,7 +1498,8 @@
 	// `['ai', 'bitz-suggested']` tag rides the publish so downstream clients
 	// can badge provenance. Manual toggle — we never guess.
 	let aiAssisted = $state(false);
-	let destination = $state<Destination>('bitz');
+	let destinations = $state<Destination[]>(['bitz']);
+	let publishDetailsOpen = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let otherSourceInput = $state<HTMLInputElement | null>(null);
 	let confirmDiscard = $state(false);
@@ -1671,6 +1672,34 @@
 		if (gone && !imageLayers.some((l) => l.src === gone.src)) {
 			layerAssets.release(gone.src);
 		}
+	}
+
+	/** Duplicate a selected image layer as an independently editable copy.
+	 * Offset it very slightly so it is immediately discoverable on the stage. */
+	function duplicateLayer(id: string) {
+		if (imageLayers.length >= MAX_IMAGE_OVERLAYS) {
+			toasts.info(`Image layers max out at ${MAX_IMAGE_OVERLAYS}`);
+			return;
+		}
+		const original = imageLayers.find((layer) => layer.id === id);
+		if (!original) return;
+		const fresh = makeImageOverlay(original.src, original.aspect, { index: layerSeq++ });
+		if (!fresh) return;
+		const copy: MemeImageOverlay = {
+			...original,
+			id: fresh.id,
+			x: clamp01(original.x + 0.035),
+			y: clamp01(original.y + 0.035)
+		};
+		const index = imageLayers.findIndex((layer) => layer.id === id);
+		imageLayers = [
+			...imageLayers.slice(0, index + 1),
+			copy,
+			...imageLayers.slice(index + 1)
+		];
+		selectedLayerId = copy.id;
+		selectedId = null;
+		toasts.success('Image layer duplicated');
 	}
 
 	function patchLayer(id: string, patch: Partial<MemeImageOverlay>) {
@@ -2420,7 +2449,8 @@
 			drawingGroups,
 			caption,
 			sensitive,
-			destination,
+			destination: destinations[0] ?? 'bitz',
+			destinations,
 			lookId,
 			trimStartSec,
 			trimEndSec,
@@ -2459,7 +2489,7 @@
 			}
 			caption = slot.caption;
 			sensitive = slot.sensitive;
-			destination = slot.destination;
+			destinations = slot.destinations?.length ? [...slot.destinations] : [slot.destination];
 			lookId = memeLookOf(slot.lookId);
 			selectedId = overlays[0]?.id ?? null;
 			selectedDrawingGroupId = drawingGroups[0]?.id ?? null;
@@ -3100,7 +3130,7 @@
 		track('uploading', 'Uploading meme…', 0);
 		return media.upload(rendered, selectedProvider === 'none' ? undefined : selectedProvider, {
 			pubkey: me?.pk,
-			purpose: destination === 'story' ? 'story' : 'note',
+			purpose: destinations.length === 1 && destinations[0] === 'story' ? 'story' : 'note',
 			signal: mineController?.signal,
 			onProgress: (p) => track('uploading', 'Uploading meme…', p.percent),
 			onRetry: ({ attempt, delayMs }) => {
@@ -3285,22 +3315,29 @@
 			const rendered = await exportMeme();
 			const uploaded = await uploadRendered(rendered);
 			track('publishing', 'Publishing to Nostr…');
-			const eventId = await (destination === 'story'
-				? publishStory(uploaded)
-				: destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
-					? publishNote(uploaded)
-					: publishBitz(uploaded));
+			const eventIds = await Promise.all(
+				destinations.map((destination) =>
+					destination === 'story'
+						? publishStory(uploaded)
+						: destination === 'note'
+							? publishNote(uploaded)
+							: publishBitz(uploaded)
+				)
+			);
+			const eventId = eventIds[0]!;
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
 			toasts.push(
-				destination === 'story'
-					? 'Meme story posted · lasts 24h'
-					: destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
-						? 'Meme note posted · kind 1'
-						: `Meme published · kind ${kindInfo?.kind}`,
+				destinations.length > 1
+					? `Meme published to ${destinations.length} public places`
+					: destinations[0] === 'story'
+						? 'Meme story posted · lasts 24h'
+						: destinations[0] === 'note'
+							? 'Meme note posted · kind 1'
+							: `Meme published · kind ${kindInfo?.kind}`,
 				'success',
 				6000,
-				destination === 'note' || (mediaKind === 'image' && !sfxCues.length)
+				destinations.length === 1 && destinations[0] === 'note'
 					? { label: 'View note', run: () => goto(`/note/${eventId}`) }
 					: { label: 'View in Bitz', run: () => goto(`/bitz${bitzHashLink(eventId)}`) }
 			);
@@ -3571,7 +3608,7 @@
 						: (overlays[0]?.id ?? null);
 				caption = draft.caption;
 				sensitive = draft.sensitive;
-				destination = draft.destination;
+				destinations = draft.destinations?.length ? [...draft.destinations] : [draft.destination];
 				lookId = memeLookOf(draft.lookId);
 				if (draft.mediaTransform) {
 					mediaZoom = Math.min(4, Math.max(1, draft.mediaTransform.scale || 1));
@@ -3605,7 +3642,7 @@
 		void overlays;
 		void caption;
 		void sensitive;
-		void destination;
+		void destinations;
 		void selectedId;
 		void sfxCues;
 		void imageLayers;
@@ -3631,7 +3668,7 @@
 			playbackRate,
 			caption,
 			sensitive,
-			destination,
+			destinations,
 			selectedId,
 			lookId,
 			framing: { scale: mediaZoom, x: mediaPanX, y: mediaPanY },
@@ -3647,10 +3684,16 @@
 					overlays: snapshot.overlays,
 					caption: snapshot.caption,
 					sensitive: snapshot.sensitive,
-					destination: snapshot.destination,
+					destination: snapshot.destinations[0] ?? 'bitz',
+					destinations: snapshot.destinations,
 					selectedId: snapshot.selectedId,
 					lookId: snapshot.lookId,
+					sfxCues: snapshot.sfxCues,
+					imageLayers: snapshot.imageLayers,
 					drawingGroups: snapshot.drawingGroups,
+					trimStartSec: snapshot.trimStartSec,
+					trimEndSec: snapshot.trimEndSec,
+					playbackRate: snapshot.playbackRate,
 					...(snapshot.framing.scale !== 1 || snapshot.framing.x !== 0 || snapshot.framing.y !== 0
 						? { mediaTransform: snapshot.framing }
 						: {})
@@ -4750,7 +4793,7 @@
 								? (layerAssets.renderSrcs.get(selectedLayer.src) ?? null)
 								: null}
 							{busy}
-							{videoMemeSupported}
+							videoExportSupported={videoMemeSupported}
 							{overlays}
 							bind:selectedId
 							bind:timingId
@@ -4817,7 +4860,8 @@
 							onApplySuggestion={applySuggestion}
 							onSeek={scrubPreview}
 							onRemoveCue={removeSfxCue}
-							bind:destination
+							bind:destinations
+							bind:publishDetailsOpen
 							bind:sensitive
 							bind:showPow
 							bind:license
@@ -4833,6 +4877,11 @@
 							onCancelMining={() => mineController?.abort()}
 							onPatchLayer={patchLayer}
 							onRemoveLayer={removeLayer}
+							onDuplicateLayer={duplicateLayer}
+							onPublish={() => void submit()}
+							{exportFormat}
+							{videoMemeSupported}
+							onFormat={(format) => (exportFormat = format)}
 						/>
 					{/snippet}
 
@@ -4908,14 +4957,14 @@
 					{busy}
 					{canPost}
 					{progressLabel}
-					{destination}
+					{destinations}
 					{exportFormat}
 					{outputFormatLabel}
 					videoExportSupported={canRenderVideoMeme()}
 					onFormat={(format) => (exportFormat = format)}
 					onCancel={requestClose}
 					onExport={() => void exportFile()}
-					onPublish={() => void submit()}
+					onPublish={() => (publishDetailsOpen = true)}
 				/>
 			{/if}
 		</div>

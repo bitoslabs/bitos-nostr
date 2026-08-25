@@ -40,6 +40,8 @@ export interface MemeDraftData {
 	caption: string;
 	sensitive: boolean;
 	destination: 'bitz' | 'story' | 'note';
+	/** Multiple public destinations; older drafts use the singular destination. */
+	destinations?: Array<'bitz' | 'story' | 'note'>;
 	/** Selected overlay when the draft was saved. */
 	selectedId: string | null;
 	/** Source-media color look id (meme/look.ts). */
@@ -69,6 +71,14 @@ export function readMemeDraft(): MemeDraftData | null {
 			parsed.destination !== 'bitz' &&
 			parsed.destination !== 'story' &&
 			parsed.destination !== 'note'
+		) {
+			return null;
+		}
+		if (
+			parsed.destinations !== undefined &&
+			(!Array.isArray(parsed.destinations) ||
+				parsed.destinations.length === 0 ||
+				parsed.destinations.some((value) => value !== 'bitz' && value !== 'story' && value !== 'note'))
 		) {
 			return null;
 		}

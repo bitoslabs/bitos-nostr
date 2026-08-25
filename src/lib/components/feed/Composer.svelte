@@ -94,6 +94,15 @@
 	const gifMenuId = 'composer-gif-menu';
 	const emojiMenuId = 'composer-emoji-menu';
 	const COMPOSER_EMOJIS = [
+		'₿',
+		'🚀',
+		'🌕',
+		'⚡',
+		'🟠',
+		'❤️',
+		'🧡',
+		'📈',
+		'💎',
 		'😀',
 		'😂',
 		'🤣',
@@ -118,11 +127,6 @@
 		'💪',
 		'🫂',
 		'👀',
-		'❤️',
-		'🔥',
-		'✨',
-		'⚡',
-		'🎉',
 		'💯',
 		'💩',
 		'🐮'
