@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { MIN_CROP, type MemeImageOverlay } from '$lib/meme/image-overlay';
+	import { MIN_CROP, wholeImageAspect, type MemeImageOverlay } from '$lib/meme/image-overlay';
 
 	/**
 	 * MemeLayerCropDialog — source-image crop editor for an image layer
@@ -151,29 +151,32 @@
 			</button>
 		</div>
 
-		<!-- Frame: the natural image with a draggable crop window over it.
-		     Pointer math is normalized to the frame box, so it works at any
-		     rendered size; the frame hugs the CROP's aspect so what you see
-		     is what the layer box will become. -->
+		<!-- Frame: the ENTIRE natural image at a FIXED whole-image aspect —
+		     the reference every standard crop editor uses. A fixed frame makes
+		     the window's % offsets map to real pixels 1:1 at any rendered
+		     size, so what you box is what you get. (A frame that resized with
+		     the window warped reopen-crops and desynced the handles.) -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			bind:this={frameEl}
-			class="relative mt-3 max-h-[46dvh] touch-none overflow-hidden rounded-xl bg-black/70 select-none"
-			style="aspect-ratio:{layer.aspect * (draft.w / draft.h) || 1};"
+			class="relative mx-auto mt-3 max-h-[46dvh] touch-none overflow-hidden rounded-xl bg-black/70 select-none"
+			style="aspect-ratio:{wholeImageAspect(layer)}; width:min(100%, calc(46dvh * {wholeImageAspect(
+				layer
+			)}));"
 			onpointerdown={(e) => onFramePointerDown(e, 'move')}
 			onpointermove={onFramePointerMove}
 			onpointerup={endDrag}
 			onpointercancel={endDrag}
 		>
-			<!-- Whole image, cover-fit into the frame — exactly how the cropped
-			     region will fill the layer box on the stage. -->
+			<!-- Whole image fills the fixed frame exactly (no cover cropping,
+			     no scale tricks — 1 window-% = that % of the frame). -->
 			<img
 				src={renderSrc ?? layer.src}
 				alt=""
 				crossOrigin="anonymous"
 				draggable="false"
-				class="pointer-events-none absolute inset-0 h-full w-full object-cover"
-				style="transform:scale({1 / Math.min(draft.w, draft.h)});"
+				class="pointer-events-none absolute inset-0 h-full w-full"
+				style="object-fit:fill;"
 			/>
 			<!-- Dim everything OUTSIDE the crop window (evenodd hole). -->
 			<div
@@ -258,7 +261,7 @@
 		</div>
 
 		<p class="mt-2 text-[10.5px] leading-snug text-[var(--ui-text-dimmed)]">
-			Cropping hides the rest of the image — zoom keeps the cropped ratio (no stretching).
+			Cropping hides the rest of the image while keeping the selected size and ratio (no stretching).
 		</p>
 
 		<div class="mt-3 flex items-center gap-2">

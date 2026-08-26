@@ -102,6 +102,39 @@ export function normalizeCrop(
 	return { x, y, w, h };
 }
 
+/**
+ * Aspect (w/h) of the WHOLE natural image. A crop makes `aspect` describe
+ * the cropped window instead — this inverts it back (crop editor frame,
+ * clearing/re-cropping). Without a crop `aspect` already is the whole ratio.
+ */
+export function wholeImageAspect(layer: Pick<MemeImageOverlay, 'aspect' | 'crop'>): number {
+	return layer.crop ? (layer.aspect || 1) / (layer.crop.w / layer.crop.h) : layer.aspect || 1;
+}
+
+/**
+ * Geometry for applying a source crop to an EXISTING layer. The selected
+ * window keeps the exact scale it had in the crop dialog: selecting 47% ×
+ * 69% produces a layer that is 47% as wide and 69% as tall as the uncropped
+ * layer — it is not enlarged to preserve its old area.
+ *
+ * `layer` may already be cropped. Recover the whole-image geometry first so
+ * re-cropping and clearing a crop always refer back to the same source box.
+ */
+export function croppedLayerGeometry(
+	layer: Pick<MemeImageOverlay, 'size' | 'aspect' | 'crop'>,
+	next: { x: number; y: number; w: number; h: number } | undefined,
+	wholeAspect: number
+): { size: number; aspect: number } {
+	const whole = clamp(wholeAspect > 0 ? wholeAspect : 1, 0.05, 20);
+	const aspect = clamp(next ? (whole * next.w) / next.h : whole, 0.05, 20);
+	const previousHeight = layer.crop?.h ?? 1;
+	const wholeSize = layer.size / previousHeight;
+	return {
+		size: clamp(wholeSize * (next?.h ?? 1), MIN_IMAGE_SIZE, MAX_IMAGE_SIZE),
+		aspect
+	};
+}
+
 /** Tolerant parser: coerces, clamps and drops unknown fields. */
 export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	if (!raw || typeof raw !== 'object') return null;

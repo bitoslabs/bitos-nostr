@@ -39,12 +39,13 @@ export const COMPOSER_EMOJIS = [
 
 /** Reply composer keeps its conversational reactions at the end. */
 export const REPLY_EMOJIS = [
-	...FACE_EMOJIS,
-	...GESTURE_EMOJIS,
+	'₿',
+	'⚡',
 	'❤️',
 	'🔥',
 	'✨',
-	'⚡',
 	'🎉',
+	...FACE_EMOJIS,
+	...GESTURE_EMOJIS,
 	...CLOSING_EMOJIS
 ] as const;

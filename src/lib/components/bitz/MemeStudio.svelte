@@ -82,11 +82,13 @@
 		coverRect
 	} from '$lib/meme/render';
 	import {
+		croppedLayerGeometry,
 		imageOverlayVisibleAt,
 		layerSrcOk,
 		makeImageOverlay,
 		MAX_IMAGE_OVERLAYS,
 		MAX_IMAGE_OVERLAY_BYTES,
+		wholeImageAspect,
 		type MemeImageOverlay
 	} from '$lib/meme/image-overlay';
 	import { buddyFigure, isBuddySrc } from '$lib/meme/bitz-buddy';
@@ -2124,10 +2126,8 @@
 	let replaceLayerForId: string | null = null;
 	let replaceLayerInput = $state<HTMLInputElement | null>(null);
 
-	/** Crop editor (user ask 2026-08-26): the layer whose source image is
-	 *  being cropped — null = dialog closed. Applying rewrites `aspect` to
-	 *  the CROPPED box so the stage + export agree, keeping x/y/size (the
-	 *  center + height stay; the visual anchor is preserved). */
+	/** Crop editor: applying keeps the selected source window at the same
+	 * scale shown in the dialog, while preserving the layer center. */
 	let croppingLayerId = $state<string | null>(null);
 	const croppingLayer = $derived(imageLayers.find((l) => l.id === croppingLayerId) ?? null);
 
@@ -2142,19 +2142,14 @@
 	) {
 		const layer = imageLayers.find((l) => l.id === id);
 		if (!layer) return;
-		// aspect describes the CROPPED box: (crop.w·W)/(crop.h·H) where W×H
-		// is the natural size. Without a decoded bitmap the natural size is
-		// unknown — keep aspect as-is (normalize guards the rest; the bitmap
-		// decodes long before export and a re-crop then snaps it exactly).
-		const bitmap = layerAssets.bitmaps.get(layer.src);
-		if (crop && bitmap?.naturalWidth && bitmap?.naturalHeight) {
-			const cropped = (crop.w * bitmap.naturalWidth) / (crop.h * bitmap.naturalHeight);
-			patchLayer(id, { crop, aspect: Math.min(20, Math.max(0.05, cropped)) });
-		} else {
-			patchLayer(id, { crop });
-		}
+		// `aspect` describes the CURRENT box (whole image until cropped, the
+		// window afterwards) — wholeImageAspect inverts an existing crop back
+		// to the whole-image ratio; no bitmap decode needed.
+		const geo = croppedLayerGeometry(layer, crop, wholeImageAspect(layer));
+		const realCrop = crop && (crop.w < 1 || crop.h < 1) ? crop : undefined;
+		patchLayer(id, { ...geo, crop: realCrop });
 		croppingLayerId = null;
-		toasts.success(crop ? 'Layer cropped' : 'Crop cleared');
+		toasts.success(realCrop ? 'Layer cropped' : 'Crop cleared');
 	}
 
 	function onReplaceLayerInput(e: Event) {
@@ -4731,8 +4726,9 @@
 																	src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
 																	alt=""
 																	crossOrigin="anonymous"
-																	class="absolute select-none {layerAssets.bitmaps.get(layer.src)
-																		?.complete
+																	class="absolute max-h-none max-w-none select-none {layerAssets.bitmaps.get(
+																		layer.src
+																	)?.complete
 																		? ''
 																		: 'opacity-60'}"
 																	style="left:{(-layer.crop.x / layer.crop.w) * 100}%; top:{(-layer
@@ -4740,7 +4736,7 @@
 																		layer.crop.h) *
 																		100}%; width:{(1 / layer.crop.w) * 100}%; height:{(1 /
 																		layer.crop.h) *
-																		100}%;"
+																		100}%; max-width:none; max-height:none;"
 																	draggable="false"
 																/>
 															</div>
