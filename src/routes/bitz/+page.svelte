@@ -79,6 +79,10 @@
 		delay: number;
 	};
 	let burstSeq = 0;
+	// Relay requests can finish after the route has changed. Do not let their
+	// continuations read component-owned derived values (or write this page's
+	// state/session) once Svelte has destroyed the component.
+	let bitzPageActive = true;
 
 	type ReelsCache = {
 		savedAt: number;
@@ -658,6 +662,7 @@
 	}
 
 	function applyReels(next: ReelNote[], options: { append?: boolean } = {}) {
+		if (!bitzPageActive) return;
 		// PUB-013: a just-published bitz stages its optimistic reel immediately,
 		// but relay refreshes can lag behind it. Carry reels whose event is still
 		// pending in the PUB-012 outbox through a full refresh so the player never
@@ -720,6 +725,7 @@
 		options: { append?: boolean; discoveryIds?: Set<string> } = {}
 	) {
 		const nextReels = await buildReelsFromEvents(events, options.discoveryIds);
+		if (!bitzPageActive) return;
 		applyReels(nextReels, options);
 		const oldestSeen =
 			events
@@ -798,16 +804,21 @@
 	}
 
 	async function loadReels(options: { background?: boolean } = {}) {
+		if (!bitzPageActive) return;
+		// Capture route-derived values before any await. A request may outlive the
+		// page that started it, in which case its continuation must not read them.
+		const isAuthorPlayback = authorMode;
+		const requestedAuthorPubkey = authorPubkey;
 		if (!options.background) loading = true;
 		try {
 			// Author mode: every filter is scoped to one author; discovery relays
 			// never contribute (the profile grid is configured-relay territory).
-			const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
+			const authorFilter = requestedAuthorPubkey ? { authors: [requestedAuthorPubkey] } : {};
 			const filters = [
 				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter },
 				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT, ...authorFilter }
 			];
-			const discoveryPromise = queryUrls(authorMode ? [] : discoveryUrls(), filters);
+			const discoveryPromise = queryUrls(isAuthorPlayback ? [] : discoveryUrls(), filters);
 			const events = await queryPrimaryFirst(filters, {
 				onSecondary: (mergedEvents) => {
 					void discoveryPromise.then((discovered) =>
@@ -818,16 +829,20 @@
 				}
 			});
 			const discovered = await discoveryPromise;
+			if (!bitzPageActive) return;
 			await updateReelWindow(mergeEvents(events, discovered), {
 				discoveryIds: discoveryOnlyIds(events, discovered)
 			});
 		} catch (e) {
-			if (!options.background) toasts.error((e as Error).message || 'Could not load reels');
+			if (bitzPageActive && !options.background)
+				toasts.error((e as Error).message || 'Could not load reels');
 		} finally {
-			loading = false;
-			// Author playback must not mark the global session fresh — returning to
-			// /bitz should still get its own background refresh when stale.
-			if (!authorMode) bitzSession.lastRefreshedAt = Date.now();
+			if (bitzPageActive) {
+				loading = false;
+				// Author playback must not mark the global session fresh — returning to
+				// /bitz should still get its own background refresh when stale.
+				if (!isAuthorPlayback) bitzSession.lastRefreshedAt = Date.now();
+			}
 		}
 	}
 
@@ -1720,6 +1735,7 @@
 		}
 
 		return () => {
+			bitzPageActive = false;
 			document.removeEventListener('fullscreenchange', handleFullscreenChange);
 			clearTimeout(deepLinkTimeout);
 			visibilityObserver?.disconnect();

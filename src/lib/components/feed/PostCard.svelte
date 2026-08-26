@@ -309,7 +309,10 @@
 
 	function mediaAspectStyle(media: MediaAttachment, count: number) {
 		if (count !== 1 || !media.dim || media.dim.w <= 0 || media.dim.h <= 0) return undefined;
-		return `aspect-ratio: ${media.dim.w} / ${media.dim.h};`;
+		// `aspect-ratio` reserves the natural height before the image loads. Cap the
+		// tile too: capping only the image leaves a very tall, empty container for
+		// portrait media (for example, a 608 × 1080 GIF in a wide feed card).
+		return `aspect-ratio: ${media.dim.w} / ${media.dim.h}; max-height: min(500px, 65vh);`;
 	}
 
 	function videoCoverStyle() {
