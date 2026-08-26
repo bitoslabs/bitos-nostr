@@ -7,7 +7,7 @@
 import { browser } from '$app/environment';
 import type { UnsignedEvent } from 'nostr-tools/pure';
 import { signMined } from '$lib/auth/signer';
-import { subscribe, publish, queryPrimaryFirst, queryOnce } from './pool';
+import { subscribe, publish, queryPrimaryFirst, lookupEventTags } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
@@ -976,7 +976,7 @@ class FeedStore {
 		// nonce changes it, so the pre-sign body could not be checked. Unknown
 		// history refuses rather than risks a loop (wouldCycle contract).
 		const lineage = remixOf(event.tags);
-		if (lineage && (await wouldCycle(event.id, lineage, (id) => this.loadAncestorTags(id)))) {
+		if (lineage && (await wouldCycle(event.id, lineage, (id, hints) => this.loadAncestorTags(id, hints)))) {
 			throw new Error('This remix chains back to itself — re-open the source and try again');
 		}
 		options.onPhase?.('publishing');
@@ -1011,16 +1011,12 @@ class FeedStore {
 		bitzSession.reels = reels;
 	}
 
-	/** Load an ancestor's tags by event id (relays, best-effort — a missing
-	 *  event is the chain's natural end; pruned history degrades gracefully
-	 *  instead of blocking the publish guard). */
-	async loadAncestorTags(eventId: string): Promise<string[][] | null> {
-		try {
-			const [event] = await queryOnce([{ ids: [eventId], limit: 1 }]);
-			return event ? event.tags : null;
-		} catch {
-			return null;
-		}
+	/** Load an ancestor's tags by id (smart relay lookup: publisher hints,
+	 *  then primary, then parallel fallback — a missing event is the chain's
+	 *  natural end; pruned history degrades gracefully instead of blocking
+	 *  the publish guard). */
+	async loadAncestorTags(eventId: string, hintUrls: string[] = []): Promise<string[][] | null> {
+		return lookupEventTags(eventId, hintUrls);
 	}
 
 	/** Publish a NIP-18 repost (kind 6) of the original signed event. */

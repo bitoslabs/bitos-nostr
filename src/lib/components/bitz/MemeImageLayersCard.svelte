@@ -27,7 +27,9 @@
 		onPatch,
 		onRemove,
 		onReplace,
-		onDuplicate
+		onDuplicate,
+		onOpenCrop,
+		onArrange
 	}: {
 		layers: MemeImageOverlay[];
 		selectedLayerId: string | null;
@@ -47,6 +49,10 @@
 		onRemove: (id: string) => void;
 		onReplace: (id: string) => void;
 		onDuplicate: (id: string) => void;
+		/** Open the source-crop editor for a layer. */
+		onOpenCrop: (id: string) => void;
+		/** z-order extremes + single steps — later slots paint on top. */
+		onArrange: (id: string, to: 'front' | 'back' | 'up' | 'down') => void;
 	} = $props();
 
 	const selectedLayer = $derived(layers.find((l) => l.id === selectedLayerId) ?? null);
@@ -263,8 +269,11 @@
 								index={selectedIndex}
 								renderSrc={selectedRenderSrc}
 								{busy}
+								canArrange={layers.length > 1}
 								{onPatch}
 								{onDuplicate}
+								{onOpenCrop}
+								{onArrange}
 							/>
 						{/key}
 					</div>

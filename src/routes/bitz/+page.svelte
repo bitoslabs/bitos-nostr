@@ -2,7 +2,6 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { SvelteMap } from 'svelte/reactivity';
 	import { npubEncode, decode as nip19Decode } from 'nostr-tools/nip19';
 	import type { Filter } from 'nostr-tools/filter';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -18,19 +17,18 @@
 	import NostrEventPreview from '$lib/components/feed/NostrEventPreview.svelte';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import NoteZapDialog from '$lib/components/feed/NoteZapDialog.svelte';
-	import CommentBody from '$lib/components/feed/CommentBody.svelte';
-	import ReplyComposer from '$lib/components/feed/ReplyComposer.svelte';
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
-	import { queryPrimaryFirst, queryUrls, queryOnce } from '$lib/nostr/pool';
+	import { queryParallelProgressive, queryPrimaryFirst, queryUrls } from '$lib/nostr/pool';
 	import { DISCOVERY_RELAY_URLS, relays } from '$lib/nostr/relays.svelte';
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
-	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
+	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import { latestAddressableEvents, selectRendition } from '$lib/nostr/bitz-codec';
 	import { toFeedNote } from '$lib/nostr/feed-note';
+	import { commentsFor } from '$lib/nostr/comments.svelte';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { bookmarks } from '$lib/stores/bookmarks.svelte';
 	import {
@@ -63,7 +61,8 @@
 	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
 	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
 	import { remixLayoutOf, remixOf, rightsOf, canRemix } from '$lib/meme/remix';
-	import { remixChainOf, type RemixAncestor } from '$lib/meme/remix';
+	import RemixChainDialog from '$lib/components/bitz/RemixChainDialog.svelte';
+	import BitzCommentsPanel from '$lib/components/bitz/BitzCommentsPanel.svelte';
 	import { splitsOf } from '$lib/meme/splits';
 	import { SFX_LABELS } from '$lib/meme/sound-catalog';
 	type Burst = {
@@ -88,12 +87,6 @@
 		savedAt: number;
 		reels: ReelNote[];
 	};
-	type CommentPage = {
-		loaded: boolean;
-		oldestCreatedAt: number;
-		hasMore: boolean;
-	};
-
 	const urlPattern = /https?:\/\/[^\s<>()]+/gi;
 	const imagePattern = /\.(?:apng|avif|gif|jpe?g|png|webp)$/i;
 	const videoPattern = /\.(?:m3u8|m4v|mov|mp4|webm)$/i;
@@ -135,7 +128,6 @@
 	const INITIAL_RENDERED_REELS = 5;
 	const REEL_RENDER_BATCH = 5;
 	const REEL_PREFETCH_THRESHOLD = 6;
-	const COMMENTS_PAGE_SIZE = 80;
 	// Explore grid: how many tiles render up front and per "load more".
 	const EXPLORE_INITIAL_VISIBLE = 24;
 	const EXPLORE_PAGE_SIZE = 18;
@@ -184,8 +176,6 @@
 	}
 
 	let loading = $state(true);
-	let loadingComments = $state(false);
-	let deletingCommentId = $state('');
 	let loadingMoreReels = $state(false);
 	let hasMoreReels = $state(true);
 	/** Long-edge render target for adaptive rendition picks (READ-002/F-019).
@@ -258,14 +248,9 @@
 	let reelAspectRatios = $state<Record<string, number>>({});
 	let reelCanvasSizes = $state<Record<string, { width: number; height: number }>>({});
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
+	/** The reel whose comments panel is open; the BitzCommentsPanel component
+	 * owns loading/pagination and follows this prop while swiping. */
 	let commentReel = $state<ReelNote | null>(null);
-	let commentPendingDelete = $state<FeedNote | null>(null);
-	let deleteCommentOpen = $state(false);
-	let commentPages = $state<Record<string, CommentPage>>({});
-	/** The comment being replied to (full note, not just id/name): replies must
-	 * chain NIP-10 tags to this comment so they land nested under it — exactly
-	 * how feed-card comment replies are saved. Null = replying to the reel. */
-	let commentReplyTarget = $state<FeedNote | null>(null);
 	// Element/observer registries are non-reactive by design (no re-render on
 	// media wiring) — plain Maps are intentional.
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -315,14 +300,6 @@
 		Array.isArray(rankedReelResult) ? new Map<string, ScoreBreakdown>() : rankedReelResult.breakdown
 	);
 
-	const RANK_TAG_COLORS: Record<string, string> = {
-		recency: '#3b82f6',
-		engagement: '#f97316',
-		zaps: '#eab308',
-		affinity: '#ec4899',
-		wot: '#22c55e',
-		novelty: '#14b8a6'
-	};
 	const RANK_TAG_ICONS: Record<string, string> = {
 		recency: 'i-lucide-clock',
 		engagement: 'i-lucide-flame',
@@ -428,15 +405,6 @@
 		}
 		await openFromExplore(reel);
 	}
-	const activeComments = $derived(commentReel ? commentsFor(commentReel.id) : []);
-	const activeCommentTree = $derived(
-		commentReel
-			? commentTree(commentReel.id)
-			: { top: [] as FeedNote[], children: new SvelteMap<string, FeedNote[]>() }
-	);
-	const activeTopLevelComments = $derived(activeCommentTree.top);
-	const activeCommentPage = $derived(commentReel ? commentPages[commentReel.id] : undefined);
-
 	function splitTrailingPunctuation(raw: string) {
 		let core = raw;
 		let suffix = '';
@@ -823,7 +791,7 @@
 				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT, ...authorFilter }
 			];
 			const discoveryPromise = queryUrls(isAuthorPlayback ? [] : discoveryUrls(), filters);
-			const events = await queryPrimaryFirst(filters, {
+			const events = await queryParallelProgressive(filters, {
 				onSecondary: (mergedEvents) => {
 					void discoveryPromise.then((discovered) =>
 						updateReelWindow(mergeEvents(mergedEvents, discovered), {
@@ -959,11 +927,7 @@
 		if (remaining < reelScroller.clientHeight * 3) void ensureMoreReelsBuffered();
 		if (commentReel) {
 			const activeReel = reelAtScrollPosition();
-			if (activeReel && activeReel.id !== commentReel.id) {
-				commentReel = activeReel;
-				commentReplyTarget = null;
-				void loadComments(activeReel);
-			}
+			if (activeReel && activeReel.id !== commentReel.id) commentReel = activeReel;
 		}
 	}
 
@@ -1157,11 +1121,7 @@
 		});
 		if (commentReel) {
 			const next = renderedReels[target];
-			if (next) {
-				commentReel = next;
-				commentReplyTarget = null;
-				void loadComments(next);
-			}
+			if (next) commentReel = next;
 		}
 	}
 
@@ -1231,55 +1191,6 @@
 					activeVideo.currentTime = Math.min(activeVideo.duration, activeVideo.currentTime + 5);
 				break;
 		}
-	}
-
-	/** Every reply in the reel's thread: top-level comments carry the reel as
-	 * their reply tag, nested replies carry it as their NIP-10 root tag. NIP-22
-	 * comments reference the reel via the uppercase E root tag instead. Powers
-	 * the comment counters. */
-	function commentsFor(reelId: string) {
-		return feed.notes
-			.filter(
-				(note) =>
-					note.id !== reelId &&
-					note.tags.some((tag) => (tag[0] === 'e' || tag[0] === 'E') && tag[1] === reelId)
-			)
-			.sort((a, b) => a.createdAt - b.createdAt);
-	}
-
-	/** Two-level thread layout, same as feed cards: top-level comments reply
-	 * directly to the reel; everything else nests under its top-level ancestor
-	 * (a reply to a level-2 comment renders flat beside it — never a third
-	 * indent). Orphans whose parent sits behind the pagination cut, and cyclic
-	 * replyTo chains, fall back to top-level so nothing ever vanishes. */
-	function commentTree(reelId: string): {
-		top: FeedNote[];
-		children: SvelteMap<string, FeedNote[]>;
-	} {
-		const thread = commentsFor(reelId);
-		const byId = new Map(thread.map((note) => [note.id, note]));
-		const isTopLevel = (note: FeedNote) => !note.replyTo || note.replyTo === reelId;
-		/** The top-level comment this note nests under, or null = render top-level. */
-		const parentGroupId = (note: FeedNote): string | null => {
-			let current = note;
-			// Guard against cyclic replyTo chains: stop after thread.length hops.
-			for (let hops = 0; hops < thread.length; hops += 1) {
-				if (isTopLevel(current)) return null;
-				const parent = byId.get(current.replyTo!);
-				if (!parent) return null; // orphan — keep it visible at top level
-				if (isTopLevel(parent)) return parent.id;
-				current = parent;
-			}
-			return null; // cycle — bail out as top-level
-		};
-		const top: FeedNote[] = [];
-		const children = new SvelteMap<string, FeedNote[]>();
-		for (const note of thread) {
-			const pid = parentGroupId(note);
-			if (pid === null) top.push(note);
-			else children.set(pid, [...(children.get(pid) ?? []), note]);
-		}
-		return { top, children };
 	}
 
 	async function toggleLike(reel: ReelNote) {
@@ -1377,185 +1288,20 @@
 		}
 	}
 
-	async function openComments(reel: ReelNote) {
+	function openComments(reel: ReelNote) {
 		commentReel = reel;
-		commentReplyTarget = null;
-		await loadComments(reel);
 	}
 
 	// ---- remix lineage browser (audit gap #12) ------------------------------
-	/** Chain sheet state: which reel's lineage is open + the walked ancestry. */
+	/** Which reel's lineage sheet is open; the walk itself lives in the dialog. */
 	let lineageReel = $state<ReelNote | null>(null);
 	let lineageOpen = $state(false);
-	let lineageLoading = $state(false);
-	let lineageChain = $state<RemixAncestor[]>([]);
-	let lineageTruncated = $state(false);
-	let lineageFailed = $state(false);
-	/** Invalidates an in-flight lookup when the chain dialog is reopened. */
-	let lineageRequest = 0;
-
-	/** Load an ancestor's tags by event id (relays, best-effort). */
-	async function loadEventTags(eventId: string): Promise<string[][] | null> {
-		try {
-			const [event] = await queryOnce([{ ids: [eventId], limit: 1 }]);
-			return event ? event.tags : null;
-		} catch {
-			// A missing event is the chain's natural end — pruned history
-			// degrades gracefully instead of failing the sheet.
-			return null;
-		}
-	}
 
 	/** Open the lineage sheet for a remixed bitz (S-014 bounded walk). */
-	async function openLineage(reel: ReelNote) {
+	function openLineage(reel: ReelNote) {
 		if (!remixOf(reel.tags)) return;
-		const request = ++lineageRequest;
 		lineageReel = reel;
 		lineageOpen = true;
-		lineageLoading = true;
-		lineageFailed = false;
-		lineageChain = [];
-		lineageTruncated = false;
-		try {
-			const result = await remixChainOf(reel.tags, loadEventTags);
-			if (request !== lineageRequest) return;
-			if (result.ok) {
-				lineageChain = result.chain;
-				lineageTruncated = result.truncated;
-			} else {
-				lineageFailed = true;
-			}
-		} catch {
-			if (request !== lineageRequest) return;
-			lineageFailed = true;
-		} finally {
-			if (request === lineageRequest) lineageLoading = false;
-		}
-	}
-
-	async function loadComments(reel: ReelNote, options: { force?: boolean; more?: boolean } = {}) {
-		const page = commentPages[reel.id];
-		if (!options.force && !options.more && page?.loaded) return;
-		if (options.more && (!page?.hasMore || !page.oldestCreatedAt)) return;
-		loadingComments = true;
-		try {
-			// ADR-003 migration window: read both NIP-22 comments (kind 1111,
-			// uppercase E root) and legacy kind-1 replies so old and new clients
-			// see one merged thread.
-			const filter: {
-				kinds: number[];
-				'#e': string[];
-				limit: number;
-				until?: number;
-			} = {
-				kinds: [NOSTR_KINDS.COMMENT, NOSTR_KINDS.TEXT_NOTE],
-				'#e': [reel.id],
-				limit: COMMENTS_PAGE_SIZE
-			};
-			if (options.more) filter.until = page!.oldestCreatedAt - 1;
-			const replyEvents = await queryPrimaryFirst([filter]);
-			// Keep the whole thread, not just direct replies: nested replies-to-
-			// comments reference the reel through their NIP-10 root tag (or the
-			// uppercase E tag on kind-1111 comments).
-			const replies = replyEvents
-				.map(toFeedNote)
-				.filter((note) =>
-					note.tags.some((tag) => (tag[0] === 'e' || tag[0] === 'E') && tag[1] === reel.id)
-				);
-			const replyIds = replies.map((reply) => reply.id);
-			const reactions = replyIds.length
-				? await queryPrimaryFirst([{ kinds: [NOSTR_KINDS.REACTION], '#e': replyIds, limit: 300 }])
-				: [];
-			const withActivity = applyActivityToNotes(replies, reactions, identity.current?.pk);
-			for (const reply of withActivity) feed.upsertNote(reply);
-			profiles.ensure(withActivity.map((reply) => reply.pubkey));
-			const oldestInPage = replyEvents.reduce(
-				(oldest, event) => Math.min(oldest, event.created_at),
-				Number.POSITIVE_INFINITY
-			);
-			const oldestCreatedAt = Number.isFinite(oldestInPage)
-				? Math.min(page?.oldestCreatedAt || Number.POSITIVE_INFINITY, oldestInPage)
-				: page?.oldestCreatedAt || 0;
-			commentPages = {
-				...commentPages,
-				[reel.id]: {
-					loaded: true,
-					oldestCreatedAt,
-					hasMore: replyEvents.length >= COMMENTS_PAGE_SIZE && oldestCreatedAt > 0
-				}
-			};
-		} catch (e) {
-			toasts.error((e as Error).message || 'Could not load comments');
-		} finally {
-			loadingComments = false;
-		}
-	}
-
-	async function loadMoreComments() {
-		if (!commentReel || loadingComments || !activeCommentPage?.hasMore) return;
-		await loadComments(commentReel, { more: true });
-	}
-
-	async function likeComment(comment: FeedNote) {
-		try {
-			await feed.react(comment, '❤️');
-			if (commentReel) await loadComments(commentReel, { force: true });
-		} catch (e) {
-			toasts.error((e as Error).message);
-		}
-	}
-
-	// --- Zap a reel comment ---
-	let zapCommentTarget = $state<FeedNote | null>(null);
-	let zapCommentOpen = $state(false);
-	let optimisticCommentZaps = $state<Record<string, number>>({});
-	const zapCommentProfile = $derived(
-		zapCommentTarget ? profiles.get(zapCommentTarget.pubkey) : undefined
-	);
-	const zapCommentAddress = $derived(zapCommentProfile?.lud16 || zapCommentProfile?.lud06 || '');
-
-	function commentZapSats(comment: FeedNote) {
-		return comment.zapTotalSats + (optimisticCommentZaps[comment.id] ?? 0);
-	}
-
-	function zapComment(comment: FeedNote) {
-		const profile = profiles.get(comment.pubkey);
-		if (!profile?.lud16 && !profile?.lud06) {
-			toasts.info('This author has no Lightning address');
-			return;
-		}
-		zapCommentTarget = comment;
-		zapCommentOpen = true;
-	}
-
-	function handleCommentZapPaid(sats: number) {
-		if (!zapCommentTarget) return;
-		optimisticCommentZaps = {
-			...optimisticCommentZaps,
-			[zapCommentTarget.id]: (optimisticCommentZaps[zapCommentTarget.id] ?? 0) + sats
-		};
-	}
-
-	function askDeleteComment(comment: FeedNote) {
-		if (comment.pubkey !== identity.current?.pk) return;
-		commentPendingDelete = comment;
-		deleteCommentOpen = true;
-	}
-
-	async function deleteComment() {
-		const comment = commentPendingDelete;
-		if (!comment || deletingCommentId || comment.pubkey !== identity.current?.pk) return;
-		deletingCommentId = comment.id;
-		try {
-			await feed.deleteNote(comment);
-			commentPendingDelete = null;
-			deleteCommentOpen = false;
-			toasts.success('Comment deleted');
-		} catch (e) {
-			toasts.error((e as Error).message || 'Could not delete comment');
-		} finally {
-			deletingCommentId = '';
-		}
 	}
 
 	// --- Explore grid (Bitz · Explore tab) ----------------------------------
@@ -2726,359 +2472,23 @@
 		/>
 	{/if}
 
-	<!-- Bitz comments panel -->
+	<!-- Bitz comments panel: self-contained component owning the thread —
+	     loading + pagination (primary relay first, others in parallel), reply
+	     composer, per-comment like/zap/delete. The page only swaps the reel
+	     while swiping; the panel follows. -->
 	{#if commentReel}
-		<button
-			type="button"
-			class="fixed inset-0 z-40 bg-black/45 lg:hidden"
-			aria-label="Close comments"
-			onclick={() => (commentReel = null)}
-		></button>
-		<aside
-			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl bg-[var(--ui-bg)] text-[var(--ui-text)] md:border-l md:border-[var(--ui-border-muted)] lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none"
-			aria-label="Bitz comments"
-		>
-			<header class="flex h-14 shrink-0 items-center justify-between px-4">
-				<h2 class="text-[16px] font-extrabold text-[var(--ui-text-highlighted)]">
-					Comments <span class="ml-1 text-[var(--ui-text-dimmed)]">{activeComments.length}</span>
-				</h2>
-				<div class="flex items-center gap-1">
-					<button
-						type="button"
-						onclick={() => scrollToReel(-1)}
-						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
-						aria-label="Previous bitz"
-					>
-						<Icon name="i-lucide-chevron-up" class="size-4" />
-					</button>
-					<button
-						type="button"
-						onclick={() => scrollToReel(1)}
-						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
-						aria-label="Next bitz"
-					>
-						<Icon name="i-lucide-chevron-down" class="size-4" />
-					</button>
-					<button
-						type="button"
-						onclick={() => loadComments(commentReel!, { force: true })}
-						disabled={loadingComments}
-						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
-						aria-label="Refresh comments"
-					>
-						<Icon
-							name="i-lucide-rotate-cw"
-							class="size-4 {loadingComments ? 'animate-spin' : ''}"
-						/>
-					</button>
-					<button
-						type="button"
-						onclick={() => (commentReel = null)}
-						class="grid size-9 place-items-center rounded-full bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] transition hover:text-[var(--ui-text-highlighted)]"
-						aria-label="Close comments"
-					>
-						<Icon name="i-lucide-x" class="size-5" />
-					</button>
-				</div>
-			</header>
-			<div class="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-				{#if loadingComments && !activeComments.length}
-					<div class="flex h-36 items-center justify-center">
-						<div
-							class="size-6 animate-spin rounded-full border-2 border-[var(--ui-border)] border-t-primary-500"
-						></div>
-					</div>
-				{:else}
-					<div class="space-y-6">
-						{#if activeCommentPage?.hasMore}
-							<button
-								type="button"
-								onclick={loadMoreComments}
-								disabled={loadingComments || !activeCommentPage?.hasMore}
-								class="mx-auto flex h-9 items-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
-							>
-								<Icon
-									name={loadingComments ? 'i-lucide-loader-circle' : 'i-lucide-chevron-up'}
-									class="size-3.5 {loadingComments ? 'animate-spin' : ''}"
-								/>
-								{loadingComments ? 'Loading comments…' : 'Load more comments'}
-							</button>
-						{/if}
-						{#if activeComments.length}
-							{#snippet commentRow(comment: FeedNote, nested: boolean)}
-								{@const commentProfile = profiles.get(comment.pubkey)}
-								{@const commentName =
-									commentProfile?.display_name || commentProfile?.name || shortKey(comment.pubkey)}
-								{@const commentLiked = comment.reactions.some((reaction) => reaction.byMe)}
-								{@const commentLikes = comment.reactions.reduce(
-									(sum, reaction) => sum + reaction.count,
-									0
-								)}
-								<div class="flex {nested ? 'gap-2 pl-8' : 'gap-3'}">
-									<a href={`/profile/${comment.pubkey}`} class="shrink-0">
-										<Avatar
-											pubkey={comment.pubkey}
-											name={commentName}
-											picture={commentProfile?.picture}
-											lightning={hasLightning(commentProfile)}
-											size={nested ? 22 : 34}
-											frame={!nested}
-										/>
-									</a>
-									<div class="min-w-0 flex-1">
-										<div class="flex min-w-0 items-center gap-1.5">
-											<a
-												href={`/profile/${comment.pubkey}`}
-												class="truncate text-[12px] font-extrabold text-[var(--ui-text-highlighted)] hover:text-primary-500"
-											>
-												{commentName}
-											</a>
-											{#if commentProfile?.nip05}
-												<Icon
-													name="i-lucide-badge-check"
-													class="size-3 shrink-0 text-primary-500"
-												/>
-											{/if}
-											{#if comment.pubkey === identity.current?.pk}
-												<span
-													class="rounded-full bg-primary-500/15 px-1 py-px text-[9px] font-bold text-primary-600 uppercase"
-													>you</span
-												>
-											{/if}
-											{#if comment.pow}
-												<PowBadge bits={comment.pow} micro id={comment.id} />
-											{/if}
-											<a
-												href={`/note/${comment.id}?from=bitz`}
-												class="ml-auto shrink-0 text-[10.5px] font-semibold text-[var(--ui-text-dimmed)] hover:text-primary-500"
-											>
-												{timeAgo(comment.createdAt)}
-											</a>
-										</div>
-										<CommentBody content={comment.content} tags={comment.tags} compact />
-										<div
-											class="mt-1 flex items-center gap-3 text-[11px] font-bold text-[var(--ui-text-dimmed)]"
-										>
-											<button
-												type="button"
-												onclick={() => likeComment(comment)}
-												class="inline-flex items-center gap-1 transition hover:text-[var(--tone-error-text)]"
-												aria-label="Like comment"
-											>
-												<Icon
-													name={commentLiked ? 'i-solar-heart-bold' : 'i-solar-heart-linear'}
-													class="size-3 {commentLiked ? 'text-primary-500' : ''}"
-												/>
-												{#if commentLikes}<span class="font-semibold">{commentLikes}</span>{/if}
-											</button>
-											<button
-												type="button"
-												onclick={() => zapComment(comment)}
-												class="inline-flex items-center gap-1 transition hover:text-warm-500"
-												aria-label="Zap sats to this comment"
-											>
-												<Icon name="i-lucide-zap" class="size-3 fill-current" />
-												{#if commentZapSats(comment)}
-													<span class="font-semibold">{compactSats(commentZapSats(comment))}</span>
-												{:else}Zap{/if}
-											</button>
-											<button
-												type="button"
-												onclick={() => (commentReplyTarget = comment)}
-												disabled={!privacyNotificationSettings.canCommentOn(comment.pubkey)}
-												class="transition hover:text-primary-500 disabled:pointer-events-none disabled:opacity-40"
-											>
-												Reply
-											</button>
-											{#if comment.pubkey === identity.current?.pk}
-												<button
-													type="button"
-													onclick={() => askDeleteComment(comment)}
-													disabled={deletingCommentId === comment.id}
-													class="transition hover:text-[var(--ui-text-highlighted)] disabled:cursor-not-allowed disabled:opacity-60"
-												>
-													{deletingCommentId === comment.id ? 'Deleting' : 'Delete'}
-												</button>
-											{/if}
-										</div>
-									</div>
-								</div>
-							{/snippet}
-							{#each activeTopLevelComments as comment (comment.id)}
-								{@render commentRow(comment, false)}
-								{#each activeCommentTree.children.get(comment.id) ?? [] as child (child.id)}
-									{@render commentRow(child, true)}
-								{/each}
-							{/each}
-						{:else}
-							<div class="flex h-44 flex-col items-center justify-center text-center">
-								<div
-									class="grid size-12 place-items-center rounded-2xl bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
-								>
-									<Icon name="i-lucide-message-circle" class="size-6" />
-								</div>
-								<p class="mt-3 text-[14px] font-bold text-[var(--ui-text-highlighted)]">
-									No comments yet
-								</p>
-								<p class="mt-1 text-[12px] text-[var(--ui-text-muted)]">Start the conversation.</p>
-							</div>
-						{/if}
-					</div>
-				{/if}
-			</div>
-
-			<div class="shrink-0 bg-transparent p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
-				{#key `${commentReel.id}:${commentReplyTarget?.id ?? ''}`}
-					{@const replyTargetProfile = commentReplyTarget
-						? profiles.get(commentReplyTarget.pubkey)
-						: undefined}
-					{@const replyTargetName = commentReplyTarget
-						? replyTargetProfile?.display_name ||
-							replyTargetProfile?.name ||
-							shortKey(commentReplyTarget.pubkey)
-						: ''}
-					<ReplyComposer
-						parent={commentReplyTarget ?? commentReel}
-						commentTarget={{
-							id: commentReel.id,
-							pubkey: commentReel.pubkey,
-							kind: commentReel.raw?.kind ?? NOSTR_KINDS.TEXT_NOTE
-						}}
-						placeholder={commentReplyTarget ? `Reply to ${replyTargetName}…` : 'Add a comment…'}
-						autofocus={!!commentReplyTarget}
-						initialMention={commentReplyTarget
-							? { pubkey: commentReplyTarget.pubkey, name: replyTargetName }
-							: undefined}
-						onSubmitted={() => {
-							commentReplyTarget = null;
-							void loadComments(commentReel!, { force: true });
-						}}
-						onCancel={() => (commentReplyTarget = null)}
-					/>
-				{/key}
-			</div>
-		</aside>
+		<BitzCommentsPanel
+			reel={commentReel}
+			onClose={() => (commentReel = null)}
+			onNavigate={scrollToReel}
+		/>
 	{/if}
 
-	<Dialog bind:open={deleteCommentOpen} title="Delete comment">
-		<div class="space-y-2">
-			<p class="text-[14px] font-semibold text-[var(--ui-text)]">Delete this comment?</p>
-			<p class="text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-				BitOS will publish a delete event to your relays and remove the comment locally.
-			</p>
-		</div>
-
-		{#snippet footer()}
-			<button
-				type="button"
-				onclick={() => {
-					commentPendingDelete = null;
-					deleteCommentOpen = false;
-				}}
-				disabled={!!deletingCommentId}
-				class="inline-flex h-9 items-center justify-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-4 text-[13px] font-bold text-[var(--ui-text)] transition hover:border-primary-500 hover:text-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				Cancel
-			</button>
-			<button
-				type="button"
-				onclick={deleteComment}
-				disabled={!!deletingCommentId}
-				class="inline-flex h-9 items-center gap-2 rounded-full bg-[var(--tone-error-text)] px-4 text-[13px] font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-			>
-				<Icon
-					name={deletingCommentId ? 'i-lucide-loader-circle' : 'i-lucide-trash-2'}
-					class="size-4 {deletingCommentId ? 'animate-spin' : ''}"
-				/>
-				{deletingCommentId ? 'Deleting' : 'Delete'}
-			</button>
-		{/snippet}
-	</Dialog>
-
 	<!-- Remix lineage (audit #12): the bounded ancestry walked off the remix
-	     tags — cycle-safe, depth-capped, graceful on pruned relay history. -->
-	<Dialog
-		bind:open={lineageOpen}
-		title="Remix chain"
-		onClose={() => {
-			lineageRequest += 1;
-			lineageLoading = false;
-		}}
-	>
-		{#if lineageLoading}
-			<div
-				class="flex items-center justify-center gap-2 py-10 text-[13px] font-semibold text-[var(--ui-text-muted)]"
-			>
-				<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-				Walking the chain…
-			</div>
-		{:else if lineageFailed}
-			<div class="py-10 text-center text-[13px] text-[var(--ui-text-muted)]">
-				Couldn't read the full chain — the lineage loops or a relay failed.
-				<br />The oldest reachable ancestor is still shown below.
-			</div>
-		{:else if lineageChain.length === 0}
-			<div class="py-10 text-center text-[13px] text-[var(--ui-text-muted)]">
-				No remix ancestry found on your relays.
-			</div>
-		{:else}
-			<div
-				class="mb-4 flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2.5"
-			>
-				<span
-					class="grid size-7 shrink-0 place-items-center rounded-full border border-white/30 bg-white/10 text-white"
-				>
-					<Icon name="i-lucide-git-fork" class="size-3.5" />
-				</span>
-				<p class="min-w-0 text-[12px] leading-snug text-[var(--ui-text-muted)]">
-					{lineageChain.length} remix {lineageChain.length === 1 ? 'source' : 'sources'} traced from this
-					bitz.
-				</p>
-			</div>
-			<ol
-				class="relative flex flex-col gap-2 before:absolute before:top-5 before:bottom-5 before:left-5 before:w-px before:bg-white/25"
-			>
-				{#each lineageChain as ancestor, i (ancestor.eventId)}
-					{@const ancestorName = profiles.displayName(ancestor.pubkey) || 'Unknown creator'}
-					<li
-						class="animate-rise relative flex items-center gap-2.5 rounded-xl border border-white/15 bg-[var(--ui-bg-muted)] px-2.5 py-2 shadow-sm transition hover:border-white/35 hover:bg-[var(--ui-bg-accented)] {i ===
-						0
-							? 'ring-1 ring-white/40'
-							: ''}"
-						style="animation-delay: {i * 45}ms"
-					>
-						<span class="relative z-1 rounded-full bg-[var(--ui-bg-muted)] p-0.5">
-							<Avatar pubkey={ancestor.pubkey} name={ancestorName} size={28} />
-						</span>
-						<a
-							href="/note/{ancestor.eventId}"
-							class="flex min-w-0 flex-1 flex-col rounded-md outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-							aria-label="Open the source bitz"
-						>
-							<span class="truncate text-[13px] font-bold">{ancestorName}</span>
-							<span class="text-[11px] text-[var(--ui-text-dimmed)]">
-								{ancestor.depth === 0
-									? 'Direct source'
-									: `${ancestor.depth} step${ancestor.depth === 1 ? '' : 's'} back`}
-							</span>
-						</a>
-						{#if i === 0}
-							<span
-								class="shrink-0 rounded-full border border-white/25 bg-primary-500/20 px-2 py-0.5 text-[10px] font-bold text-primary-600"
-							>
-								Source
-							</span>
-						{/if}
-					</li>
-				{/each}
-			</ol>
-			{#if lineageTruncated}
-				<p class="mt-3 text-center text-[11px] text-[var(--ui-text-dimmed)]">
-					Chain longer than 32 — oldest steps hidden.
-				</p>
-			{/if}
-		{/if}
-	</Dialog>
+	     tags — cycle-safe, depth-capped, graceful on pruned relay history.
+	     Self-contained component: primary-first relay walk with a parallel
+	     fallback, identity badges, per-row zap/share, and paged rows. -->
+	<RemixChainDialog bind:open={lineageOpen} reel={lineageReel} />
 
 	{#if zapReel}
 		{@const zapProfile = profiles.get(zapReel.pubkey)}
@@ -3088,17 +2498,6 @@
 			lightningAddress={zapProfile?.lud16 || zapProfile?.lud06 || ''}
 			eventId={zapReel.id}
 			onPaid={handleZapPaid}
-		/>
-	{/if}
-
-	{#if zapCommentTarget}
-		<NoteZapDialog
-			bind:open={zapCommentOpen}
-			recipientPubkey={zapCommentTarget.pubkey}
-			lightningAddress={zapCommentAddress}
-			eventId={zapCommentTarget.id}
-			onPaid={handleCommentZapPaid}
-			onClose={() => (zapCommentTarget = null)}
 		/>
 	{/if}
 

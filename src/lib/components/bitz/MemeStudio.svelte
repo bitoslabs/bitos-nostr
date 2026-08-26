@@ -30,7 +30,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
-	import { queryOnce } from '$lib/nostr/pool';
+	import { lookupEventTags } from '$lib/nostr/pool';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { media } from '$lib/stores/media.svelte';
@@ -185,6 +185,7 @@
 	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
 	import MemeStudioFooter from '$lib/components/bitz/MemeStudioFooter.svelte';
 	import MemeDiscardDialog from '$lib/components/bitz/MemeDiscardDialog.svelte';
+	import MemeLayerCropDialog from '$lib/components/bitz/MemeLayerCropDialog.svelte';
 	import MemeTimelineDock from '$lib/components/bitz/MemeTimelineDock.svelte';
 	import MemeStudioInputs from '$lib/components/bitz/MemeStudioInputs.svelte';
 	import MemePublishOptions from '$lib/components/bitz/MemePublishOptions.svelte';
@@ -2005,6 +2006,22 @@
 		imageLayers = list;
 	}
 
+	/** Arrange (user ask 2026-08-26 "move up to front, send to back"): z-order
+	 *  extremes and single steps. front = last slot (paints on top of every
+	 *  other layer), back = first slot. No-op safe at either end. */
+	function arrangeLayer(id: string, to: 'front' | 'back' | 'up' | 'down') {
+		if (to === 'up') return moveLayerRow(id, 1);
+		if (to === 'down') return moveLayerRow(id, -1);
+		const idx = imageLayers.findIndex((l) => l.id === id);
+		if (idx < 0) return;
+		const list = [...imageLayers];
+		const [row] = list.splice(idx, 1);
+		if (!row) return;
+		if (to === 'front') list.push(row);
+		else list.unshift(row);
+		imageLayers = list;
+	}
+
 	/** One-shot playhead stamp for the NEXT layer added via the file picker
 	 *  (the picker flow can't take arguments — set → click → consumed here). */
 	let pendingLayerAtMs: number | null = null;
@@ -2106,6 +2123,39 @@
 	 *  picker flow can't take arguments — set → click → consumed here). */
 	let replaceLayerForId: string | null = null;
 	let replaceLayerInput = $state<HTMLInputElement | null>(null);
+
+	/** Crop editor (user ask 2026-08-26): the layer whose source image is
+	 *  being cropped — null = dialog closed. Applying rewrites `aspect` to
+	 *  the CROPPED box so the stage + export agree, keeping x/y/size (the
+	 *  center + height stay; the visual anchor is preserved). */
+	let croppingLayerId = $state<string | null>(null);
+	const croppingLayer = $derived(imageLayers.find((l) => l.id === croppingLayerId) ?? null);
+
+	function openLayerCrop(id: string) {
+		if (busy) return;
+		croppingLayerId = id;
+	}
+
+	function applyLayerCrop(
+		id: string,
+		crop: { x: number; y: number; w: number; h: number } | undefined
+	) {
+		const layer = imageLayers.find((l) => l.id === id);
+		if (!layer) return;
+		// aspect describes the CROPPED box: (crop.w·W)/(crop.h·H) where W×H
+		// is the natural size. Without a decoded bitmap the natural size is
+		// unknown — keep aspect as-is (normalize guards the rest; the bitmap
+		// decodes long before export and a re-crop then snaps it exactly).
+		const bitmap = layerAssets.bitmaps.get(layer.src);
+		if (crop && bitmap?.naturalWidth && bitmap?.naturalHeight) {
+			const cropped = (crop.w * bitmap.naturalWidth) / (crop.h * bitmap.naturalHeight);
+			patchLayer(id, { crop, aspect: Math.min(20, Math.max(0.05, cropped)) });
+		} else {
+			patchLayer(id, { crop });
+		}
+		croppingLayerId = null;
+		toasts.success(crop ? 'Layer cropped' : 'Crop cleared');
+	}
 
 	function onReplaceLayerInput(e: Event) {
 		const input = e.currentTarget as HTMLInputElement;
@@ -2302,10 +2352,14 @@
 			const layer = box ? imageLayers.find((l) => l.id === layerDrag!.id) : undefined;
 			if (box && layer) {
 				if (layerDrag.mode === 'resize') {
-					const y = clamp01((event.clientY - box.top) / box.height);
-					// Pointer-to-center distance, doubled = new height (the bottom
-					// edge follows the pointer; at rest this reproduces `size`).
-					const next = (y - layer.y) * 2;
+					// Pointer-to-center distance on the dominant axis, doubled =
+					// the new edge (the followed corner reproduces `size` at rest;
+					// aspect-ratio CSS keeps the box proportional — no stretching).
+					const dxNorm = (event.clientX - box.left) / box.width - layer.x;
+					const dyNorm = (event.clientY - box.top) / box.height - layer.y;
+					const boxAspect = (layer.aspect || 1) * (box.height / box.width);
+					const next =
+						(Math.abs(dyNorm) > Math.abs(dxNorm) / boxAspect ? dyNorm : dxNorm / boxAspect) * 2;
 					patchLayer(layer.id, { size: Math.min(0.9, Math.max(0.05, next)) });
 				} else {
 					patchLayer(layer.id, {
@@ -3892,14 +3946,7 @@
 						['remix', remixSource.eventId, ...(remixSource.relays ?? [])],
 						['p', remixSource.pubkey]
 					],
-					async (eventId) => {
-						try {
-							const [event] = await queryOnce([{ ids: [eventId], limit: 1 }]);
-							return event ? event.tags : null;
-						} catch {
-							return null; // pruned history = natural chain end
-						}
-					}
+					(eventId, hintUrls) => lookupEventTags(eventId, hintUrls ?? [])
 				);
 				if (!result.ok && result.reason === 'cycle') {
 					throw new Error('This remix chain loops — clear the remix source before publishing');
@@ -4063,6 +4110,15 @@
 	 *  dialog/menu owns the screen, or mid-export. */
 	function handleStudioShortcut(event: KeyboardEvent): void {
 		if (!open || soundDialogOpen || popovers.active) return;
+		// The crop editor owns the screen while open — Escape closes it and
+		// every other key stays inert (no nudging the layer mid-crop).
+		if (croppingLayerId) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				croppingLayerId = null;
+			}
+			return;
+		}
 		if (isTypingTarget(event.target)) return;
 		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
 			event.preventDefault();
@@ -4081,6 +4137,43 @@
 			return;
 		}
 		if (busy) return;
+		// Selected image layer: arrows nudge (Shift = 10×), ⌥/Alt+↑/↓ arranges
+		// z-order, Delete/Backspace removes (mirrors the drawing shortcuts).
+		if (selectedLayerId) {
+			if (
+				event.key === 'ArrowLeft' ||
+				event.key === 'ArrowRight' ||
+				event.key === 'ArrowUp' ||
+				event.key === 'ArrowDown'
+			) {
+				if (event.altKey) {
+					event.preventDefault();
+					if (event.key === 'ArrowUp' || event.key === 'ArrowRight')
+						arrangeLayer(selectedLayerId, 'up');
+					else arrangeLayer(selectedLayerId, 'down');
+					return;
+				}
+				event.preventDefault();
+				const step = event.shiftKey ? 0.05 : 0.005;
+				const layer = imageLayers.find((l) => l.id === selectedLayerId);
+				if (layer) {
+					patchLayer(layer.id, {
+						x: clamp01(
+							layer.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0)
+						),
+						y: clamp01(
+							layer.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0)
+						)
+					});
+				}
+				return;
+			}
+			if (event.key === 'Delete' || event.key === 'Backspace') {
+				event.preventDefault();
+				removeLayer(selectedLayerId);
+				return;
+			}
+		}
 		if ((event.key === 'Delete' || event.key === 'Backspace') && selectedDrawingGroup) {
 			event.preventDefault();
 			removeDrawingGroup(selectedDrawingGroup.id);
@@ -4628,17 +4721,42 @@
 													aria-label={`Image layer ${li + 1}`}
 												>
 													{#if layerAssets.bitmaps.has(layer.src)}
-														<img
-															src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
-															alt=""
-															crossOrigin="anonymous"
-															class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
-																layer.src
-															)?.complete
-																? ''
-																: 'opacity-60'}"
-															draggable="false"
-														/>
+														<!-- Crop preview (user ask 2026-08-26): with a crop, the box
+												     shows ONLY the cropped region — the full bitmap sits inside
+												     at scaled negative insets, mirroring the exact source-rect
+												     the export draws (paintImageOverlays). -->
+														{#if layer.crop}
+															<div class="pointer-events-none relative size-full overflow-hidden">
+																<img
+																	src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
+																	alt=""
+																	crossOrigin="anonymous"
+																	class="absolute select-none {layerAssets.bitmaps.get(layer.src)
+																		?.complete
+																		? ''
+																		: 'opacity-60'}"
+																	style="left:{(-layer.crop.x / layer.crop.w) * 100}%; top:{(-layer
+																		.crop.y /
+																		layer.crop.h) *
+																		100}%; width:{(1 / layer.crop.w) * 100}%; height:{(1 /
+																		layer.crop.h) *
+																		100}%;"
+																	draggable="false"
+																/>
+															</div>
+														{:else}
+															<img
+																src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
+																alt=""
+																crossOrigin="anonymous"
+																class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
+																	layer.src
+																)?.complete
+																	? ''
+																	: 'opacity-60'}"
+																draggable="false"
+															/>
+														{/if}
 													{:else}
 														<span
 															class="grid size-full place-items-center rounded-lg border border-dashed border-white/40 bg-black/30 text-[10px] font-bold text-white/80"
@@ -5517,6 +5635,8 @@
 							{layerBusy}
 							onAddLayerImage={() => layerInput?.click()}
 							onMoveLayer={moveLayerRow}
+							onOpenCropLayer={openLayerCrop}
+							onArrangeLayer={arrangeLayer}
 							onReplaceLayer={(id) => {
 								replaceLayerForId = id;
 								replaceLayerInput?.click();
@@ -5710,6 +5830,16 @@
 				onSave={() => {
 					void saveCurrentSlot().then(startFresh);
 				}}
+			/>
+		{/if}
+
+		<!-- Layer source-image crop editor (user ask 2026-08-26). -->
+		{#if croppingLayer}
+			<MemeLayerCropDialog
+				layer={croppingLayer}
+				renderSrc={layerAssets.renderSrcs.get(croppingLayer.src) ?? null}
+				onApply={(crop) => applyLayerCrop(croppingLayer!.id, crop)}
+				onCancel={() => (croppingLayerId = null)}
 			/>
 		{/if}
 	</div>

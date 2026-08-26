@@ -411,11 +411,13 @@ export function paintGifFrameAt(
  * Frame source for an ANIMATED image layer: given the layer's natural size
  * (w/h of its landed box on the export canvas), paint the layer's GIF frame
  * active at `timeSec` into that box. Static paints use a shared 1×1 offscreen
- * so layers never fight over one canvas.
+ * so layers never fight over one canvas. An optional normalized source crop
+ * composes with the GIF's own frame placement (crop first, then cover-fit
+ * the cropped region into the box).
  */
 export function gifLayerPainter(
 	gif: DecodedGif,
-	box: { w: number; h: number }
+	box: { w: number; h: number; crop?: { x: number; y: number; w: number; h: number } }
 ): {
 	paint: (ctx: CanvasRenderingContext2D, x: number, y: number, timeSec: number) => void;
 	close: () => void;
@@ -424,9 +426,16 @@ export function gifLayerPainter(
 	scratch.width = Math.max(2, Math.round(box.w) & ~1);
 	scratch.height = Math.max(2, Math.round(box.h) & ~1);
 	const sctx = scratch.getContext('2d');
+	const crop = box.crop;
+	// Crop path: whole-frame composite at the GIF's natural size, cached for
+	// the painter's lifetime (one canvas per src, reused every frame).
+	const full = document.createElement('canvas');
+	full.width = Math.max(2, gif.width);
+	full.height = Math.max(2, gif.height);
+	const fctx = full.getContext('2d');
 	return {
 		paint: (ctx, x, y, timeSec) => {
-			if (!sctx) return;
+			if (!sctx || !fctx) return;
 			// Layers LOOP for as long as the export runs — the paint clock is
 			// media time (tens of seconds), while the clip itself is ~1-3s.
 			// paintGifFrameAt clamps past-the-end times to the final frame,
@@ -434,12 +443,29 @@ export function gifLayerPainter(
 			// stopped moving in my video" bug) — wrap instead.
 			const loopsIn = gif.duration > 0 ? timeSec % gif.duration : 0;
 			sctx.clearRect(0, 0, scratch.width, scratch.height);
-			paintGifFrameAt(sctx, gif, loopsIn, scratch);
+			if (!crop) {
+				paintGifFrameAt(sctx, gif, loopsIn, scratch);
+				ctx.drawImage(scratch, x, y);
+				return;
+			}
+			// Composite the full frame at natural size (cover-fit into the
+			// natural box is the identity), then extract the crop sub-rect
+			// into the destination-sized scratch — WYSIWYG with the bitmap
+			// path's drawImage source-rect crop.
+			fctx.clearRect(0, 0, full.width, full.height);
+			paintGifFrameAt(fctx, gif, loopsIn, full);
+			const sw = Math.max(1, Math.round(gif.width * crop.w));
+			const sh = Math.max(1, Math.round(gif.height * crop.h));
+			const sx = Math.min(full.width - sw, Math.max(0, Math.round(gif.width * crop.x)));
+			const sy = Math.min(full.height - sh, Math.max(0, Math.round(gif.height * crop.y)));
+			sctx.drawImage(full, sx, sy, sw, sh, 0, 0, scratch.width, scratch.height);
 			ctx.drawImage(scratch, x, y);
 		},
 		close: () => {
 			scratch.width = 0;
 			scratch.height = 0;
+			full.width = 0;
+			full.height = 0;
 		}
 	};
 }

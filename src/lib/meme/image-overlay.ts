@@ -54,6 +54,13 @@ export interface MemeImageOverlay {
 	lookId?: string;
 	/** Ambient motion preset (layer-motion.ts). Missing/none = static. */
 	motionId?: string;
+	/**
+	 * Source crop window, normalized to the NATURAL image (x/y/w/h in 0–1).
+	 * Missing = show the whole image. When set, `aspect` describes the
+	 * CROPPED box ((crop.w·W) / (crop.h·H)), not the natural image — the
+	 * stage box and the export both display exactly the cropped region.
+	 */
+	crop?: { x: number; y: number; w: number; h: number };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -78,6 +85,23 @@ export function layerSrcOk(raw: string): boolean {
 	return isHttpUrl(raw) || isBuddySrc(raw) || isBitzverseSrc(raw);
 }
 
+/** Minimum crop edge as a fraction of the source — keeps crops pickable. */
+export const MIN_CROP = 0.1;
+
+/** Tolerant crop parse: clamps into the unit box, min 10% per edge.
+ *  Anything unusable → undefined (whole image). Exported for the crop UI. */
+export function normalizeCrop(
+	raw: unknown
+): { x: number; y: number; w: number; h: number } | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const o = raw as Record<string, unknown>;
+	const w = clamp(num(o.w, 1), MIN_CROP, 1);
+	const h = clamp(num(o.h, 1), MIN_CROP, 1);
+	const x = Math.min(clamp(num(o.x, 0), 0, 1), 1 - w);
+	const y = Math.min(clamp(num(o.y, 0), 0, 1), 1 - h);
+	return { x, y, w, h };
+}
+
 /** Tolerant parser: coerces, clamps and drops unknown fields. */
 export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	if (!raw || typeof raw !== 'object') return null;
@@ -87,6 +111,7 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 	const aspect = clamp(num(o.aspect, 1), 0.05, 20);
 	const lookId = memeLookOf(o.lookId);
 	const motionId = layerMotionOf(o.motionId);
+	const crop = normalizeCrop(o.crop);
 	const overlay: MemeImageOverlay = {
 		id: typeof o.id === 'string' && o.id.trim() ? o.id.slice(0, 64) : newId(),
 		src: src.slice(0, 512),
@@ -104,7 +129,8 @@ export function normalizeImageOverlay(raw: unknown): MemeImageOverlay | null {
 		flipH: o.flipH === true ? true : undefined,
 		flipV: o.flipV === true ? true : undefined,
 		...(lookId !== 'none' ? { lookId } : {}),
-		...(motionId !== 'none' ? { motionId } : {})
+		...(motionId !== 'none' ? { motionId } : {}),
+		...(crop ? { crop } : {})
 	};
 	if (
 		overlay.startMs !== undefined &&
@@ -165,6 +191,7 @@ export interface WireImageOverlay {
 	fv?: 1; // vertical flip (only when true)
 	k?: string; // per-layer look id (only when set)
 	m?: string; // ambient motion preset id (only when set)
+	c?: [number, number, number, number]; // source crop [x, y, w, h] (only when set)
 }
 
 export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay {
@@ -184,6 +211,13 @@ export function encodeImageOverlay(overlay: MemeImageOverlay): WireImageOverlay 
 	if (overlay.flipV) w.fv = 1;
 	if (overlay.lookId && overlay.lookId !== 'none') w.k = overlay.lookId;
 	if (overlay.motionId && overlay.motionId !== 'none') w.m = overlay.motionId;
+	if (overlay.crop)
+		w.c = [
+			round2(overlay.crop.x),
+			round2(overlay.crop.y),
+			round2(overlay.crop.w),
+			round2(overlay.crop.h)
+		];
 	return w;
 }
 
@@ -203,7 +237,8 @@ export function decodeImageOverlay(w: unknown): MemeImageOverlay | null {
 		flipH: raw.fh === 1,
 		flipV: raw.fv === 1,
 		lookId: raw.k,
-		motionId: raw.m
+		motionId: raw.m,
+		crop: raw.c ? { x: raw.c[0], y: raw.c[1], w: raw.c[2], h: raw.c[3] } : undefined
 	});
 }
 

@@ -108,6 +108,8 @@
 		onPatchLayer,
 		onRemoveLayer,
 		onDuplicateLayer,
+		onOpenCropLayer,
+		onArrangeLayer,
 		onPublish,
 		exportFormat,
 		videoExportSupported,
@@ -202,6 +204,8 @@
 		onPatchLayer: (id: string, patch: Partial<MemeImageOverlay>) => void;
 		onRemoveLayer: (id: string) => void;
 		onDuplicateLayer: (id: string) => void;
+		onOpenCropLayer: (id: string) => void;
+		onArrangeLayer: (id: string, to: 'front' | 'back' | 'up' | 'down') => void;
 		onPublish: () => void;
 		exportFormat: import('./meme-studio-config').MemeExportFormat;
 		videoExportSupported: boolean;
@@ -229,6 +233,8 @@
 		onRemove={onRemoveLayer}
 		onReplace={onReplaceLayer}
 		onDuplicate={onDuplicateLayer}
+		onOpenCrop={onOpenCropLayer}
+		onArrange={onArrangeLayer}
 	/>
 	{#if !videoMemeSupported}
 		<p
@@ -329,7 +335,7 @@
 			{suggestions}
 			{smartMatches}
 			onOpenStudio={onOpenSoundStudio}
-			onOpenShareSound={onOpenShareSound}
+			{onOpenShareSound}
 			{onPreviewSynth}
 			{onAddSynth}
 			{onAddCustom}

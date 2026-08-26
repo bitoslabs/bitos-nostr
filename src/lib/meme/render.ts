@@ -25,6 +25,14 @@ export type AnimatedLayerPainter = (
 	timeSec: number
 ) => void;
 
+/** Box an animated painter targets: the landed destination size on the
+ *  export canvas, plus the layer's optional normalized source crop. */
+export type AnimatedLayerBox = {
+	w: number;
+	h: number;
+	crop?: { x: number; y: number; w: number; h: number };
+};
+
 const FONT_STACKS: Record<MemeFont, string> = {
 	impact: '"Impact", "Haettenschweiler", "Arial Black", "sans-serif"',
 	sans: 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
@@ -45,7 +53,7 @@ export interface RenderOptions {
 	 * first frame that `drawImage(img)` would freeze on. Same resolver
 	 * signature as paintImageOverlays' `animFor`.
 	 */
-	animPainters?: (src: string, box: { w: number; h: number }) => AnimatedLayerPainter | null;
+	animPainters?: (src: string, box: AnimatedLayerBox) => AnimatedLayerPainter | null;
 	/** Canvas long-edge cap (px). Defaults to 1080; 0 = keep source size. */
 	maxEdge?: number;
 	/**
@@ -281,7 +289,7 @@ export function paintImageOverlays(
 	bitmapFor: (src: string) => CanvasImageSource | null,
 	canvas: { width: number; height: number },
 	atMs?: number,
-	animFor?: (src: string, box: { w: number; h: number }) => AnimatedLayerPainter | null
+	animFor?: (src: string, box: AnimatedLayerBox) => AnimatedLayerPainter | null
 ): void {
 	for (const layer of layers) {
 		if (atMs !== undefined && !imageOverlayVisibleAt(layer, atMs)) continue;
@@ -289,7 +297,6 @@ export function paintImageOverlays(
 		const w = h * (layer.aspect || 1);
 		const x = layer.x * canvas.width - w / 2;
 		const y = layer.y * canvas.height - h / 2;
-		// Per-layer effects: opacity, rotation, mirror flips, color look.
 		// Mirrors the studio's CSS exactly — WYSIWYG by construction.
 		const rad = ((layer.rotate ?? 0) * Math.PI) / 180;
 		const flipX = layer.flipH ? -1 : 1;
@@ -321,7 +328,7 @@ export function paintImageOverlays(
 		}
 		let painted = false;
 		if (atMs !== undefined && animFor) {
-			const painter = animFor(layer.src, { w, h });
+			const painter = animFor(layer.src, { w, h, crop: layer.crop });
 			if (painter) {
 				painter(ctx, x, y, atMs / 1000);
 				painted = true;
@@ -329,10 +336,39 @@ export function paintImageOverlays(
 		}
 		if (!painted) {
 			const bitmap = bitmapFor(layer.src);
-			if (bitmap) ctx.drawImage(bitmap, x, y, w, h);
+			if (bitmap) {
+				const src = cropSourceRect(bitmap, layer.crop);
+				if (src) ctx.drawImage(bitmap, src.sx, src.sy, src.sw, src.sh, x, y, w, h);
+				else ctx.drawImage(bitmap, x, y, w, h);
+			}
 		}
 		if (transformed || alpha < 1 || look) ctx.restore();
 	}
+}
+
+/** Source-pixel window for a normalized crop on a bitmap (null = whole). */
+function cropSourceRect(
+	bitmap: CanvasImageSource,
+	crop?: { x: number; y: number; w: number; h: number }
+): { sx: number; sy: number; sw: number; sh: number } | null {
+	if (!crop) return null;
+	// Union-loose read: bitmaps are HTMLImageElement (naturalWidth) or
+	// canvas/bitmap types (width); VideoFrame reports displayWidth instead,
+	// which layer srcs never produce — fall through to "no crop" there.
+	const b = bitmap as {
+		naturalWidth?: number;
+		naturalHeight?: number;
+		width?: number;
+		height?: number;
+	};
+	const bw = b.naturalWidth ?? b.width ?? 0;
+	const bh = b.naturalHeight ?? b.height ?? 0;
+	if (!bw || !bh) return null;
+	const sx = crop.x * bw;
+	const sy = crop.y * bh;
+	const sw = Math.max(2, crop.w * bw);
+	const sh = Math.max(2, crop.h * bh);
+	return { sx, sy, sw, sh };
 }
 
 function mediaSize(el: HTMLImageElement | HTMLVideoElement): { width: number; height: number } {

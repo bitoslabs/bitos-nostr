@@ -12,6 +12,8 @@ vi.mock('./pool', () => ({
 	queryPrimaryFirst: vi.fn(async () => []),
 	queryUrls: vi.fn(async () => []),
 	queryOnce: vi.fn(async () => []),
+	lookupEventById: vi.fn(async () => null),
+	lookupEventTags: vi.fn(async () => null),
 	publishUrls: vi.fn(async () => []),
 	subscribeUrls: vi.fn(() => () => {})
 }));
@@ -251,20 +253,11 @@ describe('remix publish cycle guard (CRE-006)', () => {
 
 	it('publishes a healthy remix chain (no false blocking)', async () => {
 		const { identity } = await import('./identity.svelte');
-		const { publish, queryOnce } = await import('./pool');
+		const { publish, lookupEventTags } = await import('./pool');
 		identity.importSecret('ab'.repeat(32));
-		// Grandparent <- parent <- this remix: loader walks one hop and stops.
-		vi.mocked(queryOnce).mockResolvedValueOnce([
-			{
-				id: '77'.repeat(32),
-				pubkey: '88'.repeat(32),
-				kind: 20,
-				content: '',
-				created_at: 1,
-				tags: [] as string[][],
-				sig: ''
-			}
-		]);
+		// Grandparent <- parent <- this remix: loader walks one hop and stops
+		// (the parent's event has no `remix` tag, so the walk ends there).
+		vi.mocked(lookupEventTags).mockResolvedValueOnce([['p', '88'.repeat(32)]]);
 
 		const id = await feed.postBitz(media, {
 			caption: 'remix!',
@@ -280,23 +273,15 @@ describe('remix publish cycle guard (CRE-006)', () => {
 
 	it('blocks a self-referencing remix before anything is staged or published', async () => {
 		const { identity } = await import('./identity.svelte');
-		const { publish, queryOnce } = await import('./pool');
+		const { publish, lookupEventTags } = await import('./pool');
 		identity.importSecret('ab'.repeat(32));
 
-		// Malicious relay: every ancestor query returns an event whose remix
-		// pointer points at itself (self-referential fork). The walk sees the
-		// same id twice -> refuse. Deterministic without predicting the signed id.
+		// Malicious relay: every ancestor query returns tags whose remix
+		// pointer points at themselves (self-referential fork). The walk sees
+		// the same id twice -> refuse. Deterministic without the signed id.
 		const sourceId = '99'.repeat(32);
-		vi.mocked(queryOnce).mockImplementation(async () => [
-			{
-				id: sourceId,
-				pubkey: '88'.repeat(32),
-				kind: 20,
-				content: '',
-				created_at: 1,
-				tags: [['remix', sourceId, 'wss://relay.damus.io']],
-				sig: ''
-			}
+		vi.mocked(lookupEventTags).mockImplementation(async () => [
+			['remix', sourceId, 'wss://relay.damus.io']
 		]);
 
 		await expect(

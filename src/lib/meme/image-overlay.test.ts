@@ -6,8 +6,10 @@ import {
 	imageOverlayVisibleAt,
 	isHttpUrl,
 	makeImageOverlay,
+	normalizeCrop,
 	normalizeImageOverlay,
-	MAX_IMAGE_OVERLAYS
+	MAX_IMAGE_OVERLAYS,
+	MIN_CROP
 } from './image-overlay';
 
 describe('image-overlay', () => {
@@ -165,5 +167,49 @@ describe('image-overlay', () => {
 	it('caps layers at the collage limit', () => {
 		expect(MAX_IMAGE_OVERLAYS).toBeLessThanOrEqual(6);
 		expect(MAX_IMAGE_OVERLAYS).toBeGreaterThan(0);
+	});
+
+	it('normalizeCrop clamps into the unit box and floors tiny edges', () => {
+		// Junk → undefined (whole image).
+		expect(normalizeCrop(undefined)).toBeUndefined();
+		expect(normalizeCrop('nope')).toBeUndefined();
+		// Missing fields default to the whole image.
+		expect(normalizeCrop({})).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+		// Edges floor at MIN_CROP so crops stay pickable.
+		const tiny = normalizeCrop({ x: 0.5, y: 0.5, w: 0.001, h: 0.001 })!;
+		expect(tiny.w).toBeCloseTo(MIN_CROP);
+		expect(tiny.h).toBeCloseTo(MIN_CROP);
+		// Over-sized edges clamp, and origin pulls back inside the box.
+		const over = normalizeCrop({ x: 0.8, y: 0.8, w: 2, h: 2 })!;
+		expect(over).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+		const shifted = normalizeCrop({ x: 0.9, y: 0.9, w: 0.5, h: 0.2 })!;
+		expect(shifted.x).toBeCloseTo(0.5);
+		expect(shifted.y).toBeCloseTo(0.8);
+		expect(shifted.x + shifted.w).toBeLessThanOrEqual(1 + 1e-9);
+		expect(shifted.y + shifted.h).toBeLessThanOrEqual(1 + 1e-9);
+	});
+
+	it('crop round-trips the wire and stays silent when absent', () => {
+		const cropped = normalizeImageOverlay({
+			src: 'https://cdn.example.com/s.png',
+			crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 }
+		})!;
+		expect(cropped.crop).toEqual({ x: 0.1, y: 0.2, w: 0.5, h: 0.4 });
+		const wire = encodeImageOverlay(cropped);
+		expect(wire.c).toEqual([0.1, 0.2, 0.5, 0.4]);
+		const back = decodeImageOverlay(wire)!;
+		expect(back.crop).toEqual({ x: 0.1, y: 0.2, w: 0.5, h: 0.4 });
+
+		// Untouched layers carry no crop on the wire.
+		const plain = normalizeImageOverlay({ src: 'https://cdn.example.com/p.png' })!;
+		expect(encodeImageOverlay(plain).c).toBeUndefined();
+		expect(plain.crop).toBeUndefined();
+
+		// Partial crops default sensibly, never throw.
+		const partial = normalizeImageOverlay({
+			src: 'https://cdn.example.com/j.png',
+			crop: { x: -5, w: 99 }
+		})!;
+		expect(partial.crop).toEqual({ x: 0, y: 0, w: 1, h: 1 });
 	});
 });

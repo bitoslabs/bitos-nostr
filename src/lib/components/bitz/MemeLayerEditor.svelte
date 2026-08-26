@@ -17,8 +17,11 @@
 		index,
 		renderSrc,
 		busy = false,
+		canArrange = true,
 		onPatch,
-		onDuplicate
+		onDuplicate,
+		onOpenCrop,
+		onArrange
 	}: {
 		layer: MemeImageOverlay;
 		/** 1-based display number of this layer. */
@@ -26,8 +29,14 @@
 		/** Same-origin blob URL when bytes are held (CORS-free preview). */
 		renderSrc: string | null;
 		busy?: boolean;
+		/** z-order buttons are hidden on single-layer stages. */
+		canArrange?: boolean;
 		onPatch: (id: string, patch: Partial<MemeImageOverlay>) => void;
 		onDuplicate: (id: string) => void;
+		/** Open the source-crop editor for this layer. */
+		onOpenCrop: (id: string) => void;
+		/** z-order: front/back/to-front/to-back — later slots paint on top. */
+		onArrange: (id: string, to: 'front' | 'back' | 'up' | 'down') => void;
 	} = $props();
 
 	const sizePct = $derived(Math.round(layer.size * 100));
@@ -57,6 +66,18 @@
 			Layer {index}
 		</p>
 		<div class="flex items-center gap-1">
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onOpenCrop(layer.id)}
+				aria-label={`Crop layer ${index} image`}
+				title={layer.crop ? 'Edit the image crop' : 'Crop this image'}
+				class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40 {layer.crop
+					? 'text-warm-600'
+					: ''}"
+			>
+				<Icon name="i-lucide-crop" class="size-3.5" />
+			</button>
 			<button
 				type="button"
 				disabled={busy}
@@ -96,6 +117,53 @@
 			     delete button per layer, not two. -->
 		</div>
 	</div>
+
+	<!-- z-order (user ask 2026-08-26 "move up to front, send to back"):
+	     later array slots paint on top (paintImageOverlays paints in array
+	     order) — front = last slot, back = first slot. -->
+	{#if canArrange}
+		<div class="mt-2 flex items-center gap-1">
+			<span class="mr-0.5 text-[10.5px] font-bold text-[var(--ui-text-muted)]">Order</span>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onArrange(layer.id, 'front')}
+				title="Bring to front — paints above every other layer"
+				class="flex h-6 items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+			>
+				<Icon name="i-lucide-arrow-up-to-line" class="size-3" />
+				Front
+			</button>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onArrange(layer.id, 'up')}
+				title="Bring forward one layer"
+				class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
+			>
+				<Icon name="i-lucide-chevron-up" class="size-3.5" />
+			</button>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onArrange(layer.id, 'down')}
+				title="Send backward one layer"
+				class="grid size-6 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)] disabled:opacity-40"
+			>
+				<Icon name="i-lucide-chevron-down" class="size-3.5" />
+			</button>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => onArrange(layer.id, 'back')}
+				title="Send to back — paints behind every other layer"
+				class="flex h-6 items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2 text-[10px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/15 hover:text-warm-600 disabled:opacity-40"
+			>
+				<Icon name="i-lucide-arrow-down-to-line" class="size-3" />
+				Back
+			</button>
+		</div>
+	{/if}
 
 	<div class="mt-1.5 flex items-center gap-2.5">
 		<span class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-black/40">

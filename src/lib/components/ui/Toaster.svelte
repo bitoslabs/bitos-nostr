@@ -12,13 +12,13 @@
 </script>
 
 <div
-	class="pointer-events-none fixed inset-x-0 top-3 z-[100] flex flex-col items-center gap-2 px-3"
+	class="pointer-events-none fixed inset-x-0 top-3 z-[120] flex flex-col items-center gap-2 px-3"
 >
 	{#each toasts.items as t (t.id)}
 		<div
 			in:fly={{ y: -16, duration: 220 }}
 			out:fly={{ y: -16, duration: 160 }}
-			class="glass pointer-events-auto flex max-w-sm items-start gap-2.5 rounded-xl border border-[var(--glass-border)] px-3.5 py-2.5 shadow-lg shadow-black/10"
+			class="glass  pointer-events-auto flex max-w-sm items-start gap-2.5 rounded-xl border border-[var(--glass-border)] px-3.5 py-2.5 shadow-lg shadow-black/10"
 		>
 			<div class="grid size-6 shrink-0 place-items-center rounded-md {tone[t.tone].cls}">
 				<Icon name={tone[t.tone].icon} class="size-4" />

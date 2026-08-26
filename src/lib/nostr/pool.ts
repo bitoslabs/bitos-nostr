@@ -304,6 +304,75 @@ export async function queryParallelProgressive(
 	return primaryEvents;
 }
 
+/**
+ * Smart single-event lookup by id — the cheapest read path for interactive
+ * chain walking (remix lineage, publish-time cycle guards). Order:
+ *
+ *   1. `hintUrls` first (e.g. the relays stamped in a `remix` tag by the
+ *      publisher — where the source is known to live), bounded by
+ *      `PRIMARY_MAX_WAIT_MS`;
+ *   2. the user's primary read relay with the same short budget;
+ *   3. every other read relay queried in parallel (unbounded wait — this is
+ *      the fallback of last resort, so let stragglers land).
+ *
+ * A miss everywhere returns null rather than throwing: a missing event is a
+ * chain's natural end (pruned history), not an error callers can act on.
+ */
+export const SMART_LOOKUP_PRIMARY_MAX_WAIT_MS = 2_000;
+const RELAY_URL_RE = /^wss?:\/\//i;
+
+export async function lookupEventById(
+	eventId: string,
+	hintUrls: string[] = []
+): Promise<Event | null> {
+	if (!browser) return null;
+	if (!relays.orderedReadUrls.length) return null;
+
+	const tried = new Set<string>();
+	const filter = [{ ids: [eventId], limit: 1 }];
+
+	// 1. Publisher-stamped relay hints (deduped, ws/wss only, unknown to the
+	//    user's list are queried via the explicit-URL path without touching
+	//    the user's relay settings).
+	const hints = hintUrls.filter(
+		(url) => RELAY_URL_RE.test(url) && !tried.has(url) && tried.add(url)
+	);
+	if (hints.length) {
+		const found = await queryUrls(hints, filter, {
+			maxWait: SMART_LOOKUP_PRIMARY_MAX_WAIT_MS
+		}).catch(() => []);
+		if (found[0]) return found[0];
+	}
+
+	// 2. The user's primary read relay, short budget.
+	const primaryUrls = relays.primaryUrls.length
+		? relays.primaryUrls
+		: relays.orderedReadUrls.slice(0, 1);
+	primaryUrls.forEach((url) => tried.add(url));
+	if (primaryUrls.length) {
+		const found = await queryUrls(primaryUrls, filter, {
+			maxWait: SMART_LOOKUP_PRIMARY_MAX_WAIT_MS
+		}).catch(() => []);
+		if (found[0]) return found[0];
+	}
+
+	// 3. Everything else, in parallel, no budget.
+	const rest = relays.orderedReadUrls.filter((url) => !tried.has(url));
+	if (!rest.length) return null;
+	const found = await queryUrls(rest, filter).catch(() => []);
+	return found[0] ?? null;
+}
+
+/** Smart tag lookup: `lookupEventById` with the event body stripped, for
+ *  loaders that only need ancestry (`remixChainOf` / `wouldCycle`). */
+export async function lookupEventTags(
+	eventId: string,
+	hintUrls: string[] = []
+): Promise<string[][] | null> {
+	const event = await lookupEventById(eventId, hintUrls);
+	return event ? event.tags : null;
+}
+
 /** Publish a signed event to all *write* relays. */
 export async function publish(event: Event): Promise<string[]> {
 	if (!browser) throw new Error('publish() is only available in the browser');

@@ -226,6 +226,35 @@ describe('remix chain (DAG projection)', () => {
 		);
 		expect(result).toEqual({ ok: false, reason: 'loader-error' });
 	});
+
+	it('forwards each hop’s publisher relay hints to the loader', async () => {
+		const seen: Array<string[]> = [];
+		const result = await remixChainOf(
+			tags({ eventId: id(0), pubkey: 'ab'.repeat(32) }),
+			async (eventId, hints) => {
+				seen.push(hints ?? []);
+				// Hint goes to hop 1; hop 1 is a dead end.
+				return eventId === id(0)
+					? [['remix', id(1), 'wss://relay.two'], ['p', 'ff'.repeat(32)]]
+					: null;
+			}
+		);
+		expect(result.ok).toBe(true);
+		// The walk relayed the caller's hint (relay.one) for the first hop and
+		// the ancestor's own stamped hint (relay.two) for the second.
+		expect(seen).toEqual([['wss://relay.one'], ['wss://relay.two']]);
+	});
+
+	it('still walks when the loader ignores the hints (arity-1 loaders)', async () => {
+		const load = async (eventId: string) => {
+			if (eventId === id(0)) return tags({ eventId: id(1), pubkey: 'ff'.repeat(32) });
+			return null;
+		};
+		const result = await remixChainOf(tags({ eventId: id(0), pubkey: 'ab'.repeat(32) }), load);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.chain).toHaveLength(2);
+	});
 });
 
 describe('wouldCycle (publish guard)', () => {

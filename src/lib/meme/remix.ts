@@ -418,13 +418,15 @@ export type RemixChainResult =
 	| { ok: false; reason: 'cycle' | 'loader-error' };
 
 /**
- * Walk the remix ancestry of an event. `load` receives an event id and returns
- * its tags (or null when unknown — treated as the chain's natural end, so a
- * pruned relay history degrades gracefully instead of erroring).
+ * Walk the remix ancestry of an event. `load` receives an event id and its
+ * publisher-stamped relay hints (`remix` tag trailing entries) and returns the
+ * parent's tags (or null when unknown — treated as the chain's natural end, so
+ * a pruned relay history degrades gracefully instead of erroring). Loaders may
+ * ignore the hints; every existing `(eventId) => …` loader stays compatible.
  */
 export async function remixChainOf(
 	tags: string[][],
-	load: (eventId: string) => Promise<string[][] | null>
+	load: (eventId: string, hintUrls?: string[]) => Promise<string[][] | null>
 ): Promise<RemixChainResult> {
 	const chain: RemixAncestor[] = [];
 	const seen = new Set<string>();
@@ -440,7 +442,7 @@ export async function remixChainOf(
 		chain.push({ eventId: current.eventId, pubkey: current.pubkey, depth: chain.length });
 		let parentTags: string[][] | null;
 		try {
-			parentTags = await load(current.eventId);
+			parentTags = await load(current.eventId, current.relays);
 		} catch {
 			return { ok: false, reason: 'loader-error' };
 		}
@@ -457,7 +459,7 @@ export async function remixChainOf(
 export async function wouldCycle(
 	newEventId: string,
 	source: RemixSource,
-	load: (eventId: string) => Promise<string[][] | null>
+	load: (eventId: string, hintUrls?: string[]) => Promise<string[][] | null>
 ): Promise<boolean> {
 	// An event referencing itself directly is malformed regardless of loader.
 	if (newEventId === source.eventId) return true;
@@ -470,7 +472,7 @@ export async function wouldCycle(
 		seen.add(current.eventId);
 		let parentTags: string[][] | null;
 		try {
-			parentTags = await load(current.eventId);
+			parentTags = await load(current.eventId, current.relays);
 		} catch {
 			return true; // unknown history — refuse rather than risk a loop
 		}

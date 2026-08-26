@@ -201,11 +201,20 @@ export class LayerAssetCache {
 	/**
 	 * Arrow property deliberately retains this cache when supplied to the
 	 * renderer as a callback (`animPainters: layerAssets.painterFor`).
+	 * The size key includes the crop box — a src used uncropped AND cropped
+	 * (two layers, or a re-crop mid-session) needs distinct painters, and a
+	 * crop change must invalidate the cached one.
 	 */
-	painterFor = (src: string, box: { w: number; h: number }): AnimatedLayerPainter | null => {
+	painterFor = (
+		src: string,
+		box: { w: number; h: number; crop?: { x: number; y: number; w: number; h: number } }
+	): AnimatedLayerPainter | null => {
 		const decoded = this.gifs.get(src);
 		if (!decoded) return null;
-		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}`;
+		const cropKey = box.crop
+			? `c${Math.round(box.crop.x * 1000)}-${Math.round(box.crop.y * 1000)}-${Math.round(box.crop.w * 1000)}-${Math.round(box.crop.h * 1000)}`
+			: '';
+		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}${cropKey}`;
 		const cached = this.painters.get(src);
 		let handle = cached && cached.key === sizeKey ? cached.handle : undefined;
 		if (!handle) {

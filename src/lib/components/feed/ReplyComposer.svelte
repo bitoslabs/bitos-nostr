@@ -1,41 +1,3 @@
-<script module lang="ts">
-	/** Quick emoji palette for the reply toolbar. */
-	export const REPLY_EMOJIS = [
-		'😀',
-		'😂',
-		'🤣',
-		'😊',
-		'😍',
-		'🥰',
-		'😘',
-		'😎',
-		'🤔',
-		'🥳',
-		'😴',
-		'🤯',
-		'🥺',
-		'😭',
-		'😢',
-		'😡',
-		'👍',
-		'👎',
-		'👏',
-		'🙌',
-		'🙏',
-		'💪',
-		'🫂',
-		'👀',
-		'❤️',
-		'🔥',
-		'✨',
-		'⚡',
-		'🎉',
-		'💯',
-		'💩',
-		'🐮'
-	];
-</script>
-
 <script lang="ts">
 	/**
 	 * Rich reply composer used under feed notes (and for nested comment replies).
@@ -68,6 +30,7 @@
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import { shortKey } from '$lib/utils/format';
+	import { REPLY_EMOJIS } from '$lib/utils/composer-emojis';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
 	import type { FeedNote } from '$lib/nostr/types';
 	import type { UploadedMedia } from '$lib/media/uploaders';
