@@ -34,12 +34,21 @@
 			onClose?.();
 		}
 	};
+
+	/**
+	 * Dialogs can be declared inside a scrolling or multi-column route. Move the
+	 * live overlay to `body` so `position: fixed` always uses the viewport rather
+	 * than that route's layout box (especially important on narrow screens).
+	 */
+	function portal(node: HTMLElement) {
+		document.body.append(node);
+	}
 </script>
 
 <svelte:window onkeydown={onKey} />
 
 {#if open}
-	<div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+	<div use:portal class="fixed inset-0 z-[100] flex items-center justify-center p-4">
 		<button
 			type="button"
 			aria-label="Close dialog"
@@ -48,7 +57,7 @@
 			onclick={dismiss}
 		></button>
 		<div
-			class="surface-card animate-rise relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden shadow-2xl shadow-black/30"
+			class="surface-card animate-rise relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden border-white/30 shadow-2xl ring-1 shadow-black/30 ring-white/15"
 			role="dialog"
 			aria-modal="true"
 		>

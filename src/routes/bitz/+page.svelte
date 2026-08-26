@@ -255,6 +255,8 @@
 	let renderedReelCount = $state(INITIAL_RENDERED_REELS);
 	let activeReelId = $state('');
 	let activeReelMuted = $state(loadReelMuted());
+	let reelAspectRatios = $state<Record<string, number>>({});
+	let reelCanvasSizes = $state<Record<string, { width: number; height: number }>>({});
 	let revealedSensitiveReels = $state<Record<string, boolean>>({});
 	let commentReel = $state<ReelNote | null>(null);
 	let commentPendingDelete = $state<FeedNote | null>(null);
@@ -273,6 +275,7 @@
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	let reelVisibility = new Map<string, number>();
 	let visibilityObserver: IntersectionObserver | null = null;
+	let reelSizeObserver: ResizeObserver | null = null;
 	let oldestReelEventCreatedAt = $state(0);
 	let zapReel = $state<ReelNote | null>(null);
 	let zapOpen = $state(false);
@@ -1005,9 +1008,45 @@
 		reelVideos.delete(reelId);
 	}
 
+	function setReelAspectRatio(reelId: string, width: number, height: number) {
+		const ratio = width / height;
+		if (!Number.isFinite(ratio) || ratio <= 0) return;
+		reelAspectRatios = { ...reelAspectRatios, [reelId]: ratio };
+		fitReelCanvas(reelId);
+	}
+
+	/** Fit every native media shape (16:9, square, 4:3, portrait, …) inside
+	 * the player area. Re-running on card resize also handles the comment pane. */
+	function fitReelCanvas(reelId: string) {
+		if (typeof window === 'undefined' || window.innerWidth < 640) return;
+		const card = reelCards.get(reelId);
+		if (!card) return;
+		const ratio = reelAspectRatios[reelId] ?? 9 / 16;
+		const rail = card.querySelector<HTMLElement>('[data-reel-action-rail]');
+		const railWidth = rail?.offsetWidth ?? 46;
+		const availableWidth = Math.max(1, card.clientWidth - railWidth - 48);
+		const availableHeight = Math.max(1, card.clientHeight - 32);
+		const height = Math.min(availableHeight, availableWidth / ratio);
+		const width = height * ratio;
+		const previous = reelCanvasSizes[reelId];
+		if (previous && Math.abs(previous.width - width) < 1 && Math.abs(previous.height - height) < 1)
+			return;
+		reelCanvasSizes = { ...reelCanvasSizes, [reelId]: { width, height } };
+	}
+
+	function fitAllReelCanvases() {
+		for (const reelId of reelCards.keys()) fitReelCanvas(reelId);
+	}
+
+	function reelCanvasStyle(reelId: string) {
+		const size = reelCanvasSizes[reelId];
+		return size ? `width:${size.width}px;height:${size.height}px` : '';
+	}
+
 	function registerReelCard(reelId: string, node: HTMLDivElement | null) {
 		const previous = reelCards.get(reelId);
 		if (previous && visibilityObserver) visibilityObserver.unobserve(previous);
+		if (previous && reelSizeObserver) reelSizeObserver.unobserve(previous);
 
 		if (!node) {
 			reelCards.delete(reelId);
@@ -1018,6 +1057,8 @@
 
 		reelCards.set(reelId, node);
 		if (visibilityObserver) visibilityObserver.observe(node);
+		if (reelSizeObserver) reelSizeObserver.observe(node);
+		requestAnimationFrame(() => fitReelCanvas(reelId));
 	}
 
 	function trackReelCard(node: HTMLDivElement, reelId: string) {
@@ -1350,6 +1391,8 @@
 	let lineageChain = $state<RemixAncestor[]>([]);
 	let lineageTruncated = $state(false);
 	let lineageFailed = $state(false);
+	/** Invalidates an in-flight lookup when the chain dialog is reopened. */
+	let lineageRequest = 0;
 
 	/** Load an ancestor's tags by event id (relays, best-effort). */
 	async function loadEventTags(eventId: string): Promise<string[][] | null> {
@@ -1366,6 +1409,7 @@
 	/** Open the lineage sheet for a remixed bitz (S-014 bounded walk). */
 	async function openLineage(reel: ReelNote) {
 		if (!remixOf(reel.tags)) return;
+		const request = ++lineageRequest;
 		lineageReel = reel;
 		lineageOpen = true;
 		lineageLoading = true;
@@ -1374,6 +1418,7 @@
 		lineageTruncated = false;
 		try {
 			const result = await remixChainOf(reel.tags, loadEventTags);
+			if (request !== lineageRequest) return;
 			if (result.ok) {
 				lineageChain = result.chain;
 				lineageTruncated = result.truncated;
@@ -1381,9 +1426,10 @@
 				lineageFailed = true;
 			}
 		} catch {
+			if (request !== lineageRequest) return;
 			lineageFailed = true;
 		} finally {
-			lineageLoading = false;
+			if (request === lineageRequest) lineageLoading = false;
 		}
 	}
 
@@ -1672,6 +1718,10 @@
 		handleDeepLinkHash();
 		if (authorPubkey) void profiles.ensure([authorPubkey]);
 		visibilityObserver = createVisibilityObserver();
+		if (typeof ResizeObserver !== 'undefined') {
+			reelSizeObserver = new ResizeObserver(() => fitAllReelCanvases());
+			for (const card of reelCards.values()) reelSizeObserver.observe(card);
+		}
 		for (const node of reelCards.values()) visibilityObserver?.observe(node);
 		// The former cache could retain 120 items. Drop it once after moving to
 		// the intentionally small v3 cache.
@@ -1741,6 +1791,8 @@
 			clearTimeout(deepLinkTimeout);
 			visibilityObserver?.disconnect();
 			visibilityObserver = null;
+			reelSizeObserver?.disconnect();
+			reelSizeObserver = null;
 			reelVideos.clear();
 			reelCards.clear();
 			reelVisibility.clear();
@@ -1750,9 +1802,13 @@
 
 <svelte:head><title>Bitz · BitOS</title></svelte:head>
 
-<svelte:window onkeydown={handleKeydown} onhashchange={handleDeepLinkHash} />
+<svelte:window
+	onkeydown={handleKeydown}
+	onhashchange={handleDeepLinkHash}
+	onresize={fitAllReelCanvases}
+/>
 
-<div class="relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
+<div class="bitz-page relative h-full bg-[var(--ui-bg)] text-[var(--ui-text)]">
 	{#if loading}
 		<div class="flex h-full items-center justify-center">
 			<div
@@ -1779,7 +1835,7 @@
 						<button
 							type="button"
 							onclick={() => openFromExplore(reel)}
-							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-[var(--ui-bg-muted)] text-left"
+							class="group relative aspect-[9/16] overflow-hidden rounded-lg bg-[var(--ui-bg-muted)] text-left ring-1 ring-[var(--ui-border-muted)] transition hover:shadow-[var(--shadow-card)] hover:ring-[var(--ui-border-accented)]"
 							aria-label="Open bitz by {name}"
 						>
 							{#if reel.mediaType === 'video'}
@@ -1905,7 +1961,7 @@
 									exploreReels.length,
 									exploreVisible + EXPLORE_PAGE_SIZE
 								))}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)]"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] shadow-[var(--shadow-card)] transition hover:bg-[var(--ui-bg-accented)] hover:shadow-[var(--shadow-card-hover)]"
 						>
 							<Icon name="i-lucide-plus" class="size-4" />
 							Load more bitz
@@ -1915,7 +1971,7 @@
 							type="button"
 							onclick={() => void loadMoreExploreReels()}
 							disabled={loadingMoreReels}
-							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60"
+							class="inline-flex h-10 items-center gap-2 rounded-full border border-[var(--ui-border-accented)] bg-[var(--ui-bg-muted)] px-5 text-[13px] font-bold text-[var(--ui-text)] shadow-[var(--shadow-card)] transition hover:bg-[var(--ui-bg-accented)] hover:shadow-[var(--shadow-card-hover)] disabled:cursor-default disabled:opacity-60"
 						>
 							<Icon
 								name="i-lucide-loader-circle"
@@ -1957,7 +2013,7 @@
 	{:else}
 		<div
 			bind:this={reelScroller}
-			class="reel-container h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto transition-[padding] duration-200 {commentReel
+			class="reel-container h-full snap-y snap-mandatory [scrollbar-width:none] overflow-y-auto bg-transparent transition-[padding] duration-200 {commentReel
 				? 'lg:pr-[390px]'
 				: ''} [&::-webkit-scrollbar]:hidden"
 			onscroll={handleReelScroll}
@@ -1974,87 +2030,422 @@
 					<div
 						use:trackReelCard={reel.id}
 						data-reel-id={reel.id}
-						class="reel-card relative flex h-full w-full snap-start items-center justify-center overflow-hidden bg-black text-white"
+						class="reel-card relative flex h-full w-full snap-start flex-col bg-transparent sm:flex-row sm:items-center sm:justify-center sm:gap-4 sm:p-4"
 					>
-						{#if reel.mediaType === 'video'}
-							{@const fullView = reelViewMode === 'full'}
-							<MediaPlayer
-								src={reelSource(reel)}
-								fallbackSrcs={reel.mediaFallbacks}
-								label="Relay video note"
-								mediaClass={fullView
-									? `absolute inset-0 size-full object-contain ${
-											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
-										}`
-									: `absolute inset-0 size-full object-cover ${
-											reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
-										}`}
-								variant="reel"
-								loop
-								muted={reel.id === activeReelId ? activeReelMuted : true}
-								onMediaElement={(node) => {
-									registerReelVideo(reel.id, node as HTMLVideoElement);
-									return () => registerReelVideo(reel.id, null);
-								}}
-								onMutedChange={(nextMuted) => {
-									if (reel.id === activeReelId) setReelMuted(nextMuted);
-								}}
-								onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
-							/>
-						{:else}
-							<img
-								src={reel.mediaUrl}
-								alt={reel.content || 'Relay picture note'}
-								class="absolute inset-0 size-full object-cover {reelCovered
-									? 'scale-105 blur-2xl saturate-50'
-									: ''}"
-							/>
-						{/if}
+						<!-- Media canvas: full-bleed on mobile, rounded card on desktop.
+						     Only media-native chrome overlays it (username/profile row,
+						     caption, chips) — TikTok placement. Action buttons live on the
+						     themed rail OUTSIDE the canvas so they never fight the video
+						     for contrast in light or dark theme. -->
 						<div
-							class="pointer-events-none absolute inset-0 z-40 overflow-hidden"
-							aria-hidden="true"
+							class="reel-media-canvas relative min-h-0 flex-1 overflow-hidden bg-black text-white sm:flex-none sm:rounded-2xl sm:ring-1 sm:ring-[var(--ui-border-muted)]"
+							style={reelCanvasStyle(reel.id)}
 						>
-							{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
-								<span
-									class="reel-burst"
-									style={`left:${burst.left}; top:${burst.top}; --tx:${burst.tx}px; --rot:${burst.rot}deg; font-size:${burst.size}px; animation-delay:${burst.delay}s`}
-									>{burst.emoji}</span
-								>
-							{/each}
-						</div>
-						{#if reelCovered}
-							<button
-								type="button"
-								class="absolute inset-0 z-30 grid place-items-center bg-black/20 p-4 text-center text-white"
-								onclick={() =>
-									(revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true })}
-								aria-label="Show sensitive reel"
+							{#if reel.mediaType === 'video'}
+								{@const fullView = reelViewMode === 'full'}
+								<MediaPlayer
+									src={reelSource(reel)}
+									fallbackSrcs={reel.mediaFallbacks}
+									label="Relay video note"
+									mediaClass={fullView
+										? `absolute inset-0 size-full object-contain ${
+												reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+											}`
+										: `absolute inset-0 size-full object-cover ${
+												reelCovered ? 'scale-105 blur-2xl saturate-50' : ''
+											}`}
+									variant="reel"
+									loop
+									muted={reel.id === activeReelId ? activeReelMuted : true}
+									onMediaElement={(node) => {
+										registerReelVideo(reel.id, node as HTMLVideoElement);
+										return () => registerReelVideo(reel.id, null);
+									}}
+									onMetadata={(node) =>
+										setReelAspectRatio(
+											reel.id,
+											(node as HTMLVideoElement).videoWidth,
+											(node as HTMLVideoElement).videoHeight
+										)}
+									onMutedChange={(nextMuted) => {
+										if (reel.id === activeReelId) setReelMuted(nextMuted);
+									}}
+									onDoubleTap={(x, y) => void likeAtTap(reel, x, y)}
+								/>
+							{:else}
+								<img
+									src={reel.mediaUrl}
+									alt={reel.content || 'Relay picture note'}
+									onload={(event) => {
+										const image = event.currentTarget as HTMLImageElement;
+										setReelAspectRatio(reel.id, image.naturalWidth, image.naturalHeight);
+									}}
+									class="absolute inset-0 size-full object-cover {reelCovered
+										? 'scale-105 blur-2xl saturate-50'
+										: ''}"
+								/>
+							{/if}
+							<div
+								class="pointer-events-none absolute inset-0 z-40 overflow-hidden"
+								aria-hidden="true"
 							>
-								<span class="max-w-56 rounded-3xl bg-black/45 px-5 py-4 backdrop-blur-md">
-									<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6" />
-									<span class="block text-[14px] font-bold">Sensitive media</span>
-									{#if privacyNotificationSettings.state.sensitiveReason}
-										<span class="mt-1 block text-[11px] text-white/75">{reelSensitiveReason}</span>
-									{/if}
+								{#each bursts.filter((burst) => burst.reelId === reel.id) as burst (burst.id)}
 									<span
-										class="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black"
-										>View</span
+										class="reel-burst"
+										style={`left:${burst.left}; top:${burst.top}; --tx:${burst.tx}px; --rot:${burst.rot}deg; font-size:${burst.size}px; animation-delay:${burst.delay}s`}
+										>{burst.emoji}</span
 									>
-								</span>
-							</button>
-						{/if}
-						<div
-							class="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/70"
-						></div>
+								{/each}
+							</div>
+							{#if reelCovered}
+								<button
+									type="button"
+									class="absolute inset-0 z-30 grid place-items-center bg-black/20 p-4 text-center text-white"
+									onclick={() =>
+										(revealedSensitiveReels = { ...revealedSensitiveReels, [reel.id]: true })}
+									aria-label="Show sensitive reel"
+								>
+									<span
+										class="max-w-56 rounded-3xl bg-black/45 px-5 py-4 shadow-2xl ring-1 shadow-black/40 ring-white/15 backdrop-blur-md"
+									>
+										<Icon name="i-lucide-eye-off" class="mx-auto mb-2 size-6" />
+										<span class="block text-[14px] font-bold">Sensitive media</span>
+										{#if privacyNotificationSettings.state.sensitiveReason}
+											<span class="mt-1 block text-[11px] text-white/75">{reelSensitiveReason}</span
+											>
+										{/if}
+										<span
+											class="mt-3 inline-flex rounded-full bg-white px-3 py-1 text-[11px] font-bold text-black shadow-sm transition hover:bg-white/90"
+											>View</span
+										>
+									</span>
+								</button>
+							{/if}
+							<div
+								class="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/80"
+							></div>
 
+							<!-- pb clears the auto-hiding player bar (progress + play/mute row) -->
+							<div class="absolute inset-x-0 bottom-0 z-10 p-5 pb-[4.75rem] text-white">
+								<div class="mb-3 flex items-center gap-3">
+									<Avatar
+										pubkey={reel.pubkey}
+										{name}
+										picture={profile?.picture}
+										lightning={hasLightning(profile)}
+										size={40}
+										frame
+									/>
+									<div class="min-w-0 flex-1">
+										<a
+											href={`/profile/${reel.pubkey}`}
+											class="inline-flex min-w-0 items-center gap-1 text-[14px] font-bold"
+										>
+											<span class="truncate">{name}</span>
+											{#if profile?.nip05}
+												<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-white/85" />
+											{/if}
+										</a>
+										<div class="flex min-w-0 items-center gap-1.5">
+											<p class="flex shrink-0 items-center gap-1.5 text-[11px] opacity-80">
+												<span>{timeAgo(reel.createdAt)}</span>
+												{#if reel.source === 'discovery'}
+													<span>· discovery</span>{/if}
+												{#if reel.pow}
+													<PowBadge bits={reel.pow} micro id={reel.id} />
+												{/if}
+											</p>
+											<!-- Same overflow menu as a feed post card, scoped to this bitz. -->
+											<Popover
+												id={reelMenuId(reel)}
+												placement="top-start"
+												width="auto"
+												class="w-60"
+												label="Bitz actions"
+												triggerClass="grid size-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/15 hover:text-white"
+												triggerActiveClass="bg-white/15 text-white"
+											>
+												{#snippet trigger()}
+													<Icon name="i-lucide-ellipsis" class="size-4" />
+												{/snippet}
+
+												<MenuItem
+													href={`/messages?to=${reel.pubkey}`}
+													icon="i-lucide-message-circle"
+												>
+													Message author
+												</MenuItem>
+												<MenuItem
+													icon={bookmarks.has(reel.id)
+														? 'i-lucide-bookmark-x'
+														: 'i-lucide-bookmark'}
+													onclick={() => {
+														const saved = bookmarks.toggle(reel);
+														toasts.success(saved ? 'Saved' : 'Removed from saved');
+														popovers.close();
+													}}
+												>
+													{bookmarks.has(reel.id) ? 'Unsave bitz' : 'Save bitz'}
+												</MenuItem>
+												<!-- Remix chain (§17): open the meme studio with this bitz's
+											     layout + media pre-loaded — one tap to riff on a meme. -->
+												{#if reel.mediaType === 'video'}
+													<!-- Whole-video view vs the default crop-to-fill. Global:
+												     applies to every reel while swiping, and persists. -->
+													<MenuItem
+														icon={reelViewMode === 'full' ? 'i-lucide-shrink' : 'i-lucide-expand'}
+														onclick={() => {
+															toggleReelViewMode();
+															popovers.close();
+														}}
+													>
+														{reelViewMode === 'full'
+															? 'Fill screen · all bitz'
+															: 'View full video · all bitz'}
+													</MenuItem>
+												{/if}
+												<MenuItem
+													icon="i-lucide-link"
+													onclick={() =>
+														copyText(
+															shareWebLink({ eventId: reel.id }, location.origin),
+															'Web link'
+														)}
+												>
+													Copy web link
+												</MenuItem>
+												<MenuItem
+													icon="i-lucide-at-sign"
+													onclick={() => copyText(shareEntity({ eventId: reel.id }), 'Nostr link')}
+												>
+													Copy nostr link
+												</MenuItem>
+												<MenuItem
+													icon="i-lucide-fingerprint"
+													onclick={() => copyText(reel.id, 'Note ID')}
+												>
+													Copy note ID
+												</MenuItem>
+												<MenuItem
+													icon="i-lucide-text"
+													onclick={() => copyText(reel.content, 'Note text')}
+												>
+													Copy note text
+												</MenuItem>
+												<MenuItem
+													icon="i-lucide-user-round"
+													onclick={() => copyText(npubEncode(reel.pubkey), 'Author npub')}
+												>
+													Copy author npub
+												</MenuItem>
+												<MenuItem icon="i-lucide-braces" onclick={() => showRawReel(reel)}>
+													View raw note
+												</MenuItem>
+
+												<MenuDivider />
+
+												<MenuItem icon="i-lucide-thumbs-down" onclick={() => notInterestedIn(reel)}>
+													Not interested
+												</MenuItem>
+												{#if reel.pubkey !== identity.current?.pk}
+													<MenuItem
+														icon={interactionProfile.isAuthorMuted(reel.pubkey)
+															? 'i-lucide-eye'
+															: 'i-lucide-eye-off'}
+														onclick={() => toggleMuteAuthorOf(reel, name)}
+													>
+														{interactionProfile.isAuthorMuted(reel.pubkey)
+															? `Show more from ${name}`
+															: `Show less from ${name}`}
+													</MenuItem>
+												{/if}
+												{#each extractTags(reel).slice(0, 3) as tag (tag)}
+													{#if interactionProfile.isTagMuted(tag)}
+														<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
+															Show more about #{tag}
+														</MenuItem>
+													{:else}
+														<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
+															Show less about #{tag}
+														</MenuItem>
+													{/if}
+												{/each}
+
+												<MenuDivider />
+
+												{#if reel.pubkey === identity.current?.pk}
+													<MenuItem
+														tone="danger"
+														icon="i-lucide-trash-2"
+														onclick={() => {
+															popovers.close();
+															pendingDeleteReel = reel;
+															deleteReelOpen = true;
+														}}
+													>
+														Delete bitz
+													</MenuItem>
+												{:else}
+													<MenuItem
+														icon="i-lucide-volume-x"
+														onclick={() => muteAuthorOf(reel, name)}
+													>
+														Mute author
+													</MenuItem>
+													<MenuItem
+														tone="danger"
+														icon="i-lucide-ban"
+														onclick={() => blockAuthorOf(reel, name)}
+													>
+														Block author
+													</MenuItem>
+													<MenuItem
+														tone="danger"
+														icon="i-lucide-flag"
+														onclick={() => {
+															popovers.close();
+															reportReelTarget = reel;
+															reportReelOpen = true;
+														}}
+													>
+														Report bitz
+													</MenuItem>
+												{/if}
+											</Popover>
+										</div>
+									</div>
+								</div>
+								{#if captionFor(reel)}
+									<p class="line-clamp-4 text-[13.5px] leading-relaxed">
+										{#each captionTokens(reel) as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
+											{#if token.type === 'text'}
+												{token.value}
+											{:else if token.type === 'hashtag'}
+												<a
+													href={`/?tag=${encodeURIComponent(token.tag)}`}
+													class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
+												>
+													{token.value}
+												</a>
+											{:else if token.type === 'nostr'}
+												{#if isEventReference(token.value)}
+													<NostrEventPreview value={token.value} compact />
+												{:else}
+													<MentionLink
+														value={token.value}
+														class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
+													/>
+												{/if}
+											{:else}
+												<a
+													href={token.value}
+													target="_blank"
+													rel="noreferrer"
+													class="font-semibold text-accent-400 transition hover:text-accent-300 hover:underline"
+												>
+													{token.host}
+												</a>
+											{/if}
+										{/each}
+									</p>
+								{/if}
+								{#if rankTagFor(reel)}
+									<!-- Why-this-bitz chip (algorithm parity with the home feed): names the
+								     top ranking signal so the surface feels explainable, not arbitrary. -->
+									<span
+										class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold text-white/90 shadow-sm ring-1 ring-white/20 backdrop-blur-md"
+										title="How this bitz ranked for you — tune signals in Settings → Feed"
+									>
+										<Icon name={rankTagFor(reel)!.icon} class="size-3.5 shrink-0" />
+										<span class="truncate">{rankTagFor(reel)!.label}</span>
+									</span>
+								{/if}
+								{#if remixOf(reel.tags)}
+									<!-- Remix lineage chip (§17 creator economy): links the derivative to
+								     its source. Protocol provenance only — rights live upstream. -->
+									<a
+										href={`/note/${remixOf(reel.tags)!.eventId}?from=bitz`}
+										class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold shadow-sm ring-1 ring-white/20 backdrop-blur-md transition hover:bg-white/25"
+									>
+										<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
+										<span class="truncate">Remixed</span>
+									</a>
+								{/if}
+								{#if remixLayoutOf(reel.tags)?.sfxCues.length}
+									{@const reelSoundCues = remixLayoutOf(reel.tags)?.sfxCues ?? []}
+									<!-- Sound chip (meme-virality rec): surfaces the bitz's primary cue so
+								     viewers can name the sound — and jump to trending to reuse it. -->
+									<a
+										href="/more/sounds"
+										class="text-warm-200 mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-warm-500/20 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-warm-500/30"
+										title="{reelSoundCues.length} sound cue{reelSoundCues.length > 1
+											? 's'
+											: ''} — see trending sounds"
+									>
+										<Icon name="i-lucide-audio-lines" class="size-3.5 shrink-0" />
+										<span class="truncate"
+											>{reelSoundCues[0]?.sfx === 'custom'
+												? 'Custom sound'
+												: (SFX_LABELS[reelSoundCues[0]?.sfx as keyof typeof SFX_LABELS] ??
+													'Sound')}{reelSoundCues.length > 1
+												? ` +${reelSoundCues.length - 1}`
+												: ''}</span
+										>
+									</a>
+								{/if}
+								{#if rightsOf(reel.tags).license}
+									<!-- Advisory rights badge (S-013, §17.3): provenance, not legal advice. -->
+									{@const reelRights = rightsOf(reel.tags)}
+									<span
+										class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
+										title={`License ${reelRights.license}${reelRights.attribution ? ` · ${reelRights.attribution}` : ''}`}
+									>
+										<Icon name="i-lucide-scale" class="size-3.5 shrink-0" />
+										<span class="truncate">{reelRights.license}</span>
+									</span>
+								{/if}
+								{#if splitsOf(reel.tags)}
+									<!-- Value-split chip (CRE-008): how this bitz declares its value graph.
+							         Display only in V1 - store/display/validate, payment comes later. -->
+									<span
+										class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
+										title={`Value splits (display only)\n${splitsOf(reel.tags)!
+											.rows.map(
+												(r) =>
+													`${r.role.replace(/_/g, ' ')}: ${(r.basisPoints / 100).toFixed(1)}%${r.beneficiary ? ` - ${r.beneficiary.slice(0, 12)}` : ''}`
+											)
+											.join('\n')}`}
+									>
+										<Icon name="i-lucide-git-fork" class="size-3.5 shrink-0" />
+										<span class="truncate"
+											>{splitsOf(reel.tags)!.rows.length} split{splitsOf(reel.tags)!.rows.length > 1
+												? 's'
+												: ''} declared</span
+										>
+									</span>
+								{/if}
+								{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
+									<div
+										class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold shadow-sm ring-1 ring-white/15 backdrop-blur-md"
+									>
+										<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+										Loading older bitz
+									</div>
+								{/if}
+							</div>
+						</div>
+
+						<!-- Action rail OUTSIDE the media canvas: a themed bar under the
+					     video on mobile (thumb-friendly, TikTok-bottom feel) and a
+					     vertical rail beside the canvas on desktop. The username and
+					     profile stay ON the canvas (bottom-left overlay), so the media
+					     area itself carries no buttons. -->
 						<div
-							class="pointer-events-auto absolute right-4 bottom-24 z-20 flex flex-col gap-5 transition-[right] duration-200 {commentReel
-								? 'lg:right-24'
-								: ''}"
+							data-reel-action-rail
+							class="relative z-20 flex shrink-0 items-center justify-around gap-1 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:flex-col sm:justify-center sm:gap-4 sm:self-stretch sm:border-0 sm:bg-transparent sm:p-0"
 						>
-							<!-- Remix is a primary creation action, so keep it at the top of
-							     the rail. On short mobile screens the old bottom position could
-							     sit beneath caption/bottom-player chrome and feel untappable. -->
+							<!-- Remix is a primary creation action, so keep it first on the
+							     rail. -->
 							<button
 								type="button"
 								onclick={() => void remixReel(reel)}
@@ -2071,7 +2462,7 @@
 										class="size-5 {remixStartingId === reel.id ? 'animate-spin' : ''}"
 									/>
 								</span>
-								<span class="text-[11px] font-semibold">
+								<span class="text-[10px] sm:text-[11px]">
 									{remixStartingId === reel.id ? 'Opening' : 'Remix'}
 								</span>
 							</button>
@@ -2087,7 +2478,7 @@
 									<span class="icon-circle">
 										<Icon name="i-lucide-git-fork" class="size-5" />
 									</span>
-									<span class="text-[11px] font-semibold">Chain</span>
+									<span class="text-[10px] sm:text-[11px]">Chain</span>
 								</button>
 							{/if}
 							<button
@@ -2102,8 +2493,8 @@
 								<span class="icon-circle is-zap">
 									<Icon name="i-lucide-zap" class="size-5 fill-current" />
 								</span>
-								<span class="text-[11px] font-semibold tabular-nums">
-									{zapTotalFor(reel) ? `${compactSats(zapTotalFor(reel))} sats` : 'Zap'}
+								<span class="text-[10px] tabular-nums sm:text-[11px]">
+									{zapTotalFor(reel) ? compactSats(zapTotalFor(reel)) : 'Zap'}
 								</span>
 							</button>
 							<button type="button" onclick={() => toggleLike(reel)} class="reel-action">
@@ -2117,7 +2508,7 @@
 											: ''}"
 									/>
 								</span>
-								<span class="text-[11px] font-semibold">
+								<span class="text-[10px] sm:text-[11px]">
 									{reel.reactions.reduce((sum, reaction) => sum + reaction.count, 0) || 'Like'}
 								</span>
 							</button>
@@ -2130,13 +2521,13 @@
 								<span class="icon-circle {commentReel?.id === reel.id ? 'is-active' : ''}">
 									<Icon name="i-lucide-message-circle" class="size-5" />
 								</span>
-								<span class="text-[11px] font-semibold">
+								<span class="text-[10px] sm:text-[11px]">
 									{commentsFor(reel.id).length || 'Comment'}
 								</span>
 							</button>
 							<button type="button" onclick={() => void shareReel(reel)} class="reel-action">
 								<span class="icon-circle"><Icon name="i-lucide-share" class="size-5" /></span>
-								<span class="text-[11px] font-semibold">
+								<span class="text-[10px] sm:text-[11px]">
 									{reel.repostCount ? formatCompact(reel.repostCount) : 'Share'}
 								</span>
 							</button>
@@ -2147,317 +2538,8 @@
 										class="size-5"
 									/>
 								</span>
-								<span class="text-[11px] font-semibold">Save</span>
+								<span class="text-[10px] sm:text-[11px]">Save</span>
 							</button>
-							<a href={`/profile/${reel.pubkey}`} class="mt-2" aria-label="Open profile">
-								<Avatar
-									pubkey={reel.pubkey}
-									{name}
-									picture={profile?.picture}
-									lightning={hasLightning(profile)}
-									orbit
-									size={40}
-									frame
-								/>
-							</a>
-						</div>
-
-						<!-- pb clears the auto-hiding player bar (progress + play/mute row) -->
-						<div class="absolute inset-x-0 bottom-0 z-10 p-5 pr-20 pb-[4.75rem] text-white">
-							<div class="mb-3 flex items-center gap-3">
-								<Avatar
-									pubkey={reel.pubkey}
-									{name}
-									picture={profile?.picture}
-									lightning={hasLightning(profile)}
-									size={40}
-									frame
-								/>
-								<div class="min-w-0 flex-1">
-									<a
-										href={`/profile/${reel.pubkey}`}
-										class="inline-flex min-w-0 items-center gap-1 text-[14px] font-bold"
-									>
-										<span class="truncate">{name}</span>
-										{#if profile?.nip05}
-											<Icon name="i-lucide-badge-check" class="size-3.5 shrink-0 text-white/85" />
-										{/if}
-									</a>
-									<div class="flex min-w-0 items-center gap-1.5">
-										<p class="flex shrink-0 items-center gap-1.5 text-[11px] opacity-80">
-											<span>{timeAgo(reel.createdAt)}</span>
-											{#if reel.source === 'discovery'}
-												<span>· discovery</span>{/if}
-											{#if reel.pow}
-												<PowBadge bits={reel.pow} micro id={reel.id} />
-											{/if}
-										</p>
-										<!-- Same overflow menu as a feed post card, scoped to this bitz. -->
-										<Popover
-											id={reelMenuId(reel)}
-											placement="top-start"
-											width="auto"
-											class="w-60"
-											label="Bitz actions"
-											triggerClass="grid size-7 shrink-0 place-items-center rounded-lg text-white/60 transition-colors hover:bg-white/15 hover:text-white"
-											triggerActiveClass="bg-white/15 text-white"
-										>
-											{#snippet trigger()}
-												<Icon name="i-lucide-ellipsis" class="size-4" />
-											{/snippet}
-
-											<MenuItem href={`/messages?to=${reel.pubkey}`} icon="i-lucide-message-circle">
-												Message author
-											</MenuItem>
-											<MenuItem
-												icon={bookmarks.has(reel.id) ? 'i-lucide-bookmark-x' : 'i-lucide-bookmark'}
-												onclick={() => {
-													const saved = bookmarks.toggle(reel);
-													toasts.success(saved ? 'Saved' : 'Removed from saved');
-													popovers.close();
-												}}
-											>
-												{bookmarks.has(reel.id) ? 'Unsave bitz' : 'Save bitz'}
-											</MenuItem>
-											<!-- Remix chain (§17): open the meme studio with this bitz's
-											     layout + media pre-loaded — one tap to riff on a meme. -->
-											{#if reel.mediaType === 'video'}
-												<!-- Whole-video view vs the default crop-to-fill. Global:
-												     applies to every reel while swiping, and persists. -->
-												<MenuItem
-													icon={reelViewMode === 'full' ? 'i-lucide-shrink' : 'i-lucide-expand'}
-													onclick={() => {
-														toggleReelViewMode();
-														popovers.close();
-													}}
-												>
-													{reelViewMode === 'full'
-														? 'Fill screen · all bitz'
-														: 'View full video · all bitz'}
-												</MenuItem>
-											{/if}
-											<MenuItem
-												icon="i-lucide-link"
-												onclick={() =>
-													copyText(shareWebLink({ eventId: reel.id }, location.origin), 'Web link')}
-											>
-												Copy web link
-											</MenuItem>
-											<MenuItem
-												icon="i-lucide-at-sign"
-												onclick={() => copyText(shareEntity({ eventId: reel.id }), 'Nostr link')}
-											>
-												Copy nostr link
-											</MenuItem>
-											<MenuItem
-												icon="i-lucide-fingerprint"
-												onclick={() => copyText(reel.id, 'Note ID')}
-											>
-												Copy note ID
-											</MenuItem>
-											<MenuItem
-												icon="i-lucide-text"
-												onclick={() => copyText(reel.content, 'Note text')}
-											>
-												Copy note text
-											</MenuItem>
-											<MenuItem
-												icon="i-lucide-user-round"
-												onclick={() => copyText(npubEncode(reel.pubkey), 'Author npub')}
-											>
-												Copy author npub
-											</MenuItem>
-											<MenuItem icon="i-lucide-braces" onclick={() => showRawReel(reel)}>
-												View raw note
-											</MenuItem>
-
-											<MenuDivider />
-
-											<MenuItem icon="i-lucide-thumbs-down" onclick={() => notInterestedIn(reel)}>
-												Not interested
-											</MenuItem>
-											{#if reel.pubkey !== identity.current?.pk}
-												<MenuItem
-													icon={interactionProfile.isAuthorMuted(reel.pubkey)
-														? 'i-lucide-eye'
-														: 'i-lucide-eye-off'}
-													onclick={() => toggleMuteAuthorOf(reel, name)}
-												>
-													{interactionProfile.isAuthorMuted(reel.pubkey)
-														? `Show more from ${name}`
-														: `Show less from ${name}`}
-												</MenuItem>
-											{/if}
-											{#each extractTags(reel).slice(0, 3) as tag (tag)}
-												{#if interactionProfile.isTagMuted(tag)}
-													<MenuItem icon="i-lucide-eye" onclick={() => toggleMuteTag(tag)}>
-														Show more about #{tag}
-													</MenuItem>
-												{:else}
-													<MenuItem icon="i-lucide-hash" onclick={() => toggleMuteTag(tag)}>
-														Show less about #{tag}
-													</MenuItem>
-												{/if}
-											{/each}
-
-											<MenuDivider />
-
-											{#if reel.pubkey === identity.current?.pk}
-												<MenuItem
-													tone="danger"
-													icon="i-lucide-trash-2"
-													onclick={() => {
-														popovers.close();
-														pendingDeleteReel = reel;
-														deleteReelOpen = true;
-													}}
-												>
-													Delete bitz
-												</MenuItem>
-											{:else}
-												<MenuItem icon="i-lucide-volume-x" onclick={() => muteAuthorOf(reel, name)}>
-													Mute author
-												</MenuItem>
-												<MenuItem
-													tone="danger"
-													icon="i-lucide-ban"
-													onclick={() => blockAuthorOf(reel, name)}
-												>
-													Block author
-												</MenuItem>
-												<MenuItem
-													tone="danger"
-													icon="i-lucide-flag"
-													onclick={() => {
-														popovers.close();
-														reportReelTarget = reel;
-														reportReelOpen = true;
-													}}
-												>
-													Report bitz
-												</MenuItem>
-											{/if}
-										</Popover>
-									</div>
-								</div>
-							</div>
-							{#if captionFor(reel)}
-								<p class="line-clamp-4 text-[13.5px] leading-relaxed">
-									{#each captionTokens(reel) as token, tokenIndex (`${token.type}:${tokenIndex}:${token.value}`)}
-										{#if token.type === 'text'}
-											{token.value}
-										{:else if token.type === 'hashtag'}
-											<a
-												href={`/?tag=${encodeURIComponent(token.tag)}`}
-												class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
-											>
-												{token.value}
-											</a>
-										{:else if token.type === 'nostr'}
-											{#if isEventReference(token.value)}
-												<NostrEventPreview value={token.value} compact />
-											{:else}
-												<MentionLink
-													value={token.value}
-													class="font-bold text-primary-400 transition hover:text-primary-300 hover:underline"
-												/>
-											{/if}
-										{:else}
-											<a
-												href={token.value}
-												target="_blank"
-												rel="noreferrer"
-												class="font-semibold text-accent-400 transition hover:text-accent-300 hover:underline"
-											>
-												{token.host}
-											</a>
-										{/if}
-									{/each}
-								</p>
-							{/if}
-							{#if rankTagFor(reel)}
-								<!-- Why-this-bitz chip (algorithm parity with the home feed): names the
-								     top ranking signal so the surface feels explainable, not arbitrary. -->
-								<span
-									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold text-white/85 backdrop-blur"
-									title="How this bitz ranked for you — tune signals in Settings → Feed"
-								>
-									<Icon name={rankTagFor(reel)!.icon} class="size-3.5 shrink-0" />
-									<span class="truncate">{rankTagFor(reel)!.label}</span>
-								</span>
-							{/if}
-							{#if remixOf(reel.tags)}
-								<!-- Remix lineage chip (§17 creator economy): links the derivative to
-								     its source. Protocol provenance only — rights live upstream. -->
-								<a
-									href={`/note/${remixOf(reel.tags)!.eventId}?from=bitz`}
-									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-white/25"
-								>
-									<Icon name="i-lucide-repeat" class="size-3.5 shrink-0" />
-									<span class="truncate">Remixed</span>
-								</a>
-							{/if}
-							{#if remixLayoutOf(reel.tags)?.sfxCues.length}
-								{@const reelSoundCues = remixLayoutOf(reel.tags)?.sfxCues ?? []}
-								<!-- Sound chip (meme-virality rec): surfaces the bitz's primary cue so
-								     viewers can name the sound — and jump to trending to reuse it. -->
-								<a
-									href="/more/sounds"
-									class="text-warm-200 mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-warm-500/20 px-3 py-1 text-[11px] font-semibold backdrop-blur transition hover:bg-warm-500/30"
-									title="{reelSoundCues.length} sound cue{reelSoundCues.length > 1
-										? 's'
-										: ''} — see trending sounds"
-								>
-									<Icon name="i-lucide-audio-lines" class="size-3.5 shrink-0" />
-									<span class="truncate"
-										>{reelSoundCues[0]?.sfx === 'custom'
-											? 'Custom sound'
-											: (SFX_LABELS[reelSoundCues[0]?.sfx as keyof typeof SFX_LABELS] ??
-												'Sound')}{reelSoundCues.length > 1
-											? ` +${reelSoundCues.length - 1}`
-											: ''}</span
-									>
-								</a>
-							{/if}
-							{#if rightsOf(reel.tags).license}
-								<!-- Advisory rights badge (S-013, §17.3): provenance, not legal advice. -->
-								{@const reelRights = rightsOf(reel.tags)}
-								<span
-									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
-									title={`License ${reelRights.license}${reelRights.attribution ? ` · ${reelRights.attribution}` : ''}`}
-								>
-									<Icon name="i-lucide-scale" class="size-3.5 shrink-0" />
-									<span class="truncate">{reelRights.license}</span>
-								</span>
-							{/if}
-							{#if splitsOf(reel.tags)}
-								<!-- Value-split chip (CRE-008): how this bitz declares its value graph.
-							         Display only in V1 - store/display/validate, payment comes later. -->
-								<span
-									class="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-black/30 px-3 py-1 text-[11px] font-semibold backdrop-blur"
-									title={`Value splits (display only)\n${splitsOf(reel.tags)!
-										.rows.map(
-											(r) =>
-												`${r.role.replace(/_/g, ' ')}: ${(r.basisPoints / 100).toFixed(1)}%${r.beneficiary ? ` - ${r.beneficiary.slice(0, 12)}` : ''}`
-										)
-										.join('\n')}`}
-								>
-									<Icon name="i-lucide-git-fork" class="size-3.5 shrink-0" />
-									<span class="truncate"
-										>{splitsOf(reel.tags)!.rows.length} split{splitsOf(reel.tags)!.rows.length > 1
-											? 's'
-											: ''} declared</span
-									>
-								</span>
-							{/if}
-							{#if loadingMoreReels && reel.id === renderedReels.at(-1)?.id}
-								<div
-									class="mt-3 inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-[11px] font-semibold backdrop-blur"
-								>
-									<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-									Loading older bitz
-								</div>
-							{/if}
 						</div>
 					</div>
 				{/each}
@@ -2505,44 +2587,41 @@
 					</div>
 				</div>
 			{/if}
-
-			{#if playbackReels.length}
-				<div
-					class="absolute top-1/2 right-[92px] z-30 hidden -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/25 p-1 shadow-lg ring-1 shadow-black/20 ring-white/10 backdrop-blur-md transition-[right] duration-200 sm:flex {commentReel
-						? 'lg:right-[398px]'
-						: ''}"
-				>
-					<button
-						type="button"
-						onclick={() => scrollToReel(-1)}
-						class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Previous bitz"
-					>
-						<Icon name="i-lucide-chevron-up" class="size-[18px]" />
-					</button>
-					<button
-						type="button"
-						onclick={() => scrollToReel(1)}
-						class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white"
-						aria-label="Next bitz"
-					>
-						<Icon name="i-lucide-chevron-down" class="size-[18px]" />
-					</button>
-				</div>
-			{/if}
 		</div>
 	{/if}
 
-	<!-- Sticky top bar: Bitz wordmark · view tabs · refresh. Shrinks with the
-	     comments panel so the tabs stay centered over the video area (lg).
-	     Over the player it is dark media chrome (gradient over video); on the
-	     Explore grid it follows the theme so light mode gets a themed page. -->
+	<!-- Reel controls and navigation -->
+	{#if playbackReels.length}
+		<div
+			class="absolute top-1/2 right-28 z-30 -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/30 p-1 text-white shadow-xl ring-1 shadow-black/30 ring-white/15 backdrop-blur-xl transition-[right] duration-200 sm:bg-[var(--ui-bg-muted)] sm:text-[var(--ui-text)] sm:shadow-[var(--shadow-card)] sm:ring-[var(--ui-border-muted)] sm:backdrop-blur-none {commentReel
+				? 'hidden'
+				: 'hidden sm:flex'}"
+		>
+			<button
+				type="button"
+				onclick={() => scrollToReel(-1)}
+				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white sm:bg-[var(--ui-bg)] sm:text-[var(--ui-text-muted)] sm:hover:bg-[var(--ui-bg-accented)] sm:hover:text-[var(--ui-text-highlighted)]"
+				aria-label="Previous bitz"
+			>
+				<Icon name="i-lucide-chevron-up" class="size-[18px]" />
+			</button>
+			<button
+				type="button"
+				onclick={() => scrollToReel(1)}
+				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white sm:bg-[var(--ui-bg)] sm:text-[var(--ui-text-muted)] sm:hover:bg-[var(--ui-bg-accented)] sm:hover:text-[var(--ui-text-highlighted)]"
+				aria-label="Next bitz"
+			>
+				<Icon name="i-lucide-chevron-down" class="size-[18px]" />
+			</button>
+		</div>
+	{/if}
+
+	<!-- Compact floating controls. There is intentionally no page header here:
+	     Bitz navigation stays available without a large opaque strip above media. -->
 	<div
-		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 pt-4 pb-12 transition-[padding] duration-200 {isExplore
-			? 'bg-gradient-to-b from-[var(--ui-bg)] via-[color-mix(in_oklab,var(--ui-bg)_72%,transparent)] to-transparent text-[var(--ui-text)]'
-			: 'bg-gradient-to-b from-black/55 via-black/25 to-transparent text-white'} {commentReel
-			? 'lg:pr-[390px]'
-			: ''}"
+		class="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 pt-2 pb-2 transition-[padding] duration-200 {isExplore
+			? 'bg-transparent text-[var(--ui-text)]'
+			: 'bg-transparent text-white sm:text-[var(--ui-text)]'} {commentReel ? 'lg:pr-[390px]' : ''}"
 	>
 		{#if authorMode}
 			<!-- Author mode: back-to-profile bar replaces the wordmark. Tapping the
@@ -2551,14 +2630,14 @@
 				<button
 					type="button"
 					onclick={exitAuthorMode}
-					class="grid size-9 shrink-0 place-items-center rounded-full bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+					class="grid size-9 shrink-0 place-items-center rounded-full bg-white/15 text-white shadow-lg ring-1 shadow-black/20 ring-white/15 backdrop-blur-md transition hover:bg-white/25 sm:bg-[var(--ui-bg-muted)] sm:text-[var(--ui-text)] sm:shadow-none sm:ring-[var(--ui-border-muted)] sm:backdrop-blur-none sm:hover:bg-[var(--ui-bg-accented)]"
 					aria-label="Back to profile"
 				>
 					<Icon name="i-lucide-arrow-left" class="size-5" />
 				</button>
 				<a
 					href={authorPubkey ? `/profile/${npubEncode(authorPubkey)}` : '#'}
-					class="flex min-w-0 items-center gap-2 rounded-full bg-black/30 p-1 pr-3 text-white backdrop-blur-md transition hover:bg-black/50"
+					class="flex min-w-0 items-center gap-2 rounded-full bg-black/30 p-1 pr-3 text-white shadow-lg ring-1 shadow-black/25 ring-white/15 backdrop-blur-xl transition hover:bg-black/50 sm:bg-[var(--ui-bg-muted)] sm:text-[var(--ui-text)] sm:shadow-none sm:ring-[var(--ui-border-muted)] sm:backdrop-blur-none sm:hover:bg-[var(--ui-bg-accented)]"
 				>
 					<Avatar
 						pubkey={authorPubkey}
@@ -2571,24 +2650,17 @@
 						<span class="block max-w-[120px] truncate text-[13px] font-bold sm:max-w-[200px]"
 							>{authorDisplayName}</span
 						>
-						<span class="block text-[10.5px] text-white/65 tabular-nums">{reels.length} bitz</span>
+						<span
+							class="block text-[10.5px] text-white/65 tabular-nums sm:text-[var(--ui-text-muted)]"
+							>{reels.length} bitz</span
+						>
 					</span>
 				</a>
 			</div>
-		{:else}
-			<h2
-				class="pointer-events-auto hidden justify-self-start font-display text-[22px] font-extrabold sm:block {isExplore
-					? 'text-[var(--ui-text-highlighted)]'
-					: 'text-white drop-shadow'}"
-			>
-				Bitz
-			</h2>
 		{/if}
 		{#if !authorMode}
 			<div
-				class="pointer-events-auto flex max-w-full [scrollbar-width:none] items-center gap-0.5 overflow-x-auto rounded-full p-1 [&::-webkit-scrollbar]:hidden {isExplore
-					? 'bg-[var(--ui-bg-muted)] ring-1 ring-[var(--ui-border-muted)]'
-					: 'bg-black/40 backdrop-blur-md'}"
+				class="pointer-events-auto col-start-2 flex max-w-full [scrollbar-width:none] items-center gap-1 justify-self-center overflow-x-auto [&::-webkit-scrollbar]:hidden"
 				role="tablist"
 				aria-label="Bitz views"
 			>
@@ -2598,28 +2670,22 @@
 						role="tab"
 						aria-selected={bitzMode === tab.key}
 						onclick={() => switchBitzMode(tab.key)}
-						class="rounded-full px-3 py-1.5 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
+						class="relative px-2 py-2 text-[13px] font-bold whitespace-nowrap transition {bitzMode ===
 						tab.key
-							? isExplore
-								? 'bg-[var(--ui-bg)] text-[var(--ui-text-highlighted)] shadow-sm ring-1 ring-[var(--ui-border-muted)]'
-								: 'bg-white text-black'
-							: isExplore
-								? 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-								: 'text-white/75 hover:text-white'}"
+							? 'text-primary-500 after:absolute after:inset-x-2 after:bottom-1 after:h-0.5 after:rounded-full after:bg-primary-500'
+							: 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'}"
 					>
 						{tab.label}
 					</button>
 				{/each}
 			</div>
 		{/if}
-		<div class="pointer-events-auto flex items-center gap-2 justify-self-end">
+		<div class="pointer-events-auto col-start-3 flex items-center gap-2 justify-self-end">
 			{#if !authorMode}
 				<button
 					type="button"
 					onclick={() => search.openOverlay()}
-					class="grid size-10 place-items-center rounded-xl transition {isExplore
-						? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
-						: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
+					class="grid size-9 place-items-center text-[var(--ui-text)] transition hover:text-primary-500"
 					aria-label="Search bitz"
 				>
 					<Icon name="i-lucide-search" class="size-5" />
@@ -2628,9 +2694,7 @@
 			<button
 				type="button"
 				onclick={() => loadReels()}
-				class="grid size-10 place-items-center rounded-xl transition {isExplore
-					? 'bg-[var(--ui-bg-muted)] text-[var(--ui-text)] ring-1 ring-[var(--ui-border-muted)] hover:bg-[var(--ui-bg-accented)]'
-					: 'bg-white/15 text-white backdrop-blur hover:bg-white/25'}"
+				class="grid size-9 place-items-center text-[var(--ui-text)] transition hover:text-primary-500"
 				aria-label="Refresh bitz"
 			>
 				<Icon name="i-lucide-rotate-cw" class="size-5" />
@@ -2650,6 +2714,7 @@
 		/>
 	{/if}
 
+	<!-- Bitz comments panel -->
 	{#if commentReel}
 		<button
 			type="button"
@@ -2658,7 +2723,7 @@
 			onclick={() => (commentReel = null)}
 		></button>
 		<aside
-			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl border border-[var(--ui-border)] bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-2xl shadow-black/20 lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none lg:border-y-0 lg:border-r-0 lg:border-[var(--ui-border-muted)]"
+			class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl bg-[var(--ui-bg)] text-[var(--ui-text)] md:border-l md:border-[var(--ui-border-muted)] lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none"
 			aria-label="Bitz comments"
 		>
 			<header class="flex h-14 shrink-0 items-center justify-between px-4">
@@ -2666,6 +2731,22 @@
 					Comments <span class="ml-1 text-[var(--ui-text-dimmed)]">{activeComments.length}</span>
 				</h2>
 				<div class="flex items-center gap-1">
+					<button
+						type="button"
+						onclick={() => scrollToReel(-1)}
+						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
+						aria-label="Previous bitz"
+					>
+						<Icon name="i-lucide-chevron-up" class="size-4" />
+					</button>
+					<button
+						type="button"
+						onclick={() => scrollToReel(1)}
+						class="grid size-9 place-items-center rounded-full text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
+						aria-label="Next bitz"
+					>
+						<Icon name="i-lucide-chevron-down" class="size-4" />
+					</button>
 					<button
 						type="button"
 						onclick={() => loadComments(commentReel!, { force: true })}
@@ -2904,7 +2985,14 @@
 
 	<!-- Remix lineage (audit #12): the bounded ancestry walked off the remix
 	     tags — cycle-safe, depth-capped, graceful on pruned relay history. -->
-	<Dialog bind:open={lineageOpen} title="Remix chain">
+	<Dialog
+		bind:open={lineageOpen}
+		title="Remix chain"
+		onClose={() => {
+			lineageRequest += 1;
+			lineageLoading = false;
+		}}
+	>
 		{#if lineageLoading}
 			<div
 				class="flex items-center justify-center gap-2 py-10 text-[13px] font-semibold text-[var(--ui-text-muted)]"
@@ -2922,18 +3010,37 @@
 				No remix ancestry found on your relays.
 			</div>
 		{:else}
-			<ol class="flex flex-col gap-1.5">
+			<div
+				class="mb-4 flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2.5"
+			>
+				<span
+					class="grid size-7 shrink-0 place-items-center rounded-full border border-white/30 bg-white/10 text-white"
+				>
+					<Icon name="i-lucide-git-fork" class="size-3.5" />
+				</span>
+				<p class="min-w-0 text-[12px] leading-snug text-[var(--ui-text-muted)]">
+					{lineageChain.length} remix {lineageChain.length === 1 ? 'source' : 'sources'} traced from this
+					bitz.
+				</p>
+			</div>
+			<ol
+				class="relative flex flex-col gap-2 before:absolute before:top-5 before:bottom-5 before:left-5 before:w-px before:bg-white/25"
+			>
 				{#each lineageChain as ancestor, i (ancestor.eventId)}
 					{@const ancestorName = profiles.displayName(ancestor.pubkey) || 'Unknown creator'}
 					<li
-						class="flex items-center gap-2.5 rounded-xl px-2 py-1.5 {i === 0
-							? 'bg-[var(--ui-bg-muted)]'
+						class="animate-rise relative flex items-center gap-2.5 rounded-xl border border-white/15 bg-[var(--ui-bg-muted)] px-2.5 py-2 shadow-sm transition hover:border-white/35 hover:bg-[var(--ui-bg-accented)] {i ===
+						0
+							? 'ring-1 ring-white/40'
 							: ''}"
+						style="animation-delay: {i * 45}ms"
 					>
-						<Avatar pubkey={ancestor.pubkey} name={ancestorName} size={28} />
+						<span class="relative z-1 rounded-full bg-[var(--ui-bg-muted)] p-0.5">
+							<Avatar pubkey={ancestor.pubkey} name={ancestorName} size={28} />
+						</span>
 						<a
 							href="/note/{ancestor.eventId}"
-							class="flex min-w-0 flex-1 flex-col"
+							class="flex min-w-0 flex-1 flex-col rounded-md outline-none focus-visible:ring-2 focus-visible:ring-white/80"
 							aria-label="Open the source bitz"
 						>
 							<span class="truncate text-[13px] font-bold">{ancestorName}</span>
@@ -2945,7 +3052,7 @@
 						</a>
 						{#if i === 0}
 							<span
-								class="shrink-0 rounded-full bg-primary-500/15 px-2 py-0.5 text-[10px] font-bold text-primary-600"
+								class="shrink-0 rounded-full border border-white/25 bg-primary-500/20 px-2 py-0.5 text-[10px] font-bold text-primary-600"
 							>
 								Source
 							</span>

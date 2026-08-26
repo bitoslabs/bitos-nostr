@@ -497,8 +497,9 @@
 			pubkey={me.pk}
 			name={me.profile?.display_name || me.profile?.name || 'You'}
 			picture={me.profile?.picture}
-			size={28}
+			size={34}
 			class="mt-0.5 shrink-0"
+			frame
 		/>
 	{/if}
 

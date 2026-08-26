@@ -27,6 +27,7 @@
 		 * activity. Only applies to the `reel` variant. */
 		autoHide = true,
 		onMediaElement,
+		onMetadata,
 		onMutedChange,
 		onDoubleTap
 	}: {
@@ -49,6 +50,7 @@
 		autoplay?: boolean;
 		autoHide?: boolean;
 		onMediaElement?: (element: HTMLMediaElement) => void | (() => void);
+		onMetadata?: (element: HTMLMediaElement) => void;
 		onMutedChange?: (muted: boolean) => void;
 		/** Fires with tap coordinates (px, relative to the video) when the
 		 * surface is double-tapped/double-clicked. Single taps still toggle
@@ -358,7 +360,10 @@
 			onplay={() => (isPlaying = true)}
 			onpause={() => (isPlaying = false)}
 			onended={() => (isPlaying = false)}
-			onloadedmetadata={updateState}
+			onloadedmetadata={() => {
+				updateState();
+				onMetadata?.(media!);
+			}}
 			ontimeupdate={updateState}
 			onvolumechange={updateState}
 			onratechange={updateState}

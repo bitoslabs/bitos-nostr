@@ -14,6 +14,8 @@
 import type { MediaTransform } from './render';
 import type { ZoomWindow } from '$lib/ai/suggest';
 
+export type { ZoomWindow } from '$lib/ai/suggest';
+
 /** Cap mirrors sfx cues (16) — zoom spam reads as a glitch, not a gag. */
 export const MAX_ZOOM_WINDOWS = 16;
 

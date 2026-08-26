@@ -582,11 +582,14 @@
 		const url = gifUrl.trim();
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
+		stageLoadLabel = 'that link';
+		stageLoadPercent = 0;
 		try {
 			const res = await fetchSourceFile(url, {
 				noProxy: true,
 				label: 'gif',
-				maxBytes: { image: 50 * 1024 * 1024, video: MAX_MEDIA_BYTES }
+				maxBytes: { image: 50 * 1024 * 1024, video: MAX_MEDIA_BYTES },
+				onProgress: (percent) => (stageLoadPercent = percent)
 			});
 			if (!res.ok || !res.file) throw new Error(res.error);
 			await acceptFile(res.file, {
@@ -598,6 +601,7 @@
 			toasts.error(e instanceof Error ? e.message : 'Could not load that media URL');
 		} finally {
 			gifUrlBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -620,6 +624,10 @@
 	let blankMenuId = `meme-blank-${Math.random().toString(36).slice(2, 8)}`;
 	let showGifUrlForm = $state(false);
 	let gifStageBusy = $state(false);
+	/** Byte-level progress for base-media loads (URL paste / GIF pick /
+	 *  library open). 0 = connecting or unknown content-length. */
+	let stageLoadLabel = $state('');
+	let stageLoadPercent = $state(0);
 	/** Batch queue (mass production) — the store owns list mechanics (ids,
 	 *  captions, the staging pointer); staging side-effects live here. */
 	const batch = new MemeBatchQueue();
@@ -649,8 +657,14 @@
 	async function loadGifFromUrl(url: string, label = 'GIF', keepLayout = false): Promise<boolean> {
 		if (gifStageBusy) return false;
 		gifStageBusy = true;
+		stageLoadLabel = label || 'that GIF';
+		stageLoadPercent = 0;
 		try {
-			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			const res = await fetchSourceFile(url, {
+				label,
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => (stageLoadPercent = percent)
+			});
 			if (!res.ok || !res.file) throw new Error(res.error ?? `Could not load that ${label}`);
 			await acceptFile(res.file, { keepRemix: true, keepLayout });
 			mediaLibrary.remember(res.url ?? url, label, res.file.type || 'image/gif');
@@ -660,6 +674,7 @@
 			return false;
 		} finally {
 			gifStageBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -669,8 +684,14 @@
 		if (gifStageBusy) return;
 		gifStageBusy = true;
 		popovers.close();
+		stageLoadLabel = label || 'that source';
+		stageLoadPercent = 0;
 		try {
-			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			const res = await fetchSourceFile(url, {
+				label,
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => (stageLoadPercent = percent)
+			});
 			if (!res.ok || !res.file) throw new Error(res.error ?? 'Could not open that source');
 			await acceptFile(res.file, {
 				keepRemix: true,
@@ -681,6 +702,7 @@
 			toasts.error(e instanceof Error ? e.message : 'Could not open that source');
 		} finally {
 			gifStageBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -4298,9 +4320,11 @@
 			<div class="flex min-h-0 flex-1 flex-col">
 				{#if !file}
 					<MemeStudioEmptyState
-						remixing={!!remixSource}
-						{remixLabel}
+						remixing={!!remixSource || remixLoading}
+						remixLabel={remixLoading ? remixLoadLabel : remixLabel}
+						{remixLoading}
 						staging={gifStageBusy}
+						loadPercent={remixLoading ? remixLoadPercent : gifStageBusy ? stageLoadPercent : 0}
 						{busy}
 						gifPickerId={gifPickerMenuId}
 						blankPickerId={blankMenuId}
@@ -4486,6 +4510,32 @@
 												</div>
 												<p class="text-[11px] font-medium text-white/60">
 													{remixLoadPercent > 0 ? `${remixLoadPercent}%` : 'Connecting…'}
+												</p>
+											</div>
+										{/if}
+										{#if gifStageBusy && stageLoadPercent > 0}
+											<!-- Base-media loads (URL paste / GIF pick / library open):
+											     byte-level progress over the stage, not a dead spinner. -->
+											<div
+												class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
+												role="status"
+												aria-live="polite"
+											>
+												<Icon name="i-lucide-film" class="size-8 animate-pulse text-warm-400" />
+												<p class="px-6 text-center text-[13px] font-semibold text-white">
+													Loading {stageLoadLabel}…
+												</p>
+												<div
+													class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15"
+													aria-hidden="true"
+												>
+													<div
+														class="h-full rounded-full bg-warm-400 transition-[width] duration-200"
+														style="width:{stageLoadPercent}%"
+													></div>
+												</div>
+												<p class="text-[11px] font-medium text-white/60">
+													{stageLoadPercent}%
 												</p>
 											</div>
 										{/if}

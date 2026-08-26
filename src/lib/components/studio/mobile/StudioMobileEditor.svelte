@@ -31,6 +31,20 @@
 		recordMeme
 	} from '$lib/meme/export-pipeline';
 	import { exportErrorMessage, shiftCuesForExport } from '$lib/meme/export-support';
+	import { normalizeFxWindows, type FrameFxWindow } from '$lib/meme/fx-track';
+	import {
+		composeZoomWithFraming,
+		normalizeZoomWindows,
+		zoomTransformAt,
+		type ZoomWindow
+	} from '$lib/meme/zoom-track';
+	import {
+		mediaMsToExportMs,
+		normalizeSpeedWindows,
+		rateAt,
+		shiftCuesForExportWithSpeeds,
+		type SpeedWindow
+	} from '$lib/meme/speed-track';
 	import { paintOverlay, targetSize, type MediaTransform } from '$lib/meme/render';
 	import {
 		remixTagsFor,
@@ -119,6 +133,14 @@
 	let artboardId = $state<MemeArtboardId>('source');
 	let zoom = $state(1);
 	let pan = $state({ x: 0, y: 0 });
+
+	/** Effect tracks riding the remix wire — same media-time convention as
+	 *  the desktop studio (z/f/s keys). Seeded from the remix handoff, burned
+	 *  into every export, re-published so lineage tracks survive mobile
+	 *  remixes (previously mobile silently DROPPED them from the chain). */
+	let zoomWindows = $state<ZoomWindow[]>([]);
+	let fxWindows = $state<FrameFxWindow[]>([]);
+	let speedWindows = $state<SpeedWindow[]>([]);
 	let stageEl = $state<HTMLDivElement | null>(null);
 	/** Natural media size (for the `source` artboard's aspect + export size). */
 	let mediaNatural = $state({ w: 0, h: 0 });
@@ -315,6 +337,8 @@
 	let remixLoading = $state(false);
 	/** Progress percent 0–100 (0 = still connecting / unknown length). */
 	let remixLoadPercent = $state(0);
+	/** What is downloading (handoff label) — shown in the scrim copy. */
+	let remixLoadLabel = $state('');
 
 	/** Stage media bytes as the shell's current source (shared by the remix
 	 *  seeder and the file picker so both own one blob-URL lifecycle). */
@@ -334,6 +358,7 @@
 		remixLoading = true;
 		remixLoadPercent = 0;
 		const label = handoff.label || 'a bitz';
+		remixLoadLabel = label;
 		const source = await fetchSourceFile(handoff.mediaUrl, {
 			label: 'remix-source',
 			accept: handoff.mediaType,
@@ -347,9 +372,13 @@
 			return;
 		}
 		setMediaFile(source.file);
-		// Fresh media ⇒ fresh trim; the LOOK rides the remix wire (`l`) —
-		// the remix starts from the source's look, not a reset.
+		// Fresh media ⇒ fresh trim; the LOOK + effect tracks ride the remix
+		// wire (`l`/`z`/`f`/`s`) — a desktop meme's zoom/fx/speed survives a
+		// mobile remix instead of silently vanishing from the lineage.
 		lookId = memeLookOf(handoff.lookId);
+		zoomWindows = normalizeZoomWindows(handoff.zoomWindows ?? []);
+		fxWindows = normalizeFxWindows(handoff.fxWindows ?? []);
+		speedWindows = normalizeSpeedWindows(handoff.speedWindows ?? []);
 		trimStart = 0;
 		trimEnd = null;
 		if (handoff.overlays?.length)
@@ -606,8 +635,11 @@
 		input.value = '';
 		if (!file) return;
 		setMediaFile(file);
-		// Fresh media ⇒ fresh window/look (mode derives from the media kind).
+		// Fresh media ⇒ fresh window/look/tracks (mode derives from the kind).
 		lookId = 'none';
+		zoomWindows = [];
+		fxWindows = [];
+		speedWindows = [];
 		trimStart = 0;
 		trimEnd = null;
 		selectedId = null;
@@ -677,7 +709,10 @@
 			lookId,
 			trimStartSec: trimStart,
 			trimEndSec: trimEnd,
-			playbackRate
+			playbackRate,
+			zoomWindows,
+			fxWindows,
+			speedWindows
 		});
 		toasts.info(`“${label}” saved to Work in progress`);
 	}
@@ -765,7 +800,12 @@
 			stageImg: img,
 			stageVideo: null,
 			lookCss: memeLookCss(lookId),
-			mediaTransform: { scale: 1, x: 0, y: 0 }
+			// The framing the preview shows (zoom gesture + pan) is the framing
+			// the export burns — never an identity stub (WYSIWYG).
+			mediaTransform,
+			// Plain still: fx evaluate where the windows say (a static image
+			// has no timeline — media time 0).
+			fxWindows: fxWindows.length ? fxWindows : undefined
 		});
 		paintOverlaysAt(ctx, canvas, 0);
 		// Plain still: encode straight to PNG.
@@ -785,7 +825,7 @@
 			canvas,
 			totalMs: runtimeSec * 1000,
 			extraTracks: cueTrack ? [cueTrack] : [],
-			paint: (c) => {
+			paint: (c, elapsedMs) => {
 				c.clearRect(0, 0, canvas.width, canvas.height);
 				paintMemeBase(c, canvas, {
 					mediaKind: 'image',
@@ -793,9 +833,13 @@
 					stageImg: img,
 					stageVideo: null,
 					lookCss: memeLookCss(lookId),
-					mediaTransform: { scale: 1, x: 0, y: 0 }
+					mediaTransform,
+					// Static base: fx run on the sound-meme's export clock —
+					// windows fire at their times as the timeline advances.
+					fxWindows: fxWindows.length ? fxWindows : undefined,
+					fxAtMs: elapsedMs
 				});
-				paintOverlaysAt(c, canvas, 0);
+				paintOverlaysAt(c, canvas, elapsedMs);
 			}
 		});
 		return { file, dim: `${size.width}x${size.height}`, durationSec: runtimeSec };
@@ -808,7 +852,13 @@
 		if (!video) throw new Error('Add a video first');
 		const winStart = trimStart;
 		const winEnd = (trimEnd ?? video.duration) || 0;
-		const runtimeSec = Math.max(0.5, (winEnd - winStart) / playbackRate);
+		// Export length under any speed curve: map the trim end through the
+		// ramps, then compress by the base rate (mirrors the desktop studio's
+		// mediaSpanExportSec math).
+		const runtimeSec = Math.max(
+			0.5,
+			(mediaMsToExportMs(speedWindows, winEnd * 1000) / 1000 - winStart) / (playbackRate || 1)
+		);
 		const size = targetSize({
 			width: video.videoWidth || 1080,
 			height: video.videoHeight || 1920
@@ -820,12 +870,26 @@
 		if (!ctx) throw new Error('Canvas is unavailable in this browser');
 		video.pause();
 		video.currentTime = winStart;
-		video.playbackRate = playbackRate;
+		// Ramps multiply the base rate; re-drive every frame as currentTime
+		// crosses window boundaries (the desktop recorder does the same).
+		const driveRate = () => {
+			video.playbackRate = Math.min(
+				4,
+				Math.max(0.25, playbackRate * rateAt(speedWindows, video.currentTime * 1000))
+			);
+		};
+		driveRate();
 		await video.play().catch(() => undefined);
 		try {
 			// Cue sheet → export timeline (trim window + speed), then a mixed
 			// audio track for the recorder (synth-only cues need no decoder).
-			const exportCues = shiftCuesForExport(sfxCues, winStart, playbackRate, runtimeSec);
+			const exportCues = shiftCuesForExportWithSpeeds(
+				sfxCues,
+				speedWindows,
+				winStart,
+				playbackRate,
+				runtimeSec
+			);
 			const cueTrack = exportCues.length
 				? await cueAudioTrack(runtimeSec, exportCues, SYNTH_ONLY_DECODE)
 				: null;
@@ -834,17 +898,26 @@
 				totalMs: runtimeSec * 1000,
 				extraTracks: cueTrack ? [cueTrack] : [],
 				paint: (c, elapsedMs) => {
+					// Rate curve re-driven per frame; the element's currentTime IS
+					// the media clock under the curve.
+					driveRate();
 					paintMemeBase(c, canvas, {
 						mediaKind: 'video',
 						gif: null,
 						stageImg: null,
 						stageVideo: video,
 						lookCss: memeLookCss(lookId),
-						mediaTransform: { scale: 1, x: 0, y: 0 },
-						stageSeconds: video.currentTime
+						mediaTransform: composeZoomWithFraming(
+							mediaTransform,
+							zoomTransformAt(zoomWindows, Math.round(video.currentTime * 1000))
+						),
+						stageSeconds: video.currentTime,
+						fxWindows: fxWindows.length ? fxWindows : undefined,
+						fxAtMs: Math.round(video.currentTime * 1000)
 					});
-					// Overlays are media-timed: export clock → media clock.
-					paintOverlaysAt(c, canvas, winStart * 1000 + elapsedMs * playbackRate);
+					// Overlays stay media-timed via the element clock (the old
+					// linear proxy drifted under ramps).
+					paintOverlaysAt(c, canvas, Math.round(video.currentTime * 1000));
 				},
 				onProgress: (p) => (pubPercent = p)
 			});
@@ -911,7 +984,12 @@
 										// studio — the next creator in the chain remixes sounds too.
 										sfxCues,
 										// And the color look (wire `l`) — parity with desktop.
-										...(lookId !== 'none' ? { lookId } : {})
+										...(lookId !== 'none' ? { lookId } : {}),
+										// Effect tracks (wire `z`/`f`/`s`) — lineage parity:
+										// a remix made here never drops the source's tracks.
+										...(zoomWindows.length ? { zoomWindows } : {}),
+										...(fxWindows.length ? { fxWindows } : {}),
+										...(speedWindows.length ? { speedWindows } : {})
 									})
 								: []),
 							...rightsTagsFor(license, remixSource ? sourceCredit : '')
@@ -1062,7 +1140,7 @@
 			>
 				<Icon name="i-lucide-wand-sparkles" class="size-8 animate-pulse text-warm-400" />
 				<p class="px-8 text-center text-[13px] font-semibold text-white">
-					Loading the remix source…
+					Loading “{remixLoadLabel || 'the remix source'}”…
 				</p>
 				<div class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15" aria-hidden="true">
 					<div

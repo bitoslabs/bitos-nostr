@@ -12,7 +12,9 @@
 	let {
 		remixLabel = '',
 		remixing = false,
+		remixLoading = false,
 		staging = false,
+		loadPercent = 0,
 		busy = false,
 		gifPickerId,
 		blankPickerId,
@@ -33,7 +35,12 @@
 	}: {
 		remixLabel?: string;
 		remixing?: boolean;
+		/** True while the owner's remix source is still downloading — the
+		 *  stage scrim can't run yet (no media), so progress shows here. */
+		remixLoading?: boolean;
 		staging?: boolean;
+		/** Byte-level load progress (0 = connecting / unknown length). */
+		loadPercent?: number;
 		busy?: boolean;
 		gifPickerId: string;
 		blankPickerId: string;
@@ -69,6 +76,45 @@
 				<p class="text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
 					Loading the source clip + applying its captions &amp; sounds…
 				</p>
+			</div>
+		</div>
+	{/if}
+	{#if remixLoading}
+		<!-- Remix source streaming from the owner's post: byte-level progress
+		     with a label (the studio's stage scrim only exists once media lands,
+		     so this is the only visible feedback during the download). -->
+		<div class="mb-4 w-full max-w-sm" role="status" aria-live="polite">
+			<p
+				class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-bold text-[var(--ui-text-muted)]"
+			>
+				<span class="truncate">Downloading “{remixLabel || 'the source'}” to remix…</span>
+				<span class="shrink-0 tabular-nums"
+					>{loadPercent > 0 ? `${loadPercent}%` : 'Connecting…'}</span
+				>
+			</p>
+			<div
+				class="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-border-muted)]"
+				aria-hidden="true"
+			>
+				<div
+					class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
+					style="width:{loadPercent > 0 ? loadPercent : 12}%"
+				></div>
+			</div>
+		</div>
+	{/if}
+	{#if staging && loadPercent > 0}
+		<!-- First source streaming in (URL paste / GIF pick before any media
+			     lands): byte-level bar instead of dead spinners on the buttons. -->
+		<div class="mb-4 w-full max-w-sm" role="status" aria-live="polite">
+			<div
+				class="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-border-muted)]"
+				aria-hidden="true"
+			>
+				<div
+					class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
+					style="width:{loadPercent}%"
+				></div>
 			</div>
 		</div>
 	{/if}

@@ -468,7 +468,7 @@
 	}
 	.bubble-out {
 		background-color: var(--bubble-out-bg);
-		color: #ffffff;
+		color: var(--ui-text);
 	}
 	.chat-canvas {
 		background-color: var(--chat-bg);
@@ -505,7 +505,9 @@
 		width: 100%;
 		min-width: 0;
 		box-sizing: border-box;
-		background-color: transparent;
+		/* Explicitly match the app canvas instead of inheriting whatever surface
+		   sits behind a feed row. This prevents barely-visible off-white seams. */
+		background-color: var(--ui-bg);
 		border: 0;
 		border-top: 0;
 		border-bottom: 1px solid var(--ui-border-muted);
@@ -689,57 +691,88 @@
 		border-color: var(--ui-text-highlighted);
 	}
 
-	/* Reel action button (vertical rail) */
+	/* Reel action button — themed rail OUTSIDE the media canvas (horizontal
+	   bar under the video on mobile, vertical rail beside it on desktop).
+	   All colors come from the ui tokens so light/dark both work; the media
+	   itself stays chrome-free. */
 	.reel-action {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 6px;
-		color: #ffffff;
+		gap: 5px;
+		color: var(--ui-text-muted);
 		cursor: pointer;
 		transition: all 0.2s;
 	}
 	.reel-action:hover {
-		transform: scale(1.1);
+		transform: scale(1.06);
+		color: var(--ui-text-highlighted);
 	}
 	.reel-action:active {
-		transform: scale(0.9);
+		transform: scale(0.94);
 	}
 	.reel-action .icon-circle {
-		width: 46px;
-		height: 46px;
+		width: 40px;
+		height: 40px;
 		clip-path: polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%);
-		background: rgba(255, 255, 255, 0.16);
-		backdrop-filter: blur(10px);
+		/* Opaque token surface: the rail no longer sits over media, so plain
+		   themed chips read cleaner than vibrancy glass. The hexagon clip
+		   shears outer shadows, so definition stays an inset hairline. */
+		background: var(--ui-bg-muted);
+		color: var(--ui-text);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+		box-shadow: inset 0 0 0 1.5px var(--ui-border-muted);
+		transition:
+			background 0.2s,
+			box-shadow 0.2s;
+	}
+	.reel-action:hover .icon-circle {
+		background: var(--ui-bg-accented);
+		box-shadow: inset 0 0 0 1.5px var(--ui-border-accented);
+	}
+	.reel-action > span:not(.icon-circle) {
+		font-weight: 600;
+		white-space: nowrap;
 	}
 	.reel-action .icon-circle.is-active {
 		background: var(--color-primary-500);
-		box-shadow: 0 10px 28px rgba(47, 149, 246, 0.35);
+		color: #fff;
+		box-shadow: none;
 	}
 	/* Bitcoin-orange zap circle — the sats-first action on the reel rail. */
 	.reel-action .icon-circle.is-zap {
-		background: rgba(247, 147, 26, 0.22);
-		color: #ffb02e;
-		box-shadow: 0 8px 26px rgba(247, 147, 26, 0.3);
+		background: color-mix(in oklab, #f7931a 14%, var(--ui-bg-muted));
+		color: #b45309;
+		box-shadow: none;
+	}
+	html.dark .reel-action .icon-circle.is-zap {
+		color: #ffb45e;
 	}
 	.reel-action .icon-circle.is-zap:hover {
-		background: rgba(247, 147, 26, 0.34);
+		background: color-mix(in oklab, #f7931a 26%, var(--ui-bg-muted));
 	}
 	/* Violet remix circle — the create action on the reel rail (§17 creator
 	   economy), visually distinct from the orange sats action and the neutral
 	   engagement circles. */
 	.reel-action .icon-circle.is-remix {
-		background: rgba(139, 92, 246, 0.24);
+		background: color-mix(in oklab, #8b5cf6 16%, var(--ui-bg-muted));
+		color: #6d28d9;
+		box-shadow: none;
+	}
+	html.dark .reel-action .icon-circle.is-remix {
 		color: #c4b5fd;
-		box-shadow: 0 8px 26px rgba(139, 92, 246, 0.32);
 	}
 	.reel-action .icon-circle.is-remix:hover {
-		background: rgba(139, 92, 246, 0.38);
-		color: #ddd6fe;
+		background: color-mix(in oklab, #8b5cf6 28%, var(--ui-bg-muted));
+	}
+	/* Desktop vertical rail grows the hexagons back to TikTok rail scale. */
+	@media (min-width: 640px) {
+		.reel-action .icon-circle {
+			width: 46px;
+			height: 46px;
+		}
 	}
 
 	/* Double-tap / zap burst particles floating up from the tap point. */
@@ -792,6 +825,46 @@
 		scroll-snap-align: start;
 		scroll-snap-stop: always;
 	}
+	/* Bitz is a full-height media page, but its empty column remains the same
+	   canvas as the application body — never a separate feed/card surface. */
+	.bitz-page {
+		background-color: var(--ui-bg);
+		isolation: isolate;
+	}
+	.bitz-page::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+		opacity: 0.03;
+		pointer-events: none;
+	}
+	.bitz-page > * {
+		position: relative;
+		z-index: 1;
+	}
+	/* Native media aspect ratios are measured by the Bitz player. This fallback
+	   keeps the first paint portrait-shaped until its metadata arrives. */
+	@media (min-width: 640px) {
+		.reel-media-canvas {
+			aspect-ratio: 9 / 16;
+		}
+	}
+	/* On short landscape/desktop windows retain every action but reduce the
+	   rail's footprint so it stays aligned with the dynamically sized video. */
+	@media (min-width: 640px) and (max-height: 680px) {
+		.reel-card > .reel-media-canvas + div {
+			gap: 0.5rem;
+		}
+		.reel-card > .reel-media-canvas + div .icon-circle {
+			width: 38px;
+			height: 38px;
+		}
+		.reel-card > .reel-media-canvas + div .reel-action > span:not(.icon-circle) {
+			font-size: 9px;
+		}
+	}
 	@media (min-width: 1024px) {
 		.reel-comments-panel {
 			position: absolute !important;
@@ -801,9 +874,8 @@
 			width: 390px;
 			max-height: none;
 			border-radius: 1rem 0 0 1rem;
-			border-top: 0;
-			border-right: 0;
-			border-bottom: 0;
+			border: 0;
+			box-shadow: none;
 		}
 	}
 	/* Native WebKit clear control would double up with the overlay's own
