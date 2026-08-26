@@ -1345,10 +1345,7 @@
 		toasts.success(isSaved ? 'Saved' : 'Removed from saved');
 	}
 
-	/** SOC-007/PUB-014: share a reel via Web Share (url + nostr entity text)
-	 * and publish a NIP-18 kind-16 generic repost (correct form for non-kind-1
-	 * events per S-002). Falls back to clipboard when the Share sheet is
-	 * unavailable (desktop browsers). */
+	/** Open the device share sheet for a reel, falling back to its web link. */
 	async function shareReel(reel: ReelNote) {
 		const webUrl = shareWebLink({ eventId: reel.id }, location.origin);
 		if (navigator.share) {
@@ -1356,24 +1353,22 @@
 				await navigator.share(sharePayload({ eventId: reel.id }, location.origin));
 				toasts.success('Shared');
 			} catch {
-				// user dismissed the sheet — still fire the repost? No: dismissal
-				// is not intent. Only abort quietly.
-			}
-			try {
-				await feed.repost(reel);
-			} catch {
-				// Repost is best-effort; sharing itself succeeded.
+				// Dismissing the native sheet is not an error and should be quiet.
 			}
 			return;
 		}
 		navigator.clipboard.writeText(webUrl);
+		toasts.success('Link copied');
+	}
+
+	/** Publish the NIP-18 generic repost explicitly — sharing a link never
+	 * reposts by surprise. */
+	async function repostReel(reel: ReelNote) {
 		try {
 			await feed.repost(reel);
-			toasts.success('Reposted · Link copied');
-		} catch {
-			// The link is already useful on its own; a publish failure (e.g. no
-			// raw event in this view) must not break sharing.
-			toasts.success('Link copied');
+			toasts.success('Reposted');
+		} catch (error) {
+			toasts.error((error as Error).message || 'Could not repost this bitz');
 		}
 	}
 
@@ -2176,6 +2171,16 @@
 													Message author
 												</MenuItem>
 												<MenuItem
+													icon="i-lucide-share"
+													onclick={() => {
+														popovers.close();
+														void shareReel(reel);
+													}}
+												>
+													Share
+												</MenuItem>
+												<MenuDivider />
+												<MenuItem
 													icon={bookmarks.has(reel.id)
 														? 'i-lucide-bookmark-x'
 														: 'i-lucide-bookmark'}
@@ -2435,14 +2440,12 @@
 							</div>
 						</div>
 
-						<!-- Action rail OUTSIDE the media canvas: a themed bar under the
-					     video on mobile (thumb-friendly, TikTok-bottom feel) and a
-					     vertical rail beside the canvas on desktop. The username and
-					     profile stay ON the canvas (bottom-left overlay), so the media
-					     area itself carries no buttons. -->
+						<!-- TikTok-style action rail: vertically over the right edge of the
+					     media on mobile, then beside the canvas on desktop. The username
+					     and profile stay on the canvas at bottom-left. -->
 						<div
 							data-reel-action-rail
-							class="relative z-20 flex shrink-0 items-center justify-around gap-1 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-1.5 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:flex-col sm:justify-center sm:gap-4 sm:self-stretch sm:border-0 sm:bg-transparent sm:p-0"
+							class="absolute right-2 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-20 flex flex-col items-center gap-2.5 text-white sm:relative sm:right-auto sm:bottom-auto sm:shrink-0 sm:justify-center sm:gap-4 sm:self-stretch sm:text-[var(--ui-text-muted)]"
 						>
 							<!-- Remix is a primary creation action, so keep it first on the
 							     rail. -->
@@ -2525,10 +2528,10 @@
 									{commentsFor(reel.id).length || 'Comment'}
 								</span>
 							</button>
-							<button type="button" onclick={() => void shareReel(reel)} class="reel-action">
-								<span class="icon-circle"><Icon name="i-lucide-share" class="size-5" /></span>
+							<button type="button" onclick={() => void repostReel(reel)} class="reel-action">
+								<span class="icon-circle"><Icon name="i-lucide-repeat-2" class="size-5" /></span>
 								<span class="text-[10px] sm:text-[11px]">
-									{reel.repostCount ? formatCompact(reel.repostCount) : 'Share'}
+									{reel.repostCount ? formatCompact(reel.repostCount) : 'Repost'}
 								</span>
 							</button>
 							<button type="button" onclick={() => toggleSave(reel)} class="reel-action">
