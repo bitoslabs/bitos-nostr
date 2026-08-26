@@ -7,7 +7,7 @@
 import { browser } from '$app/environment';
 import type { UnsignedEvent } from 'nostr-tools/pure';
 import { signMined } from '$lib/auth/signer';
-import { subscribe, publish, queryPrimaryFirst } from './pool';
+import { subscribe, publish, queryPrimaryFirst, queryOnce } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
@@ -25,6 +25,7 @@ import {
 } from './types';
 import { toFeedNote } from './feed-note';
 import { buildKind22, validateBitzMedia } from './bitz-codec';
+import { wouldCycle, remixOf } from '$lib/meme/remix';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
@@ -969,6 +970,15 @@ class FeedStore {
 					})
 				: unsigned;
 		const event = await signMined(mined);
+		// CRE-006 phase-2 publish guard: a remix event's id must never appear in
+		// its own ancestry (self-referential or malicious forks would loop every
+		// chain walker downstream). Tested against the SIGNED id — the mining
+		// nonce changes it, so the pre-sign body could not be checked. Unknown
+		// history refuses rather than risks a loop (wouldCycle contract).
+		const lineage = remixOf(event.tags);
+		if (lineage && (await wouldCycle(event.id, lineage, (id) => this.loadAncestorTags(id)))) {
+			throw new Error('This remix chains back to itself — re-open the source and try again');
+		}
 		options.onPhase?.('publishing');
 		// PUB-012 §12.2: the signed event enters the local outbox before the
 		// first relay write, and stays until the durability threshold is met
@@ -999,6 +1009,18 @@ class FeedStore {
 		if (!reel) return;
 		const { reels } = reconcileOptimisticReel(bitzSession.reels, reel);
 		bitzSession.reels = reels;
+	}
+
+	/** Load an ancestor's tags by event id (relays, best-effort — a missing
+	 *  event is the chain's natural end; pruned history degrades gracefully
+	 *  instead of blocking the publish guard). */
+	async loadAncestorTags(eventId: string): Promise<string[][] | null> {
+		try {
+			const [event] = await queryOnce([{ ids: [eventId], limit: 1 }]);
+			return event ? event.tags : null;
+		} catch {
+			return null;
+		}
 	}
 
 	/** Publish a NIP-18 repost (kind 6) of the original signed event. */

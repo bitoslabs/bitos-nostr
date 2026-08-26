@@ -39,6 +39,7 @@ import {
 	MAX_SPEED_WINDOWS as WIRE_SPEED_CAP
 } from './speed-track';
 import type { SpeedWindow } from './speed-track';
+import { memeLookOf, type MemeLookId } from './look';
 import type { ZoomWindow } from '$lib/ai/suggest';
 import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
 
@@ -62,6 +63,8 @@ export interface RemixSource {
 export interface RemixPayload {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
+	/** Color look preset burned into the source media (e.g. 'noir'). Wire `l`. */
+	lookId?: MemeLookId;
 	/** Raster image layers (2026-08-23): ordered bottom-to-top, capped. */
 	imageLayers?: MemeImageOverlay[];
 	/** Punch-in zoom windows (compact-wire): media-timed like sfxCues. */
@@ -105,6 +108,7 @@ export function encodeRemixPayload(payload: RemixPayload): string {
 		v: number;
 		o: WireOverlay[];
 		c: WireCue[];
+		l?: MemeLookId;
 		g?: WireImageOverlay[];
 		z?: WireZoom[];
 		f?: WireFx[];
@@ -131,6 +135,9 @@ export function encodeRemixPayload(payload: RemixPayload): string {
 					}
 				: { s: cue.sfx, a: cue.atMs, g: cue.gain, ...(cue.lane ? { l: cue.lane } : {}) }
 		),
+		// Color look rides as `l` ("look") — omitted when none so old payloads
+		// stay byte-identical and the 700-char budget goes to content.
+		...(payload.lookId && payload.lookId !== 'none' ? { l: payload.lookId } : {}),
 		// Image layers ride as `g` ("graphics") — omitted entirely when none,
 		// and hard-capped so a collage never blows the 700-char tag limit.
 		...(payload.imageLayers?.length
@@ -178,6 +185,7 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			v?: number;
 			o?: WireOverlay[];
 			c?: WireCue[];
+			l?: unknown;
 			g?: unknown[];
 			z?: unknown[];
 			f?: unknown[];
@@ -219,9 +227,11 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 		const zoomWindows = normalizeZoomWindows(parsed.z ?? []);
 		const fxWindows = decodeFxWindows(parsed.f ?? []);
 		const speedWindows = normalizeSpeedWindows(decodeSpeedWindows(parsed.s ?? []));
+		const lookId = typeof parsed.l === 'string' ? memeLookOf(parsed.l) : 'none';
 		return {
 			overlays,
 			sfxCues: cues,
+			...(lookId !== 'none' ? { lookId } : {}),
 			...(imageLayers.length ? { imageLayers } : {}),
 			...(zoomWindows.length ? { zoomWindows } : {}),
 			...(fxWindows.length ? { fxWindows } : {}),
@@ -354,6 +364,7 @@ export function remixSourceKey(event: {
 export function applyRemixPayload(payload: RemixPayload): {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
+	lookId: MemeLookId;
 	imageLayers: MemeImageOverlay[];
 	zoomWindows: ZoomWindow[];
 	fxWindows: FrameFxWindow[];
@@ -372,7 +383,15 @@ export function applyRemixPayload(payload: RemixPayload): {
 	const zoomWindows = normalizeZoomWindows(payload.zoomWindows ?? []);
 	const fxWindows = normalizeFxWindows(payload.fxWindows ?? []);
 	const speedWindows = normalizeSpeedWindows(payload.speedWindows ?? []);
-	return { overlays, sfxCues, imageLayers, zoomWindows, fxWindows, speedWindows };
+	return {
+		overlays,
+		sfxCues,
+		lookId: memeLookOf(payload.lookId),
+		imageLayers,
+		zoomWindows,
+		fxWindows,
+		speedWindows
+	};
 }
 
 // ---- Remix DAG (plan §17 / ledger CRE-006, S-014) ----------------------------

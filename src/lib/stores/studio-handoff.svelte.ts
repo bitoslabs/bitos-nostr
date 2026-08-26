@@ -20,6 +20,8 @@ export interface StudioRemixHandoff {
 	mediaType: 'image' | 'video';
 	overlays: unknown[];
 	sfxCues: unknown[];
+	/** Color look preset id (remix wire `l`) — applied on studio arrival. */
+	lookId?: string;
 	relays?: string[];
 	imageLayers?: unknown[];
 	/** Punch-in zoom windows from the source's meme tag (media-timed). */

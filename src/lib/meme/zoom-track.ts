@@ -87,32 +87,6 @@ export function zoomTransformAt(
 	return undefined;
 }
 
-/** Frame-level preview: the stage computes the SAME rect as coverRect via
- *  CSS. Returns percentages relative to the stage box (like mediaFrame). */
-export function zoomFrameCss(
-	sourceW: number,
-	sourceH: number,
-	canvasW: number,
-	canvasH: number,
-	transform?: MediaTransform
-): { left: string; top: string; width: string; height: string } | null {
-	if (canvasW <= 0 || canvasH <= 0) return null;
-	const scale = Math.max(canvasW / (sourceW || 1), canvasH / (sourceH || 1));
-	const zoom = Math.min(4, Math.max(1, transform?.scale ?? 1));
-	const w = (sourceW || canvasW) * scale * zoom;
-	const h = (sourceH || canvasH) * scale * zoom;
-	const maxX = Math.max(0, (w - canvasW) / 2);
-	const maxY = Math.max(0, (h - canvasH) / 2);
-	const dx = Math.min(1, Math.max(-1, transform?.x ?? 0)) * maxX;
-	const dy = Math.min(1, Math.max(-1, transform?.y ?? 0)) * maxY;
-	return {
-		left: ((((canvasW - w) / 2 + dx) / canvasW) * 100).toFixed(3),
-		top: ((((canvasH - h) / 2 + dy) / canvasH) * 100).toFixed(3),
-		width: ((w / canvasW) * 100).toFixed(3),
-		height: ((h / canvasH) * 100).toFixed(3)
-	};
-}
-
 /** Combine the creator's manual framing with a live zoom window: the zoom
  *  multiplies on top of the manual scale; pans sum (manual rides as bias). */
 export function composeZoomWithFraming(
@@ -128,20 +102,11 @@ export function composeZoomWithFraming(
 	};
 }
 
-/** Remap zoom windows onto the EXPORT timeline (trim + speed), mirroring
- *  `shiftCuesForExport` — same media-time convention, same filtering. */
-export function shiftZoomsForExport(
-	zooms: ZoomWindow[],
-	trimStartSec: number,
-	playbackRate: number,
-	durationSec: number
-): ZoomWindow[] {
-	const rate = playbackRate || 1;
-	return zooms
-		.map((z) => ({
-			...z,
-			startMs: (z.startMs - trimStartSec * 1000) / rate,
-			endMs: (z.endMs - trimStartSec * 1000) / rate
-		}))
-		.filter((z) => z.endMs > 0 && z.startMs < durationSec * 1000);
-}
+/*
+ * (shiftZoomsForExport + zoomFrameCss removed 2026-08-26: every export path
+ * evaluates zooms on the MEDIA clock — the recorder replays source time,
+ * GIF paths use the looped media time — so the trim/rate remap these helpers
+ * implemented is never needed. The stage preview computes the frame via the
+ * same coverRect math as every exporter (MemeStudio mediaFrame), which
+ * superseded the CSS mirror.)
+ */

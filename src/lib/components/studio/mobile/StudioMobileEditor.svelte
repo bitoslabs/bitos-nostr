@@ -347,8 +347,9 @@
 			return;
 		}
 		setMediaFile(source.file);
-		// Fresh media ⇒ fresh look/trim (mirrors the picker path).
-		lookId = 'none';
+		// Fresh media ⇒ fresh trim; the LOOK rides the remix wire (`l`) —
+		// the remix starts from the source's look, not a reset.
+		lookId = memeLookOf(handoff.lookId);
 		trimStart = 0;
 		trimEnd = null;
 		if (handoff.overlays?.length)
@@ -908,7 +909,9 @@
 										overlays,
 										// Mobile cue sheet rides the remix wire like the desktop
 										// studio — the next creator in the chain remixes sounds too.
-										sfxCues
+										sfxCues,
+										// And the color look (wire `l`) — parity with desktop.
+										...(lookId !== 'none' ? { lookId } : {})
 									})
 								: []),
 							...rightsTagsFor(license, remixSource ? sourceCredit : '')

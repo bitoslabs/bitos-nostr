@@ -506,6 +506,7 @@
 			mediaType: reel.mediaType,
 			overlays: layout?.overlays ?? [],
 			sfxCues: layout?.sfxCues ?? [],
+			lookId: layout?.lookId,
 			zoomWindows: layout?.zoomWindows ?? [],
 			fxWindows: layout?.fxWindows ?? [],
 			speedWindows: layout?.speedWindows ?? [],

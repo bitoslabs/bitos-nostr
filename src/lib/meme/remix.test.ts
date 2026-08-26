@@ -43,6 +43,23 @@ describe('encode/decode payload', () => {
 		expect(custom.soundId).toBe('snd-1');
 	});
 
+	it('round-trips a color look (wire `l`) and omits it when none', () => {
+		const overlay = makeOverlay({ text: 'gm' });
+		// noir rides; unknown ids degrade to absent (not a crash, not garbage)
+		const withLook = decodeRemixPayload(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'noir' })
+		)!;
+		expect(withLook.lookId).toBe('noir');
+		const unknownLook = decodeRemixPayload(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'bogus' as never })
+		)!;
+		expect(unknownLook.lookId).toBeUndefined();
+		const noLook = JSON.parse(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'none' })
+		) as Record<string, unknown>;
+		expect(noLook).not.toHaveProperty('l');
+	});
+
 	it('round-trips timed overlay windows', () => {
 		const overlay = makeOverlay({ text: 'LATE PUNCHLINE' });
 		overlay.startMs = 1200;
@@ -98,6 +115,12 @@ describe('remix tags', () => {
 });
 
 describe('applyRemixPayload', () => {
+	it('carries the look through the clone (fresh ids, same brand)', () => {
+		const overlay = makeOverlay({ text: 'gm' });
+		const applied = applyRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'vhs' });
+		expect(applied.lookId).toBe('vhs');
+		expect(applied.overlays[0]!.id).not.toBe(overlay.id);
+	});
 	it('clones with fresh ids and normalized rows', () => {
 		const original = makeClassicPair();
 		const payload = {

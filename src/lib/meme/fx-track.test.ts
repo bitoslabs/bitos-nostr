@@ -1,6 +1,6 @@
 /**
  * fx-track contract tests — same covenant as zoom-track: windows in media
- * time, normalize clamps/sorts, export shift mirrors the cue convention, the
+ * time, normalize clamps/sorts, the wire codec round-trips, and painters
  * wire codec round-trips, and painters run without touching DOM APIs beyond
  * canvas (jsdom canvas is stubbed via a mock ctx where needed).
  */
@@ -19,8 +19,7 @@ import {
 	isFrameFxId,
 	normalizeFxWindow,
 	normalizeFxWindows,
-	paintFxFrame,
-	shiftFxForExport
+	paintFxFrame
 } from './fx-track';
 
 const win = (over: Partial<Parameters<typeof normalizeFxWindow>[0]> = {}) =>
@@ -109,16 +108,6 @@ describe('active/phase', () => {
 		expect(fxPhase(w, 1000)).toBe(0);
 		expect(fxPhase(w, 1500)).toBeCloseTo(0.5);
 		expect(fxPhase(w, 2000)).toBe(1);
-	});
-});
-
-describe('shiftFxForExport', () => {
-	it('remaps by trim + rate and drops outside windows', () => {
-		const shifted = shiftFxForExport([win()], 1, 2, 10);
-		expect(shifted[0]!.startMs).toBe(0);
-		expect(shifted[0]!.endMs).toBe(500);
-		const dropped = shiftFxForExport([win()], 3, 1, 10);
-		expect(dropped).toHaveLength(0);
 	});
 });
 

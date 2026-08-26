@@ -115,24 +115,12 @@ export function fxPhase(win: FrameFxWindow, atMs: number): number {
 	return Math.min(1, Math.max(0, (atMs - win.startMs) / span));
 }
 
-/** Remap fx windows onto the EXPORT timeline (trim + speed), mirroring
- *  `shiftCuesForExport` / `shiftZoomsForExport` — same convention, same
- *  filtering (windows that fall outside the export span drop). */
-export function shiftFxForExport(
-	windows: FrameFxWindow[],
-	trimStartSec: number,
-	playbackRate: number,
-	durationSec: number
-): FrameFxWindow[] {
-	const rate = playbackRate || 1;
-	return windows
-		.map((win) => ({
-			...win,
-			startMs: (win.startMs - trimStartSec * 1000) / rate,
-			endMs: (win.endMs - trimStartSec * 1000) / rate
-		}))
-		.filter((win) => win.endMs > 0 && win.startMs < durationSec * 1000);
-}
+/*
+ * (shiftFxForExport removed 2026-08-26: every export path evaluates fx on
+ * the MEDIA clock — recorder paths replay source time, GIF paths use the
+ * looped media time — so the trim/rate remap this helper implemented is
+ * never needed.)
+ */
 
 /** Encode windows for the remix wire (`f`) — compact, capped, ordered. */
 export function encodeFxWindows(windows: FrameFxWindow[]): WireFx[] {

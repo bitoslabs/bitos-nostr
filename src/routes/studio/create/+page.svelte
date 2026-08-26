@@ -47,6 +47,7 @@
 				mediaType: pending.remix.mediaType,
 				overlays: pending.remix.overlays as RemixHandoff['overlays'],
 				sfxCues: pending.remix.sfxCues as RemixHandoff['sfxCues'],
+				lookId: pending.remix.lookId as RemixHandoff['lookId'],
 				imageLayers: pending.remix.imageLayers as RemixHandoff['imageLayers'],
 				zoomWindows: pending.remix.zoomWindows as RemixHandoff['zoomWindows'] | undefined,
 				fxWindows: pending.remix.fxWindows as RemixHandoff['fxWindows'] | undefined,

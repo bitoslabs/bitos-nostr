@@ -226,3 +226,90 @@ describe('NIP-18 repost kind selection (S-002/SOC-007)', () => {
 		}
 	});
 });
+
+describe('remix publish cycle guard (CRE-006)', () => {
+	const media: import('$lib/media/uploaders').UploadedMedia = {
+		url: 'https://cdn.example/meme.png',
+		kind: 'image',
+		mimeType: 'image/png',
+		bytes: 12_345,
+		provider: 'server'
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.stubGlobal('localStorage', {
+			getItem: vi.fn(() => null),
+			setItem: vi.fn(),
+			removeItem: vi.fn()
+		});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('publishes a healthy remix chain (no false blocking)', async () => {
+		const { identity } = await import('./identity.svelte');
+		const { publish, queryOnce } = await import('./pool');
+		identity.importSecret('ab'.repeat(32));
+		// Grandparent <- parent <- this remix: loader walks one hop and stops.
+		vi.mocked(queryOnce).mockResolvedValueOnce([
+			{
+				id: '77'.repeat(32),
+				pubkey: '88'.repeat(32),
+				kind: 20,
+				content: '',
+				created_at: 1,
+				tags: [] as string[][],
+				sig: ''
+			}
+		]);
+
+		const id = await feed.postBitz(media, {
+			caption: 'remix!',
+			extraTags: [
+				['remix', '99'.repeat(32), 'wss://relay.damus.io'],
+				['p', '88'.repeat(32)]
+			]
+		});
+
+		expect(id).toMatch(/^[0-9a-f]{64}$/);
+		expect(vi.mocked(publish)).toHaveBeenCalledTimes(1);
+	});
+
+	it('blocks a self-referencing remix before anything is staged or published', async () => {
+		const { identity } = await import('./identity.svelte');
+		const { publish, queryOnce } = await import('./pool');
+		identity.importSecret('ab'.repeat(32));
+
+		// Malicious relay: every ancestor query returns an event whose remix
+		// pointer points at itself (self-referential fork). The walk sees the
+		// same id twice -> refuse. Deterministic without predicting the signed id.
+		const sourceId = '99'.repeat(32);
+		vi.mocked(queryOnce).mockImplementation(async () => [
+			{
+				id: sourceId,
+				pubkey: '88'.repeat(32),
+				kind: 20,
+				content: '',
+				created_at: 1,
+				tags: [['remix', sourceId, 'wss://relay.damus.io']],
+				sig: ''
+			}
+		]);
+
+		await expect(
+			feed.postBitz(media, {
+				caption: 'cyclic remix',
+				extraTags: [
+					['remix', sourceId, 'wss://relay.damus.io'],
+					['p', '88'.repeat(32)]
+				]
+			})
+		).rejects.toThrow(/chains back to itself/);
+
+		// The rejection happened BEFORE staging/publishing — no relay write.
+		expect(vi.mocked(publish)).not.toHaveBeenCalled();
+	});
+});

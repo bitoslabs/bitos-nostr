@@ -10,6 +10,8 @@
 		mediaType: 'video' | 'image';
 		overlays: MemeTextOverlay[];
 		sfxCues: MemeSfxCue[];
+		/** Source color look (remix wire `l`) — applied on arrival. */
+		lookId?: MemeLookId;
 		relays?: string[];
 		/** Source image layers (remix wire `g`) — optional, older events lack it. */
 		imageLayers?: RemixLayerRef[];
@@ -122,18 +124,13 @@
 	import {
 		composeZoomWithFraming,
 		normalizeZoomWindows,
-		shiftZoomsForExport,
-		zoomFrameCss,
 		zoomTransformAt
 	} from '$lib/meme/zoom-track';
 	import {
 		fxPreviewStyle,
-		FRAME_FX_IDS,
-		FRAME_FX_LABELS,
 		MAX_FX_WINDOWS,
 		normalizeFxWindows,
 		paintFxFrame,
-		shiftFxForExport,
 		type FrameFxId,
 		type FrameFxWindow
 	} from '$lib/meme/fx-track';
@@ -2654,6 +2651,7 @@
 		const applied = applyRemixPayload({
 			overlays: handoff.overlays,
 			sfxCues: handoff.sfxCues,
+			...(handoff.lookId && handoff.lookId !== 'none' ? { lookId: handoff.lookId } : {}),
 			...(handoff.imageLayers?.length ? { imageLayers: handoff.imageLayers } : {}),
 			...(handoff.zoomWindows?.length ? { zoomWindows: handoff.zoomWindows } : {}),
 			...(handoff.fxWindows?.length ? { fxWindows: handoff.fxWindows } : {}),
@@ -2673,6 +2671,9 @@
 			void layerAssets.cacheGif(layer.src);
 		}
 		selectedId = overlays[0]?.id ?? null;
+		// The source's color look rides the handoff (wire `l`) — apply it so the
+		// remix starts where the original ended up, WYSIWYG with its export.
+		if (applied.lookId !== 'none') lookId = applied.lookId;
 		remixSource = { eventId: handoff.eventId, pubkey: handoff.pubkey, relays: handoff.relays };
 		remixLabel = handoff.label || 'a bitz';
 		// S-013: automatic attribution — credit the source author on publish.
@@ -3333,17 +3334,25 @@
 			);
 			ctx.fillStyle = '#000';
 			ctx.fillRect(0, 0, a.width, a.height);
+			// Mod so the base LOOPS when a layer/cue extends past one pass
+			// (mirrors the recorder path) instead of freezing on its last
+			// frame for the rest of the window.
+			const baseSec = gif && gif.duration > 0 ? t % gif.duration : t;
 			paintMemeBase(ctx, a, {
 				mediaKind,
 				gif,
 				stageImg,
 				stageVideo,
 				lookCss,
-				mediaTransform,
-				// Mod so the base LOOPS when a layer/cue extends past one pass
-				// (mirrors the recorder path) instead of freezing on its last
-				// frame for the rest of the window.
-				stageSeconds: gif && gif.duration > 0 ? t % gif.duration : t,
+				// Zoom punches at the looped media time — the SAME clock the
+				// preview and the recorder path compose on, so the offline .gif
+				// is WYSIWYG (previously this passed the static framing and
+				// silently dropped the zoom track).
+				mediaTransform: composeZoomWithFraming(
+					mediaTransform,
+					zoomTransformAt(zoomWindows, Math.round(baseSec * 1000))
+				),
+				stageSeconds: baseSec,
 				fxWindows: fxWindows.length ? fxWindows : undefined
 			});
 			paintImageOverlays(
@@ -3434,7 +3443,10 @@
 				bitmaps: layerAssets.bitmaps,
 				target: renderTarget,
 				mediaTransform,
-				fxWindows: fxWindows.length ? fxWindows : undefined
+				fxWindows: fxWindows.length ? fxWindows : undefined,
+				// The still is the CURRENT frame — fx evaluate at the stage
+				// playhead (media time), not a hardcoded 0.
+				fxAtMs: Math.round(stageSeconds * 1000)
 			});
 			return new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' });
 		}
@@ -3543,6 +3555,11 @@
 			paint: (ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
+				// GIF clock for effect tracks: looped media time (a repeated GIF
+				// re-fires zoom/fx windows each pass — preview + offline encoder
+				// parity; raw elapsed would fire them exactly once).
+				const loopMs =
+					decoded.duration > 0 ? Math.round(elapsedMs % (decoded.duration * 1000)) : elapsedMs;
 				paintMemeBase(ctx, a, {
 					mediaKind,
 					gif: decoded,
@@ -3551,13 +3568,13 @@
 					lookCss,
 					mediaTransform: composeZoomWithFraming(
 						mediaTransform,
-						zoomTransformAt(zoomWindows, elapsedMs)
+						zoomTransformAt(zoomWindows, loopMs)
 					),
 					stageSeconds: (elapsedMs / 1000) % Math.max(decoded.duration, 0.01),
 					fxWindows: fxWindows.length ? fxWindows : undefined,
-					// FX ride the EXPORT clock (elapsedMs) like the cue sheet — a
-					// longer Length pick repeats the hit each loop pass.
-					fxAtMs: elapsedMs
+					// FX ride the looped GIF clock — a longer Length pick repeats
+					// the hit each pass (matching what the preview shows).
+					fxAtMs: loopMs
 				});
 				paintImageOverlays(
 					ctx,
@@ -3727,6 +3744,7 @@
 						? remixTagsFor(remixSource, {
 								overlays,
 								sfxCues,
+								...(lookId !== 'none' ? { lookId } : {}),
 								imageLayers,
 								zoomWindows,
 								fxWindows,
