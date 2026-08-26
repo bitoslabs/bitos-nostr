@@ -1023,8 +1023,13 @@
 		if (!card) return;
 		const ratio = reelAspectRatios[reelId] ?? 9 / 16;
 		const rail = card.querySelector<HTMLElement>('[data-reel-action-rail]');
+		const navigation = card.querySelector<HTMLElement>('[data-reel-navigation]');
 		const railWidth = rail?.offsetWidth ?? 46;
-		const availableWidth = Math.max(1, card.clientWidth - railWidth - 48);
+		// The desktop navigation is part of the player control cluster, rather
+		// than a viewport-floating widget. Reserve its column as well so a wide
+		// landscape reel cannot grow beneath either control surface.
+		const navigationWidth = navigation?.offsetWidth ?? 0;
+		const availableWidth = Math.max(1, card.clientWidth - railWidth - navigationWidth - 64);
 		const availableHeight = Math.max(1, card.clientHeight - 32);
 		const height = Math.min(availableHeight, availableWidth / ratio);
 		const width = height * ratio;
@@ -2440,6 +2445,36 @@
 							</div>
 						</div>
 
+						<!-- Desktop navigation belongs to this reel's control cluster, not
+						     the viewport. That keeps it clear of both the video and the
+						     action rail at narrow desktop widths. The comments header owns
+						     navigation while the panel is open. -->
+						{#if !commentReel}
+							<div
+								data-reel-navigation
+								class="hidden shrink-0 flex-col gap-1.5 self-center rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] p-1 text-[var(--ui-text)] shadow-[var(--shadow-card)] sm:flex"
+								role="group"
+								aria-label="Bitz navigation"
+							>
+								<button
+									type="button"
+									onclick={() => scrollToReel(-1)}
+									class="grid size-9 place-items-center rounded-full bg-[var(--ui-bg)] text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
+									aria-label="Previous bitz"
+								>
+									<Icon name="i-lucide-chevron-up" class="size-[18px]" />
+								</button>
+								<button
+									type="button"
+									onclick={() => scrollToReel(1)}
+									class="grid size-9 place-items-center rounded-full bg-[var(--ui-bg)] text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] hover:text-[var(--ui-text-highlighted)]"
+									aria-label="Next bitz"
+								>
+									<Icon name="i-lucide-chevron-down" class="size-[18px]" />
+								</button>
+							</div>
+						{/if}
+
 						<!-- TikTok-style action rail: vertically over the right edge of the
 					     media on mobile, then beside the canvas on desktop. The username
 					     and profile stay on the canvas at bottom-left. -->
@@ -2590,32 +2625,6 @@
 					</div>
 				</div>
 			{/if}
-		</div>
-	{/if}
-
-	<!-- Reel controls and navigation -->
-	{#if playbackReels.length}
-		<div
-			class="absolute top-1/2 right-28 z-30 -translate-y-1/2 flex-col gap-1.5 rounded-full bg-black/30 p-1 text-white shadow-xl ring-1 shadow-black/30 ring-white/15 backdrop-blur-xl transition-[right] duration-200 sm:bg-[var(--ui-bg-muted)] sm:text-[var(--ui-text)] sm:shadow-[var(--shadow-card)] sm:ring-[var(--ui-border-muted)] sm:backdrop-blur-none {commentReel
-				? 'hidden'
-				: 'hidden sm:flex'}"
-		>
-			<button
-				type="button"
-				onclick={() => scrollToReel(-1)}
-				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white sm:bg-[var(--ui-bg)] sm:text-[var(--ui-text-muted)] sm:hover:bg-[var(--ui-bg-accented)] sm:hover:text-[var(--ui-text-highlighted)]"
-				aria-label="Previous bitz"
-			>
-				<Icon name="i-lucide-chevron-up" class="size-[18px]" />
-			</button>
-			<button
-				type="button"
-				onclick={() => scrollToReel(1)}
-				class="grid size-9 place-items-center rounded-full bg-white/12 text-white/90 transition hover:bg-white/25 hover:text-white sm:bg-[var(--ui-bg)] sm:text-[var(--ui-text-muted)] sm:hover:bg-[var(--ui-bg-accented)] sm:hover:text-[var(--ui-text-highlighted)]"
-				aria-label="Next bitz"
-			>
-				<Icon name="i-lucide-chevron-down" class="size-[18px]" />
-			</button>
 		</div>
 	{/if}
 

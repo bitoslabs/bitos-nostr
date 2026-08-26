@@ -855,18 +855,18 @@
 	   vertical rail over the media's right edge instead of consuming a bottom
 	   bar. The translucent treatment keeps every action readable on video. */
 	@media (max-width: 639px) {
-		.reel-card > .reel-media-canvas + [data-reel-action-rail] .icon-circle {
+		.reel-card > .reel-media-canvas ~ [data-reel-action-rail] .icon-circle {
 			background: rgb(0 0 0 / 0.4);
 			color: #fff;
 			box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.18);
 			backdrop-filter: blur(8px);
 			-webkit-backdrop-filter: blur(8px);
 		}
-		.reel-card > .reel-media-canvas + [data-reel-action-rail] .icon-circle.is-remix {
+		.reel-card > .reel-media-canvas ~ [data-reel-action-rail] .icon-circle.is-remix {
 			background: rgb(91 55 176 / 0.72);
 			color: #fff;
 		}
-		.reel-card > .reel-media-canvas + [data-reel-action-rail] .icon-circle.is-zap {
+		.reel-card > .reel-media-canvas ~ [data-reel-action-rail] .icon-circle.is-zap {
 			background: rgb(183 93 0 / 0.78);
 			color: #fff;
 		}
@@ -874,14 +874,14 @@
 	/* On short landscape/desktop windows retain every action but reduce the
 	   rail's footprint so it stays aligned with the dynamically sized video. */
 	@media (min-width: 640px) and (max-height: 680px) {
-		.reel-card > .reel-media-canvas + div {
+		.reel-card > [data-reel-action-rail] {
 			gap: 0.5rem;
 		}
-		.reel-card > .reel-media-canvas + div .icon-circle {
+		.reel-card > [data-reel-action-rail] .icon-circle {
 			width: 38px;
 			height: 38px;
 		}
-		.reel-card > .reel-media-canvas + div .reel-action > span:not(.icon-circle) {
+		.reel-card > [data-reel-action-rail] .reel-action > span:not(.icon-circle) {
 			font-size: 9px;
 		}
 	}
