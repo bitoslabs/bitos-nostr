@@ -24,6 +24,24 @@ describe('fetchSourceFile', () => {
 		expect(res.mime).toBe('image/gif');
 	});
 
+	it('reports byte progress for a streamed remix source', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				new Response(new Uint8Array([1, 2, 3, 4]), {
+					headers: { 'content-type': 'image/png', 'content-length': '4' }
+				})
+			)
+		);
+		const progress: number[] = [];
+		const res = await fetchSourceFile('https://x.test/remix.png', {
+			onProgress: (percent) => progress.push(percent)
+		});
+		expect(res.ok).toBe(true);
+		expect(progress.at(-1)).toBe(100);
+		expect(progress.some((percent) => percent > 0 && percent < 100)).toBe(true);
+	});
+
 	it('rejects non-media mime with actionable copy', async () => {
 		mockFetch('text/html', 10);
 		const res = await fetchSourceFile('https://x.test/page');

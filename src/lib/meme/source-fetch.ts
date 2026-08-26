@@ -28,6 +28,8 @@ export interface SourceFetchOptions {
 	accept?: 'image' | 'video' | 'both';
 	/** Hard byte cap — one number or per-kind caps (default 200 MB both). */
 	maxBytes?: number | { image: number; video: number };
+	/** Byte-level download progress (0–100). Fires on chunks + completion. */
+	onProgress?: (percent: number) => void;
 }
 
 /** Studio-wide media cap (kept identical to MemeStudio's previous inline cap). */
@@ -37,6 +39,32 @@ function extensionFor(mime: string): string {
 	return (mime.split('/')[1] ?? 'bin').replace('quicktime', 'mov');
 }
 
+/** Read a (possibly streaming) response body as a Blob, reporting byte-level
+ *  progress when the server sends content-length. Unknown-length streams
+ *  still complete — they just report an indeterminate progress (0). */
+async function readBlobWithProgress(
+	res: Response,
+	onProgress?: (percent: number) => void
+): Promise<Blob> {
+	const total = Number(res.headers.get('content-length') ?? '');
+	if (!onProgress || !res.body || !Number.isFinite(total) || total <= 0) return res.blob();
+	const reader = res.body.getReader();
+	const chunks: BlobPart[] = [];
+	let loaded = 0;
+	const report = () => onProgress(Math.min(99, Math.round((loaded / total) * 100)));
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (value) {
+			chunks.push(value as unknown as BlobPart);
+			loaded += value.byteLength;
+			report();
+		}
+	}
+	onProgress(100);
+	return new Blob(chunks, { type: (res.headers.get('content-type') ?? '').split(';')[0] });
+}
+
 /** Fetch a remote image/video URL and wrap it as a stage-ready File. */
 export async function fetchSourceFile(
 	url: string,
@@ -44,7 +72,8 @@ export async function fetchSourceFile(
 		label = 'source',
 		noProxy = false,
 		accept = 'both',
-		maxBytes = MAX_SOURCE_BYTES
+		maxBytes = MAX_SOURCE_BYTES,
+		onProgress
 	}: SourceFetchOptions = {}
 ): Promise<SourceFileResult> {
 	const trimmed = url.trim();
@@ -57,7 +86,7 @@ export async function fetchSourceFile(
 		if (!kind || (accept !== 'both' && kind !== accept)) {
 			throw new Error('That link is not a picture or video');
 		}
-		const blob = await res.blob();
+		const blob = await readBlobWithProgress(res, onProgress);
 		const cap = typeof maxBytes === 'number' ? maxBytes : (maxBytes?.[kind] ?? MAX_SOURCE_BYTES);
 		if (blob.size > cap) throw new Error(`Over ${humanBytes(cap)} — too big`);
 		const nameBase = (label || 'source').replace(/[^\w.-]+/g, '-').replace(/-+$/, '');

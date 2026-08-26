@@ -190,6 +190,8 @@
 	import MemeDiscardDialog from '$lib/components/bitz/MemeDiscardDialog.svelte';
 	import MemeTimelineDock from '$lib/components/bitz/MemeTimelineDock.svelte';
 	import MemeStudioInputs from '$lib/components/bitz/MemeStudioInputs.svelte';
+	import MemePublishOptions from '$lib/components/bitz/MemePublishOptions.svelte';
+	import MemeShareSoundWidget from '$lib/components/bitz/MemeShareSoundWidget.svelte';
 	import MemeTemplateSlotTools from '$lib/components/bitz/MemeTemplateSlotTools.svelte';
 	import MemeInspectorPanel from '$lib/components/bitz/MemeInspectorPanel.svelte';
 	import MemeExpertClipPanel from '$lib/components/bitz/MemeExpertClipPanel.svelte';
@@ -279,6 +281,7 @@
 	let sfxMenuId = `meme-sfx-${Math.random().toString(36).slice(2, 8)}`;
 	/** Sound studio dialog (picker + cue-sheet editor). */
 	let soundDialogOpen = $state(false);
+	let shareSoundDialogOpen = $state(false);
 	let recordingPreflightOpen = $state(false);
 	let recordingCapabilities = $state<{
 		pointer: boolean;
@@ -2614,7 +2617,16 @@
 	/** Stash a remix payload handed over from the bitz page: loads the source
 	 *  (fresh overlay/cue ids) into the studio. Runs while the studio is open —
 	 *  the composer is already usable on the fallback “pick your own clip” path. */
+	let remixLoading = $state(false);
+	let remixLoadLabel = $state('');
+	let remixLoadPercent = $state(0);
+
 	async function consumeRemixHandoff(handoff: RemixHandoff) {
+		// Big sources stream off the relay CDN — show byte-level progress
+		// instead of a dead stage while the route chunk + media both land.
+		remixLoading = true;
+		remixLoadLabel = handoff.label || 'a bitz';
+		remixLoadPercent = 0;
 		try {
 			// Use the same source-loader as the rest of the studio. Besides keeping
 			// the media/type/200 MB checks consistent, this retries CORS-hostile
@@ -2624,7 +2636,10 @@
 			const source = await fetchSourceFile(handoff.mediaUrl, {
 				label: 'remix-source',
 				accept: handoff.mediaType,
-				maxBytes: MAX_SOURCE_BYTES
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => {
+					remixLoadPercent = percent;
+				}
 			});
 			if (!source.ok || !source.file)
 				throw new Error(source.error ?? 'Could not load source media');
@@ -2633,6 +2648,8 @@
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : 'Could not load source media';
 			toasts.warning(`${detail} — choose your own clip below to continue this remix`);
+		} finally {
+			remixLoading = false;
 		}
 		const applied = applyRemixPayload({
 			overlays: handoff.overlays,
@@ -3820,6 +3837,10 @@
 		const controller = new AbortController();
 		mineController = controller;
 		powProgress = null;
+		// Enter a busy phase before the remix-lineage lookup. That lookup can
+		// wait on relays, and the publish dialog needs to acknowledge the tap
+		// immediately rather than appearing frozen until rendering begins.
+		track('rendering', 'Preparing your public post…', 0);
 		try {
 			if (mediaKind === 'video') stageVideo?.pause();
 			// Lineage pre-flight (S-014): refuse to extend a cyclic/self-referential
@@ -4111,7 +4132,11 @@
 		// Draft recovery (plan F-010): restore work-in-progress after a crash,
 		// refresh or accidental close. Runs once per component lifetime.
 		const draft = readMemeDraft();
-		if (draft && !file) {
+		// An explicit studio handoff owns the initial canvas. In particular, the
+		// async draft-media decode can finish after a Bitz remix fetch and replace
+		// its source/layout, making Remix appear to restore an unrelated draft.
+		// Slots and templates are likewise intentional starts, not recovery.
+		if (draft && !file && !remixHandoff && !slotHandoff && !templateHandoff) {
 			let restored = false;
 			void draftMediaFile(draft).then((media) => {
 				if (media) {
@@ -4416,6 +4441,35 @@
 													: `filter:${previewMediaFilterCss}; transform:${previewMediaBoxCss};`}
 												onload={onImageLoad}
 											/>
+										{/if}
+										{#if remixLoading}
+											<!-- The source type is unknown until its bytes finish loading, so this
+											     must sit outside the video/image branch. -->
+											<div
+												class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
+												role="status"
+												aria-live="polite"
+											>
+												<Icon
+													name="i-lucide-wand-sparkles"
+													class="size-8 animate-pulse text-warm-400"
+												/>
+												<p class="px-6 text-center text-[13px] font-semibold text-white">
+													Loading “{remixLoadLabel}” to remix…
+												</p>
+												<div
+													class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15"
+													aria-hidden="true"
+												>
+													<div
+														class="h-full rounded-full bg-warm-400 transition-[width] duration-200"
+														style="width:{remixLoadPercent > 0 ? remixLoadPercent : 12}%"
+													></div>
+												</div>
+												<p class="text-[11px] font-medium text-white/60">
+													{remixLoadPercent > 0 ? `${remixLoadPercent}%` : 'Connecting…'}
+												</p>
+											</div>
 										{/if}
 										<!-- Frame-FX overlay mirror (flash/color/strobe/vignette/spotlight
 			     paint as a translucent layer over the media box — the same values
@@ -5459,6 +5513,7 @@
 							{smartMatches}
 							onApplySmartMatch={applySmartMatch}
 							onOpenSoundStudio={() => (soundDialogOpen = true)}
+							onOpenShareSound={() => (shareSoundDialogOpen = true)}
 							onPreviewSynth={previewSfx}
 							onAddSynth={addSfxCue}
 							onAddCustom={addCustomCue}
@@ -5607,6 +5662,33 @@
 	onQueue={onQueueInput}
 	onSound={(sound) => void soundIO.importFile(sound)}
 />
+<MemePublishOptions
+	bind:destinations
+	bind:caption
+	bind:open={publishDetailsOpen}
+	bind:sensitive
+	bind:showPow
+	bind:license
+	bind:aiAssisted
+	bind:splitsOpen
+	bind:splitRows
+	bind:selectedProvider
+	bind:pow
+	{busy}
+	{phase}
+	{powProgress}
+	{writeRelayCount}
+	kindNip={kindInfo?.nip}
+	softCaptionLimit={SOFT_CAP}
+	hardCaptionLimit={HARD_CAP}
+	{exportFormat}
+	{mediaKind}
+	videoExportSupported={videoMemeSupported}
+	onFormat={(format) => (exportFormat = format)}
+	onCancelMining={() => mineController?.abort()}
+	onPublish={() => void submit()}
+/>
+<MemeShareSoundWidget bind:open={shareSoundDialogOpen} showTrigger={false} />
 <MemeSoundDialog
 	bind:open={soundDialogOpen}
 	bind:cues={sfxCues}

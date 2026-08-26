@@ -7,7 +7,7 @@
 	import { soundLibrary } from '$lib/stores/meme-sounds.svelte';
 	import { soundIO } from '$lib/stores/meme-sound-io.svelte';
 
-	let open = $state(false);
+	let { open = $bindable(false), showTrigger = true }: { open?: boolean; showTrigger?: boolean } = $props();
 	let soundId = $state('');
 	let title = $state('');
 	let description = $state('');
@@ -58,14 +58,16 @@
 	}
 </script>
 
-<button
-	type="button"
-	onclick={() => (open = true)}
-	class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"
->
-	<Icon name="i-lucide-share-2" class="size-3.5" />
-	Share sound
-</button>
+{#if showTrigger}
+	<button
+		type="button"
+		onclick={() => (open = true)}
+		class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"
+	>
+		<Icon name="i-lucide-share-2" class="size-3.5" />
+		Share sound
+	</button>
+{/if}
 
 <Dialog bind:open title="Publish sound">
 	<input

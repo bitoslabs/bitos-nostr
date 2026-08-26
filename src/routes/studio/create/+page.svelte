@@ -172,6 +172,7 @@
 			<StudioMobileEditor
 				onexit={exitStudio}
 				onposted={afterPost}
+				soundHandoff={pendingSound}
 				remixHandoff={remixPayload}
 				templateHandoff={pendingTemplate}
 				slotHandoff={pendingSlotId}

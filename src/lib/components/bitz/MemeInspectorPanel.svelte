@@ -5,7 +5,6 @@
 	import MemeArtboardCard from './MemeArtboardCard.svelte';
 	import MemeTrimPanel from './MemeTrimPanel.svelte';
 	import MemeSoundPanel from './MemeSoundPanel.svelte';
-	import MemePublishOptions from './MemePublishOptions.svelte';
 	import { cueTrackDurationSec } from '$lib/meme/cue-track';
 	import type { MemeImageOverlay } from '$lib/meme/image-overlay';
 	import type { MemeTextOverlay } from '$lib/meme/schema';
@@ -78,6 +77,7 @@
 		analyzing,
 		suggestions,
 		onOpenSoundStudio,
+		onOpenShareSound,
 		onPreviewSynth,
 		onAddSynth,
 		onAddCustom,
@@ -171,6 +171,7 @@
 		analyzing: boolean;
 		suggestions: MemeSuggestion[];
 		onOpenSoundStudio: () => void;
+		onOpenShareSound: () => void;
 		onPreviewSynth: (id: MemeSfxId) => void;
 		onAddSynth: (id: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
@@ -328,6 +329,7 @@
 			{suggestions}
 			{smartMatches}
 			onOpenStudio={onOpenSoundStudio}
+			onOpenShareSound={onOpenShareSound}
 			{onPreviewSynth}
 			{onAddSynth}
 			{onAddCustom}
@@ -341,30 +343,4 @@
 			{onRemoveCue}
 		/>
 	{/if}
-	<MemePublishOptions
-		bind:destinations
-		bind:caption
-		bind:open={publishDetailsOpen}
-		bind:sensitive
-		bind:showPow
-		bind:license
-		bind:aiAssisted
-		bind:splitsOpen
-		bind:splitRows
-		bind:selectedProvider
-		bind:pow
-		{busy}
-		{phase}
-		{powProgress}
-		{writeRelayCount}
-		{kindNip}
-		{softCaptionLimit}
-		{hardCaptionLimit}
-		{exportFormat}
-		{mediaKind}
-		{videoExportSupported}
-		{onFormat}
-		{onCancelMining}
-		{onPublish}
-	/>
 </div>

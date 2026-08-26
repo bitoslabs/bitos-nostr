@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import MemeShareSoundWidget from './MemeShareSoundWidget.svelte';
 	import MemeSharedSoundsPicker from './MemeSharedSoundsPicker.svelte';
 	import MemeSoundCueList from './MemeSoundCueList.svelte';
 	import MemeSoundSuggestions from './MemeSoundSuggestions.svelte';
@@ -28,6 +27,7 @@
 		smartMatches = [],
 		onApplySmartMatch,
 		onOpenStudio,
+		onOpenShareSound,
 		onPreviewSynth,
 		onAddSynth,
 		onAddCustom,
@@ -53,6 +53,7 @@
 		smartMatches?: SmartResolution[];
 		onApplySmartMatch: (match: SmartResolution) => void;
 		onOpenStudio: () => void;
+		onOpenShareSound: () => void;
 		onPreviewSynth: (sfx: MemeSfxId) => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
@@ -118,7 +119,7 @@
 			<Icon name="i-lucide-music-plus" class="size-3.5" />
 			Add sound
 		</button>
-		<MemeShareSoundWidget />
+		<button type="button" onclick={onOpenShareSound} class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"><Icon name="i-lucide-share-2" class="size-3.5" />Share sound</button>
 		<MemeSharedSoundsPicker
 			sounds={sharedSoundsStore.list}
 			loading={sharedSoundsStore.loading}

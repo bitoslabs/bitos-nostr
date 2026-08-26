@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { browser } from '$app/environment';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import StudioSheet from './StudioSheet.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -9,16 +10,42 @@
 	import { feed } from '$lib/nostr/feed.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { memeSlots, type MemeSlotMedia } from '$lib/stores/meme-slots.svelte';
-	import { MEME_COLORS, makeOverlay, type MemeFont, type MemeTextOverlay } from '$lib/meme/schema';
+	import type { StudioSoundSeed } from '$lib/stores/studio-handoff.svelte';
+	import {
+		MAX_SFX_CUES,
+		MEME_COLORS,
+		makeOverlay,
+		normalizeSfxCue,
+		type MemeFont,
+		type MemeSfxCue,
+		type MemeSfxId,
+		type MemeTextOverlay
+	} from '$lib/meme/schema';
+	import { SFX_BUCKETS, SFX_LABELS } from '$lib/meme/sound-catalog';
 	import { MEME_LOOKS, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { STICKER_PACKS, isStickerOverlay, makeSticker } from '$lib/meme/stickers';
-	import { canRenderVideoMeme, paintMemeBase, recordMeme } from '$lib/meme/export-pipeline';
-	import { exportErrorMessage } from '$lib/meme/export-support';
-	import { paintOverlay, targetSize } from '$lib/meme/render';
-	import { rightsTagsFor, type RemixLicense } from '$lib/meme/remix';
 	import {
+		canRenderVideoMeme,
+		cueAudioTrack,
+		paintMemeBase,
+		recordMeme
+	} from '$lib/meme/export-pipeline';
+	import { exportErrorMessage, shiftCuesForExport } from '$lib/meme/export-support';
+	import { paintOverlay, targetSize, type MediaTransform } from '$lib/meme/render';
+	import {
+		remixTagsFor,
+		rightsTagsFor,
+		type RemixLicense,
+		type RemixSource
+	} from '$lib/meme/remix';
+	import { fetchSourceFile } from '$lib/meme/source-fetch';
+	import {
+		ARTBOARDS,
+		ARTBOARD_KEY,
 		DESTINATIONS,
 		LICENSE_OPTIONS,
+		STAGE_ZOOM_KEY,
+		type MemeArtboardId,
 		type MemeDestination
 	} from '$lib/components/bitz/meme-studio-config';
 	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
@@ -51,14 +78,15 @@
 	 */
 
 	type EditorMode = 'image' | 'gif' | 'video';
-	type PanelId = 'meme' | 'text' | 'sticker' | 'trim' | 'look' | 'publish';
+	type PanelId = 'meme' | 'text' | 'sticker' | 'trim' | 'look' | 'publish' | 'audio' | 'canvas';
 
 	let {
 		onexit,
 		onposted,
 		remixHandoff = null,
 		templateHandoff = null,
-		slotHandoff = null
+		slotHandoff = null,
+		soundHandoff = null
 	}: {
 		onexit: () => void;
 		/** After a successful publish — the route sends the creator home. */
@@ -66,6 +94,7 @@
 		remixHandoff?: RemixHandoff | null;
 		templateHandoff?: { id: string; overlays: MemeTextOverlay[] } | null;
 		slotHandoff?: string | null;
+		soundHandoff?: StudioSoundSeed | null;
 	} = $props();
 
 	/* ------------------------------------------------------------------ *
@@ -83,6 +112,87 @@
 	let trimStart = $state(0);
 	let trimEnd = $state<number | null>(null);
 	let playbackRate = $state(1);
+	/** Sound-effect cues staged against media time (same schema as desktop). */
+	let sfxCues = $state<MemeSfxCue[]>([]);
+	/** Artboard + framing (zoom/pan) — the same model as the desktop stage;
+	 *  pan is normalized -1..1 within the zoom overflow, zoom 1–4. */
+	let artboardId = $state<MemeArtboardId>('source');
+	let zoom = $state(1);
+	let pan = $state({ x: 0, y: 0 });
+	let stageEl = $state<HTMLDivElement | null>(null);
+	/** Natural media size (for the `source` artboard's aspect + export size). */
+	let mediaNatural = $state({ w: 0, h: 0 });
+
+	const mediaTransform = $derived<MediaTransform>({ scale: zoom, x: pan.x, y: pan.y });
+	/** Stage aspect ratio (w/h). Presets use their frame; `source` follows the
+	 *  media itself (9:16 fallback until metadata loads). */
+	const stageAspect = $derived.by(() => {
+		const board = ARTBOARDS.find((a) => a.id === artboardId);
+		if (board && board.w > 0 && board.h > 0) return board.w / board.h;
+		if (mediaNatural.w > 0 && mediaNatural.h > 0) return mediaNatural.w / mediaNatural.h;
+		return 9 / 16;
+	});
+	/** CSS pan: visual dx = pan.x * (z-1)/2 * stage width, and a CSS translate
+	 *  percentage applies pre-scale — so percent = pan * (z-1) / (2z) * 100. */
+	const panPercent = $derived.by(() => {
+		const f = zoom > 1 ? ((zoom - 1) / (2 * zoom)) * 100 : 0;
+		return { x: pan.x * f, y: pan.y * f };
+	});
+
+	/** Restore framing prefs (shared keys with the desktop studio). */
+	$effect(() => {
+		if (!browser) return;
+		const savedZoom = Number(localStorage.getItem(STAGE_ZOOM_KEY));
+		if (Number.isFinite(savedZoom) && savedZoom >= 1 && savedZoom <= 4) zoom = savedZoom;
+		const savedBoard = localStorage.getItem(ARTBOARD_KEY) as MemeArtboardId | null;
+		if (savedBoard && ARTBOARDS.some((a) => a.id === savedBoard)) artboardId = savedBoard;
+	});
+
+	function persistFraming() {
+		if (!browser) return;
+		try {
+			localStorage.setItem(STAGE_ZOOM_KEY, String(zoom));
+			localStorage.setItem(ARTBOARD_KEY, artboardId);
+		} catch {
+			/* prefs are best-effort */
+		}
+	}
+
+	function setArtboard(id: MemeArtboardId) {
+		artboardId = id;
+		pan = { x: 0, y: 0 };
+		persistFraming();
+	}
+
+	function setZoom(next: number) {
+		zoom = Math.min(4, Math.max(1, next));
+		if (zoom === 1) pan = { x: 0, y: 0 };
+		persistFraming();
+	}
+
+	/** Pan drag on the stage (zoomed-in framing). */
+	let panDrag: { startX: number; startY: number; x: number; y: number } | null = null;
+
+	function onStagePointerDown(event: PointerEvent) {
+		if ((event.target as HTMLElement).closest('[data-overlay]')) return; // overlay owns it
+		if (zoom <= 1) return;
+		panDrag = { startX: event.clientX, startY: event.clientY, x: pan.x, y: pan.y };
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+	}
+
+	function onStagePointerMove(event: PointerEvent) {
+		if (!panDrag || !stageEl) return;
+		const rect = stageEl.getBoundingClientRect();
+		// Visual pan travel is pan * (zoom-1)/2 * size, so Δpan = Δpx * 2 / ((zoom-1) * size).
+		const step = 2 / Math.max(0.001, zoom - 1);
+		const nx = panDrag.x + ((event.clientX - panDrag.startX) / rect.width) * step;
+		const ny = panDrag.y + ((event.clientY - panDrag.startY) / rect.height) * step;
+		pan = { x: Math.min(1, Math.max(-1, nx)), y: Math.min(1, Math.max(-1, ny)) };
+	}
+
+	function onStagePointerUp() {
+		panDrag = null;
+	}
 
 	/** Media in the canvas. `ownedUrl` marks blob: URLs this shell created. */
 	let mediaUrl = $state<string | null>(null);
@@ -121,7 +231,9 @@
 			panelParam === 'sticker' ||
 			panelParam === 'trim' ||
 			panelParam === 'look' ||
-			panelParam === 'publish'
+			panelParam === 'publish' ||
+			panelParam === 'audio' ||
+			panelParam === 'canvas'
 			? panelParam
 			: null
 	);
@@ -196,6 +308,63 @@
 	});
 
 	/* ------------------------------------------------------------------ *
+	 * Remix handoff (bitz page → mobile studio)
+	 * ------------------------------------------------------------------ */
+
+	/** True while the remix source streams in (progress scrim on the canvas). */
+	let remixLoading = $state(false);
+	/** Progress percent 0–100 (0 = still connecting / unknown length). */
+	let remixLoadPercent = $state(0);
+
+	/** Stage media bytes as the shell's current source (shared by the remix
+	 *  seeder and the file picker so both own one blob-URL lifecycle). */
+	function setMediaFile(file: File) {
+		if (ownedUrl) URL.revokeObjectURL(ownedUrl);
+		ownedUrl = URL.createObjectURL(file);
+		pickedFile = file;
+		mediaUrl = ownedUrl;
+		mediaKind = file.type.startsWith('video/') ? 'video' : 'image';
+	}
+
+	/** Load the remix source through the shared fetcher (proxy retry + type +
+	 *  size gates) instead of pointing <img>/<video> at the remote URL: cross-
+	 *  origin elements used to render a blank canvas and taint exports. The
+	 *  lineage + credit ride the publish tags exactly like the desktop studio. */
+	async function seedRemixHandoff(handoff: RemixHandoff): Promise<void> {
+		remixLoading = true;
+		remixLoadPercent = 0;
+		const label = handoff.label || 'a bitz';
+		const source = await fetchSourceFile(handoff.mediaUrl, {
+			label: 'remix-source',
+			accept: handoff.mediaType,
+			onProgress: (percent) => (remixLoadPercent = percent)
+		});
+		remixLoading = false;
+		if (!source.ok || !source.file) {
+			toasts.warning(
+				`${source.error ?? 'Could not load the source'} — pick your own clip to continue this remix`
+			);
+			return;
+		}
+		setMediaFile(source.file);
+		// Fresh media ⇒ fresh look/trim (mirrors the picker path).
+		lookId = 'none';
+		trimStart = 0;
+		trimEnd = null;
+		if (handoff.overlays?.length)
+			overlays = handoff.overlays
+				.filter((o): o is MemeTextOverlay => !!o && typeof (o as MemeTextOverlay).text === 'string')
+				.map((o) => ({ ...o, id: `${o.id}` }));
+		remixSource = { eventId: handoff.eventId, pubkey: handoff.pubkey, relays: handoff.relays };
+		sourceCredit = `remix of ${label}`.slice(0, 140);
+	}
+
+	/** Current remix lineage — publishes as remix + meme + attribution tags. */
+	let remixSource = $state<RemixSource | null>(null);
+	/** Attribution credit stamped on the publish (S-013 automatic credit). */
+	let sourceCredit = $state('');
+
+	/* ------------------------------------------------------------------ *
 	 * Handoff seeding (one-shot, mirrors MemeStudio's latch pattern)
 	 * ------------------------------------------------------------------ */
 
@@ -205,20 +374,14 @@
 		handoffApplied = true;
 
 		if (remixHandoff) {
-			mediaUrl = remixHandoff.mediaUrl;
-			mediaKind = remixHandoff.mediaType;
-			if (remixHandoff.overlays?.length)
-				overlays = remixHandoff.overlays
-					.filter(
-						(o): o is MemeTextOverlay => !!o && typeof (o as MemeTextOverlay).text === 'string'
-					)
-					.map((o) => ({ ...o, id: `${o.id}` }));
+			void seedRemixHandoff(remixHandoff);
 			return;
 		}
 		if (slotHandoff) {
 			const slot = memeSlots.list.find((s) => s.id === slotHandoff);
 			if (slot) {
 				overlays = slot.overlays.map((o) => ({ ...o }));
+				sfxCues = slot.sfxCues.map((c) => ({ ...c }));
 				lookId = memeLookOf(slot.lookId);
 				trimStart = slot.trimStartSec;
 				trimEnd = slot.trimEndSec;
@@ -237,6 +400,55 @@
 			}));
 		}
 	});
+
+	/** Sound handoff (Sounds page “Use sound”): stage the picked synth sound
+	 *  as the first cue — only on a clean cue sheet (mirrors the desktop). */
+	let soundSeedApplied = false;
+	$effect(() => {
+		if (soundSeedApplied || !soundHandoff) return;
+		soundSeedApplied = true;
+		if (soundHandoff.kind !== 'synth' || sfxCues.length) return;
+		addSfxCue(soundHandoff.id as MemeSfxId);
+		toasts.info(
+			`${soundHandoff.label ?? SFX_LABELS[soundHandoff.id as MemeSfxId]} staged at the playhead`,
+			3500
+		);
+	});
+
+	/** Stage a sound cue at the current playhead (media time). */
+	function addSfxCue(sfx: MemeSfxId) {
+		if (sfxCues.length >= MAX_SFX_CUES) {
+			toasts.error(`Sound cues cap out at ${MAX_SFX_CUES}`);
+			return;
+		}
+		const atMs = mediaKind === 'video' ? Math.round(currentTime * 1000) : 0;
+		const cue = normalizeSfxCue({ sfx, atMs, gain: 1 });
+		if (cue) sfxCues = [...sfxCues, cue];
+	}
+
+	function removeSfxCue(id: string) {
+		sfxCues = sfxCues.filter((c) => c.id !== id);
+	}
+
+	/** Audition a synth sound (same render path as the desktop studio). */
+	function previewSfx(sfx: MemeSfxId) {
+		void (async () => {
+			const { renderSfxTrack, scheduleSfx, SFX_RECIPES } = await import('$lib/meme/sfx');
+			const dur = SFX_RECIPES[sfx].duration + 0.25;
+			const OfflineCtx = window.OfflineAudioContext;
+			if (!OfflineCtx) return;
+			const schedule = scheduleSfx([{ id: 'preview', sfx, atMs: 0, gain: 1 }], dur);
+			const buffer = await renderSfxTrack(schedule, dur, OfflineCtx);
+			const AudioCtx = window.AudioContext;
+			if (!AudioCtx) return;
+			const ctx = new AudioCtx();
+			const source = ctx.createBufferSource();
+			source.buffer = buffer;
+			source.connect(ctx.destination);
+			source.start();
+			source.onended = () => void ctx.close().catch(() => undefined);
+		})();
+	}
 
 	/* ------------------------------------------------------------------ *
 	 * Undo + overlay mutations
@@ -392,11 +604,7 @@
 		const file = input.files?.[0];
 		input.value = '';
 		if (!file) return;
-		if (ownedUrl) URL.revokeObjectURL(ownedUrl);
-		ownedUrl = URL.createObjectURL(file);
-		pickedFile = file;
-		mediaUrl = ownedUrl;
-		mediaKind = file.type.startsWith('video/') ? 'video' : 'image';
+		setMediaFile(file);
 		// Fresh media ⇒ fresh window/look (mode derives from the media kind).
 		lookId = 'none';
 		trimStart = 0;
@@ -441,7 +649,9 @@
 			overlays
 				.find((o) => o.text.trim() && !isStickerOverlay(o))
 				?.text.trim()
-				.slice(0, 40) || 'Mobile draft';
+				.slice(0, 40) ||
+			(sfxCues.length ? `Sound meme · ${SFX_LABELS[sfxCues[0]!.sfx as MemeSfxId]}` : '') ||
+			'Mobile draft';
 		let media: MemeSlotMedia | null = null;
 		if (pickedFile) {
 			try {
@@ -457,7 +667,7 @@
 			media,
 			mediaKindValue: media ? mediaKind : null,
 			overlays,
-			sfxCues: [],
+			sfxCues,
 			imageLayers: [],
 			drawingGroups: [],
 			caption: '',
@@ -527,6 +737,10 @@
 		for (const o of overlays) paintOverlay(ctx, o, canvas, { atMs });
 	}
 
+	/** The mobile soundboard stages synth cues only, so the cue mixer's
+	 *  custom-sound decoder is a null stub (synth recipes need no PCM). */
+	const SYNTH_ONLY_DECODE = async () => null;
+
 	interface RenderedMeme {
 		file: File;
 		dim: string;
@@ -553,12 +767,37 @@
 			mediaTransform: { scale: 1, x: 0, y: 0 }
 		});
 		paintOverlaysAt(ctx, canvas, 0);
-		const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-		if (!blob) throw new Error('Rendering the meme failed');
-		return {
-			file: new File([blob], `meme-${Date.now()}.png`, { type: 'image/png' }),
-			dim: `${size.width}x${size.height}`
-		};
+		// Plain still: encode straight to PNG.
+		if (!sfxCues.length) {
+			const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+			if (!blob) throw new Error('Rendering the meme failed');
+			return {
+				file: new File([blob], `meme-${Date.now()}.png`, { type: 'image/png' }),
+				dim: `${size.width}x${size.height}`
+			};
+		}
+		// Sound-on-static (desktop behavior): an image with cue sounds exports
+		// as a video — the painted frame plus the mixed cue track.
+		const runtimeSec = Math.max(1, (sfxCues[sfxCues.length - 1]!.atMs + 800) / 1000);
+		const cueTrack = await cueAudioTrack(runtimeSec, sfxCues, SYNTH_ONLY_DECODE);
+		const file = await recordMeme({
+			canvas,
+			totalMs: runtimeSec * 1000,
+			extraTracks: cueTrack ? [cueTrack] : [],
+			paint: (c) => {
+				c.clearRect(0, 0, canvas.width, canvas.height);
+				paintMemeBase(c, canvas, {
+					mediaKind: 'image',
+					gif: null,
+					stageImg: img,
+					stageVideo: null,
+					lookCss: memeLookCss(lookId),
+					mediaTransform: { scale: 1, x: 0, y: 0 }
+				});
+				paintOverlaysAt(c, canvas, 0);
+			}
+		});
+		return { file, dim: `${size.width}x${size.height}`, durationSec: runtimeSec };
 	}
 
 	/** Video render: realtime canvas capture of the trim window at the picked
@@ -583,9 +822,16 @@
 		video.playbackRate = playbackRate;
 		await video.play().catch(() => undefined);
 		try {
+			// Cue sheet → export timeline (trim window + speed), then a mixed
+			// audio track for the recorder (synth-only cues need no decoder).
+			const exportCues = shiftCuesForExport(sfxCues, winStart, playbackRate, runtimeSec);
+			const cueTrack = exportCues.length
+				? await cueAudioTrack(runtimeSec, exportCues, SYNTH_ONLY_DECODE)
+				: null;
 			const file = await recordMeme({
 				canvas,
 				totalMs: runtimeSec * 1000,
+				extraTracks: cueTrack ? [cueTrack] : [],
 				paint: (c, elapsedMs) => {
 					paintMemeBase(c, canvas, {
 						mediaKind: 'video',
@@ -596,7 +842,8 @@
 						mediaTransform: { scale: 1, x: 0, y: 0 },
 						stageSeconds: video.currentTime
 					});
-					paintOverlaysAt(c, canvas, elapsedMs * playbackRate);
+					// Overlays are media-timed: export clock → media clock.
+					paintOverlaysAt(c, canvas, winStart * 1000 + elapsedMs * playbackRate);
 				},
 				onProgress: (p) => (pubPercent = p)
 			});
@@ -612,8 +859,11 @@
 			toasts.error('Add a photo or video first');
 			return;
 		}
-		if (mediaKind === 'video' && !canRenderVideoMeme()) {
-			toasts.error("This browser can't render video memes — try Chrome or Edge");
+		if (
+			(mediaKind === 'video' || (mediaKind === 'image' && sfxCues.length > 0)) &&
+			!canRenderVideoMeme()
+		) {
+			toasts.error("This browser can't render animated memes — try Chrome or Edge");
 			return;
 		}
 		pubError = '';
@@ -650,7 +900,19 @@
 						sensitive,
 						dim: rendered.dim,
 						duration: rendered.durationSec,
-						extraTags: rightsTagsFor(license)
+						// Remix lineage rides the event (chain + meme payload +
+						// attribution) exactly like the desktop studio publishes.
+						extraTags: [
+							...(remixSource
+								? remixTagsFor(remixSource, {
+										overlays,
+										// Mobile cue sheet rides the remix wire like the desktop
+										// studio — the next creator in the chain remixes sounds too.
+										sfxCues
+									})
+								: []),
+							...rightsTagsFor(license, remixSource ? sourceCredit : '')
+						]
 					});
 				} else if (destination === 'story') {
 					const video =
@@ -787,87 +1049,139 @@
 			if (!(event.target as HTMLElement).closest('[data-overlay]')) selectedId = null;
 		}}
 	>
-		<!-- Media layer -->
-		{#if mediaUrl && mediaKind === 'video'}
-			<video
-				bind:this={videoEl}
-				src={mediaUrl}
-				class="absolute inset-0 size-full {mode === 'image' ? 'object-contain' : 'object-cover'}"
-				style="filter: {memeLookCss(lookId)}"
-				playsinline
-				muted
-				loop
-				autoplay
-				ontimeupdate={(e) => {
-					const v = e.currentTarget;
-					currentTime = v.currentTime;
-					// Manual loop inside the trim window (Phase 2).
-					if (trimEnd !== null && v.currentTime >= trimEnd) v.currentTime = trimStart;
-					else if (v.currentTime < trimStart - 0.05) v.currentTime = trimStart;
-				}}
-				ondurationchange={(e) => (duration = e.currentTarget.duration || 0)}
-				onplay={() => (playing = true)}
-				onpause={() => (playing = false)}
-			></video>
-		{:else if mediaUrl}
-			<img
-				bind:this={imgEl}
-				src={mediaUrl}
-				alt="Meme source"
-				draggable="false"
-				style="filter: {memeLookCss(lookId)}"
-				class="absolute inset-0 size-full {mode === 'image' ? 'object-contain' : 'object-cover'}"
-			/>
-		{/if}
-
-		<!-- Empty state: tap to import from the camera roll -->
-		{#if !mediaUrl}
-			<button
-				type="button"
-				onclick={pickMedia}
-				class="absolute inset-4 flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-white/20 text-white/60 transition active:scale-[0.99]"
-			>
-				<span class="grid size-14 place-items-center rounded-2xl bg-white/8 backdrop-blur-md">
-					<Icon name="i-lucide-image-plus" class="size-6" />
-				</span>
-				<span class="text-[14px] font-bold">Tap to add a photo or video</span>
-				<span class="text-[11.5px] text-white/45">
-					Camera roll import · no upload until you publish
-				</span>
-			</button>
-		{/if}
-
-		<!-- Overlay layer (draggable captions / text / stickers) -->
-		{#each overlays as o (o.id)}
+		{#if remixLoading}
+			<!-- Remix source streaming in: progress scrim over the canvas (the
+			     shell used to show a black void while the URL sat unloaded). -->
 			<div
-				data-overlay
-				class="absolute z-10 max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none text-center leading-[1.1] font-bold whitespace-pre-wrap {isStickerOverlay(
-					o
-				)
-					? ''
-					: 'px-1'} {selectedId === o.id ? 'rounded-md ring-2 ring-warm-500/80' : ''}"
-				style={overlayStyle(o)}
-				onpointerdown={(e) => onOverlayPointerDown(e, o)}
-				onpointermove={onOverlayPointerMove}
-				onpointerup={onOverlayPointerUp}
-				onpointercancel={onOverlayPointerUp}
-				role="button"
-				tabindex="-1"
-				aria-label="Overlay: {o.text}"
+				class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
+				role="status"
+				aria-live="polite"
 			>
-				{#if selectedId === o.id}
-					<button
-						type="button"
-						onclick={() => removeOverlay(o.id)}
-						aria-label="Delete overlay"
-						class="absolute -top-2.5 -right-2.5 z-20 grid size-6 place-items-center rounded-full bg-warm-500 text-white shadow-lg active:scale-90"
-					>
-						<Icon name="i-lucide-x" class="size-3.5" />
-					</button>
-				{/if}
-				{o.caps ? o.text.toUpperCase() : o.text}
+				<Icon name="i-lucide-wand-sparkles" class="size-8 animate-pulse text-warm-400" />
+				<p class="px-8 text-center text-[13px] font-semibold text-white">
+					Loading the remix source…
+				</p>
+				<div class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15" aria-hidden="true">
+					<div
+						class="h-full rounded-full bg-warm-400 transition-[width] duration-200"
+						style="width:{remixLoadPercent > 0 ? remixLoadPercent : 12}%"
+					></div>
+				</div>
+				<p class="text-[11px] font-medium text-white/60">
+					{remixLoadPercent > 0 ? `${remixLoadPercent}%` : 'Connecting…'}
+				</p>
 			</div>
-		{/each}
+		{/if}
+		<!-- Framed stage: artboard aspect + zoom/pan framing (container for
+		     overlay font units too). Empty canvas sits behind everything. -->
+		<div
+			bind:this={stageEl}
+			class="relative touch-none overflow-hidden rounded-xl border border-white/10 bg-black"
+			style="aspect-ratio: {stageAspect}; width: min(100cqw, calc(100cqh * {stageAspect})); container-type: size"
+			onpointerdown={onStagePointerDown}
+			onpointermove={onStagePointerMove}
+			onpointerup={onStagePointerUp}
+			onpointercancel={onStagePointerUp}
+		>
+			<!-- Media layer -->
+			{#if mediaUrl && mediaKind === 'video'}
+				<video
+					bind:this={videoEl}
+					src={mediaUrl}
+					class="absolute inset-0 size-full object-cover"
+					style="filter: {memeLookCss(
+						lookId
+					)}; transform: scale({zoom}) translate({panPercent.x}%, {panPercent.y}%)"
+					playsinline
+					muted
+					loop
+					autoplay
+					onloadedmetadata={(e) => {
+						mediaNatural = {
+							w: e.currentTarget.videoWidth,
+							h: e.currentTarget.videoHeight
+						};
+					}}
+					ontimeupdate={(e) => {
+						const v = e.currentTarget;
+						currentTime = v.currentTime;
+						// Manual loop inside the trim window (Phase 2).
+						if (trimEnd !== null && v.currentTime >= trimEnd) v.currentTime = trimStart;
+						else if (v.currentTime < trimStart - 0.05) v.currentTime = trimStart;
+					}}
+					ondurationchange={(e) => (duration = e.currentTarget.duration || 0)}
+					onplay={() => (playing = true)}
+					onpause={() => (playing = false)}
+				></video>
+			{:else if mediaUrl}
+				<img
+					bind:this={imgEl}
+					src={mediaUrl}
+					alt="Meme source"
+					draggable="false"
+					style="filter: {memeLookCss(
+						lookId
+					)}; transform: scale({zoom}) translate({panPercent.x}%, {panPercent.y}%)"
+					class="absolute inset-0 size-full object-cover"
+					onload={(e) => {
+						const img = e.currentTarget as HTMLImageElement;
+						mediaNatural = {
+							w: img.naturalWidth,
+							h: img.naturalHeight
+						};
+					}}
+				/>
+			{/if}
+
+			<!-- Empty state: tap to import from the camera roll -->
+			{#if !mediaUrl}
+				<button
+					type="button"
+					onclick={pickMedia}
+					class="absolute inset-4 flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-white/20 text-white/60 transition active:scale-[0.99]"
+				>
+					<span class="grid size-14 place-items-center rounded-2xl bg-white/8 backdrop-blur-md">
+						<Icon name="i-lucide-image-plus" class="size-6" />
+					</span>
+					<span class="text-[14px] font-bold">Tap to add a photo or video</span>
+					<span class="text-[11.5px] text-white/45">
+						Camera roll import · no upload until you publish
+					</span>
+				</button>
+			{/if}
+
+			<!-- Overlay layer (draggable captions / text / stickers) -->
+			{#each overlays as o (o.id)}
+				<div
+					data-overlay
+					class="absolute z-10 max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none text-center leading-[1.1] font-bold whitespace-pre-wrap {isStickerOverlay(
+						o
+					)
+						? ''
+						: 'px-1'} {selectedId === o.id ? 'rounded-md ring-2 ring-warm-500/80' : ''}"
+					style={overlayStyle(o)}
+					onpointerdown={(e) => onOverlayPointerDown(e, o)}
+					onpointermove={onOverlayPointerMove}
+					onpointerup={onOverlayPointerUp}
+					onpointercancel={onOverlayPointerUp}
+					role="button"
+					tabindex="-1"
+					aria-label="Overlay: {o.text}"
+				>
+					{#if selectedId === o.id}
+						<button
+							type="button"
+							onclick={() => removeOverlay(o.id)}
+							aria-label="Delete overlay"
+							class="absolute -top-2.5 -right-2.5 z-20 grid size-6 place-items-center rounded-full bg-warm-500 text-white shadow-lg active:scale-90"
+						>
+							<Icon name="i-lucide-x" class="size-3.5" />
+						</button>
+					{/if}
+					{o.caps ? o.text.toUpperCase() : o.text}
+				</div>
+			{/each}
+		</div>
 
 		<!-- Top controls: exit · mode switcher · undo -->
 		<div class="absolute inset-x-0 top-0 z-30 flex items-center justify-between gap-2 px-3 pt-3">
@@ -934,21 +1248,19 @@
 		<!-- Right quick tools -->
 		<div class="absolute top-1/2 right-2 z-30 flex -translate-y-1/2 flex-col gap-3">
 			{#each quickTools as tool (tool.id)}
-				{#if tool.id !== 'audio' || mode !== 'image'}
-					<button
-						type="button"
-						onclick={() =>
-							tool.id === 'audio' || tool.id === 'effects'
-								? toasts.info('Coming in Phase 3 — sounds & effects', 2200)
-								: openPanel(tool.id)}
-						class="flex size-12 flex-col items-center justify-center rounded-full border {tool.accent
-							? 'border-warm-500/70 bg-white/10 text-warm-500'
-							: 'border-white/15 bg-white/10 text-white'} backdrop-blur-md transition active:scale-90"
-					>
-						<Icon name={tool.icon} class="size-5" />
-						<span class="mt-0.5 text-[8px] font-bold">{tool.label}</span>
-					</button>
-				{/if}
+				<button
+					type="button"
+					onclick={() =>
+						tool.id === 'effects'
+							? toasts.info('Effects land in a future update', 2200)
+							: openPanel(tool.id)}
+					class="flex size-12 flex-col items-center justify-center rounded-full border {tool.accent
+						? 'border-warm-500/70 bg-white/10 text-warm-500'
+						: 'border-white/15 bg-white/10 text-white'} backdrop-blur-md transition active:scale-90"
+				>
+					<Icon name={tool.icon} class="size-5" />
+					<span class="mt-0.5 text-[8px] font-bold">{tool.label}</span>
+				</button>
 			{/each}
 		</div>
 
@@ -996,6 +1308,14 @@
 				>
 					<div class="-mt-1.5 -ml-1.25 size-3 rounded-full bg-warm-500 shadow"></div>
 				</div>
+				{#each sfxCues as cue (cue.id)}
+					{@const pct = duration > 0 ? Math.min(100, (cue.atMs / 1000 / duration) * 100) : 0}
+					<span
+						class="pointer-events-none absolute bottom-0.5 size-2.5 -translate-x-1/2 rounded-full bg-primary-400 ring-1 ring-black/60"
+						style="left:{pct}%"
+						title="Sound cue"
+					></span>
+				{/each}
 			</div>
 			<div class="flex items-center justify-around text-white/60">
 				<button
@@ -1355,6 +1675,78 @@
 			Looks preview live and burn into the export exactly as shown — the same presets as the desktop
 			studio.
 		</p>
+	</StudioSheet>
+
+	<!-- Soundboard sheet (Phase 4 — the Audio quick tool). -->
+	<StudioSheet open={panel === 'audio'} title="Sounds" icon="i-lucide-music" onclose={closeSheet}>
+		<div class="flex flex-col gap-4">
+			<!-- Staged cues -->
+			{#if sfxCues.length}
+				<div>
+					<p class="mb-1.5 text-[11px] font-bold tracking-wide text-white/50 uppercase">
+						Cue sheet · {sfxCues.length}/{MAX_SFX_CUES}
+					</p>
+					<div class="flex flex-col gap-1.5">
+						{#each sfxCues as cue (cue.id)}
+							<div class="flex items-center gap-2 rounded-lg bg-white/5 px-2.5 py-1.5">
+								<button
+									type="button"
+									onclick={() => previewSfx(cue.sfx as MemeSfxId)}
+									aria-label="Preview {SFX_LABELS[cue.sfx as MemeSfxId]}"
+									class="grid size-7 shrink-0 place-items-center rounded-full bg-primary-500/15 text-primary-500"
+								>
+									<Icon name="i-lucide-play" class="size-3.5" />
+								</button>
+								<span class="min-w-0 flex-1 truncate text-[12px] font-bold">
+									{SFX_LABELS[cue.sfx as MemeSfxId]}
+								</span>
+								<span class="shrink-0 font-mono text-[10.5px] text-white/45 tabular-nums">
+									{fmtTime(cue.atMs / 1000)}
+								</span>
+								<button
+									type="button"
+									onclick={() => removeSfxCue(cue.id)}
+									aria-label="Remove cue"
+									class="grid size-7 shrink-0 place-items-center rounded-full text-white/45 transition hover:text-[var(--tone-error-text,#ef4444)]"
+								>
+									<Icon name="i-lucide-x" class="size-3.5" />
+								</button>
+							</div>
+						{/each}
+					</div>
+					<p class="mt-1 text-[10.5px] text-white/40">
+						{#if mediaKind === 'video'}
+							Sounds fire at their cue point and burn into the published video.
+						{:else}
+							An image with sounds publishes as a short video.
+						{/if}
+					</p>
+				</div>
+			{/if}
+
+			<!-- Sound pads by vibe -->
+			{#each SFX_BUCKETS as bucket (bucket.id)}
+				<div>
+					<p class="mb-1.5 text-[11px] font-bold tracking-wide text-white/50 uppercase">
+						{bucket.label}
+					</p>
+					<div class="grid grid-cols-4 gap-2">
+						{#each bucket.ids as sfx (sfx)}
+							<button
+								type="button"
+								onclick={() => {
+									previewSfx(sfx as MemeSfxId);
+									addSfxCue(sfx as MemeSfxId);
+								}}
+								class="rounded-lg bg-white/5 px-1 py-2.5 text-[10.5px] leading-tight font-bold text-white/80 transition active:scale-90"
+							>
+								{SFX_LABELS[sfx as MemeSfxId]}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/each}
+		</div>
 	</StudioSheet>
 
 	<!-- Publish sheet (docs/ui/edit3.html Screen 6). -->
