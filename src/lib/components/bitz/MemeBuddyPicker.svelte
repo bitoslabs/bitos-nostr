@@ -27,6 +27,7 @@
 
 <Popover
 	{id}
+	float
 	placement="top-start"
 	width="auto"
 	label="Bitz Buddy"

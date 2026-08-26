@@ -45,6 +45,7 @@
 
 <Popover
 	{id}
+	float
 	placement="top-start"
 	width="auto"
 	label="Speed ramps"

@@ -48,6 +48,7 @@
 
 <Popover
 	{id}
+	float
 	placement="top-start"
 	width="auto"
 	label="Frame FX"
