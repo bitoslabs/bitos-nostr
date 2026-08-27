@@ -65,6 +65,39 @@ describe('sharedSoundEventParts', () => {
 		expect(parts.tags.find((t) => t[1] === 'bad topic!')).toBeUndefined();
 		expect(parts.tags.find((t) => t[0] === 'x')).toBeUndefined(); // no hash, no x tag
 	});
+
+	it('backs description mentions with p tags (NIP-27) and merges inline hashtags into topics', () => {
+		const parts = sharedSoundEventParts({
+			soundId: 'x2',
+			label: 'Bonk',
+			durationSec: 1.5,
+			mime: 'audio/webm',
+			url: 'https://cdn.example/b.webm',
+			sha256: 'cd'.repeat(32),
+			license: 'CC0-1.0',
+			// A nostr: mention plus an inline hashtag that is not in the topics list.
+			description:
+				'Thanks nostr:npub1424242424242424242424242424242424242424242424242424qamrcaj for the idea! #funny',
+			topics: ['meme'],
+			clientTag: CLIENT()
+		});
+		expect(parts.tags).toContainEqual(['p', 'aa'.repeat(32)]);
+		expect(parts.tags).toContainEqual(['t', 'meme']);
+		expect(parts.tags).toContainEqual(['t', 'funny']);
+		// no p tag for plain @text that is not a nostr: entity
+		const plain = sharedSoundEventParts({
+			soundId: 'x3',
+			label: 'B',
+			durationSec: 1,
+			mime: 'audio/webm',
+			url: 'https://cdn.example/c.webm',
+			sha256: '',
+			license: 'CC0-1.0',
+			description: 'nostr:npub1invalid and @bob stay untagged',
+			clientTag: CLIENT()
+		});
+		expect(plain.tags.filter((t) => t[0] === 'p')).toEqual([]);
+	});
 });
 
 describe('parseSharedSound (tolerant reader)', () => {

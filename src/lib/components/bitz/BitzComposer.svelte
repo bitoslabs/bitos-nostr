@@ -479,7 +479,7 @@
 		const provider = selectedProvider;
 		uploading = true;
 		try {
-			const result = await media.upload(target, provider === 'none' ? undefined : provider, {
+			const result = await media.upload(target, provider, {
 				pubkey: me?.pk,
 				purpose: 'note',
 				onProgress: (p) => {
@@ -547,7 +547,7 @@
 			const provider = selectedProvider;
 			const shot = await media.upload(
 				new File([blob], `bitz-cover-${Date.now()}.jpg`, { type: 'image/jpeg' }),
-				provider === 'none' ? undefined : provider,
+				provider,
 				{ pubkey: me?.pk, purpose: 'note' }
 			);
 			cover = shot.url;
@@ -644,7 +644,7 @@
 					);
 					publishUploaded = await media.upload(
 						renderedFile,
-						provider === 'none' ? undefined : provider,
+						provider,
 						{ pubkey: me?.pk, purpose: 'note' }
 					);
 					publishMeta = {
@@ -659,7 +659,7 @@
 						try {
 							const shot = await media.upload(
 								coverFile,
-								provider === 'none' ? undefined : provider,
+								provider,
 								{ pubkey: me?.pk, purpose: 'note' }
 							);
 							publishCover = shot.url;

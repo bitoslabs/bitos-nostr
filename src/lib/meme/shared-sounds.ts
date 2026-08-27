@@ -19,6 +19,9 @@
 export const SOUND_SCHEMA = 'com.bitos.bitz.sound';
 export const SOUND_SCHEMA_VERSION = 1;
 
+import { extractHashtagTags } from '$lib/utils/note-content';
+import { extractMentionEntities } from '$lib/utils/nip27';
+
 /** d-tag namespace prefix for shared sounds (§17.1). */
 export const SOUND_D_PREFIX = 'com.bitos.bitz:sound:';
 
@@ -85,6 +88,16 @@ export function sharedSoundEventParts(input: {
 		.filter((topic) => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(topic))
 		.slice(0, 10);
 	for (const topic of topics) tags.push(['t', topic]);
+	// Inline #hashtags typed in the public description join the topic list so
+	// discovery matches what readers actually see (deduped, capped at 10 t tags).
+	const tTagCount = () => tags.filter((t) => t[0] === 't').length;
+	for (const tag of extractHashtagTags(input.description ?? '')) {
+		if (!topics.includes(tag[1]!) && tTagCount() < 10) tags.push(tag);
+	}
+	// NIP-27: back every inline nostr: mention in the description with a p tag.
+	for (const pubkey of extractMentionEntities(input.description ?? '').pubkeys) {
+		tags.push(['p', pubkey]);
+	}
 	if (input.coverUrl?.trim()) tags.push(['image', input.coverUrl.trim().slice(0, 2048)]);
 	const content: SoundContent = {
 		label: input.label.trim().slice(0, 40) || 'Shared sound',

@@ -182,6 +182,8 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
+	import { rewriteMentions } from '$lib/utils/nip27';
+	import type { TrackedMention } from '$lib/utils/mentions';
 	import type { MemeMediaFormat } from '$lib/components/bitz/MemeStudioDropZone.svelte';
 	import MemeBatchQueueBar from '$lib/components/bitz/MemeBatchQueueBar.svelte';
 	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
@@ -1722,6 +1724,9 @@
 
 	// ---- compose ---------------------------------------------------------------
 	let caption = $state('');
+	// Tracked @mentions from the public-description composer — rewritten to
+	// nostr:npub entities at publish (same as the feed Composer).
+	let captionMentions = $state<TrackedMention[]>([]);
 	let sensitive = $state(false);
 	// Remix rights (S-013, §17.3): advisory license stamped on every bitz
 	// publish. Default CC-BY — derivatives allowed with credit.
@@ -2272,6 +2277,7 @@
 	let progress = $state(0);
 	let progressLabel = $state('');
 	let selectedProvider = $state<MediaProviderId | 'none'>(media.state.defaultProvider);
+	let providerInitialized = $state(false);
 	let powProgress = $state<PowProgress | null>(null);
 	let showPow = $state(false);
 	let pow = $state(powPrefs.state.lastDifficulty);
@@ -2293,7 +2299,15 @@
 			imageLayers.length > 0 ||
 			sfxCues.length > 0
 	);
-	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
+	// A single kind-1 destination is a regular note post, so it gets the same
+	// text capacity as the main composer. Mixed destinations retain the shorter
+	// meme-caption limit shared by Bitz and Stories.
+	const noteOnly = $derived(destinations.length === 1 && destinations[0] === 'note');
+	const publicSoftCaptionLimit = $derived(noteOnly ? 4_000 : SOFT_CAP);
+	const publicHardCaptionLimit = $derived(noteOnly ? 16_000 : HARD_CAP);
+	const canPost = $derived(
+		!!file && !busy && caption.length <= publicHardCaptionLimit && splitCheck.ok
+	);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
 	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
 	 *  kind 21 (landscape), matching what clients actually play. */
@@ -2319,6 +2333,20 @@
 				: { label: 'Video meme', kind: 21, nip: 'NIP-71' };
 		}
 		return null;
+	});
+
+	// A provider can become unavailable when the user signs out or edits its
+	// settings. Keep the publish dialog on a working choice instead of showing
+	// Free Blossom as selected when it cannot authorize an upload.
+	$effect(() => {
+		const valid = (id: MediaProviderId | 'none') => id === 'none' || media.isConfigured(id);
+		const current = selectedProvider;
+		if (!providerInitialized) {
+			providerInitialized = true;
+			if (!valid(current)) selectedProvider = 'none';
+			return;
+		}
+		if (!valid(current)) selectedProvider = 'none';
 	});
 
 	// ---- drag logic (pointer events, works with touch) -----------------------
@@ -2429,6 +2457,7 @@
 		selectedId = null;
 		timingId = null;
 		caption = '';
+		captionMentions = [];
 		sensitive = false;
 		confirmDiscard = false;
 		showTemplateSave = false;
@@ -3732,7 +3761,7 @@
 
 	async function uploadRendered(rendered: File): Promise<UploadedMediaLike> {
 		track('uploading', 'Uploading meme…', 0);
-		return media.upload(rendered, selectedProvider === 'none' ? undefined : selectedProvider, {
+		return media.upload(rendered, selectedProvider, {
 			pubkey: me?.pk,
 			purpose: destinations.length === 1 && destinations[0] === 'story' ? 'story' : 'note',
 			signal: mineController?.signal,
@@ -3756,7 +3785,7 @@
 		});
 		const uploaded = await media.upload(
 			posterFile,
-			selectedProvider === 'none' ? undefined : selectedProvider,
+			selectedProvider,
 			{
 				pubkey: me?.pk,
 				purpose: 'note',
@@ -3931,6 +3960,8 @@
 		// immediately rather than appearing frozen until rendering begins.
 		track('rendering', 'Preparing your public post…', 0);
 		try {
+			// @name → nostr:npub… so mentions notify (NIP-27) on every destination.
+			caption = rewriteMentions(caption, captionMentions);
 			if (mediaKind === 'video') stageVideo?.pause();
 			// Lineage pre-flight (S-014): refuse to extend a cyclic/self-referential
 			// chain — a malformed source would poison every remix downstream of it.
@@ -5651,8 +5682,8 @@
 							{removeOverlay}
 							onAddClassic={() => applyTemplate(TEMPLATES[0])}
 							bind:caption
-							softCaptionLimit={SOFT_CAP}
-							hardCaptionLimit={HARD_CAP}
+							softCaptionLimit={publicSoftCaptionLimit}
+							hardCaptionLimit={publicHardCaptionLimit}
 							{artboardId}
 							artboardWidth={renderTarget.width}
 							artboardHeight={renderTarget.height}
@@ -5859,6 +5890,7 @@
 <MemePublishOptions
 	bind:destinations
 	bind:caption
+	bind:mentions={captionMentions}
 	bind:open={publishDetailsOpen}
 	bind:sensitive
 	bind:showPow
@@ -5873,8 +5905,8 @@
 	{powProgress}
 	{writeRelayCount}
 	kindNip={kindInfo?.nip}
-	softCaptionLimit={SOFT_CAP}
-	hardCaptionLimit={HARD_CAP}
+	softCaptionLimit={publicSoftCaptionLimit}
+	hardCaptionLimit={publicHardCaptionLimit}
 	{exportFormat}
 	{mediaKind}
 	videoExportSupported={videoMemeSupported}
