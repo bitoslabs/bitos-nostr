@@ -182,6 +182,8 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
+	import { rewriteMentions } from '$lib/utils/nip27';
+	import type { TrackedMention } from '$lib/utils/mentions';
 	import type { MemeMediaFormat } from '$lib/components/bitz/MemeStudioDropZone.svelte';
 	import MemeBatchQueueBar from '$lib/components/bitz/MemeBatchQueueBar.svelte';
 	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
@@ -1722,6 +1724,9 @@
 
 	// ---- compose ---------------------------------------------------------------
 	let caption = $state('');
+	// Tracked @mentions from the public-description composer — rewritten to
+	// nostr:npub entities at publish (same as the feed Composer).
+	let captionMentions = $state<TrackedMention[]>([]);
 	let sensitive = $state(false);
 	// Remix rights (S-013, §17.3): advisory license stamped on every bitz
 	// publish. Default CC-BY — derivatives allowed with credit.
@@ -2452,6 +2457,7 @@
 		selectedId = null;
 		timingId = null;
 		caption = '';
+		captionMentions = [];
 		sensitive = false;
 		confirmDiscard = false;
 		showTemplateSave = false;
@@ -3954,6 +3960,8 @@
 		// immediately rather than appearing frozen until rendering begins.
 		track('rendering', 'Preparing your public post…', 0);
 		try {
+			// @name → nostr:npub… so mentions notify (NIP-27) on every destination.
+			caption = rewriteMentions(caption, captionMentions);
 			if (mediaKind === 'video') stageVideo?.pause();
 			// Lineage pre-flight (S-014): refuse to extend a cyclic/self-referential
 			// chain — a malformed source would poison every remix downstream of it.
@@ -5882,6 +5890,7 @@
 <MemePublishOptions
 	bind:destinations
 	bind:caption
+	bind:mentions={captionMentions}
 	bind:open={publishDetailsOpen}
 	bind:sensitive
 	bind:showPow

@@ -23,12 +23,17 @@
 	import { shortKey } from '$lib/utils/format';
 	import { COMPOSER_EMOJIS } from '$lib/utils/composer-emojis';
 	import { rewriteMentions } from '$lib/utils/nip27';
+	import {
+		detectMentionTrigger,
+		ensureMentionTracking,
+		filterMentionCandidates,
+		type MentionCandidate,
+		type TrackedMention
+	} from '$lib/utils/mentions';
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
 	import GifPicker from './GifPicker.svelte';
 	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
-
-	type MentionCandidate = { pubkey: string; name: string; picture?: string; npub: string };
 
 	let text = $state('');
 	let posting = $state(false);
@@ -74,7 +79,6 @@
 	let providerInitialized = $state(false);
 	let mention = $state<{ start: number; query: string } | null>(null);
 	let mentionIndex = $state(0);
-	type TrackedMention = { name: string; npub: string };
 	let mentions = $state<TrackedMention[]>([]);
 
 	function onTextareaFocus() {
@@ -108,8 +112,7 @@
 			: `${text.length.toLocaleString()} / ${HARD_LIMIT.toLocaleString()}`
 	);
 	const candidates = $derived.by(() => {
-		const map: Record<string, { pubkey: string; name: string; picture?: string; npub: string }> =
-			{};
+		const map: Record<string, MentionCandidate> = {};
 		for (const pubkey of [...contacts.following, ...Object.keys(profiles.byPubkey)]) {
 			if (!pubkey || pubkey === me?.pk || map[pubkey]) continue;
 			const profile = profiles.get(pubkey);
@@ -122,17 +125,9 @@
 		}
 		return Object.values(map);
 	});
-	const filteredMentions = $derived.by(() => {
-		if (!mention) return [];
-		const query = mention.query.toLowerCase().trim();
-		return (
-			query
-				? candidates.filter(
-						(c) => c.name.toLowerCase().includes(query) || c.npub.toLowerCase().includes(query)
-					)
-				: candidates
-		).slice(0, 8);
-	});
+	const filteredMentions = $derived.by(() =>
+		mention ? filterMentionCandidates(candidates, mention.query) : []
+	);
 
 	$effect(() => {
 		void filteredMentions.length;
@@ -187,14 +182,7 @@
 	function syncMention() {
 		const el = textareaElement();
 		if (!el) return;
-		const before = text.slice(0, el.selectionStart ?? text.length);
-		const at = before.lastIndexOf('@');
-		if (at < 0 || (at > 0 && !/\s/.test(before[at - 1]))) {
-			mention = null;
-			return;
-		}
-		const query = before.slice(at + 1);
-		const nextMention = query.length <= 40 && !/\s/.test(query) ? { start: at, query } : null;
+		const nextMention = detectMentionTrigger(text, el.selectionStart ?? text.length);
 		// Arrow navigation also fires keyup; preserve the same mention state so
 		// the reactive result reset does not move the highlight back to the top.
 		if (mention?.start !== nextMention?.start || mention?.query !== nextMention?.query) {
@@ -202,7 +190,7 @@
 		}
 	}
 
-	function selectMention(candidate: (typeof candidates)[number]) {
+	function selectMention(candidate: MentionCandidate) {
 		if (!mention) return;
 		const before = text.slice(0, mention.start);
 		const after = text.slice(mention.start + 1 + mention.query.length);
@@ -212,31 +200,6 @@
 		mention = null;
 		const pos = before.length + insert.length;
 		queueMicrotask(() => textareaElement()?.setSelectionRange(pos, pos));
-	}
-
-	function escapeRegExp(value: string) {
-		return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	}
-
-	function mentionTokenRegex(name: string) {
-		return new RegExp(`(^|\\s)@${escapeRegExp(name)}(?=$|\\s|[^\\p{L}\\p{N}_-])`, 'iu');
-	}
-
-	function ensureMentionTracking(
-		content: string,
-		tracked: TrackedMention[],
-		candidatesList: MentionCandidate[]
-	): TrackedMention[] {
-		// Transient local index (not reactive state) — built and discarded per call.
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity
-		const map = new Map(tracked.map((m) => [m.name, m]));
-		for (const candidate of candidatesList) {
-			if (map.has(candidate.name)) continue;
-			if (mentionTokenRegex(candidate.name).test(content)) {
-				map.set(candidate.name, { name: candidate.name, npub: candidate.npub });
-			}
-		}
-		return [...map.values()];
 	}
 
 	// Circular character meter (Twitter-style): fills to the soft limit, then
