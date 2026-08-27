@@ -2272,6 +2272,7 @@
 	let progress = $state(0);
 	let progressLabel = $state('');
 	let selectedProvider = $state<MediaProviderId | 'none'>(media.state.defaultProvider);
+	let providerInitialized = $state(false);
 	let powProgress = $state<PowProgress | null>(null);
 	let showPow = $state(false);
 	let pow = $state(powPrefs.state.lastDifficulty);
@@ -2293,7 +2294,15 @@
 			imageLayers.length > 0 ||
 			sfxCues.length > 0
 	);
-	const canPost = $derived(!!file && !busy && caption.length <= HARD_CAP && splitCheck.ok);
+	// A single kind-1 destination is a regular note post, so it gets the same
+	// text capacity as the main composer. Mixed destinations retain the shorter
+	// meme-caption limit shared by Bitz and Stories.
+	const noteOnly = $derived(destinations.length === 1 && destinations[0] === 'note');
+	const publicSoftCaptionLimit = $derived(noteOnly ? 4_000 : SOFT_CAP);
+	const publicHardCaptionLimit = $derived(noteOnly ? 16_000 : HARD_CAP);
+	const canPost = $derived(
+		!!file && !busy && caption.length <= publicHardCaptionLimit && splitCheck.ok
+	);
 	/** Orientation of the EXPORTED file (artboard or source frame), not the
 	 *  source media — a portrait clip cropped to a 16:9 artboard publishes as
 	 *  kind 21 (landscape), matching what clients actually play. */
@@ -2319,6 +2328,20 @@
 				: { label: 'Video meme', kind: 21, nip: 'NIP-71' };
 		}
 		return null;
+	});
+
+	// A provider can become unavailable when the user signs out or edits its
+	// settings. Keep the publish dialog on a working choice instead of showing
+	// Free Blossom as selected when it cannot authorize an upload.
+	$effect(() => {
+		const valid = (id: MediaProviderId | 'none') => id === 'none' || media.isConfigured(id);
+		const current = selectedProvider;
+		if (!providerInitialized) {
+			providerInitialized = true;
+			if (!valid(current)) selectedProvider = 'none';
+			return;
+		}
+		if (!valid(current)) selectedProvider = 'none';
 	});
 
 	// ---- drag logic (pointer events, works with touch) -----------------------
@@ -3732,7 +3755,7 @@
 
 	async function uploadRendered(rendered: File): Promise<UploadedMediaLike> {
 		track('uploading', 'Uploading meme…', 0);
-		return media.upload(rendered, selectedProvider === 'none' ? undefined : selectedProvider, {
+		return media.upload(rendered, selectedProvider, {
 			pubkey: me?.pk,
 			purpose: destinations.length === 1 && destinations[0] === 'story' ? 'story' : 'note',
 			signal: mineController?.signal,
@@ -3756,7 +3779,7 @@
 		});
 		const uploaded = await media.upload(
 			posterFile,
-			selectedProvider === 'none' ? undefined : selectedProvider,
+			selectedProvider,
 			{
 				pubkey: me?.pk,
 				purpose: 'note',
@@ -5651,8 +5674,8 @@
 							{removeOverlay}
 							onAddClassic={() => applyTemplate(TEMPLATES[0])}
 							bind:caption
-							softCaptionLimit={SOFT_CAP}
-							hardCaptionLimit={HARD_CAP}
+							softCaptionLimit={publicSoftCaptionLimit}
+							hardCaptionLimit={publicHardCaptionLimit}
 							{artboardId}
 							artboardWidth={renderTarget.width}
 							artboardHeight={renderTarget.height}
@@ -5873,8 +5896,8 @@
 	{powProgress}
 	{writeRelayCount}
 	kindNip={kindInfo?.nip}
-	softCaptionLimit={SOFT_CAP}
-	hardCaptionLimit={HARD_CAP}
+	softCaptionLimit={publicSoftCaptionLimit}
+	hardCaptionLimit={publicHardCaptionLimit}
 	{exportFormat}
 	{mediaKind}
 	videoExportSupported={videoMemeSupported}

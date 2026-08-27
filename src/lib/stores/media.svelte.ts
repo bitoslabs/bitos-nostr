@@ -128,7 +128,7 @@ class MediaStore {
 	/** Upload a single file via the given (or the default) provider. */
 	upload = async (
 		file: File,
-		provider?: MediaProviderId,
+		provider?: MediaProviderId | 'none',
 		options: UploadOptions = {}
 	): Promise<UploadedMedia> => {
 		const sanitized = await sanitizeMediaForUpload(file);
