@@ -517,7 +517,7 @@
 
 	<!-- Keep this shell out of its own stacking context. Full-screen viewers rendered
 	     by page content must be able to layer above the mobile tab bar. -->
-	<div class="relative flex h-screen w-full justify-center overflow-hidden">
+	<div class="relative flex h-dvh w-full justify-center overflow-hidden">
 		<!-- Breakout editors (studio) drop the centered container clamp too — the
 		     editing surface owns the whole width next to the nav rail. -->
 		<div
@@ -532,8 +532,14 @@
 				<NavRail />
 			</aside>
 
-			<!-- Main view (each route renders its own premium layout) -->
-			<main class="min-w-0 flex-1 pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0">
+			<!-- Main view (each route renders its own premium layout). Breakout
+			     editors are immersive: no tab-bar reserve (the mobile tab bar hides
+			     on /studio/create — docs/studio-mobile-ux.md). -->
+			<main
+				class="min-w-0 flex-1 {isBreakout
+					? ''
+					: 'pb-[calc(4.25rem+env(safe-area-inset-bottom))] lg:pb-0'}"
+			>
 				{#if routeNeedsAuth && !hasIdentity}
 					<AuthRequired title={authMessage.title} description={authMessage.description} />
 				{:else if isBreakout}

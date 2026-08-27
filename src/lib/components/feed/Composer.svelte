@@ -21,6 +21,7 @@
 	import { readDraft, createDraftWriter } from '$lib/stores/drafts';
 	import { onMount, untrack } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
+	import { COMPOSER_EMOJIS } from '$lib/utils/composer-emojis';
 	import { rewriteMentions } from '$lib/utils/nip27';
 	import StoryRing from './StoryRing.svelte';
 	import PollComposer from './PollComposer.svelte';
@@ -93,45 +94,6 @@
 	const providerMenuId = 'composer-provider-menu';
 	const gifMenuId = 'composer-gif-menu';
 	const emojiMenuId = 'composer-emoji-menu';
-	const COMPOSER_EMOJIS = [
-		'₿',
-		'🚀',
-		'🌕',
-		'⚡',
-		'🟠',
-		'❤️',
-		'🧡',
-		'📈',
-		'💎',
-		'😀',
-		'😂',
-		'🤣',
-		'😊',
-		'😍',
-		'🥰',
-		'😘',
-		'😎',
-		'🤔',
-		'🥳',
-		'😴',
-		'🤯',
-		'🥺',
-		'😭',
-		'😢',
-		'😡',
-		'👍',
-		'👎',
-		'👏',
-		'🙌',
-		'🙏',
-		'💪',
-		'🫂',
-		'👀',
-		'💯',
-		'💩',
-		'🐮'
-	];
-
 	const me = $derived(identity.current);
 	const myProfile = $derived(me ? (profiles.get(me.pk) ?? me.profile) : undefined);
 	const displayName = $derived(myProfile?.display_name || myProfile?.name || 'You');
@@ -962,9 +924,6 @@
 						class="size-[18px] {mining ? 'animate-pulse' : ''}"
 					/>
 				</button>
-			</div>
-
-			<div class="flex flex-wrap items-center justify-end gap-1.5">
 				<button
 					type="button"
 					onclick={() => (sensitive = !sensitive)}

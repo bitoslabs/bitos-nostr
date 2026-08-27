@@ -12,7 +12,9 @@
 	let {
 		remixLabel = '',
 		remixing = false,
+		remixLoading = false,
 		staging = false,
+		loadPercent = 0,
 		busy = false,
 		gifPickerId,
 		blankPickerId,
@@ -28,11 +30,17 @@
 		onBlank,
 		onSubmitUrl,
 		onOpenSource,
-		onAddSourceLayer
+		onAddSourceLayer,
+		onOpenSoundStudio
 	}: {
 		remixLabel?: string;
 		remixing?: boolean;
+		/** True while the owner's remix source is still downloading — the
+		 *  stage scrim can't run yet (no media), so progress shows here. */
+		remixLoading?: boolean;
 		staging?: boolean;
+		/** Byte-level load progress (0 = connecting / unknown length). */
+		loadPercent?: number;
 		busy?: boolean;
 		gifPickerId: string;
 		blankPickerId: string;
@@ -49,6 +57,7 @@
 		onSubmitUrl: () => void | Promise<void>;
 		onOpenSource: (source: MediaSource) => void;
 		onAddSourceLayer: (source: MediaSource) => void;
+		onOpenSoundStudio: () => void;
 	} = $props();
 </script>
 
@@ -70,6 +79,45 @@
 			</div>
 		</div>
 	{/if}
+	{#if remixLoading}
+		<!-- Remix source streaming from the owner's post: byte-level progress
+		     with a label (the studio's stage scrim only exists once media lands,
+		     so this is the only visible feedback during the download). -->
+		<div class="mb-4 w-full max-w-sm" role="status" aria-live="polite">
+			<p
+				class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-bold text-[var(--ui-text-muted)]"
+			>
+				<span class="truncate">Downloading “{remixLabel || 'the source'}” to remix…</span>
+				<span class="shrink-0 tabular-nums"
+					>{loadPercent > 0 ? `${loadPercent}%` : 'Connecting…'}</span
+				>
+			</p>
+			<div
+				class="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-border-muted)]"
+				aria-hidden="true"
+			>
+				<div
+					class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
+					style="width:{loadPercent > 0 ? loadPercent : 12}%"
+				></div>
+			</div>
+		</div>
+	{/if}
+	{#if staging && loadPercent > 0}
+		<!-- First source streaming in (URL paste / GIF pick before any media
+			     lands): byte-level bar instead of dead spinners on the buttons. -->
+		<div class="mb-4 w-full max-w-sm" role="status" aria-live="polite">
+			<div
+				class="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-border-muted)]"
+				aria-hidden="true"
+			>
+				<div
+					class="h-full rounded-full bg-warm-500 transition-[width] duration-200"
+					style="width:{loadPercent}%"
+				></div>
+			</div>
+		</div>
+	{/if}
 	<MemeStudioDropZone formats={PICK_FORMATS} {onChooseMedia} {onChooseFormat} {onDropFile} />
 	<div class="mt-3 flex w-full max-w-sm flex-wrap items-center justify-center gap-1.5">
 		<Popover
@@ -88,6 +136,7 @@
 				{#if staging}
 					<Icon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
 				{/if}
+				<span class="rounded-full bg-warm-500/15 px-1.5 text-[9.5px]">pick up to 6</span>
 			{/snippet}
 			<GifPicker multiple max={6} onpick={onPickGif} onpickmany={onPickGifs} />
 		</Popover>
@@ -131,6 +180,15 @@
 			onOpenBase={onOpenSource}
 			onAddLayer={onAddSourceLayer}
 		/>
+		<button
+			type="button"
+			disabled={busy}
+			onclick={onOpenSoundStudio}
+			class="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10 disabled:opacity-40"
+		>
+			<Icon name="i-lucide-music" class="size-3.5" />
+			My sounds
+		</button>
 	</div>
 	{#if showUrl}
 		<form

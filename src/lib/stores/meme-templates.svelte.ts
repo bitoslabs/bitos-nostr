@@ -1,10 +1,22 @@
 import { browser } from '$app/environment';
 import {
 	MAX_OVERLAYS,
+	MAX_SFX_CUES,
 	MEME_SCHEMA,
 	normalizeOverlay,
+	normalizeSfxCues,
+	type MemeSfxCue,
 	type MemeTextOverlay
 } from '$lib/meme/schema';
+import {
+	MAX_IMAGE_OVERLAYS,
+	normalizeImageOverlay,
+	type MemeImageOverlay
+} from '$lib/meme/image-overlay';
+import { MAX_FX_WINDOWS, normalizeFxWindows, type FrameFxWindow } from '$lib/meme/fx-track';
+import { MAX_ZOOM_WINDOWS, normalizeZoomWindows } from '$lib/meme/zoom-track';
+import type { ZoomWindow } from '$lib/ai/suggest';
+import { normalizeSpeedWindows, type SpeedWindow } from '$lib/meme/speed-track';
 
 /**
  * Meme templates the user saved from Meme Studio — the Phase-6 "template"
@@ -30,6 +42,14 @@ export interface SavedMemeTemplate {
 	icon: string;
 	createdAt: number;
 	overlays: MemeTextOverlay[];
+	/** Timed extras (schema v2): sound cues, zoom punches, frame-fx
+	 *  windows, speed ramps and sticker layers captured with the layout.
+	 *  All optional — v1 rows import untouched. */
+	sfxCues?: MemeSfxCue[];
+	zoomWindows?: ZoomWindow[];
+	fxWindows?: FrameFxWindow[];
+	speedWindows?: SpeedWindow[];
+	imageLayers?: MemeImageOverlay[];
 }
 
 interface StoredTemplates {
@@ -53,6 +73,15 @@ function parseTemplate(raw: unknown): SavedMemeTemplate | null {
 		.slice(0, MAX_OVERLAYS);
 	if (!overlays.length) return null;
 	const label = typeof t.label === 'string' && t.label.trim() ? t.label.trim().slice(0, 40) : '';
+	// v2 timed extras — each track re-normalizes; empty tracks stay absent.
+	const sfxCues = normalizeSfxCues(t.sfxCues).slice(0, MAX_SFX_CUES);
+	const zoomWindows = normalizeZoomWindows(t.zoomWindows).slice(0, MAX_ZOOM_WINDOWS);
+	const fxWindows = normalizeFxWindows(t.fxWindows).slice(0, MAX_FX_WINDOWS);
+	const speedWindows = normalizeSpeedWindows(t.speedWindows).slice(0, MAX_FX_WINDOWS);
+	const imageLayers = (Array.isArray(t.imageLayers) ? t.imageLayers : [])
+		.map((l) => normalizeImageOverlay(l as Record<string, unknown>))
+		.filter((l): l is MemeImageOverlay => l !== null)
+		.slice(0, MAX_IMAGE_OVERLAYS);
 	return {
 		id: typeof t.id === 'string' && t.id.trim() ? t.id.slice(0, 64) : newId(),
 		label: label || 'My template',
@@ -61,7 +90,12 @@ function parseTemplate(raw: unknown): SavedMemeTemplate | null {
 			Number.isFinite(Number(t.createdAt)) && Number(t.createdAt) > 0
 				? Number(t.createdAt)
 				: Date.now(),
-		overlays
+		overlays,
+		...(sfxCues.length ? { sfxCues } : {}),
+		...(zoomWindows.length ? { zoomWindows } : {}),
+		...(fxWindows.length ? { fxWindows } : {}),
+		...(speedWindows.length ? { speedWindows } : {}),
+		...(imageLayers.length ? { imageLayers } : {})
 	};
 }
 
@@ -105,7 +139,18 @@ class MemeTemplatesStore {
 	};
 
 	/** Save the current overlay layout under a label. Returns the saved template. */
-	save(label: string, overlays: MemeTextOverlay[], icon = 'i-lucide-bookmark'): SavedMemeTemplate {
+	save(
+		label: string,
+		overlays: MemeTextOverlay[],
+		icon = 'i-lucide-bookmark',
+		extras?: {
+			sfxCues?: MemeSfxCue[];
+			zoomWindows?: ZoomWindow[];
+			fxWindows?: FrameFxWindow[];
+			speedWindows?: SpeedWindow[];
+			imageLayers?: MemeImageOverlay[];
+		}
+	): SavedMemeTemplate {
 		const clean = overlays
 			.map((o) => normalizeOverlay(o))
 			.filter((o): o is MemeTextOverlay => !!o)
@@ -117,7 +162,12 @@ class MemeTemplatesStore {
 			label: trimmed || `Template ${this.list.length + 1}`,
 			icon,
 			overlays: clean,
-			createdAt: Date.now()
+			createdAt: Date.now(),
+			...(extras?.sfxCues?.length ? { sfxCues: extras.sfxCues } : {}),
+			...(extras?.zoomWindows?.length ? { zoomWindows: extras.zoomWindows } : {}),
+			...(extras?.fxWindows?.length ? { fxWindows: extras.fxWindows } : {}),
+			...(extras?.speedWindows?.length ? { speedWindows: extras.speedWindows } : {}),
+			...(extras?.imageLayers?.length ? { imageLayers: extras.imageLayers } : {})
 		};
 		// Freshest first; cap the list so storage stays lean.
 		this.list = [template, ...this.list].slice(0, MAX_SAVED_TEMPLATES);
@@ -140,6 +190,36 @@ class MemeTemplatesStore {
 	/** Build a fresh, editable copy for the stage (ids regenerate on apply). */
 	apply(template: SavedMemeTemplate): MemeTextOverlay[] {
 		return template.overlays.map((o) => ({ ...o, id: newId() }));
+	}
+
+	/** Fresh copies of the timed extras (v2) — ids regenerate on apply. */
+	applyExtras(template: SavedMemeTemplate): {
+		sfxCues?: MemeSfxCue[];
+		zoomWindows?: ZoomWindow[];
+		fxWindows?: FrameFxWindow[];
+		speedWindows?: SpeedWindow[];
+		imageLayers?: MemeImageOverlay[];
+	} {
+		const extras: {
+			sfxCues?: MemeSfxCue[];
+			zoomWindows?: ZoomWindow[];
+			fxWindows?: FrameFxWindow[];
+			speedWindows?: SpeedWindow[];
+			imageLayers?: MemeImageOverlay[];
+		} = {};
+		if (template.sfxCues?.length)
+			extras.sfxCues = normalizeSfxCues(template.sfxCues.map((c) => ({ ...c, id: undefined })));
+		if (template.zoomWindows?.length)
+			extras.zoomWindows = normalizeZoomWindows(template.zoomWindows);
+		if (template.fxWindows?.length) extras.fxWindows = normalizeFxWindows(template.fxWindows);
+		if (template.speedWindows?.length)
+			extras.speedWindows = normalizeSpeedWindows(template.speedWindows);
+		if (template.imageLayers?.length)
+			extras.imageLayers = template.imageLayers.map((l) => ({
+				...l,
+				id: `img-${newId()}`
+			}));
+		return extras;
 	}
 }
 

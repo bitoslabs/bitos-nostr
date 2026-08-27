@@ -15,6 +15,9 @@ import { normalizeOverlay, type MemeTextOverlay, type MemeSfxCue } from '$lib/me
 import { normalizeSfxCues } from '$lib/meme/schema';
 import { normalizeImageOverlay, type MemeImageOverlay } from '$lib/meme/image-overlay';
 import { normalizeDrawingGroups, type DrawingGroup } from '$lib/meme/drawing';
+import type { ZoomWindow } from '$lib/meme/zoom-track';
+import type { FrameFxWindow } from '$lib/meme/fx-track';
+import type { SpeedWindow } from '$lib/meme/speed-track';
 
 export const MEME_SLOTS_KEY = 'bitos:meme-slots';
 export const MEME_SLOTS_VERSION = 1;
@@ -52,10 +55,14 @@ export interface MemeSlot {
 	trimStartSec: number;
 	trimEndSec: number | null;
 	playbackRate: number;
+	/** Effect tracks (remix wire z/f/s) — optional, older slots lack them. */
+	zoomWindows?: ZoomWindow[];
+	fxWindows?: FrameFxWindow[];
+	speedWindows?: SpeedWindow[];
 }
 
 interface StoredSlots {
-	schema: string;
+	schema: 'bitos.meme.slots';
 	version: number;
 	list: MemeSlot[];
 }
@@ -104,9 +111,9 @@ function parseSlot(raw: unknown): MemeSlot | null {
 		s.destination === 'story' || s.destination === 'note' ? s.destination : 'bitz';
 	const destinations: MemeSlot['destination'][] = Array.isArray(s.destinations)
 		? s.destinations.filter(
-			(value): value is MemeSlot['destination'] =>
-				value === 'bitz' || value === 'story' || value === 'note'
-		)
+				(value): value is MemeSlot['destination'] =>
+					value === 'bitz' || value === 'story' || value === 'note'
+			)
 		: [destination];
 	const hasWork =
 		!!media ||

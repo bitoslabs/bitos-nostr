@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitz Buddy — LAUGH: squint eyes, big open grin, tears of joy -->
+	<defs>
+		<radialGradient id="coin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+		<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#d98812"/>
+		</linearGradient>
+	</defs>
+	<g stroke="#ffb020" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9">
+		<path d="M 34 60 l -12 -7"/><path d="M 30 84 l -14 1"/>
+		<path d="M 206 60 l 12 -7"/><path d="M 210 84 l 14 1"/>
+	</g>
+	<g stroke="#3a2a10" stroke-width="14" stroke-linecap="round" fill="none">
+		<path d="M 98 190 q 3 20 -4 30"/><path d="M 142 190 q -3 20 4 30"/>
+	</g>
+	<g fill="#ff7a1a" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round">
+		<path d="M 70 226 q 12 -8 26 -2 l 2 8 q -16 6 -28 2 z"/>
+		<path d="M 170 226 q -12 -8 -26 -2 l -2 8 q 16 6 28 2 z"/>
+	</g>
+	<!-- arms on belly -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 48 138 q 16 10 36 12"/><path d="M 192 138 q -16 10 -36 12"/>
+	</g>
+	<circle cx="86" cy="152" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="154" cy="152" r="11" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="120" cy="120" r="96" fill="url(#rim)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="120" cy="120" r="82" fill="url(#coin)" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- squint-happy eyes -->
+	<path d="M 76 106 q 17 -16 34 0" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<path d="M 130 106 q 17 -16 34 0" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<!-- tears of joy -->
+	<path d="M 70 118 q 6 10 0 14 q -7 -4 0 -14 z" fill="#7dd3fc" stroke="#0c4a6e" stroke-width="2.5"/>
+	<path d="M 170 118 q 6 10 0 14 q -7 -4 0 -14 z" fill="#7dd3fc" stroke="#0c4a6e" stroke-width="2.5"/>
+	<!-- huge open grin -->
+	<path d="M 88 138 q 32 30 64 0 q -8 22 -32 22 q -24 0 -32 -22 z" fill="#5b2d0e" stroke="#3a2a10" stroke-width="5"/>
+	<path d="M 100 154 q 20 8 40 0 l -2 6 q -18 6 -36 0 z" fill="#fff"/>
+	<ellipse cx="74" cy="130" rx="10" ry="5" fill="#ff9d5c" opacity="0.5"/>
+	<ellipse cx="166" cy="130" rx="10" ry="5" fill="#ff9d5c" opacity="0.5"/>
+</svg>

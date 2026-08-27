@@ -21,7 +21,10 @@
 		onCutVideo,
 		onSplitSelected,
 		onAddCaption,
-		onAddSound
+		onAddSound,
+		onAutoMeme,
+		autoMemeReady = false,
+		analyzing = false
 	}: {
 		busy: boolean;
 		mediaKind: 'image' | 'video' | null;
@@ -42,6 +45,11 @@
 		onSplitSelected: () => void;
 		onAddCaption: () => void;
 		onAddSound: () => void;
+		/** Build (if needed) + surface the suggestion ladder — the one-tap
+		 *  Auto Meme entry (`analyzing` drives its spinner). */
+		onAutoMeme: () => void;
+		autoMemeReady?: boolean;
+		analyzing?: boolean;
 	} = $props();
 </script>
 
@@ -129,6 +137,18 @@
 		title="Split the selected caption or image layer at the playhead"
 		class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[10.5px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
 		><Icon name="i-lucide-split" class="size-3.5" /> Split selected</button
+	>
+	<button
+		type="button"
+		onclick={onAutoMeme}
+		disabled={busy || !mediaKind || analyzing}
+		title="Generate 3 editable timelines — captions, cues and punch-in zooms from your audio, analyzed on-device"
+		class="flex items-center gap-1 rounded-full bg-gradient-to-r from-primary-500/15 to-warm-500/15 px-3 py-1 text-[10.5px] font-bold text-primary-600 transition hover:from-primary-500/25 hover:to-warm-500/25 disabled:opacity-40"
+		><Icon
+			name={analyzing ? 'i-lucide-loader-circle' : 'i-lucide-wand-sparkles'}
+			class="size-3.5 {analyzing ? 'animate-spin' : ''}"
+		/>
+		{#if analyzing}Analyzing…{:else if autoMemeReady}Auto Meme ✓{:else}Auto Meme{/if}</button
 	>
 	<button
 		type="button"

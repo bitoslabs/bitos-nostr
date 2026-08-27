@@ -4,6 +4,7 @@
 	import MemeSoundCueList from './MemeSoundCueList.svelte';
 	import MemeSoundSuggestions from './MemeSoundSuggestions.svelte';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { CUSTOM_SOUND_KEY, type MemeSfxCue, type MemeSfxId } from '$lib/meme/schema';
 	import { SFX_LABELS } from '$lib/meme/sound-catalog';
@@ -23,7 +24,10 @@
 		includeSourceAudio = $bindable(),
 		analyzing,
 		suggestions,
+		smartMatches = [],
+		onApplySmartMatch,
 		onOpenStudio,
+		onOpenShareSound,
 		onPreviewSynth,
 		onAddSynth,
 		onAddCustom,
@@ -46,7 +50,10 @@
 		includeSourceAudio: boolean;
 		analyzing: boolean;
 		suggestions: MemeSuggestion[];
+		smartMatches?: SmartResolution[];
+		onApplySmartMatch: (match: SmartResolution) => void;
 		onOpenStudio: () => void;
+		onOpenShareSound: () => void;
 		onPreviewSynth: (sfx: MemeSfxId) => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
@@ -112,6 +119,15 @@
 			<Icon name="i-lucide-music-plus" class="size-3.5" />
 			Add sound
 		</button>
+		<button type="button" onclick={onOpenShareSound} class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"><Icon name="i-lucide-share-2" class="size-3.5" />Share sound</button>
+		<MemeSharedSoundsPicker
+			sounds={sharedSoundsStore.list}
+			loading={sharedSoundsStore.loading}
+			importingId={sharedSoundsStore.importingId}
+			currentPubkey={identity.current?.pk}
+			onRefresh={() => void sharedSoundsStore.load()}
+			onImport={(sound) => void sharedSoundsStore.import(sound)}
+		/>
 		{#if mediaKind === 'video'}
 			<button
 				type="button"
@@ -132,14 +148,6 @@
 				Video audio {includeSourceAudio ? 'on' : 'off'}
 			</button>
 		{/if}
-		<MemeSharedSoundsPicker
-			sounds={sharedSoundsStore.list}
-			loading={sharedSoundsStore.loading}
-			importingId={sharedSoundsStore.importingId}
-			currentPubkey={identity.current?.pk}
-			onRefresh={() => void sharedSoundsStore.load()}
-			onImport={(sound) => void sharedSoundsStore.import(sound)}
-		/>
 		{#if cues.length && overlayCount}
 			<button
 				type="button"
@@ -156,8 +164,10 @@
 			{busy}
 			{analyzing}
 			groups={suggestions}
+			{smartMatches}
 			onBuild={onBuildSuggestions}
 			onApply={onApplySuggestion}
+			onApplySmart={onApplySmartMatch}
 		/>
 	</div>
 	<MemeSoundCueList

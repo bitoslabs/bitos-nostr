@@ -43,6 +43,23 @@ describe('encode/decode payload', () => {
 		expect(custom.soundId).toBe('snd-1');
 	});
 
+	it('round-trips a color look (wire `l`) and omits it when none', () => {
+		const overlay = makeOverlay({ text: 'gm' });
+		// noir rides; unknown ids degrade to absent (not a crash, not garbage)
+		const withLook = decodeRemixPayload(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'noir' })
+		)!;
+		expect(withLook.lookId).toBe('noir');
+		const unknownLook = decodeRemixPayload(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'bogus' as never })
+		)!;
+		expect(unknownLook.lookId).toBeUndefined();
+		const noLook = JSON.parse(
+			encodeRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'none' })
+		) as Record<string, unknown>;
+		expect(noLook).not.toHaveProperty('l');
+	});
+
 	it('round-trips timed overlay windows', () => {
 		const overlay = makeOverlay({ text: 'LATE PUNCHLINE' });
 		overlay.startMs = 1200;
@@ -98,6 +115,12 @@ describe('remix tags', () => {
 });
 
 describe('applyRemixPayload', () => {
+	it('carries the look through the clone (fresh ids, same brand)', () => {
+		const overlay = makeOverlay({ text: 'gm' });
+		const applied = applyRemixPayload({ overlays: [overlay], sfxCues: [], lookId: 'vhs' });
+		expect(applied.lookId).toBe('vhs');
+		expect(applied.overlays[0]!.id).not.toBe(overlay.id);
+	});
 	it('clones with fresh ids and normalized rows', () => {
 		const original = makeClassicPair();
 		const payload = {
@@ -202,6 +225,35 @@ describe('remix chain (DAG projection)', () => {
 			}
 		);
 		expect(result).toEqual({ ok: false, reason: 'loader-error' });
+	});
+
+	it('forwards each hop’s publisher relay hints to the loader', async () => {
+		const seen: Array<string[]> = [];
+		const result = await remixChainOf(
+			tags({ eventId: id(0), pubkey: 'ab'.repeat(32) }),
+			async (eventId, hints) => {
+				seen.push(hints ?? []);
+				// Hint goes to hop 1; hop 1 is a dead end.
+				return eventId === id(0)
+					? [['remix', id(1), 'wss://relay.two'], ['p', 'ff'.repeat(32)]]
+					: null;
+			}
+		);
+		expect(result.ok).toBe(true);
+		// The walk relayed the caller's hint (relay.one) for the first hop and
+		// the ancestor's own stamped hint (relay.two) for the second.
+		expect(seen).toEqual([['wss://relay.one'], ['wss://relay.two']]);
+	});
+
+	it('still walks when the loader ignores the hints (arity-1 loaders)', async () => {
+		const load = async (eventId: string) => {
+			if (eventId === id(0)) return tags({ eventId: id(1), pubkey: 'ff'.repeat(32) });
+			return null;
+		};
+		const result = await remixChainOf(tags({ eventId: id(0), pubkey: 'ab'.repeat(32) }), load);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.chain).toHaveLength(2);
 	});
 });
 

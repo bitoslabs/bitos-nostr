@@ -3,7 +3,7 @@ import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
 import { toFeedNote } from '$lib/nostr/feed-note';
 import { parseBitz, type BitzRendition } from '$lib/nostr/bitz-codec';
 
-export type BitzMode = 'explore' | 'following' | 'foryou';
+export type BitzMode = 'explore' | 'following' | 'foryou' | 'trending' | 'zapped';
 
 /**
  * A reel's media source chain: the primary URL plus ordered fallbacks

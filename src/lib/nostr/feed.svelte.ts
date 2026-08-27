@@ -7,7 +7,7 @@
 import { browser } from '$app/environment';
 import type { UnsignedEvent } from 'nostr-tools/pure';
 import { signMined } from '$lib/auth/signer';
-import { subscribe, publish, queryPrimaryFirst } from './pool';
+import { subscribe, publish, queryPrimaryFirst, lookupEventTags } from './pool';
 import { identity } from './identity.svelte';
 import { profiles } from './profiles.svelte';
 import { blocks } from '$lib/stores/blocks.svelte';
@@ -25,6 +25,7 @@ import {
 } from './types';
 import { toFeedNote } from './feed-note';
 import { buildKind22, validateBitzMedia } from './bitz-codec';
+import { wouldCycle, remixOf } from '$lib/meme/remix';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
 import type { UploadedMedia } from '$lib/media/uploaders';
@@ -969,6 +970,15 @@ class FeedStore {
 					})
 				: unsigned;
 		const event = await signMined(mined);
+		// CRE-006 phase-2 publish guard: a remix event's id must never appear in
+		// its own ancestry (self-referential or malicious forks would loop every
+		// chain walker downstream). Tested against the SIGNED id — the mining
+		// nonce changes it, so the pre-sign body could not be checked. Unknown
+		// history refuses rather than risks a loop (wouldCycle contract).
+		const lineage = remixOf(event.tags);
+		if (lineage && (await wouldCycle(event.id, lineage, (id, hints) => this.loadAncestorTags(id, hints)))) {
+			throw new Error('This remix chains back to itself — re-open the source and try again');
+		}
 		options.onPhase?.('publishing');
 		// PUB-012 §12.2: the signed event enters the local outbox before the
 		// first relay write, and stays until the durability threshold is met
@@ -999,6 +1009,14 @@ class FeedStore {
 		if (!reel) return;
 		const { reels } = reconcileOptimisticReel(bitzSession.reels, reel);
 		bitzSession.reels = reels;
+	}
+
+	/** Load an ancestor's tags by id (smart relay lookup: publisher hints,
+	 *  then primary, then parallel fallback — a missing event is the chain's
+	 *  natural end; pruned history degrades gracefully instead of blocking
+	 *  the publish guard). */
+	async loadAncestorTags(eventId: string, hintUrls: string[] = []): Promise<string[][] | null> {
+		return lookupEventTags(eventId, hintUrls);
 	}
 
 	/** Publish a NIP-18 repost (kind 6) of the original signed event. */

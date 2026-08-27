@@ -66,6 +66,6 @@
 
 {#if media.length}
 	<div class="mt-2 max-w-[360px]">
-		<NotificationMedia {media} {tags} {content} />
+		<NotificationMedia {media} {tags} {content} containGifAndWebp />
 	</div>
 {/if}

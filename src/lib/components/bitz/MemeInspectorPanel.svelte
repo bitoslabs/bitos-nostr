@@ -1,16 +1,16 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import MemeLayerEditor from './MemeLayerEditor.svelte';
+	import MemeImageLayersCard from './MemeImageLayersCard.svelte';
 	import MemeCaptionOverlayList from './MemeCaptionOverlayList.svelte';
 	import MemeArtboardCard from './MemeArtboardCard.svelte';
 	import MemeTrimPanel from './MemeTrimPanel.svelte';
 	import MemeSoundPanel from './MemeSoundPanel.svelte';
-	import MemePublishOptions from './MemePublishOptions.svelte';
 	import { cueTrackDurationSec } from '$lib/meme/cue-track';
 	import type { MemeImageOverlay } from '$lib/meme/image-overlay';
 	import type { MemeTextOverlay } from '$lib/meme/schema';
 	import type { MemeSfxCue, MemeSfxId } from '$lib/meme/schema';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import type { MediaProviderId } from '$lib/media/uploaders';
 	import type { PowProgress } from '$lib/nostr/feed.svelte';
 	import type { RemixLicense } from '$lib/meme/remix';
@@ -19,9 +19,15 @@
 	import type { MemeArtboardId, MemeDestination, MemeStudioPhase } from './meme-studio-config';
 
 	let {
-		selectedLayer,
-		imageLayerIndex,
-		renderSrc,
+		imageLayers,
+		selectedLayerId = $bindable(null),
+		layerTimingId = $bindable(null),
+		layerBitmaps,
+		layerRenderSrcs,
+		layerBusy = false,
+		onAddLayerImage,
+		onMoveLayer,
+		onReplaceLayer,
 		busy,
 		videoMemeSupported,
 		overlays,
@@ -71,6 +77,7 @@
 		analyzing,
 		suggestions,
 		onOpenSoundStudio,
+		onOpenShareSound,
 		onPreviewSynth,
 		onAddSynth,
 		onAddCustom,
@@ -79,6 +86,8 @@
 		onSyncCaptions,
 		onBuildSuggestions,
 		onApplySuggestion,
+		smartMatches = [],
+		onApplySmartMatch,
 		onSeek,
 		onRemoveCue,
 		destinations = $bindable<MemeDestination[]>(['bitz']),
@@ -99,14 +108,22 @@
 		onPatchLayer,
 		onRemoveLayer,
 		onDuplicateLayer,
+		onOpenCropLayer,
+		onArrangeLayer,
 		onPublish,
 		exportFormat,
 		videoExportSupported,
 		onFormat
 	}: {
-		selectedLayer: MemeImageOverlay | null;
-		imageLayerIndex: number;
-		renderSrc: string | null;
+		imageLayers: MemeImageOverlay[];
+		selectedLayerId: string | null;
+		layerTimingId: string | null;
+		layerBitmaps: { has(key: string): boolean };
+		layerRenderSrcs: Map<string, string>;
+		layerBusy?: boolean;
+		onAddLayerImage: () => void;
+		onMoveLayer: (id: string, direction: -1 | 1) => void;
+		onReplaceLayer: (id: string) => void;
 		busy: boolean;
 		videoMemeSupported: boolean;
 		overlays: MemeTextOverlay[];
@@ -156,6 +173,7 @@
 		analyzing: boolean;
 		suggestions: MemeSuggestion[];
 		onOpenSoundStudio: () => void;
+		onOpenShareSound: () => void;
 		onPreviewSynth: (id: MemeSfxId) => void;
 		onAddSynth: (id: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
@@ -164,6 +182,8 @@
 		onSyncCaptions: () => void;
 		onBuildSuggestions: () => void;
 		onApplySuggestion: (suggestion: MemeSuggestion) => void;
+		smartMatches?: SmartResolution[];
+		onApplySmartMatch: (match: SmartResolution) => void;
 		onSeek: (seconds: number) => void;
 		onRemoveCue: (id: string) => void;
 		destinations: MemeDestination[];
@@ -184,6 +204,8 @@
 		onPatchLayer: (id: string, patch: Partial<MemeImageOverlay>) => void;
 		onRemoveLayer: (id: string) => void;
 		onDuplicateLayer: (id: string) => void;
+		onOpenCropLayer: (id: string) => void;
+		onArrangeLayer: (id: string, to: 'front' | 'back' | 'up' | 'down') => void;
 		onPublish: () => void;
 		exportFormat: import('./meme-studio-config').MemeExportFormat;
 		videoExportSupported: boolean;
@@ -192,19 +214,28 @@
 </script>
 
 <div class="flex min-w-0 flex-col gap-3">
-	{#if selectedLayer}
-		{#key selectedLayer.id}
-			<MemeLayerEditor
-				layer={selectedLayer}
-				index={imageLayerIndex}
-				{renderSrc}
-				{busy}
-				onPatch={onPatchLayer}
-				onRemove={onRemoveLayer}
-				onDuplicate={onDuplicateLayer}
-			/>
-		{/key}
-	{/if}
+	<!-- Image layers — one widget: list + inline selected-layer editor
+	     (merge 2026-08-25: the old toolbar-popover list fought this panel
+	     for the same selection). -->
+	<MemeImageLayersCard
+		layers={imageLayers}
+		bind:selectedLayerId
+		bind:timingId={layerTimingId}
+		bitmaps={layerBitmaps}
+		renderSrcs={layerRenderSrcs}
+		{mediaKind}
+		{timelineActive}
+		busy={busy || layerBusy}
+		loading={layerBusy}
+		onAdd={onAddLayerImage}
+		onMove={onMoveLayer}
+		onPatch={onPatchLayer}
+		onRemove={onRemoveLayer}
+		onReplace={onReplaceLayer}
+		onDuplicate={onDuplicateLayer}
+		onOpenCrop={onOpenCropLayer}
+		onArrange={onArrangeLayer}
+	/>
 	{#if !videoMemeSupported}
 		<p
 			class="flex items-center gap-1.5 rounded-lg bg-warm-500/10 px-2.5 py-2 text-[11.5px] font-semibold text-warm-500"
@@ -302,7 +333,9 @@
 			bind:includeSourceAudio
 			{analyzing}
 			{suggestions}
+			{smartMatches}
 			onOpenStudio={onOpenSoundStudio}
+			{onOpenShareSound}
 			{onPreviewSynth}
 			{onAddSynth}
 			{onAddCustom}
@@ -311,34 +344,9 @@
 			{onSyncCaptions}
 			{onBuildSuggestions}
 			{onApplySuggestion}
+			{onApplySmartMatch}
 			{onSeek}
 			{onRemoveCue}
 		/>
 	{/if}
-	<MemePublishOptions
-		bind:destinations
-		bind:caption
-		bind:open={publishDetailsOpen}
-		bind:sensitive
-		bind:showPow
-		bind:license
-		bind:aiAssisted
-		bind:splitsOpen
-		bind:splitRows
-		bind:selectedProvider
-		bind:pow
-		{busy}
-		{phase}
-		{powProgress}
-		{writeRelayCount}
-		{kindNip}
-		{softCaptionLimit}
-		{hardCaptionLimit}
-		{exportFormat}
-		{mediaKind}
-		{videoExportSupported}
-		{onFormat}
-		{onCancelMining}
-		{onPublish}
-	/>
 </div>

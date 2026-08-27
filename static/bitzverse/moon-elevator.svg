@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitzverse — MOON ELEVATOR: the sats lift to the moon -->
+	<defs>
+		<linearGradient id="car" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#f59e0b"/>
+		</linearGradient>
+		<radialGradient id="moonface" cx="0.4" cy="0.35" r="0.85">
+			<stop offset="0" stop-color="#fef9c3"/><stop offset="1" stop-color="#fde047"/>
+		</radialGradient>
+	</defs>
+	<!-- moon (waiting up top) -->
+	<circle cx="186" cy="52" r="40" fill="url(#moonface)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="172" cy="44" r="5" fill="#3a2a10"/>
+	<circle cx="196" cy="44" r="5" fill="#3a2a10"/>
+	<path d="M 174 62 q 12 10 24 0" fill="none" stroke="#3a2a10" stroke-width="5" stroke-linecap="round"/>
+	<circle cx="164" cy="60" r="4" fill="#fca5a5" opacity="0.7"/>
+	<circle cx="206" cy="60" r="4" fill="#fca5a5" opacity="0.7"/>
+	<!-- elevator mast -->
+	<path d="M 64 210 V 66" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<path d="M 88 210 V 66" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<path d="M 64 96 l 24 -12 M 64 140 l 24 -12 M 64 184 l 24 -12" stroke="#3a2a10" stroke-width="4" opacity="0.6"/>
+	<!-- top pulley -->
+	<circle cx="76" cy="58" r="12" fill="#94a3b8" stroke="#3a2a10" stroke-width="5"/>
+	<!-- rise cable -->
+	<path d="M 76 70 v 42" stroke="#3a2a10" stroke-width="4"/>
+	<!-- elevator car with a sat inside -->
+	<rect x="52" y="112" width="48" height="44" rx="7" fill="url(#car)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="76" cy="134" r="12" fill="#ffd968" stroke="#3a2a10" stroke-width="5"/>
+	<path d="M 76 128 v 12 M 71 131 h 10 M 71 137 h 10" stroke="#3a2a10" stroke-width="3" stroke-linecap="round"/>
+	<!-- ground pad -->
+	<path d="M 36 210 h 168" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<!-- up arrow + spark -->
+	<path d="M 132 178 l 0 -36 M 132 142 l -12 14 M 132 142 l 12 14" stroke="#a78bfa" stroke-width="7" stroke-linecap="round" fill="none"/>
+	<path d="M 132 196 l 4 8 M 144 190 l 7 5" stroke="#ffb020" stroke-width="4" stroke-linecap="round"/>
+</svg>

@@ -23,7 +23,8 @@ export interface SoundEntry {
 }
 
 /** Grouping keys for the picker sections. */
-export type SoundGroupId = 'synth' | 'library' | 'shared';
+/** Picker group ids — `synth-<bucket>` covers the Meme Pack V1 buckets. */
+export type SoundGroupId = 'synth' | `synth-${string}` | 'library' | 'shared';
 
 export interface SoundGroup {
 	id: SoundGroupId;
@@ -36,12 +37,34 @@ export const SFX_LABELS: Record<MemeSfxId, string> = {
 	boom: 'Boom',
 	bruh: 'Bruh',
 	laugh: 'Laugh',
+	'crowd-laugh': 'Crowd laugh',
+	gasp: 'Gasp',
+	'sad-trombone': 'Sad trombone',
+	'awkward-silence': 'Awkward silence',
+	'bass-hit': 'Bass hit',
 	whoosh: 'Whoosh',
+	slam: 'Slam',
+	explosion: 'Explosion',
+	punch: 'Punch',
+	'anime-slash': 'Anime slash',
+	error: 'Error',
+	success: 'Success',
+	notification: 'Notification',
+	loading: 'Loading',
+	'game-over': 'Game over',
+	coin: 'Coin',
+	cash: 'Cash',
+	jackpot: 'Jackpot',
+	'lightning-zap': 'Lightning zap',
 	pop: 'Pop',
 	boing: 'Boing',
 	drumroll: 'Drumroll',
 	ding: 'Ding',
-	'sad-trombone': 'Sad trombone'
+	swipe: 'Swipe',
+	click: 'Click',
+	snap: 'Snap',
+	'record-scratch': 'Record scratch',
+	'reverse-whoosh': 'Reverse whoosh'
 };
 
 /** Playback length per synth recipe in seconds (single source). */
@@ -61,6 +84,42 @@ export function synthEntries(
 		durationSec: durations[sfx] ?? 1
 	}));
 }
+
+/** Meme Pack V1 buckets (docs/source/templete/tp-2.md) — display grouping
+ *  for the soundboard; every id must land in exactly one bucket. */
+export const SFX_BUCKETS: { id: string; label: string; ids: readonly string[] }[] = [
+	{
+		id: 'funny',
+		label: 'Funny',
+		ids: ['boom', 'bruh', 'laugh', 'crowd-laugh', 'gasp', 'sad-trombone', 'awkward-silence']
+	},
+	{
+		id: 'impact',
+		label: 'Impact',
+		ids: ['bass-hit', 'whoosh', 'slam', 'explosion', 'punch', 'anime-slash']
+	},
+	{
+		id: 'system',
+		label: 'System',
+		ids: ['error', 'success', 'notification', 'loading', 'game-over']
+	},
+	{ id: 'money', label: 'Money', ids: ['coin', 'cash', 'jackpot', 'lightning-zap'] },
+	{
+		id: 'transitions',
+		label: 'Transitions',
+		ids: [
+			'pop',
+			'boing',
+			'drumroll',
+			'ding',
+			'swipe',
+			'click',
+			'snap',
+			'record-scratch',
+			'reverse-whoosh'
+		]
+	}
+];
 
 /** Derive a playable entry from an existing cue (synth id or library ref). */
 export function entryForCue(
@@ -109,17 +168,35 @@ export function filterEntries(entries: SoundEntry[], query: string): SoundEntry[
 	);
 }
 
-/** Segment a duration into picker-friendly groups (empty groups dropped). */
+/** Segment a duration into picker-friendly groups (empty groups dropped).
+ *  The synth soundboard is split into its Meme Pack buckets so a 31-sound
+ *  board stays scannable; searching still flattens everything. */
 export function groupEntries(
 	synth: SoundEntry[],
 	library: SoundEntry[],
 	shared: SoundEntry[]
 ): SoundGroup[] {
-	const groups: SoundGroup[] = [
-		{ id: 'synth', label: 'Soundboard', entries: synth },
+	const groups: SoundGroup[] = [];
+	const synthLeft = new Set(synth.map((e) => e.id));
+	for (const bucket of SFX_BUCKETS) {
+		const entries = synth.filter(
+			(e) => bucket.ids.some((id) => `synth:${id}` === e.id) && synthLeft.delete(e.id)
+		);
+		if (entries.length) groups.push({ id: `synth-${bucket.id}`, label: bucket.label, entries });
+	}
+	// Ids not in any bucket (or from a different catalog build) keep the
+	// classic Soundboard group so nothing ever disappears from the picker.
+	if (synthLeft.size) {
+		groups.push({
+			id: 'synth',
+			label: 'Soundboard',
+			entries: synth.filter((e) => synthLeft.has(e.id))
+		});
+	}
+	groups.push(
 		{ id: 'library', label: 'My sounds', entries: library },
 		{ id: 'shared', label: 'Shared', entries: shared }
-	];
+	);
 	return groups.filter((g) => g.entries.length > 0);
 }
 

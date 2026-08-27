@@ -1,14 +1,62 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
+	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import Popover from '$lib/components/ui/Popover.svelte';
 	import { memeTemplates } from '$lib/stores/meme-templates.svelte';
 	import { memeSlots } from '$lib/stores/meme-slots.svelte';
-	import { TEMPLATES, type MemeStudioTemplate } from './meme-studio-config';
+	import { sharedTemplatesStore } from '$lib/stores/meme-shared-templates.svelte';
+	import { popovers } from '$lib/stores/popovers.svelte';
+	import { toasts } from '$lib/stores/toasts.svelte';
+	import { templateMarketplace } from '$lib/stores/template-marketplace.svelte';
+	import MemeTemplateMarketplace from './MemeTemplateMarketplace.svelte';
+	import MemeTemplateDialog from './MemeTemplateDialog.svelte';
+	import {
+		TEMPLATES,
+		IMAGE_LAYOUTS,
+		type MemeStudioTemplate,
+		type MemeImageLayout
+	} from './meme-studio-config';
+	import {
+		TEMPLATE_CATEGORIES,
+		TEMPLATE_PRICE_TIERS,
+		type TemplateCategoryId
+	} from '$lib/meme/template-marketplace';
 	import type { MemeTextOverlay } from '$lib/meme/schema';
+	import type { SharedTemplate } from '$lib/meme/shared-templates';
+
+	let marketOpen = $state(false);
+	let templatesOpen = $state(false);
+	let listingOpen = $state(false);
+	let listingFor = $state('');
+	let listingPrice = $state(0);
+	let listingCategory = $state<TemplateCategoryId>('meme');
+
+	const listingBusyId = $derived(
+		listingFor && sharedTemplatesStore.sharingId === listingFor ? listingFor : ''
+	);
+
+	function openListing(id: string) {
+		listingFor = id;
+		listingPrice = 0;
+		listingCategory = 'meme';
+		listingOpen = true;
+	}
+
+	function shareWithListing() {
+		const id = listingFor;
+		listingFor = '';
+		listingOpen = false;
+		void sharedTemplatesStore.share(id, {
+			...(listingPrice ? { priceSats: listingPrice } : {}),
+			category: listingCategory
+		});
+	}
 
 	let {
 		overlays,
+		mediaKind,
 		busy,
 		dirty,
 		slotBusyId,
@@ -16,6 +64,7 @@
 		showTemplateSave = $bindable(false),
 		slotName = $bindable(''),
 		applyTemplate,
+		applyImageLayout,
 		addOverlay,
 		applySavedTemplate,
 		newDraftFromSavedTemplate,
@@ -25,9 +74,11 @@
 		duplicateSlot,
 		renameSlot,
 		removeSlot,
-		saveCurrentSlot
+		saveCurrentSlot,
+		currentPubkey = ''
 	}: {
 		overlays: MemeTextOverlay[];
+		mediaKind?: 'image' | 'video';
 		busy: boolean;
 		dirty: boolean;
 		slotBusyId: string | null;
@@ -35,6 +86,7 @@
 		showTemplateSave: boolean;
 		slotName: string;
 		applyTemplate: (template: MemeStudioTemplate) => void;
+		applyImageLayout?: (layout: MemeImageLayout) => void;
 		addOverlay: () => void;
 		applySavedTemplate: (id: string) => void;
 		newDraftFromSavedTemplate: (id: string) => void;
@@ -45,9 +97,12 @@
 		renameSlot: (id: string, label: string) => void;
 		removeSlot: (id: string) => void;
 		saveCurrentSlot: () => void | Promise<void>;
+		currentPubkey?: string;
 	} = $props();
 
 	const templateMenuId = `meme-templates-${Math.random().toString(36).slice(2, 8)}`;
+	const layoutsMenuId = `meme-image-layouts-${Math.random().toString(36).slice(2, 8)}`;
+	const sharedMenuId = `meme-shared-templates-${Math.random().toString(36).slice(2, 8)}`;
 	const slotsMenuId = `meme-slots-${Math.random().toString(36).slice(2, 8)}`;
 	let renamingSlotId = $state<string | null>(null);
 	let renamingSlotLabel = $state('');
@@ -61,6 +116,17 @@
 		renameSlot(renamingSlotId, renamingSlotLabel);
 		renamingSlotId = null;
 		renamingSlotLabel = '';
+	}
+
+	/** NIP-78 import: save the shared layout locally, then apply it onto the
+	 * stage through the same append-safe path as any saved template. */
+	async function importSharedTemplate(template: SharedTemplate) {
+		popovers.close();
+		const saved = await sharedTemplatesStore.import(template);
+		if (saved) {
+			applySavedTemplate(saved.id);
+			toasts.success(`Imported “${saved.label}” — applied to your meme`);
+		}
 	}
 
 	/** Slot panels are floated/ported to document.body. Native listeners stay
@@ -80,23 +146,62 @@
 	}
 </script>
 
-<!-- Templates -->
+<!-- Templates: the 48 builtins live in a categorized dialog (UX pass
+     2026-08-25) — inline chips pushed the real tools below the fold. -->
 <div class="flex flex-wrap items-center gap-1.5">
-	<span class="text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase">
-		Template
-	</span>
-	{#each TEMPLATES as template (template.id)}
-		<button
-			type="button"
-			onclick={() => applyTemplate(template)}
-			disabled={busy}
-			title={template.hint}
-			class="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-warm-500/15 hover:text-warm-500 active:scale-95 disabled:opacity-40"
+	<button
+		type="button"
+		onclick={() => (templatesOpen = true)}
+		disabled={busy}
+		title="Browse all templates by category"
+		class="inline-flex items-center gap-1 rounded-full bg-warm-500/12 px-2.5 py-1 text-[11px] font-bold text-warm-500 transition hover:bg-warm-500/20 active:scale-95 disabled:opacity-40"
+	>
+		<Icon name="i-lucide-layout-template" class="size-3.5" />
+		Templates
+		<span class="rounded-full bg-warm-500/15 px-1.5 font-mono text-[10px]">
+			{TEMPLATES.length}
+		</span>
+	</button>
+	{#if mediaKind === 'image' && applyImageLayout}
+		<!-- Layouts popover (UX pass 2026-08-25): 7 inline chips → one
+		     trigger; hints + a caption-count line ride along. -->
+		<Popover
+			id={layoutsMenuId}
+			float
+			placement="bottom-start"
+			width="auto"
+			class="w-72 max-w-[80vw] p-0"
+			label="Image layouts"
+			triggerClass="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20 disabled:opacity-40"
+			triggerActiveClass="bg-primary-500/20 text-primary-600"
 		>
-			<Icon name={template.icon} class="size-3.5" />
-			{template.label}
-		</button>
-	{/each}
+			{#snippet trigger()}
+				<Icon name="i-lucide-layout-grid" class="size-3.5" />
+				Layouts
+				<span class="rounded-full bg-primary-500/15 px-1.5 font-mono text-[10px]">
+					{IMAGE_LAYOUTS.length}
+				</span>
+			{/snippet}
+			<div class="p-1">
+				{#each IMAGE_LAYOUTS as layout (layout.id)}
+					<MenuItem onclick={() => applyImageLayout?.(layout)} disabled={busy}>
+						<span class="flex min-w-0 items-center gap-2">
+							<Icon name={layout.icon} class="size-4 shrink-0 text-primary-600" />
+							<span class="min-w-0">
+								<span class="block truncate text-[12.5px] font-bold">{layout.label}</span>
+								<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+									{layout.hint}
+								</span>
+							</span>
+						</span>
+					</MenuItem>
+				{/each}
+			</div>
+			<p class="px-2.5 pb-2 text-[10.5px] text-[var(--ui-text-dimmed)]">
+				A layout scaffolds caption slots — your picture and words fill it.
+			</p>
+		</Popover>
+	{/if}
 	<button
 		type="button"
 		onclick={() => addOverlay()}
@@ -152,6 +257,21 @@
 						</button>
 						<button
 							type="button"
+							onclick={() => sharedTemplatesStore.share(saved.id)}
+							disabled={busy || sharedTemplatesStore.sharingId === saved.id}
+							aria-label={`Share template ${saved.label} to Nostr`}
+							title={currentPubkey ? 'Share this layout to Nostr' : 'Sign in to share layouts'}
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-primary-600 focus-visible:opacity-100 disabled:opacity-40"
+						>
+							<Icon
+								name={sharedTemplatesStore.sharingId === saved.id
+									? 'i-lucide-loader-circle'
+									: 'i-lucide-globe-2'}
+								class="size-3.5 {sharedTemplatesStore.sharingId === saved.id ? 'animate-spin' : ''}"
+							/>
+						</button>
+						<button
+							type="button"
 							onclick={() => newDraftFromSavedTemplate(saved.id)}
 							disabled={busy}
 							aria-label={`Create a new meme from template ${saved.label}`}
@@ -159,6 +279,16 @@
 							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-warm-500 focus-visible:opacity-100 disabled:opacity-40"
 						>
 							<Icon name="i-lucide-copy-plus" class="size-3.5" />
+						</button>
+						<button
+							type="button"
+							onclick={() => openListing(saved.id)}
+							disabled={busy || sharedTemplatesStore.sharingId === saved.id}
+							aria-label={`Share template ${saved.label} with a market price`}
+							title="List on the marketplace with a zap price"
+							class="grid size-6 shrink-0 place-items-center rounded-full text-[var(--ui-text-muted)] opacity-0 transition group-hover:opacity-100 hover:text-primary-600 focus-visible:opacity-100 disabled:opacity-40"
+						>
+							<Icon name="i-lucide-store" class="size-3.5" />
 						</button>
 						<button
 							type="button"
@@ -223,6 +353,87 @@
 		</div>
 	</Popover>
 
+	<!-- Marketplace: priced/zapped community templates (tp-2 p.733) -->
+	<button
+		type="button"
+		onclick={() => templateMarketplace.openMarket()}
+		class="inline-flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"
+	>
+		<Icon name="i-lucide-store" class="size-3.5" />
+		Market
+	</button>
+
+	<!-- Shared templates: NIP-78 layouts from other bitz creators -->
+	<Popover
+		id={sharedMenuId}
+		float
+		keepOpenOnContentClick
+		placement="bottom-start"
+		width="auto"
+		class="w-72 max-w-[80vw] p-0"
+		label="Shared templates"
+		triggerClass="inline-flex items-center gap-1 rounded-full bg-[var(--ui-bg-accented)] px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text)] transition hover:bg-primary-500/15 hover:text-primary-600"
+		triggerActiveClass="bg-primary-500/15 text-primary-600"
+	>
+		{#snippet trigger()}
+			<Icon name="i-lucide-globe-2" class="size-3.5" />
+			Shared templates
+			{#if sharedTemplatesStore.list.length}
+				<span class="rounded-full bg-primary-500/15 px-1.5 font-mono text-[10px] text-primary-600">
+					{sharedTemplatesStore.list.length}
+				</span>
+			{/if}
+		{/snippet}
+		<button
+			type="button"
+			class="flex w-full items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-[11.5px] font-semibold text-primary-600 transition hover:bg-primary-500/10"
+			disabled={sharedTemplatesStore.loading}
+			use:nativeClick={() => sharedTemplatesStore.load()}
+		>
+			<Icon
+				name="i-lucide-refresh-cw"
+				class="size-3.5 {sharedTemplatesStore.loading ? 'animate-spin' : ''}"
+			/>
+			{sharedTemplatesStore.loading ? 'Searching relays…' : 'Refresh'}
+		</button>
+		{#if sharedTemplatesStore.list.length}
+			<MenuDivider />
+			<div class="max-h-64 overflow-y-auto p-1">
+				{#each sharedTemplatesStore.list as shared (shared.eventId)}
+					<button
+						type="button"
+						use:nativeClick={() => void importSharedTemplate(shared)}
+						class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--interactive-hover-bg)] hover:text-[var(--ui-text)]"
+					>
+						<span class="flex min-w-0 items-center gap-2">
+							<Icon name={shared.icon} class="size-3.5 shrink-0 text-primary-600" />
+							<span class="min-w-0">
+								<span class="block truncate">{shared.label}</span>
+								<span class="block text-[10.5px] text-[var(--ui-text-dimmed)]">
+									{shared.overlays.length} caption{shared.overlays.length === 1 ? '' : 's'}
+									{#if shared.creatorPubkey === currentPubkey}· yours{/if}
+								</span>
+							</span>
+						</span>
+						<span class="ml-auto shrink-0">
+							{#if sharedTemplatesStore.importingId === shared.eventId}
+								<Icon
+									name="i-lucide-loader-circle"
+									class="size-3.5 animate-spin text-primary-600"
+								/>
+							{:else}
+								<span
+									class="text-[10px] font-bold tracking-wide text-[var(--ui-text-dimmed)] uppercase"
+								>
+									+ add
+								</span>
+							{/if}
+						</span>
+					</button>
+				{/each}
+			</div>
+		{/if}
+	</Popover>
 	<!-- Slots: named checkpoints inside the current work, like save points. -->
 	<Popover
 		id={slotsMenuId}
@@ -366,4 +577,64 @@
 			</div>
 		</div>
 	</Popover>
+
+	<MemeTemplateMarketplace bind:open={marketOpen} onImport={() => (marketOpen = false)} />
+
+	<!-- Categorized builtin templates (replaces the 48 inline chips). -->
+	<MemeTemplateDialog bind:open={templatesOpen} {busy} {applyTemplate} />
+
+	<!-- Market listing: price + category for the next shared template -->
+	<Dialog bind:open={listingOpen} title="List on Bitz Templates">
+		<p class="pb-3 text-[11.5px] text-[var(--ui-text-dimmed)]">
+			Buyers zap you directly to unlock — you keep the full amount.
+		</p>
+		<div class="flex flex-wrap gap-1.5 pb-3">
+			{#each TEMPLATE_PRICE_TIERS as tier (tier)}
+				<button
+					type="button"
+					onclick={() => (listingPrice = tier)}
+					class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition {listingPrice ===
+					tier
+						? 'bg-primary-500/20 text-primary-600'
+						: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-primary-500/10'}"
+				>
+					{tier === 0 ? 'Free' : `⚡${tier}`}
+				</button>
+			{/each}
+		</div>
+		<div class="flex flex-wrap gap-1.5 pb-4">
+			{#each TEMPLATE_CATEGORIES.filter((c) => c.id !== 'trending' && c.id !== 'new') as cat (cat.id)}
+				<button
+					type="button"
+					onclick={() => (listingCategory = cat.id)}
+					class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition {listingCategory ===
+					cat.id
+						? 'bg-warm-500/20 text-warm-600'
+						: 'bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)] hover:bg-warm-500/10'}"
+				>
+					{cat.label}
+				</button>
+			{/each}
+		</div>
+		<div class="flex justify-end gap-2">
+			<button
+				type="button"
+				onclick={() => (listingOpen = false)}
+				class="rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)]"
+				>Cancel</button
+			>
+			<button
+				type="button"
+				onclick={shareWithListing}
+				disabled={!!listingBusyId}
+				class="flex items-center gap-1 rounded-full bg-primary-500 px-3 py-1.5 text-[12px] font-bold text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-40"
+			>
+				<Icon
+					name={listingBusyId ? 'i-lucide-loader-circle' : 'i-lucide-zap'}
+					class="size-3.5 {listingBusyId ? 'animate-spin' : ''}"
+				/>
+				Share
+			</button>
+		</div>
+	</Dialog>
 </div>

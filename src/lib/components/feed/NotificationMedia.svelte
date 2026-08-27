@@ -26,12 +26,16 @@
 		/** A quoted post's single video behaves like a normal feed video: it
 		 * plays in place and exposes transport controls instead of opening an
 		 * image-only lightbox. */
-		playSingleVideo = false
+		playSingleVideo = false,
+		/** Preserve the entire frame for GIF and WebP attachments in compact
+		 * contexts such as comment lists. */
+		containGifAndWebp = false
 	}: {
 		media: ImageMeta[];
 		tags?: string[][];
 		content?: string;
 		playSingleVideo?: boolean;
+		containGifAndWebp?: boolean;
 	} = $props();
 
 	const MAX_VISIBLE = 4;
@@ -70,6 +74,13 @@
 
 	function reasonFor(item: ImageMeta): string {
 		return getSensitiveMediaReason(tags, content, item);
+	}
+
+	function shouldContain(item: ImageMeta): boolean {
+		return (
+			containGifAndWebp &&
+			(item.kind === 'gif' || item.mime === 'image/webp' || /\.webp(?:[?#]|$)/i.test(item.url))
+		);
 	}
 
 	function isCovered(item: ImageMeta): boolean {
@@ -136,6 +147,7 @@
 				{@const isFailed = failed[item.url]}
 				{@const isLoaded = loaded[item.url]}
 				{@const covered = isCovered(item)}
+				{@const contain = shouldContain(item)}
 				{@const itemReason = reasonFor(item)}
 				{@const showMore = hiddenCount > 0 && i === visible.length - 1}
 				<button
@@ -185,7 +197,9 @@
 							loading="lazy"
 							decoding="async"
 							referrerpolicy="no-referrer"
-							class="absolute inset-0 size-full object-cover transition duration-500 group-hover:scale-[1.03] {isLoaded
+							class="absolute inset-0 size-full {contain
+								? 'object-contain'
+								: 'object-cover'} transition duration-500 group-hover:scale-[1.03] {isLoaded
 								? 'opacity-100'
 								: 'opacity-0'}"
 							onload={() => (loaded = { ...loaded, [item.url]: true })}

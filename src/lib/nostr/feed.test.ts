@@ -12,6 +12,8 @@ vi.mock('./pool', () => ({
 	queryPrimaryFirst: vi.fn(async () => []),
 	queryUrls: vi.fn(async () => []),
 	queryOnce: vi.fn(async () => []),
+	lookupEventById: vi.fn(async () => null),
+	lookupEventTags: vi.fn(async () => null),
 	publishUrls: vi.fn(async () => []),
 	subscribeUrls: vi.fn(() => () => {})
 }));
@@ -224,5 +226,75 @@ describe('NIP-18 repost kind selection (S-002/SOC-007)', () => {
 			// Embedded JSON keeps full fidelity for clients that only read content.
 			expect(JSON.parse(event.content).id).toBe('44'.repeat(32));
 		}
+	});
+});
+
+describe('remix publish cycle guard (CRE-006)', () => {
+	const media: import('$lib/media/uploaders').UploadedMedia = {
+		url: 'https://cdn.example/meme.png',
+		kind: 'image',
+		mimeType: 'image/png',
+		bytes: 12_345,
+		provider: 'server'
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.stubGlobal('localStorage', {
+			getItem: vi.fn(() => null),
+			setItem: vi.fn(),
+			removeItem: vi.fn()
+		});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('publishes a healthy remix chain (no false blocking)', async () => {
+		const { identity } = await import('./identity.svelte');
+		const { publish, lookupEventTags } = await import('./pool');
+		identity.importSecret('ab'.repeat(32));
+		// Grandparent <- parent <- this remix: loader walks one hop and stops
+		// (the parent's event has no `remix` tag, so the walk ends there).
+		vi.mocked(lookupEventTags).mockResolvedValueOnce([['p', '88'.repeat(32)]]);
+
+		const id = await feed.postBitz(media, {
+			caption: 'remix!',
+			extraTags: [
+				['remix', '99'.repeat(32), 'wss://relay.damus.io'],
+				['p', '88'.repeat(32)]
+			]
+		});
+
+		expect(id).toMatch(/^[0-9a-f]{64}$/);
+		expect(vi.mocked(publish)).toHaveBeenCalledTimes(1);
+	});
+
+	it('blocks a self-referencing remix before anything is staged or published', async () => {
+		const { identity } = await import('./identity.svelte');
+		const { publish, lookupEventTags } = await import('./pool');
+		identity.importSecret('ab'.repeat(32));
+
+		// Malicious relay: every ancestor query returns tags whose remix
+		// pointer points at themselves (self-referential fork). The walk sees
+		// the same id twice -> refuse. Deterministic without the signed id.
+		const sourceId = '99'.repeat(32);
+		vi.mocked(lookupEventTags).mockImplementation(async () => [
+			['remix', sourceId, 'wss://relay.damus.io']
+		]);
+
+		await expect(
+			feed.postBitz(media, {
+				caption: 'cyclic remix',
+				extraTags: [
+					['remix', sourceId, 'wss://relay.damus.io'],
+					['p', '88'.repeat(32)]
+				]
+			})
+		).rejects.toThrow(/chains back to itself/);
+
+		// The rejection happened BEFORE staging/publishing — no relay write.
+		expect(vi.mocked(publish)).not.toHaveBeenCalled();
 	});
 });

@@ -217,6 +217,19 @@
 	let refreshingComments = $state(false);
 	let commentsLoaded = $state(false);
 	let replyingToCommentId = $state('');
+	/** Report dialog for a specific comment/reply (NIP-56 kind 1984). */
+	let reportCommentTarget = $state<FeedNote | null>(null);
+	let commentReportOpen = $state(false);
+
+	function reportComment(comment: FeedNote) {
+		reportCommentTarget = comment;
+		commentReportOpen = true;
+	}
+
+	/* Clear the target once the dialog closes so the next Report reopens fresh. */
+	$effect(() => {
+		if (!commentReportOpen) reportCommentTarget = null;
+	});
 	let optimisticReplies = $state<FeedNote[]>([]);
 	let failedMedia = $state<Record<string, boolean>>({});
 	let revealedSensitiveMedia = $state<Record<string, boolean>>({});
@@ -296,7 +309,10 @@
 
 	function mediaAspectStyle(media: MediaAttachment, count: number) {
 		if (count !== 1 || !media.dim || media.dim.w <= 0 || media.dim.h <= 0) return undefined;
-		return `aspect-ratio: ${media.dim.w} / ${media.dim.h};`;
+		// `aspect-ratio` reserves the natural height before the image loads. Cap the
+		// tile too: capping only the image leaves a very tall, empty container for
+		// portrait media (for example, a 608 × 1080 GIF in a wide feed card).
+		return `aspect-ratio: ${media.dim.w} / ${media.dim.h}; max-height: min(500px, 65vh);`;
 	}
 
 	function videoCoverStyle() {
@@ -862,6 +878,15 @@
 				>
 					Hide
 				</button>
+				{#if identity.current?.pk !== comment.pubkey}
+					<button
+						type="button"
+						onclick={() => reportComment(comment)}
+						class="text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]"
+					>
+						Report
+					</button>
+				{/if}
 				{#if identity.current?.pk === comment.pubkey}
 					<button
 						type="button"
@@ -1590,6 +1615,15 @@
 								>
 									Hide
 								</button>
+								{#if identity.current?.pk !== reply.pubkey}
+									<button
+										type="button"
+										onclick={() => reportComment(reply)}
+										class="text-[var(--ui-text-dimmed)] hover:text-[var(--tone-error-text)]"
+									>
+										Report
+									</button>
+								{/if}
 								{#if identity.current?.pk === reply.pubkey}
 									<button
 										type="button"
@@ -1870,6 +1904,18 @@
 	noteId={note.id}
 	targetLabel={`Note by ${displayName} · ${timeAgo(note.createdAt)}`}
 />
+{#if reportCommentTarget}
+	{@const targetName =
+		profiles.get(reportCommentTarget.pubkey)?.display_name ||
+		profiles.get(reportCommentTarget.pubkey)?.name ||
+		shortKey(reportCommentTarget.pubkey)}
+	<ReportDialog
+		bind:open={commentReportOpen}
+		pubkey={reportCommentTarget.pubkey}
+		noteId={reportCommentTarget.id}
+		targetLabel={`Reply by ${targetName} · ${timeAgo(reportCommentTarget.createdAt)}`}
+	/>
+{/if}
 
 <style>
 	.video-cover {

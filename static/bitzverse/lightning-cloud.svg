@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitzverse — LIGHTNING CLOUD: rumbling storm cloud, live bolt -->
+	<defs>
+		<linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#e2e8f0"/><stop offset="1" stop-color="#94a3b8"/>
+		</linearGradient>
+		<linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#fde047"/><stop offset="1" stop-color="#f59e0b"/>
+		</linearGradient>
+	</defs>
+	<!-- cloud body: puffy union -->
+	<g fill="url(#cloud)" stroke="#3a2a10" stroke-width="6" stroke-linejoin="round">
+		<circle cx="80" cy="92" r="34"/>
+		<circle cx="122" cy="74" r="42"/>
+		<circle cx="164" cy="96" r="32"/>
+		<rect x="66" y="92" width="112" height="34" rx="17"/>
+	</g>
+	<!-- grumpy cloud face (tiny, angry) -->
+	<path d="M 96 100 l 16 6" stroke="#3a2a10" stroke-width="4" stroke-linecap="round"/>
+	<path d="M 148 100 l -16 6" stroke="#3a2a10" stroke-width="4" stroke-linecap="round"/>
+	<circle cx="108" cy="112" r="3.5" fill="#241804"/>
+	<circle cx="136" cy="112" r="3.5" fill="#241804"/>
+	<path d="M 112 124 q 10 -6 20 0" fill="none" stroke="#3a2a10" stroke-width="4" stroke-linecap="round"/>
+	<!-- live bolt -->
+	<path d="M 118 138 l -14 30 h 14 l -10 34 l 34 -44 h -16 l 12 -20 z"
+		fill="url(#bolt)" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round"/>
+	<!-- stray sparks -->
+	<g stroke="#fde047" stroke-width="4" stroke-linecap="round" fill="none">
+		<path d="M 60 70 l -12 -6"/><path d="M 184 72 l 12 -6"/>
+		<path d="M 46 104 l -13 2"/>
+	</g>
+</svg>

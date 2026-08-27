@@ -24,6 +24,23 @@ import {
 	type MemeImageOverlay,
 	type WireImageOverlay
 } from './image-overlay';
+import { MAX_ZOOM_WINDOWS, normalizeZoomWindows } from './zoom-track';
+import {
+	decodeFxWindows,
+	encodeFxWindows,
+	normalizeFxWindows,
+	MAX_FX_WINDOWS as WIRE_FX_CAP
+} from './fx-track';
+import type { FrameFxWindow, WireFx } from './fx-track';
+import {
+	decodeSpeedWindows,
+	encodeSpeedWindows,
+	normalizeSpeedWindows,
+	MAX_SPEED_WINDOWS as WIRE_SPEED_CAP
+} from './speed-track';
+import type { SpeedWindow } from './speed-track';
+import { memeLookOf, type MemeLookId } from './look';
+import type { ZoomWindow } from '$lib/ai/suggest';
 import { eventRefFor, eventRefKey } from '$lib/nostr/event-ref';
 
 /** Wire cap for `g` (graphics) — tighter than the editor's 6 because the meme
@@ -46,8 +63,18 @@ export interface RemixSource {
 export interface RemixPayload {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
+	/** Color look preset burned into the source media (e.g. 'noir'). Wire `l`. */
+	lookId?: MemeLookId;
 	/** Raster image layers (2026-08-23): ordered bottom-to-top, capped. */
 	imageLayers?: MemeImageOverlay[];
+	/** Punch-in zoom windows (compact-wire): media-timed like sfxCues. */
+	zoomWindows?: ZoomWindow[];
+	/** Frame-FX windows (glitch/flash/shake/…) — media-timed like zooms. */
+	fxWindows?: FrameFxWindow[];
+	/** Speed-ramp windows (slow-mo / speed-up) — media-timed like zooms.
+	 *  Studio UI consumption ships in V2; the wire codec keeps round-trips
+	 *  lossless so remixed memes don't lose the author's ramps. */
+	speedWindows?: SpeedWindow[];
 }
 
 /** Compact wire format — ids stripped (fresh ids on apply), booleans packed. */
@@ -72,9 +99,20 @@ interface WireCue {
 	l?: number; // mixer lane
 }
 
+/** Compact zoom window: [startMs, endMs, factor(2dp), cx(2dp), cy(2dp)]. */
+type WireZoom = [number, number, number, number, number];
+
 /** Serialize overlays + cues into the compact `meme` tag payload. */
 export function encodeRemixPayload(payload: RemixPayload): string {
-	const wire: { v: number; o: WireOverlay[]; c: WireCue[]; g?: WireImageOverlay[] } = {
+	const wire: {
+		v: number;
+		o: WireOverlay[];
+		c: WireCue[];
+		l?: MemeLookId;
+		g?: WireImageOverlay[];
+		z?: WireZoom[];
+		f?: WireFx[];
+	} = {
 		v: MEME_SCHEMA_VERSION,
 		o: payload.overlays.map((ol) => {
 			const w: WireOverlay = { t: ol.text, x: round2(ol.x), y: round2(ol.y), s: round2(ol.size) };
@@ -97,12 +135,39 @@ export function encodeRemixPayload(payload: RemixPayload): string {
 					}
 				: { s: cue.sfx, a: cue.atMs, g: cue.gain, ...(cue.lane ? { l: cue.lane } : {}) }
 		),
+		// Color look rides as `l` ("look") — omitted when none so old payloads
+		// stay byte-identical and the 700-char budget goes to content.
+		...(payload.lookId && payload.lookId !== 'none' ? { l: payload.lookId } : {}),
 		// Image layers ride as `g` ("graphics") — omitted entirely when none,
 		// and hard-capped so a collage never blows the 700-char tag limit.
 		...(payload.imageLayers?.length
 			? {
 					g: payload.imageLayers.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE).map(encodeImageOverlay)
 				}
+			: {}),
+		// Zoom windows ride as `z` — same covenant: omitted when the track is
+		// empty, capped, media-timed milliseconds like the cue sheet.
+		...(payload.zoomWindows?.length
+			? {
+					z: payload.zoomWindows
+						.slice(0, MAX_ZOOM_WINDOWS)
+						.map((w): WireZoom => [
+							w.startMs,
+							w.endMs,
+							round2(w.factor),
+							round2(w.cx),
+							round2(w.cy)
+						])
+				}
+			: {}),
+		// Frame-FX windows ride as `f` — same covenant: omitted when empty,
+		// capped by the fx-track limit, media-timed like the zooms.
+		...(payload.fxWindows?.length
+			? { f: encodeFxWindows(payload.fxWindows).slice(0, WIRE_FX_CAP) }
+			: {}),
+		// Speed-ramp windows ride as `s` — same covenant again.
+		...(payload.speedWindows?.length
+			? { s: encodeSpeedWindows(payload.speedWindows).slice(0, WIRE_SPEED_CAP) }
 			: {})
 	};
 	return JSON.stringify(wire);
@@ -120,7 +185,11 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			v?: number;
 			o?: WireOverlay[];
 			c?: WireCue[];
+			l?: unknown;
 			g?: unknown[];
+			z?: unknown[];
+			f?: unknown[];
+			s?: unknown[];
 		};
 		if (!parsed || typeof parsed !== 'object') return null;
 		if (!Array.isArray(parsed.o)) return null;
@@ -155,7 +224,19 @@ export function decodeRemixPayload(raw: string | undefined): RemixPayload | null
 			.map(decodeImageOverlay)
 			.filter((l): l is MemeImageOverlay => !!l)
 			.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE);
-		return { overlays, sfxCues: cues, ...(imageLayers.length ? { imageLayers } : {}) };
+		const zoomWindows = normalizeZoomWindows(parsed.z ?? []);
+		const fxWindows = decodeFxWindows(parsed.f ?? []);
+		const speedWindows = normalizeSpeedWindows(decodeSpeedWindows(parsed.s ?? []));
+		const lookId = typeof parsed.l === 'string' ? memeLookOf(parsed.l) : 'none';
+		return {
+			overlays,
+			sfxCues: cues,
+			...(lookId !== 'none' ? { lookId } : {}),
+			...(imageLayers.length ? { imageLayers } : {}),
+			...(zoomWindows.length ? { zoomWindows } : {}),
+			...(fxWindows.length ? { fxWindows } : {}),
+			...(speedWindows.length ? { speedWindows } : {})
+		};
 	} catch {
 		return null;
 	}
@@ -283,9 +364,13 @@ export function remixSourceKey(event: {
 export function applyRemixPayload(payload: RemixPayload): {
 	overlays: MemeTextOverlay[];
 	sfxCues: MemeSfxCue[];
+	lookId: MemeLookId;
 	imageLayers: MemeImageOverlay[];
+	zoomWindows: ZoomWindow[];
+	fxWindows: FrameFxWindow[];
+	speedWindows: SpeedWindow[];
 } {
-	// Strip ids first — normalizeOverlay/normalizeSfxCue keep valid ids, and a
+	// Strip ids first — normalizeOverlay/normalizeSfxCues keep valid ids, and a
 	// remix must be an independent clone (mirrors memeTemplates.apply).
 	const overlays = payload.overlays
 		.map((o) => normalizeOverlay({ ...o, id: undefined }))
@@ -295,7 +380,18 @@ export function applyRemixPayload(payload: RemixPayload): {
 		.map((l) => normalizeImageOverlay({ ...l, id: undefined }))
 		.filter((l): l is MemeImageOverlay => !!l)
 		.slice(0, MAX_IMAGE_OVERLAYS_ON_WIRE);
-	return { overlays, sfxCues, imageLayers };
+	const zoomWindows = normalizeZoomWindows(payload.zoomWindows ?? []);
+	const fxWindows = normalizeFxWindows(payload.fxWindows ?? []);
+	const speedWindows = normalizeSpeedWindows(payload.speedWindows ?? []);
+	return {
+		overlays,
+		sfxCues,
+		lookId: memeLookOf(payload.lookId),
+		imageLayers,
+		zoomWindows,
+		fxWindows,
+		speedWindows
+	};
 }
 
 // ---- Remix DAG (plan §17 / ledger CRE-006, S-014) ----------------------------
@@ -322,13 +418,15 @@ export type RemixChainResult =
 	| { ok: false; reason: 'cycle' | 'loader-error' };
 
 /**
- * Walk the remix ancestry of an event. `load` receives an event id and returns
- * its tags (or null when unknown — treated as the chain's natural end, so a
- * pruned relay history degrades gracefully instead of erroring).
+ * Walk the remix ancestry of an event. `load` receives an event id and its
+ * publisher-stamped relay hints (`remix` tag trailing entries) and returns the
+ * parent's tags (or null when unknown — treated as the chain's natural end, so
+ * a pruned relay history degrades gracefully instead of erroring). Loaders may
+ * ignore the hints; every existing `(eventId) => …` loader stays compatible.
  */
 export async function remixChainOf(
 	tags: string[][],
-	load: (eventId: string) => Promise<string[][] | null>
+	load: (eventId: string, hintUrls?: string[]) => Promise<string[][] | null>
 ): Promise<RemixChainResult> {
 	const chain: RemixAncestor[] = [];
 	const seen = new Set<string>();
@@ -344,7 +442,7 @@ export async function remixChainOf(
 		chain.push({ eventId: current.eventId, pubkey: current.pubkey, depth: chain.length });
 		let parentTags: string[][] | null;
 		try {
-			parentTags = await load(current.eventId);
+			parentTags = await load(current.eventId, current.relays);
 		} catch {
 			return { ok: false, reason: 'loader-error' };
 		}
@@ -361,7 +459,7 @@ export async function remixChainOf(
 export async function wouldCycle(
 	newEventId: string,
 	source: RemixSource,
-	load: (eventId: string) => Promise<string[][] | null>
+	load: (eventId: string, hintUrls?: string[]) => Promise<string[][] | null>
 ): Promise<boolean> {
 	// An event referencing itself directly is malformed regardless of loader.
 	if (newEventId === source.eventId) return true;
@@ -374,7 +472,7 @@ export async function wouldCycle(
 		seen.add(current.eventId);
 		let parentTags: string[][] | null;
 		try {
-			parentTags = await load(current.eventId);
+			parentTags = await load(current.eventId, current.relays);
 		} catch {
 			return true; // unknown history — refuse rather than risk a loop
 		}

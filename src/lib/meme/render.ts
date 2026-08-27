@@ -10,8 +10,11 @@
  */
 import { overlayVisibleAt, type MemeFont, type MemeTextOverlay } from './schema';
 import { imageOverlayVisibleAt, type MemeImageOverlay } from './image-overlay';
+import { layerMotionTransform } from './layer-motion';
 import { memeLookCss } from './look';
 import { fxTransformAt } from './fx';
+import { paintFxFrame, type FrameFxWindow } from './fx-track';
+import { rateAt, type SpeedWindow } from './speed-track';
 import { paintDrawingGroups, type DrawingGroup } from './drawing';
 
 /** Paints an animated layer frame into (x,y) — one scratch canvas per use. */
@@ -21,6 +24,14 @@ export type AnimatedLayerPainter = (
 	y: number,
 	timeSec: number
 ) => void;
+
+/** Box an animated painter targets: the landed destination size on the
+ *  export canvas, plus the layer's optional normalized source crop. */
+export type AnimatedLayerBox = {
+	w: number;
+	h: number;
+	crop?: { x: number; y: number; w: number; h: number };
+};
 
 const FONT_STACKS: Record<MemeFont, string> = {
 	impact: '"Impact", "Haettenschweiler", "Arial Black", "sans-serif"',
@@ -42,7 +53,7 @@ export interface RenderOptions {
 	 * first frame that `drawImage(img)` would freeze on. Same resolver
 	 * signature as paintImageOverlays' `animFor`.
 	 */
-	animPainters?: (src: string, box: { w: number; h: number }) => AnimatedLayerPainter | null;
+	animPainters?: (src: string, box: AnimatedLayerBox) => AnimatedLayerPainter | null;
 	/** Canvas long-edge cap (px). Defaults to 1080; 0 = keep source size. */
 	maxEdge?: number;
 	/**
@@ -58,6 +69,14 @@ export interface RenderOptions {
 	quality?: number;
 	/** CSS filter chain burned into the MEDIA pixels (captions stay crisp). */
 	lookCss?: string;
+	/**
+	 * Frame-level FX windows (glitch/flash/shake/…) — media-timed like the
+	 * zoom track. Painted OVER the base + layers, UNDER the captions, in every
+	 * render path. See fx-track.ts (the painters + the CSS preview mirror).
+	 */
+	fxWindows?: FrameFxWindow[];
+	/** The still-image render moment in ms (video paths use media time). */
+	fxAtMs?: number;
 }
 
 export interface VideoRenderOptions extends RenderOptions {
@@ -75,6 +94,23 @@ export interface VideoRenderOptions extends RenderOptions {
 	trimEndSec?: number;
 	/** Playback rate for the export pass (0.5–2; audio pitch follows). */
 	playbackRate?: number;
+	/**
+	 * Speed-ramp windows riding ON TOP of the base playbackRate — the loop
+	 * drives `source.playbackRate = rateAt(windows, mediaMs) × base` every
+	 * frame. Real-time playback supports dynamic rates, and everything else
+	 * (zooms/FX/captions) keys off media time, so the whole scene stays in
+	 * sync under the curve. See speed-track.ts.
+	 */
+	speedWindows?: SpeedWindow[];
+	/**
+	 * Time-varying framing (punch-in zoom track): given the CURRENT media
+	 * time in ms, returns the transform to paint this frame with. Takes
+	 * precedence over the static `mediaTransform` — pass a composed callback
+	 * like `(ms) => composeZoomWithFraming(base, zoomTransformAt(windows, ms))`.
+	 * Kept as a callback (not window data) so render.ts stays decoupled from
+	 * the zoom-track module (which already imports render for MediaTransform).
+	 */
+	mediaTransformAt?: (mediaTimeMs: number) => MediaTransform;
 }
 
 function fontFor(overlay: MemeTextOverlay, px: number): string {
@@ -253,7 +289,7 @@ export function paintImageOverlays(
 	bitmapFor: (src: string) => CanvasImageSource | null,
 	canvas: { width: number; height: number },
 	atMs?: number,
-	animFor?: (src: string, box: { w: number; h: number }) => AnimatedLayerPainter | null
+	animFor?: (src: string, box: AnimatedLayerBox) => AnimatedLayerPainter | null
 ): void {
 	for (const layer of layers) {
 		if (atMs !== undefined && !imageOverlayVisibleAt(layer, atMs)) continue;
@@ -261,20 +297,30 @@ export function paintImageOverlays(
 		const w = h * (layer.aspect || 1);
 		const x = layer.x * canvas.width - w / 2;
 		const y = layer.y * canvas.height - h / 2;
-		// Per-layer effects: opacity, rotation, mirror flips, color look.
 		// Mirrors the studio's CSS exactly — WYSIWYG by construction.
 		const rad = ((layer.rotate ?? 0) * Math.PI) / 180;
 		const flipX = layer.flipH ? -1 : 1;
 		const flipY = layer.flipV ? -1 : 1;
 		const alpha = layer.opacity ?? 1;
 		const look = layer.lookId && layer.lookId !== 'none' ? memeLookCss(layer.lookId) : '';
-		const transformed = rad !== 0 || flipX < 0 || flipY < 0;
+		// Ambient motion (layer-motion.ts): phase derives from media time so
+		// preview and export share ONE clock — WYSIWYG by construction.
+		const motion =
+			atMs !== undefined
+				? layerMotionTransform(layer.motionId ?? 'none', atMs, layer.startMs)
+				: null;
+		const transformed = rad !== 0 || flipX < 0 || flipY < 0 || motion !== null;
 		if (transformed || alpha < 1 || look) {
 			ctx.save();
 			if (alpha < 1) ctx.globalAlpha = alpha;
 			if (look) ctx.filter = look;
 			if (transformed) {
 				ctx.translate(x + w / 2, y + h / 2);
+				if (motion) {
+					ctx.translate(motion.dxNorm * w, motion.dyNorm * h);
+					ctx.rotate((motion.rotateDeg * Math.PI) / 180);
+					if (motion.scale !== 1) ctx.scale(motion.scale, motion.scale);
+				}
 				ctx.rotate(rad);
 				ctx.scale(flipX, flipY);
 				ctx.translate(-(x + w / 2), -(y + h / 2));
@@ -282,7 +328,7 @@ export function paintImageOverlays(
 		}
 		let painted = false;
 		if (atMs !== undefined && animFor) {
-			const painter = animFor(layer.src, { w, h });
+			const painter = animFor(layer.src, { w, h, crop: layer.crop });
 			if (painter) {
 				painter(ctx, x, y, atMs / 1000);
 				painted = true;
@@ -290,10 +336,39 @@ export function paintImageOverlays(
 		}
 		if (!painted) {
 			const bitmap = bitmapFor(layer.src);
-			if (bitmap) ctx.drawImage(bitmap, x, y, w, h);
+			if (bitmap) {
+				const src = cropSourceRect(bitmap, layer.crop);
+				if (src) ctx.drawImage(bitmap, src.sx, src.sy, src.sw, src.sh, x, y, w, h);
+				else ctx.drawImage(bitmap, x, y, w, h);
+			}
 		}
 		if (transformed || alpha < 1 || look) ctx.restore();
 	}
+}
+
+/** Source-pixel window for a normalized crop on a bitmap (null = whole). */
+function cropSourceRect(
+	bitmap: CanvasImageSource,
+	crop?: { x: number; y: number; w: number; h: number }
+): { sx: number; sy: number; sw: number; sh: number } | null {
+	if (!crop) return null;
+	// Union-loose read: bitmaps are HTMLImageElement (naturalWidth) or
+	// canvas/bitmap types (width); VideoFrame reports displayWidth instead,
+	// which layer srcs never produce — fall through to "no crop" there.
+	const b = bitmap as {
+		naturalWidth?: number;
+		naturalHeight?: number;
+		width?: number;
+		height?: number;
+	};
+	const bw = b.naturalWidth ?? b.width ?? 0;
+	const bh = b.naturalHeight ?? b.height ?? 0;
+	if (!bw || !bh) return null;
+	const sx = crop.x * bw;
+	const sy = crop.y * bh;
+	const sw = Math.max(2, crop.w * bw);
+	const sh = Math.max(2, crop.h * bh);
+	return { sx, sy, sw, sh };
 }
 
 function mediaSize(el: HTMLImageElement | HTMLVideoElement): { width: number; height: number } {
@@ -415,6 +490,7 @@ export async function renderImageMeme(
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas is not available in this browser');
 	drawCover(ctx, media, canvas, options.lookCss, options.mediaTransform);
+	if (options.fxWindows?.length) paintFxFrame(ctx, options.fxWindows, options.fxAtMs ?? 0, canvas);
 	if (options.imageLayers?.length) {
 		paintImageOverlays(
 			ctx,
@@ -595,7 +671,10 @@ export async function renderVideoMeme(
 
 	// (Mute/volume were already ducked above, before stream capture.)
 	const rate = clampNum(options.playbackRate ?? 1, 0.5, 2);
-	source.playbackRate = rate;
+	const ramps = options.speedWindows?.length ? options.speedWindows : null;
+	source.playbackRate = ramps
+		? clampNum(rate * rateAt(ramps, source.currentTime * 1000), 0.5, 2)
+		: rate;
 	const startSec = Math.max(0, options.trimStartSec ?? 0);
 	const endSec =
 		options.trimEndSec !== undefined && Number.isFinite(options.trimEndSec)
@@ -610,7 +689,25 @@ export async function renderVideoMeme(
 		if (monitor) monitor.gain.value = 1; // preview sound works again
 	};
 	const paint = () => {
-		drawCover(ctx, source, canvas, options.lookCss, options.mediaTransform);
+		// Speed ramps: re-apply the rate every frame (clamped to the same
+		// 0.5–2 span the base rate uses). Media-timed windows + media-time
+		// paint inputs stay in sync with zero extra bookkeeping.
+		if (ramps) {
+			const next = clampNum(rate * rateAt(ramps, source.currentTime * 1000), 0.5, 2);
+			if (Math.abs(source.playbackRate - next) > 0.001) source.playbackRate = next;
+		}
+		drawCover(
+			ctx,
+			source,
+			canvas,
+			options.lookCss,
+			options.mediaTransformAt
+				? options.mediaTransformAt(source.currentTime * 1000)
+				: options.mediaTransform
+		);
+		if (options.fxWindows?.length) {
+			paintFxFrame(ctx, options.fxWindows, source.currentTime * 1000, canvas);
+		}
 		if (options.imageLayers?.length) {
 			paintImageOverlays(
 				ctx,

@@ -8,10 +8,12 @@
 		layerInput = $bindable(null),
 		queueInput = $bindable(null),
 		soundInput = $bindable(null),
+		replaceInput = $bindable(null),
 		pickFormat,
 		onFile,
 		onOtherSource,
 		onLayer,
+		onReplace,
 		onQueue,
 		onSound
 	}: {
@@ -20,10 +22,12 @@
 		layerInput: HTMLInputElement | null;
 		queueInput: HTMLInputElement | null;
 		soundInput: HTMLInputElement | null;
+		replaceInput: HTMLInputElement | null;
 		pickFormat: 'all' | MemeMediaFormat;
 		onFile: (event: Event) => void;
 		onOtherSource: (event: Event) => void;
 		onLayer: (event: Event) => void;
+		onReplace: (event: Event) => void;
 		onQueue: (event: Event) => void;
 		onSound: (file: File | null) => void;
 	} = $props();
@@ -52,10 +56,17 @@
 <input
 	bind:this={layerInput}
 	type="file"
-	accept="image/png,image/gif,image/jpeg,image/webp"
+	accept="image/png,image/gif,image/jpeg,image/webp,image/svg+xml"
 	multiple
 	class="hidden"
 	onchange={onLayer}
+/>
+<input
+	bind:this={replaceInput}
+	type="file"
+	accept="image/png,image/gif,image/jpeg,image/webp,image/svg+xml"
+	class="hidden"
+	onchange={onReplace}
 />
 <input
 	bind:this={queueInput}

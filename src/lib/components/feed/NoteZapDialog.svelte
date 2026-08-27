@@ -27,6 +27,7 @@
 		eventId: string;
 		/** Kind of the zapped event for the NIP-57 `k` tag (notes/comments 1, stories 30315). */
 		eventKind?: number;
+		dialogZIndex?: number;
 		onPaid?: (sats: number) => void;
 		/** Fired when the dialog closes (any path) so hosts can resume playback. */
 		onClose?: () => void;
@@ -38,6 +39,7 @@
 		lightningAddress,
 		eventId,
 		eventKind = 1,
+		dialogZIndex = 110,
 		onPaid,
 		onClose
 	}: Props = $props();
@@ -60,6 +62,7 @@
 	let sentRecordId = $state('');
 	let zapRequestEvent = $state<ReturnType<typeof finalizeEvent> | null>(null);
 	let nowSec = $state(Math.floor(Date.now() / 1000));
+	let dialogActive = true;
 	let stopReceipt: (() => void) | undefined;
 	let closeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -174,7 +177,21 @@
 	}
 
 	async function createInvoice() {
-		if (!hasAddress) {
+		// This operation can outlive the dialog (for example, when its parent
+		// chain sheet closes). Snapshot every component-owned input before the
+		// first await so no continuation reads an inert `$derived` value.
+		const address = lightningAddress;
+		const sats = Math.max(1, Math.round(Number(customAmount) || selectedAmount));
+		const selectedSats = selectedAmount;
+		const zapComment = comment.trim();
+		const recipient = recipientPubkey;
+		const targetEventId = eventId;
+		const targetEventKind = eventKind;
+		const relayUrls = relays.urls.slice(0, 8);
+		const signingSecret = identity.current?.sk;
+		const anonymous = walletPrefs.state.anonymousZaps || !signingSecret;
+
+		if (!address || address.includes('://')) {
 			error = 'This author has no Lightning address.';
 			return;
 		}
@@ -184,7 +201,7 @@
 		paid = false;
 		cleanupReceipt();
 		try {
-			const [user, domain] = lightningAddress.split('@');
+			const [user, domain] = address.split('@');
 			if (!user || !domain) throw new Error('The author Lightning address is invalid.');
 			const lnurlEndpoint = `https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`;
 			const metadataResponse = await fetch(lnurlEndpoint);
@@ -199,10 +216,11 @@
 				allowsNostr?: boolean;
 				nostrPubkey?: string;
 			};
+			if (!dialogActive) return;
 			if (metadata.status === 'ERROR' || !metadata.callback) {
 				throw new Error(metadata.errors || 'The Lightning provider rejected the request.');
 			}
-			const millisats = amount * 1000;
+			const millisats = sats * 1000;
 			if (metadata.minSendable && millisats < metadata.minSendable) {
 				throw new Error(`Minimum amount is ${Math.ceil(metadata.minSendable / 1000)} sats.`);
 			}
@@ -210,71 +228,73 @@
 				throw new Error(`Maximum amount is ${Math.floor(metadata.maxSendable / 1000)} sats.`);
 			}
 			// Remember the chosen amount as the user's new default (YakiHonne-style).
-			walletPrefs.setDefaultAmount(selectedAmount);
+			walletPrefs.setDefaultAmount(selectedSats);
 			const callback = new URL(metadata.callback);
 			callback.searchParams.set('amount', String(millisats));
 			// NIP-57: nostrPubkey is the provider's receipt-signing key, not the
 			// recipient's pubkey — requiresNostr support only, never key equality.
 			const supportsZap = lnurlSupportsZap(metadata);
-			let receiptRelays = relays.urls.slice(0, 8);
+			let receiptRelays = relayUrls;
 			if (supportsZap) {
 				// The zapper publishes the 9735 receipt only to the relays in the
 				// request, so use the recipient's NIP-65 read relays (where they
 				// listen) plus a few of ours for the sender-side confirmation.
 				try {
-					const readRelays = (await queryNip65RelayList(recipientPubkey))
+					const readRelays = (await queryNip65RelayList(recipient))
 						.filter((relay) => relay.read)
 						.map((relay) => relay.url);
-					receiptRelays = zapRelayTagUrls(readRelays, relays.urls);
+					if (!dialogActive) return;
+					receiptRelays = zapRelayTagUrls(readRelays, relayUrls);
 				} catch {
 					/* NIP-65 list unavailable — fall back to our relays. */
 				}
 			}
-			const anonymous = walletPrefs.state.anonymousZaps || !identity.current?.sk;
 			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
 			if (supportsZap) {
 				zapRequest = finalizeEvent(
 					{
 						kind: 9734,
-						content: comment.trim(),
+						content: zapComment,
 						created_at: Math.floor(Date.now() / 1000),
 						tags: [
 							['relays', ...receiptRelays],
 							['amount', String(millisats)],
-							['p', recipientPubkey],
-							['e', eventId],
-							['k', String(eventKind)]
+							['p', recipient],
+							['e', targetEventId],
+							['k', String(targetEventKind)]
 						]
 					},
-					anonymous ? generateSecretKey() : hexToBytes(identity.current!.sk)
+					anonymous ? generateSecretKey() : hexToBytes(signingSecret!)
 				);
 				callback.searchParams.set('nostr', JSON.stringify(zapRequest));
 				callback.searchParams.set(
 					'lnurl',
 					encodeBytes('lnurl', new TextEncoder().encode(lnurlEndpoint))
 				);
-				sentRecordId = zapRequest.id;
-			} else if (comment.trim() && (metadata.commentAllowed ?? 0) > 0) {
+			} else if (zapComment && (metadata.commentAllowed ?? 0) > 0) {
 				// Plain LNURL pay: forward the message via the comment param when allowed.
-				callback.searchParams.set('comment', comment.trim().slice(0, metadata.commentAllowed!));
+				callback.searchParams.set('comment', zapComment.slice(0, metadata.commentAllowed!));
 			}
-			if (!sentRecordId) sentRecordId = `${eventId}:${amount}:${Date.now()}`;
+			const recordId = zapRequest?.id ?? `${targetEventId}:${sats}:${Date.now()}`;
 			const invoiceResponse = await fetch(callback);
+			if (!dialogActive) return;
 			if (!invoiceResponse.ok) throw new Error('Could not create a Lightning invoice.');
 			const payment = (await invoiceResponse.json()) as {
 				status?: string;
 				pr?: string;
 				reason?: string;
 			};
+			if (!dialogActive) return;
 			if (payment.status === 'ERROR' || !payment.pr)
 				throw new Error(payment.reason || 'No invoice was returned.');
+			sentRecordId = recordId;
 			invoice = payment.pr;
 			isZap = !!zapRequest;
 			zapRequestEvent = zapRequest ?? null;
 			if (zapRequest) {
 				const requestId = zapRequest.id;
 				stopReceipt = subscribe(
-					[{ kinds: [9735], '#p': [recipientPubkey], since: Math.floor(Date.now() / 1000) - 120 }],
+					[{ kinds: [9735], '#p': [recipient], since: Math.floor(Date.now() / 1000) - 120 }],
 					{
 						onevent: (event) => {
 							const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
@@ -282,10 +302,17 @@
 							try {
 								const receipt = JSON.parse(description) as { id?: string };
 								if (receipt.id !== requestId) return;
+								if (!dialogActive) return;
 								paid = true;
 								receiptConfirmed = true;
-								recordSent();
-								onPaid?.(amount);
+								wallet.recordSent({
+									id: recordId,
+									amountSats: sats,
+									recipientPubkey: recipient,
+									targetNoteId: targetEventId,
+									memo: zapComment || undefined
+								});
+								onPaid?.(sats);
 								cleanupReceipt();
 								closeAfterPayment();
 							} catch {
@@ -298,9 +325,9 @@
 			// Keep payment explicit: the user can choose NWC/WebLN or use the QR
 			// invoice with another Lightning wallet.
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not prepare the zap.';
+			if (dialogActive) error = e instanceof Error ? e.message : 'Could not prepare the zap.';
 		} finally {
-			loading = false;
+			if (dialogActive) loading = false;
 		}
 	}
 
@@ -366,10 +393,13 @@
 		}
 	}
 
-	onDestroy(cleanupReceipt);
+	onDestroy(() => {
+		dialogActive = false;
+		cleanupReceipt();
+	});
 </script>
 
-<Dialog bind:open title={paid ? 'Zap sent' : 'Zap this note'} onClose={close}>
+<Dialog bind:open title={paid ? 'Zap sent' : 'Zap this note'} zIndex={dialogZIndex} onClose={close}>
 	<div class="space-y-4">
 		<!-- Recipient header -->
 		<div class="flex items-center gap-3 rounded-2xl bg-[var(--ui-bg-muted)] p-3">

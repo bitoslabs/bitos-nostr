@@ -10,9 +10,17 @@
 		mediaType: 'video' | 'image';
 		overlays: MemeTextOverlay[];
 		sfxCues: MemeSfxCue[];
+		/** Source color look (remix wire `l`) — applied on arrival. */
+		lookId?: MemeLookId;
 		relays?: string[];
 		/** Source image layers (remix wire `g`) — optional, older events lack it. */
 		imageLayers?: RemixLayerRef[];
+		/** Source zoom windows (remix wire `z`) — optional, newer payload. */
+		zoomWindows?: ZoomWindow[];
+		/** Source frame-FX windows (remix wire `f`) — optional, newer payload. */
+		fxWindows?: FrameFxWindow[];
+		/** Source speed-ramp windows (remix wire `s`) — optional, newer payload. */
+		speedWindows?: SpeedWindow[];
 	}
 </script>
 
@@ -22,6 +30,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
+	import { lookupEventTags } from '$lib/nostr/pool';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { media } from '$lib/stores/media.svelte';
@@ -42,7 +51,8 @@
 		type MonoPcm,
 		type MemeClipAnalysis
 	} from '$lib/meme/suggestion-audio';
-	import type { MemeSuggestion } from '$lib/ai/suggest';
+	import type { MemeSuggestion, ZoomWindow } from '$lib/ai/suggest';
+	import type { SmartResolution } from '$lib/ai/smart-templates';
 	import {
 		createMemeDraftWriter,
 		draftDrawingGroups,
@@ -72,12 +82,17 @@
 		coverRect
 	} from '$lib/meme/render';
 	import {
+		croppedLayerGeometry,
 		imageOverlayVisibleAt,
+		layerSrcOk,
 		makeImageOverlay,
 		MAX_IMAGE_OVERLAYS,
 		MAX_IMAGE_OVERLAY_BYTES,
+		wholeImageAspect,
 		type MemeImageOverlay
 	} from '$lib/meme/image-overlay';
+	import { buddyFigure, isBuddySrc } from '$lib/meme/bitz-buddy';
+	import { layerMotionCss, layerMotionOf } from '$lib/meme/layer-motion';
 	import { canDecodeGif, decodeGif, paintGifFrameAt, type DecodedGif } from '$lib/meme/gif';
 	import { planGifExport } from '$lib/meme/gif-export';
 	import {
@@ -85,7 +100,8 @@
 		MEME_SFX_IDS,
 		type MemeSfxCue,
 		type MemeSfxId,
-		normalizeSfxCue
+		normalizeSfxCue,
+		normalizeSfxCues
 	} from '$lib/meme/schema';
 	import { SFX_RECIPES } from '$lib/meme/sfx';
 	import { SFX_LABELS as sfxLabels, SFX_DURATIONS as sfxDurations } from '$lib/meme/sound-catalog';
@@ -101,14 +117,34 @@
 	} from '$lib/meme/video-clips';
 	import MemeSoundDialog from '$lib/components/bitz/MemeSoundDialog.svelte';
 	import MemeLookPicker from '$lib/components/bitz/MemeLookPicker.svelte';
+	import MemeFxPicker from '$lib/components/bitz/MemeFxPicker.svelte';
+	import MemeBuddyPicker from '$lib/components/bitz/MemeBuddyPicker.svelte';
 	import MemeStickerPicker from '$lib/components/bitz/MemeStickerPicker.svelte';
 	import { mediaLibrary } from '$lib/stores/media-library.svelte';
 	import { encodeAnimatedGif, type GifEncodeFrame } from '$lib/meme/gif-encode';
+	import { exportErrorMessage, exportImetaDuration } from '$lib/meme/export-support';
 	import {
-		exportErrorMessage,
-		exportImetaDuration,
-		shiftCuesForExport
-	} from '$lib/meme/export-support';
+		composeZoomWithFraming,
+		normalizeZoomWindows,
+		zoomTransformAt
+	} from '$lib/meme/zoom-track';
+	import {
+		fxPreviewStyle,
+		MAX_FX_WINDOWS,
+		normalizeFxWindows,
+		paintFxFrame,
+		type FrameFxId,
+		type FrameFxWindow
+	} from '$lib/meme/fx-track';
+	import {
+		mediaMsToExportMs,
+		MAX_SPEED_WINDOWS,
+		normalizeSpeedWindows,
+		rateAt,
+		shiftCuesForExportWithSpeeds,
+		type SpeedWindow
+	} from '$lib/meme/speed-track';
+	import MemeSpeedPicker from '$lib/components/bitz/MemeSpeedPicker.svelte';
 	import { cueAudioTrack, paintMemeBase, recordMeme } from '$lib/meme/export-pipeline';
 	import CueWaveform from '$lib/components/bitz/CueWaveform.svelte';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
@@ -118,6 +154,7 @@
 		fetchLayerBlob,
 		probeAspect
 	} from '$lib/stores/meme-layer-assets.svelte';
+	import { looksLikeSvg, rasterizeSvgBlob } from '$lib/meme/svg-layer';
 	import { MemeBatchQueue } from '$lib/stores/meme-batch-queue.svelte';
 	import {
 		applyRemixPayload,
@@ -127,6 +164,7 @@
 		type RemixSource
 	} from '$lib/meme/remix';
 	import { splitsTagsFor, validateSplits, type SplitRow } from '$lib/meme/splits';
+	import { remixChainOf } from '$lib/meme/remix';
 	import { makeSticker } from '$lib/meme/stickers';
 	import { fxTransformAt } from '$lib/meme/fx';
 	import {
@@ -149,8 +187,11 @@
 	import MemeStudioEmptyState from '$lib/components/bitz/MemeStudioEmptyState.svelte';
 	import MemeStudioFooter from '$lib/components/bitz/MemeStudioFooter.svelte';
 	import MemeDiscardDialog from '$lib/components/bitz/MemeDiscardDialog.svelte';
+	import MemeLayerCropDialog from '$lib/components/bitz/MemeLayerCropDialog.svelte';
 	import MemeTimelineDock from '$lib/components/bitz/MemeTimelineDock.svelte';
 	import MemeStudioInputs from '$lib/components/bitz/MemeStudioInputs.svelte';
+	import MemePublishOptions from '$lib/components/bitz/MemePublishOptions.svelte';
+	import MemeShareSoundWidget from '$lib/components/bitz/MemeShareSoundWidget.svelte';
 	import MemeTemplateSlotTools from '$lib/components/bitz/MemeTemplateSlotTools.svelte';
 	import MemeInspectorPanel from '$lib/components/bitz/MemeInspectorPanel.svelte';
 	import MemeExpertClipPanel from '$lib/components/bitz/MemeExpertClipPanel.svelte';
@@ -169,7 +210,8 @@
 		type MemeDestination as Destination,
 		type MemeExportFormat,
 		type MemeStudioPhase as Phase,
-		type MemeStudioTemplate as Template
+		type MemeStudioTemplate as Template,
+		type MemeImageLayout
 	} from '$lib/components/bitz/meme-studio-config';
 
 	const DRAWING_RECENT_COLORS_KEY = 'bitos.meme-drawing-recent-colors.v1';
@@ -208,13 +250,17 @@
 		 * once on open (fresh ids — the saved template stays re-usable). */
 		templateHandoff,
 		/** Resume-slot handoff (studio home): WIP slot id to restore on open. */
-		slotHandoff
+		slotHandoff,
+		/** Sound handoff (Sounds page "Use sound"): stage the picked sound as
+		 * the first cue the next time the studio opens. */
+		soundHandoff
 	}: {
 		open?: boolean;
 		onposted?: (eventId: string) => void;
 		remixHandoff?: RemixHandoff | null;
 		templateHandoff?: { id: string; overlays: MemeTextOverlay[] } | null;
 		slotHandoff?: string | null;
+		soundHandoff?: { kind: 'synth' | 'custom'; id: string; label?: string } | null;
 	} = $props();
 
 	// ---- media state ---------------------------------------------------------
@@ -235,6 +281,7 @@
 	let sfxMenuId = `meme-sfx-${Math.random().toString(36).slice(2, 8)}`;
 	/** Sound studio dialog (picker + cue-sheet editor). */
 	let soundDialogOpen = $state(false);
+	let shareSoundDialogOpen = $state(false);
 	let recordingPreflightOpen = $state(false);
 	let recordingCapabilities = $state<{
 		pointer: boolean;
@@ -364,6 +411,21 @@
 	// --- AI-002 suggestion ladder (Mild/Funny/Chaos) -------------------------
 	let suggestBusy = $state(false);
 	let suggestionGroups = $state<MemeSuggestion[]>([]);
+	/** AI Smart Templates (tp-2 p.558): trigger-rule resolutions ranked by
+	 *  match — the “Production Bug 94%” cards of Auto Meme V2. */
+	let smartMatches = $state<SmartResolution[]>([]);
+	// ---- punchline zoom track (Auto Meme follow-through) ----------------------
+	/** Face-anchored zoom windows in media time — the runnable counterpart of
+	 *  the suggestion cards' "N zooms" line. Persisted + burned into exports
+	 *  exactly like cues, so what the card promises is what the viewer sees. */
+	let zoomWindows = $state<ZoomWindow[]>([]);
+	/** Frame-FX windows (flash/glitch/shake/…) in media time — Meme Pack V1
+	 *  Layer 2. Same covenant as zooms: normalized, capped, burned into every
+	 *  export path + mirrored in the stage preview (CSS). */
+	let fxWindows = $state<FrameFxWindow[]>([]);
+	// Speed ramps: remix round-trip today (wire `s`); editing UI is V2 per the
+	// speed-track plan (browser recorders stay real-time across 0.5–2× ramps).
+	let speedWindows = $state<SpeedWindow[]>([]);
 	/** Last local analysis — feeds the cue-sheet waveform (AI-001 anchors). */
 	let lastAnalysis = $state<MemeClipAnalysis | null>(null);
 	let analysisWindows = $state<Float32Array>(new Float32Array(0));
@@ -418,6 +480,7 @@
 			lastAnalysis = built.analysis;
 			analysisWindows = built.windows;
 			suggestionGroups = built.groups;
+			smartMatches = built.smart;
 			toasts.info('3 timelines ready — pick a vibe, everything stays editable', 4000);
 		} finally {
 			suggestBusy = false;
@@ -426,18 +489,66 @@
 	/** Apply one suggestion: overlays + cues replace the current timeline and
 	 *  the AI-004 provenance flag flips on automatically (it WAS AI-assisted). */
 	function applySuggestion(group: MemeSuggestion) {
-		if (!group.overlays.length && !group.sfxCues.length) {
+		if (!group.overlays.length && !group.sfxCues.length && !group.zooms.length) {
 			toasts.info('That vibe found nothing to add for this clip');
 			return;
 		}
 		overlays = group.overlays.map((o) => ({ ...o }));
 		sfxCues = group.sfxCues.map((c) => ({ ...c }));
+		zoomWindows = normalizeZoomWindows(group.zooms);
+		// Fresh timeline start for fx/speed too (suggestions don't emit them yet).
+		fxWindows = [];
+		speedWindows = [];
 		selectedId = overlays[0]?.id ?? null;
 		timingId = null;
 		aiAssisted = true; // AI-004: the creator applied AI suggestions
 		popovers.close();
 		toasts.success(
-			`“${group.intensity}” applied — ${group.overlays.length} captions · ${group.sfxCues.length} cues`
+			`“${group.intensity}” applied — ${group.overlays.length} captions · ${group.sfxCues.length} cues${
+				zoomWindows.length ? ` · ${zoomWindows.length} zooms` : ''
+			}`
+		);
+	}
+
+	/** Apply one AI Smart Template resolution: every timed track lands like
+	 *  a studio template (merged under caps), AI-provenance flips on. */
+	function applySmartMatch(match: SmartResolution) {
+		if (busy) return;
+		const total =
+			match.overlays.length +
+			match.sfxCues.length +
+			match.zoomWindows.length +
+			match.fxWindows.length +
+			match.speedWindows.length +
+			match.imageLayers.length;
+		if (!total) {
+			toasts.info('That template found no trigger support in this clip');
+			return;
+		}
+		if (match.overlays.length) overlays = [...overlays, ...match.overlays.map((o) => ({ ...o }))];
+		if (match.sfxCues.length) {
+			const room = Math.max(0, 16 - sfxCues.length);
+			const take = match.sfxCues.slice(0, room);
+			if (take.length) sfxCues = [...sfxCues, ...take];
+		}
+		if (match.zoomWindows.length)
+			zoomWindows = normalizeZoomWindows([...zoomWindows, ...match.zoomWindows]);
+		if (match.fxWindows.length) fxWindows = normalizeFxWindows([...fxWindows, ...match.fxWindows]);
+		if (match.speedWindows.length)
+			speedWindows = normalizeSpeedWindows([...speedWindows, ...match.speedWindows]);
+		if (match.imageLayers.length) {
+			const room = Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length);
+			const take = match.imageLayers.slice(0, room);
+			if (take.length) {
+				imageLayers = [...imageLayers, ...take];
+				for (const l of take) void cacheLayerBitmap(l.src);
+			}
+		}
+		selectedId = match.overlays[0]?.id ?? selectedId;
+		aiAssisted = true; // AI-004: applied a smart-template resolution
+		popovers.close();
+		toasts.success(
+			`Smart template applied — ${match.overlays.length} captions · ${match.zoomWindows.length} zooms · ${match.imageLayers.length} stickers`
 		);
 	}
 	/** Timeline sound blocks: label + play length per cue (synth recipes have
@@ -474,11 +585,14 @@
 		const url = gifUrl.trim();
 		if (!url || gifUrlBusy) return;
 		gifUrlBusy = true;
+		stageLoadLabel = 'that link';
+		stageLoadPercent = 0;
 		try {
 			const res = await fetchSourceFile(url, {
 				noProxy: true,
 				label: 'gif',
-				maxBytes: { image: 50 * 1024 * 1024, video: MAX_MEDIA_BYTES }
+				maxBytes: { image: 50 * 1024 * 1024, video: MAX_MEDIA_BYTES },
+				onProgress: (percent) => (stageLoadPercent = percent)
 			});
 			if (!res.ok || !res.file) throw new Error(res.error);
 			await acceptFile(res.file, {
@@ -490,6 +604,7 @@
 			toasts.error(e instanceof Error ? e.message : 'Could not load that media URL');
 		} finally {
 			gifUrlBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -512,6 +627,10 @@
 	let blankMenuId = `meme-blank-${Math.random().toString(36).slice(2, 8)}`;
 	let showGifUrlForm = $state(false);
 	let gifStageBusy = $state(false);
+	/** Byte-level progress for base-media loads (URL paste / GIF pick /
+	 *  library open). 0 = connecting or unknown content-length. */
+	let stageLoadLabel = $state('');
+	let stageLoadPercent = $state(0);
 	/** Batch queue (mass production) — the store owns list mechanics (ids,
 	 *  captions, the staging pointer); staging side-effects live here. */
 	const batch = new MemeBatchQueue();
@@ -541,8 +660,14 @@
 	async function loadGifFromUrl(url: string, label = 'GIF', keepLayout = false): Promise<boolean> {
 		if (gifStageBusy) return false;
 		gifStageBusy = true;
+		stageLoadLabel = label || 'that GIF';
+		stageLoadPercent = 0;
 		try {
-			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			const res = await fetchSourceFile(url, {
+				label,
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => (stageLoadPercent = percent)
+			});
 			if (!res.ok || !res.file) throw new Error(res.error ?? `Could not load that ${label}`);
 			await acceptFile(res.file, { keepRemix: true, keepLayout });
 			mediaLibrary.remember(res.url ?? url, label, res.file.type || 'image/gif');
@@ -552,6 +677,7 @@
 			return false;
 		} finally {
 			gifStageBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -561,8 +687,14 @@
 		if (gifStageBusy) return;
 		gifStageBusy = true;
 		popovers.close();
+		stageLoadLabel = label || 'that source';
+		stageLoadPercent = 0;
 		try {
-			const res = await fetchSourceFile(url, { label, maxBytes: MAX_SOURCE_BYTES });
+			const res = await fetchSourceFile(url, {
+				label,
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => (stageLoadPercent = percent)
+			});
 			if (!res.ok || !res.file) throw new Error(res.error ?? 'Could not open that source');
 			await acceptFile(res.file, {
 				keepRemix: true,
@@ -573,6 +705,7 @@
 			toasts.error(e instanceof Error ? e.message : 'Could not open that source');
 		} finally {
 			gifStageBusy = false;
+			stageLoadPercent = 0;
 		}
 	}
 
@@ -662,6 +795,52 @@
 	let lookId = $state<MemeLookId>('none');
 	const lookCss = $derived(memeLookCss(lookId));
 	const looksAvailable = $derived(canvasFiltersSupported());
+
+	// ---- frame-FX track (Meme Pack V1 Layer 2) ----------------------------------
+	let fxMenuId = `meme-fx-${Math.random().toString(36).slice(2, 8)}`;
+	let speedMenuId = `meme-speed-${Math.random().toString(36).slice(2, 8)}`;
+	/** Add a speed window at the playhead (default 800ms — a readable beat of
+	 *  slow-mo or speed-up; the creator tunes ranges later per-row). */
+	function addSpeedWindow(rate: number, atMs: number) {
+		if (speedWindows.length >= MAX_SPEED_WINDOWS) {
+			toasts.error(`Speed ramps cap out at ${MAX_SPEED_WINDOWS} windows`);
+			return;
+		}
+		// Default 800ms span, but never past the clip's end — a ramp that
+		// overruns the export window would normalize away.
+		const endMs = Math.min(atMs + 800, Math.round(timelineDurationSec * 1000));
+		speedWindows = normalizeSpeedWindows([...speedWindows, { startMs: atMs, endMs, rate }]);
+	}
+	function removeSpeedWindow(index: number) {
+		speedWindows = speedWindows.filter((_, i) => i !== index);
+	}
+	function patchSpeedRate(index: number, rate: number) {
+		const rows = [...speedWindows];
+		const row = rows[index];
+		if (row) rows[index] = { ...row, rate };
+		speedWindows = normalizeSpeedWindows(rows);
+	}
+	/** Add an fx window starting at the playhead (default 600ms — a punchy
+	 *  hit; the creator tunes ranges later per-row). */
+	function addFxWindow(fx: FrameFxId, atMs: number) {
+		if (fxWindows.length >= MAX_FX_WINDOWS) {
+			toasts.error(`FX cap out at ${MAX_FX_WINDOWS} windows`);
+			return;
+		}
+		fxWindows = normalizeFxWindows([
+			...fxWindows,
+			{ fx, startMs: atMs, endMs: atMs + 600, intensity: 0.7 }
+		]);
+	}
+	function removeFxWindow(index: number) {
+		fxWindows = fxWindows.filter((_, i) => i !== index);
+	}
+	function patchFxIntensity(index: number, intensity: number) {
+		const rows = [...fxWindows];
+		const row = rows[index];
+		if (row) rows[index] = { ...row, intensity };
+		fxWindows = rows;
+	}
 
 	function addCustomCue(sound: LibrarySound) {
 		if (sfxCues.length >= 16) {
@@ -995,7 +1174,30 @@
 	let mediaPanX = $state(0);
 	let mediaPanY = $state(0);
 	const mediaTransform = $derived({ scale: mediaZoom, x: mediaPanX, y: mediaPanY });
+	/** Live zoom-window transform at the current playhead (undefined = no
+	 *  active window). Composed with the manual framing so a creator's crop
+	 *  survives — the stage shows the exact rect every export path paints. */
+	const activeZoomTransform = $derived(
+		zoomTransformAt(zoomWindows, Math.round(stageSeconds * 1000))
+	);
+	const previewMediaTransform = $derived(
+		composeZoomWithFraming(mediaTransform, activeZoomTransform)
+	);
+	/** Live frame-FX mirror at the playhead — CSS approximation of the exact
+	 *  canvas painters (the GIF canvas stage runs the REAL painters in its
+	 *  paint loop, so that path is exact by construction). */
+	const previewFx = $derived(fxPreviewStyle(fxWindows, Math.round(stageSeconds * 1000)));
 
+	/** Combined media-box filter: look preset + any active frame fx. */
+	const previewMediaFilterCss = $derived(
+		[lookCss !== 'none' ? lookCss : '', previewFx.mediaFilter ?? ''].filter(Boolean).join(' ') ||
+			'none'
+	);
+	/** Zoom/fx composite transform for the media box (both are percentage
+	 *  based; fx shake scales pair with the zoom framing). */
+	const previewMediaBoxCss = $derived(previewFx.mediaTransform ?? '');
+
+	/** Reset the manual framing (crop/zoom) — fresh eyes. */
 	function resetFraming() {
 		mediaZoom = 1;
 		mediaPanX = 0;
@@ -1016,7 +1218,7 @@
 			frame.height,
 			renderTarget.width,
 			renderTarget.height,
-			mediaTransform
+			previewMediaTransform
 		);
 		return {
 			// A CSS percentage is relative to its own axis. Normalizing all four
@@ -1216,6 +1418,36 @@
 	);
 	/** Preview + export duration after speed — the number creators care about. */
 	const exportDurationSec = $derived(trimDuration / (playbackRate || 1));
+	/** Export length with speed ramps integrated: the trim span mapped through
+	 *  the window curve, then the base rate — drives the cue-mix length so
+	 *  audio and pixels share one timeline (see speed-track.ts). */
+	const mediaSpanExportSec = $derived(
+		mediaMsToExportMs(speedWindows, trimDuration * 1000) / 1000 / (playbackRate || 1)
+	);
+
+	// Speed ramps in preview: while the stage video plays, drive its rate
+	// through the window curve every frame (mirrors renderVideoMeme, so the
+	// WYSIWYG stage shows the exact export timing). Paused scrubs keep the
+	// frame — the rate only affects playback, never position.
+	$effect(() => {
+		const video = stageVideo;
+		const windows = speedWindows;
+		if (!video || mediaKind !== 'video' || !windows.length) return;
+		let raf = 0;
+		const apply = () => {
+			const next = rateAt(windows, video.currentTime * 1000) * (playbackRate || 1);
+			const clamped = Math.min(2, Math.max(0.5, next));
+			if (Math.abs(video.playbackRate - clamped) > 0.001) video.playbackRate = clamped;
+			raf = requestAnimationFrame(apply);
+		};
+		raf = requestAnimationFrame(apply);
+		return () => {
+			cancelAnimationFrame(raf);
+			// Restore the creator's base rate on teardown (windows cleared /
+			// media swapped) so a paused scrub doesn't inherit a ramp rate.
+			if (stageVideo) stageVideo.playbackRate = playbackRate || 1;
+		};
+	});
 
 	/** The base media as the timeline's first row: the video's trim window
 	 *  (draggable) or the GIF loop with its pinned-length badge. Static images
@@ -1529,6 +1761,7 @@
 	// ---- sticker picker (#3) --------------------------------------------------
 	// (UI lives in MemeStickerPicker.svelte — this is the state it drives.)
 	let stickerMenuId = `meme-stickers-${Math.random().toString(36).slice(2, 8)}`;
+	let buddyMenuId = `meme-buddy-${Math.random().toString(36).slice(2, 8)}`;
 	/** Sticker count this session — feeds the anchor rotation so consecutive
 	 *  stickers land on different spots instead of stacking. */
 	let stickerSeq = 0;
@@ -1555,6 +1788,37 @@
 	// bytes go to the media provider first, never into localStorage or the
 	// `meme` wire tag.
 	let imageLayers = $state<MemeImageOverlay[]>([]);
+
+	// Layer motion clock (layer-motion.ts): one rAF loop while ANY layer has
+	// a motion preset, feeding the live phase to the stage. Video bases use
+	// the media clock (stageSeconds) so preview matches export timing; static
+	// bases get a wall-clock loop so buddy stickers still bounce on image
+	// memes. No motions → no loop (zero idle cost).
+	let motionTickMs = $state(0);
+	$effect(() => {
+		if (!imageLayers.some((l) => layerMotionOf(l.motionId) !== 'none')) return;
+		if (timelineActive && mediaKind === 'video') {
+			// Derived from the media clock — same timeline the export paints.
+			const video = stageVideo;
+			let raf = 0;
+			const tick = () => {
+				motionTickMs = Math.round((video?.currentTime ?? 0) * 1000);
+				raf = requestAnimationFrame(tick);
+			};
+			raf = requestAnimationFrame(tick);
+			return () => cancelAnimationFrame(raf);
+		}
+		// Static/GIF base: wall-clock loop from mount — the export paints these
+		// with the same wall-clock convention (see render.ts image-meme path).
+		let raf = 0;
+		const t0 = performance.now();
+		const tick = () => {
+			motionTickMs = Math.round(performance.now() - t0);
+			raf = requestAnimationFrame(tick);
+		};
+		raf = requestAnimationFrame(tick);
+		return () => cancelAnimationFrame(raf);
+	});
 	let layerSeq = 0;
 	/** Every per-src layer resource — decoded bitmaps, render URLs, bytes,
 	 *  GIF decoders and export painters (stores/meme-layer-assets.svelte).
@@ -1578,11 +1842,18 @@
 
 	/** Keep the bytes we already have as the render source for a remote src.
 
+	/** Buddy stickers have no file name — label them from the catalog. */
+	function buddyFigureLabel(src: string): string {
+		return isBuddySrc(src)
+			? `Bitz Buddy ${buddyFigure(src.slice('/bitz-buddy/'.length, -4))?.label ?? 'sticker'}`
+			: '';
+	}
+
 	/** Add a layer from bytes and/or a remote URL. Rendering always prefers
 	 *  the bytes (same-origin blob → export-safe); the media provider re-homes
 	 *  them best-effort so drafts and the wire keep plain https srcs. */
 	async function addImageLayer(
-		source: { url?: string; bytes?: Blob; name?: string },
+		source: { url?: string; bytes?: Blob; name?: string; motionId?: string },
 		aspectHint?: number,
 		opts: { atMs?: number } = {}
 	) {
@@ -1593,6 +1864,19 @@
 		let bytes: Blob | undefined = source.bytes;
 		let url = source.url?.trim() ?? '';
 		let aspect = aspectHint ?? 1;
+		// SVG layers rasterize to PNG ONCE here: SVGs without intrinsic
+		// width/height decode as 0×0 (broken preview) and paint NOTHING on the
+		// export canvas. Every path after this point is plain-PNG. A failed
+		// raster (foreignObject, broken markup) errors out honestly.
+		if (bytes && (await looksLikeSvg(bytes))) {
+			const png = await rasterizeSvgBlob(bytes);
+			if (!png) {
+				toasts.error('That SVG could not be converted — try a PNG export from your design tool');
+				return;
+			}
+			bytes = png;
+			url = ''; // old URL is stale — the rasterized PNG below gets a fresh home
+		}
 		// URL-only: pull the bytes once so the canvas never sees a
 		// cross-origin image (the "not same origin" export failure).
 		if (!bytes && url) bytes = (await fetchLayerBlob(url)) ?? undefined;
@@ -1606,9 +1890,10 @@
 		}
 		// Device files have no canonical URL — they need a remote home to
 		// persist in drafts/wire. URL-sourced layers (GIF picker, pasted
-		// links) KEEP their source URL: the bytes we already hold render and
-		// export locally, and the published media has the pixels burned in —
-		// re-uploading CDN content to the provider would just duplicate it.
+		// links, bundled buddy stickers) KEEP their source URL: the bytes we
+		// already hold render and export locally, and the published media has
+		// the pixels burned in — re-uploading CDN content to the provider
+		// would just duplicate it.
 		let src = url;
 		if (bytes && !src) {
 			try {
@@ -1625,7 +1910,7 @@
 				return;
 			}
 		}
-		if (!/^https:\/\//i.test(src)) {
+		if (!layerSrcOk(src)) {
 			toasts.error('Image layers need an https URL');
 			return;
 		}
@@ -1634,6 +1919,8 @@
 			toasts.error('Could not use that image URL');
 			return;
 		}
+		// Drop-in ambient motion (buddy picker feel; templates may set it too).
+		if (source.motionId) layer.motionId = layerMotionOf(source.motionId) || undefined;
 		// Timeline insert: window [playhead, playhead+2s] on timed sources;
 		// static memes have no clock, so the layer stays always-visible.
 		if (opts.atMs !== undefined && timelineActive) {
@@ -1646,7 +1933,7 @@
 		selectedCueId = null;
 		selectedBaseTrack = false;
 		if (bytes) layerAssets.rememberBytes(layer.src, bytes);
-		mediaLibrary.remember(layer.src, source.name ?? '', bytes?.type);
+		mediaLibrary.remember(layer.src, source.name ?? buddyFigureLabel(src), bytes?.type);
 		const ok = await cacheLayerBitmap(layer.src);
 		if (!ok) toasts.warning('Layer added — but the image failed to load (will retry on export)');
 		// Animated GIF layers keep their motion in previews AND exports;
@@ -1692,11 +1979,7 @@
 			y: clamp01(original.y + 0.035)
 		};
 		const index = imageLayers.findIndex((layer) => layer.id === id);
-		imageLayers = [
-			...imageLayers.slice(0, index + 1),
-			copy,
-			...imageLayers.slice(index + 1)
-		];
+		imageLayers = [...imageLayers.slice(0, index + 1), copy, ...imageLayers.slice(index + 1)];
 		selectedLayerId = copy.id;
 		selectedId = null;
 		toasts.success('Image layer duplicated');
@@ -1725,6 +2008,22 @@
 		imageLayers = list;
 	}
 
+	/** Arrange (user ask 2026-08-26 "move up to front, send to back"): z-order
+	 *  extremes and single steps. front = last slot (paints on top of every
+	 *  other layer), back = first slot. No-op safe at either end. */
+	function arrangeLayer(id: string, to: 'front' | 'back' | 'up' | 'down') {
+		if (to === 'up') return moveLayerRow(id, 1);
+		if (to === 'down') return moveLayerRow(id, -1);
+		const idx = imageLayers.findIndex((l) => l.id === id);
+		if (idx < 0) return;
+		const list = [...imageLayers];
+		const [row] = list.splice(idx, 1);
+		if (!row) return;
+		if (to === 'front') list.push(row);
+		else list.unshift(row);
+		imageLayers = list;
+	}
+
 	/** One-shot playhead stamp for the NEXT layer added via the file picker
 	 *  (the picker flow can't take arguments — set → click → consumed here). */
 	let pendingLayerAtMs: number | null = null;
@@ -1739,7 +2038,7 @@
 		pendingLayerAtMs = null; // one-shot, always cleared
 		const files = picked.filter((f) => f.type.startsWith('image/'));
 		if (!files.length) {
-			if (picked.length) toasts.error('Layers take PNG, GIF or JPEG images');
+			if (picked.length) toasts.error('Layers take PNG, GIF, JPEG, WebP or SVG images');
 			return;
 		}
 		const room = MAX_IMAGE_OVERLAYS - imageLayers.length;
@@ -1758,6 +2057,116 @@
 				}).catch((err) => toasts.error(err instanceof Error ? err.message : 'Layer upload failed'))
 			)
 		).finally(() => (layerBusy = false));
+	}
+
+	/** Replace a layer's image in place: keeps position, size, timing, look,
+	 *  motion, opacity and flips — only src/aspect swap (user ask
+	 *  2026-08-25: "layer image … change replaces image"). SVG inputs
+	 *  rasterize through the same addImageLayer path. */
+	async function replaceLayerImage(
+		id: string,
+		source: { url?: string; bytes?: Blob; name?: string }
+	) {
+		const original = imageLayers.find((l) => l.id === id);
+		if (!original) return;
+		let bytes: Blob | undefined = source.bytes;
+		if (bytes && (await looksLikeSvg(bytes))) {
+			const png = await rasterizeSvgBlob(bytes);
+			if (!png) {
+				toasts.error('That SVG could not be converted — try a PNG export from your design tool');
+				return;
+			}
+			bytes = png;
+		}
+		let url = source.url?.trim() ?? '';
+		if (!bytes && url) bytes = (await fetchLayerBlob(url)) ?? undefined;
+		let aspect = original.aspect;
+		if (bytes) {
+			if (bytes.size > MAX_IMAGE_OVERLAY_BYTES) {
+				toasts.error('That image is over the 8 MB layer cap');
+				return;
+			}
+			aspect = (await probeAspect(bytes)) ?? aspect;
+		}
+		let src = url;
+		if (bytes && !src) {
+			try {
+				const file = new File([bytes], source.name ?? 'layer', {
+					type: bytes.type || 'image/png'
+				});
+				const uploaded = await media.upload(file, undefined, {
+					pubkey: me?.pk,
+					purpose: 'note'
+				});
+				src = uploaded.url;
+			} catch {
+				toasts.error('Layer upload failed — check your connection and try again');
+				return;
+			}
+		}
+		if (!layerSrcOk(src)) {
+			toasts.error('Image layers need an https URL');
+			return;
+		}
+		// Swap the row; per-src assets follow (release the old src when this
+		// was its last reference, remember bytes + decode the new bitmap).
+		imageLayers = imageLayers.map((l) => (l.id === id ? { ...l, src, aspect } : l));
+		if (!imageLayers.some((l) => l.src === original.src && l.id !== id)) {
+			layerAssets.release(original.src);
+		}
+		if (bytes) layerAssets.rememberBytes(src, bytes);
+		mediaLibrary.remember(src, source.name ?? '', bytes?.type);
+		const ok = await cacheLayerBitmap(src);
+		if (!ok) toasts.warning('Image replaced — but it failed to load (will retry on export)');
+		else toasts.success('Layer image replaced');
+	}
+
+	/** One-shot layer id for the NEXT replace-image picker run (the file
+	 *  picker flow can't take arguments — set → click → consumed here). */
+	let replaceLayerForId: string | null = null;
+	let replaceLayerInput = $state<HTMLInputElement | null>(null);
+
+	/** Crop editor: applying keeps the selected source window at the same
+	 * scale shown in the dialog, while preserving the layer center. */
+	let croppingLayerId = $state<string | null>(null);
+	const croppingLayer = $derived(imageLayers.find((l) => l.id === croppingLayerId) ?? null);
+
+	function openLayerCrop(id: string) {
+		if (busy) return;
+		croppingLayerId = id;
+	}
+
+	function applyLayerCrop(
+		id: string,
+		crop: { x: number; y: number; w: number; h: number } | undefined
+	) {
+		const layer = imageLayers.find((l) => l.id === id);
+		if (!layer) return;
+		// `aspect` describes the CURRENT box (whole image until cropped, the
+		// window afterwards) — wholeImageAspect inverts an existing crop back
+		// to the whole-image ratio; no bitmap decode needed.
+		const geo = croppedLayerGeometry(layer, crop, wholeImageAspect(layer));
+		const realCrop = crop && (crop.w < 1 || crop.h < 1) ? crop : undefined;
+		patchLayer(id, { ...geo, crop: realCrop });
+		croppingLayerId = null;
+		toasts.success(realCrop ? 'Layer cropped' : 'Crop cleared');
+	}
+
+	function onReplaceLayerInput(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const picked = [...(input.files ?? [])];
+		input.value = '';
+		const id = replaceLayerForId;
+		replaceLayerForId = null; // one-shot, always cleared
+		const file = picked.find((f) => f.type.startsWith('image/'));
+		if (!file) {
+			if (picked.length) toasts.error('Layers take PNG, GIF, JPEG, WebP or SVG images');
+			return;
+		}
+		if (!id) return;
+		void replaceLayerImage(id, { bytes: file, name: file.name }).catch((err) =>
+			toasts.error(err instanceof Error ? err.message : 'Could not replace that image')
+		);
 	}
 
 	/** Direct-URL layer form. */
@@ -1938,10 +2347,14 @@
 			const layer = box ? imageLayers.find((l) => l.id === layerDrag!.id) : undefined;
 			if (box && layer) {
 				if (layerDrag.mode === 'resize') {
-					const y = clamp01((event.clientY - box.top) / box.height);
-					// Pointer-to-center distance, doubled = new height (the bottom
-					// edge follows the pointer; at rest this reproduces `size`).
-					const next = (y - layer.y) * 2;
+					// Pointer-to-center distance on the dominant axis, doubled =
+					// the new edge (the followed corner reproduces `size` at rest;
+					// aspect-ratio CSS keeps the box proportional — no stretching).
+					const dxNorm = (event.clientX - box.left) / box.width - layer.x;
+					const dyNorm = (event.clientY - box.top) / box.height - layer.y;
+					const boxAspect = (layer.aspect || 1) * (box.height / box.width);
+					const next =
+						(Math.abs(dyNorm) > Math.abs(dxNorm) / boxAspect ? dyNorm : dxNorm / boxAspect) * 2;
 					patchLayer(layer.id, { size: Math.min(0.9, Math.max(0.05, next)) });
 				} else {
 					patchLayer(layer.id, {
@@ -2000,6 +2413,9 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
+		zoomWindows = [];
+		fxWindows = [];
+		speedWindows = [];
 		drawingGroups = [];
 		drawingUndo = [];
 		drawingRedo = [];
@@ -2087,7 +2503,17 @@
 				stageSeconds = looped;
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, canvas.width, canvas.height);
-				paintGifFrameAt(ctx, decoded, looped, canvas, mediaTransform);
+				paintGifFrameAt(
+					ctx,
+					decoded,
+					looped,
+					canvas,
+					composeZoomWithFraming(
+						mediaTransform,
+						zoomTransformAt(zoomWindows, Math.round(looped * 1000))
+					)
+				);
+				if (fxWindows.length) paintFxFrame(ctx, fxWindows, Math.round(looped * 1000), canvas);
 				raf = requestAnimationFrame(paint);
 			};
 			raf = requestAnimationFrame(paint);
@@ -2096,7 +2522,17 @@
 		// Paused / scrubbing: paint the current playhead once per change.
 		ctx.fillStyle = '#000';
 		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		paintGifFrameAt(ctx, decoded, previewSeconds, canvas, mediaTransform);
+		paintGifFrameAt(
+			ctx,
+			decoded,
+			previewSeconds,
+			canvas,
+			composeZoomWithFraming(
+				mediaTransform,
+				zoomTransformAt(zoomWindows, Math.round(previewSeconds * 1000))
+			)
+		);
+		if (fxWindows.length) paintFxFrame(ctx, fxWindows, Math.round(previewSeconds * 1000), canvas);
 	});
 
 	async function acceptFile(
@@ -2148,6 +2584,9 @@
 			imageLayers = [];
 			selectedLayerId = null;
 			sfxCues = [];
+			zoomWindows = [];
+			fxWindows = [];
+			speedWindows = [];
 			selectedId = null;
 			timingId = null;
 		}
@@ -2222,6 +2661,9 @@
 		resetGif();
 		sfxCues = [];
 		overlays = [];
+		zoomWindows = [];
+		fxWindows = [];
+		speedWindows = [];
 		drawingGroups = [];
 		drawingUndo = [];
 		drawingRedo = [];
@@ -2243,7 +2685,16 @@
 	/** Stash a remix payload handed over from the bitz page: loads the source
 	 *  (fresh overlay/cue ids) into the studio. Runs while the studio is open —
 	 *  the composer is already usable on the fallback “pick your own clip” path. */
+	let remixLoading = $state(false);
+	let remixLoadLabel = $state('');
+	let remixLoadPercent = $state(0);
+
 	async function consumeRemixHandoff(handoff: RemixHandoff) {
+		// Big sources stream off the relay CDN — show byte-level progress
+		// instead of a dead stage while the route chunk + media both land.
+		remixLoading = true;
+		remixLoadLabel = handoff.label || 'a bitz';
+		remixLoadPercent = 0;
 		try {
 			// Use the same source-loader as the rest of the studio. Besides keeping
 			// the media/type/200 MB checks consistent, this retries CORS-hostile
@@ -2253,22 +2704,37 @@
 			const source = await fetchSourceFile(handoff.mediaUrl, {
 				label: 'remix-source',
 				accept: handoff.mediaType,
-				maxBytes: MAX_SOURCE_BYTES
+				maxBytes: MAX_SOURCE_BYTES,
+				onProgress: (percent) => {
+					remixLoadPercent = percent;
+				}
 			});
-			if (!source.ok || !source.file) throw new Error(source.error ?? 'Could not load source media');
+			if (!source.ok || !source.file)
+				throw new Error(source.error ?? 'Could not load source media');
 			// keepRemix: loading the source media IS the remix path — lineage stays.
 			await acceptFile(source.file, { keepRemix: true });
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : 'Could not load source media';
 			toasts.warning(`${detail} — choose your own clip below to continue this remix`);
+		} finally {
+			remixLoading = false;
 		}
 		const applied = applyRemixPayload({
 			overlays: handoff.overlays,
 			sfxCues: handoff.sfxCues,
-			...(handoff.imageLayers?.length ? { imageLayers: handoff.imageLayers } : {})
+			...(handoff.lookId && handoff.lookId !== 'none' ? { lookId: handoff.lookId } : {}),
+			...(handoff.imageLayers?.length ? { imageLayers: handoff.imageLayers } : {}),
+			...(handoff.zoomWindows?.length ? { zoomWindows: handoff.zoomWindows } : {}),
+			...(handoff.fxWindows?.length ? { fxWindows: handoff.fxWindows } : {}),
+			...(handoff.speedWindows?.length ? { speedWindows: handoff.speedWindows } : {})
 		});
 		overlays = applied.overlays;
 		sfxCues = applied.sfxCues;
+		zoomWindows = applied.zoomWindows;
+		fxWindows = applied.fxWindows;
+		// Speed ramps: state round-trips through remix today (wire `s`); the
+		// studio UI to edit/preview them ships in V2 per the speed-track plan.
+		speedWindows = applied.speedWindows;
 		// Remix layers arrive as remote URLs already — cache bitmaps for the stage.
 		imageLayers = applied.imageLayers;
 		for (const layer of applied.imageLayers) {
@@ -2276,6 +2742,9 @@
 			void layerAssets.cacheGif(layer.src);
 		}
 		selectedId = overlays[0]?.id ?? null;
+		// The source's color look rides the handoff (wire `l`) — apply it so the
+		// remix starts where the original ended up, WYSIWYG with its export.
+		if (applied.lookId !== 'none') lookId = applied.lookId;
 		remixSource = { eventId: handoff.eventId, pubkey: handoff.pubkey, relays: handoff.relays };
 		remixLabel = handoff.label || 'a bitz';
 		// S-013: automatic attribution — credit the source author on publish.
@@ -2315,6 +2784,27 @@
 		if (slotOpenedId === slotHandoff) return;
 		slotOpenedId = slotHandoff;
 		void openSlot(slotHandoff);
+	});
+
+	/** Consumed-sound bookkeeping (one-shot latch, mirrors the slot path). */
+	let soundSeedAppliedId = '';
+	/** Sound handoff (Sounds page "Use sound"): stage the picked sound as the
+	 *  first cue once the studio opens. A remix/template/slot that lands in
+	 *  the same navigation wins — the seed only fires on a CLEAN cue sheet. */
+	$effect(() => {
+		if (!open || !soundHandoff) return;
+		if (soundSeedAppliedId === soundHandoff.id) return;
+		soundSeedAppliedId = soundHandoff.id;
+		if (sfxCues.length) return;
+		if (soundHandoff.kind === 'synth') {
+			addSfxCue(soundHandoff.id as MemeSfxId);
+			toasts.info(
+				`${soundHandoff.label ?? sfxLabels[soundHandoff.id as MemeSfxId]} staged at the playhead`,
+				3500
+			);
+		}
+		// Custom library sounds resolve inside the sound picker — the seed
+		// only carries synth ids for now (the Sounds page lists synth cards).
 	});
 
 	// ---- overlay editing -------------------------------------------------------
@@ -2407,17 +2897,71 @@
 		toasts.info(appending ? `${label} appended to your captions` : `${label} template applied`);
 	}
 
+	/** Image Meme layouts (p.784): pure caption scaffolds — same merge path
+	 *  as video templates, minus the timed tracks. */
+	function applyImageLayout(layout: MemeImageLayout) {
+		if (busy) return;
+		addTemplateOverlays(layout.overlays(), layout.label);
+	}
+
 	function applyTemplate(template: Template) {
 		if (busy) return;
 		addTemplateOverlays(template.overlays(), template.label);
+		// Timed templates (spec Layer 3): the cue sheet, zoom punches and
+		// frame-fx windows ride along. Video bases get the full show; on an
+		// image base the cues still work (sound-on-static) and the timed
+		// overlays animate once a cue makes the timeline live.
+		const cues = template.sfxCues?.() ?? [];
+		if (cues.length) {
+			const room = 16 - sfxCues.length;
+			if (room > 0) sfxCues = [...sfxCues, ...normalizeSfxCues(cues.slice(0, room))];
+		}
+		const zooms = template.zoomWindows?.() ?? [];
+		if (zooms.length) zoomWindows = normalizeZoomWindows([...zoomWindows, ...zooms]);
+		const fx = template.fxWindows?.() ?? [];
+		if (fx.length) fxWindows = normalizeFxWindows([...fxWindows, ...fx]);
+		const speeds = template.speedWindows?.() ?? [];
+		if (speeds.length) speedWindows = normalizeSpeedWindows([...speedWindows, ...speeds]);
+		// Buddy sticker layers (₿ pack): merged like every other track —
+		// capped, fresh ids via makeImageOverlay, never clobbering user work.
+		const figures = template.imageLayers?.() ?? [];
+		if (figures.length) {
+			const room = Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length);
+			const take = figures.slice(0, room);
+			if (take.length) {
+				imageLayers = [...imageLayers, ...take];
+				for (const l of take) void cacheLayerBitmap(l.src);
+			}
+		}
 	}
 
-	/** Re-apply a user-saved layout — fresh ids so each overlay is editable. */
+	/** Re-apply a user-saved layout — fresh ids so each overlay is editable.
+	 *  v2 rows also restore their timed tracks (cues/zoom/fx/speed/stickers).
+	 */
 	function applySavedTemplate(id: string) {
 		if (busy) return;
 		const saved = memeTemplates.list.find((t) => t.id === id);
 		if (!saved) return;
 		addTemplateOverlays(memeTemplates.apply(saved), `“${saved.label}”`);
+		const extras = memeTemplates.applyExtras(saved);
+		if (extras.sfxCues?.length) {
+			const room = 16 - sfxCues.length;
+			if (room > 0) sfxCues = [...sfxCues, ...extras.sfxCues.slice(0, room)];
+		}
+		if (extras.zoomWindows?.length)
+			zoomWindows = normalizeZoomWindows([...zoomWindows, ...extras.zoomWindows]);
+		if (extras.fxWindows?.length)
+			fxWindows = normalizeFxWindows([...fxWindows, ...extras.fxWindows]);
+		if (extras.speedWindows?.length)
+			speedWindows = normalizeSpeedWindows([...speedWindows, ...extras.speedWindows]);
+		if (extras.imageLayers?.length) {
+			const room = Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length);
+			const take = extras.imageLayers.slice(0, room);
+			if (take.length) {
+				imageLayers = [...imageLayers, ...take];
+				for (const l of take) void cacheLayerBitmap(l.src);
+			}
+		}
 	}
 
 	/** Snapshot the whole studio state into a named slot (media ≤ cap). */
@@ -2532,7 +3076,15 @@
 			return;
 		}
 		try {
-			const saved = memeTemplates.save(templateName, overlays);
+			// v2: capture the timed tracks with the layout — cues, zoom
+			// punches, frame-fx, speed ramps and sticker layers all ride.
+			const saved = memeTemplates.save(templateName, overlays, 'i-lucide-bookmark', {
+				sfxCues,
+				zoomWindows,
+				fxWindows,
+				speedWindows,
+				imageLayers
+			});
 			toasts.push(`Template “${saved.label}” saved`, 'success', 4000);
 			showTemplateSave = false;
 			templateName = '';
@@ -2772,7 +3324,11 @@
 			stageImg,
 			stageVideo,
 			lookCss,
-			mediaTransform,
+			mediaTransform: composeZoomWithFraming(
+				mediaTransform,
+				zoomTransformAt(zoomWindows, Math.round(stageSeconds * 1000))
+			),
+			fxWindows: fxWindows.length ? fxWindows : undefined,
 			stageSeconds
 		});
 		paintImageOverlays(
@@ -2849,17 +3405,26 @@
 			);
 			ctx.fillStyle = '#000';
 			ctx.fillRect(0, 0, a.width, a.height);
+			// Mod so the base LOOPS when a layer/cue extends past one pass
+			// (mirrors the recorder path) instead of freezing on its last
+			// frame for the rest of the window.
+			const baseSec = gif && gif.duration > 0 ? t % gif.duration : t;
 			paintMemeBase(ctx, a, {
 				mediaKind,
 				gif,
 				stageImg,
 				stageVideo,
 				lookCss,
-				mediaTransform,
-				// Mod so the base LOOPS when a layer/cue extends past one pass
-				// (mirrors the recorder path) instead of freezing on its last
-				// frame for the rest of the window.
-				stageSeconds: gif && gif.duration > 0 ? t % gif.duration : t
+				// Zoom punches at the looped media time — the SAME clock the
+				// preview and the recorder path compose on, so the offline .gif
+				// is WYSIWYG (previously this passed the static framing and
+				// silently dropped the zoom track).
+				mediaTransform: composeZoomWithFraming(
+					mediaTransform,
+					zoomTransformAt(zoomWindows, Math.round(baseSec * 1000))
+				),
+				stageSeconds: baseSec,
+				fxWindows: fxWindows.length ? fxWindows : undefined
 			});
 			paintImageOverlays(
 				ctx,
@@ -2948,7 +3513,11 @@
 				imageLayers,
 				bitmaps: layerAssets.bitmaps,
 				target: renderTarget,
-				mediaTransform
+				mediaTransform,
+				fxWindows: fxWindows.length ? fxWindows : undefined,
+				// The still is the CURRENT frame — fx evaluate at the stage
+				// playhead (media time), not a hardcoded 0.
+				fxAtMs: Math.round(stageSeconds * 1000)
 			});
 			return new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' });
 		}
@@ -2967,13 +3536,18 @@
 		// Cue mix (synth + custom) rides alongside any source audio; attached
 		// inside renderVideoMeme via the extra-track hook below.
 		// Cue mix is built on the EXPORT timeline: media time re-mapped by the
-		// trim window and compressed by playbackRate (cues after trimEnd drop).
-		const exportCues = shiftCuesForExport(sfxCues, trimStartSec, playbackRate, trimDuration);
-		const cueTrack = await cueAudioTrack(
-			trimDuration / (playbackRate || 1),
-			exportCues,
-			libraryDecodeSound
+		// trim window, integrated through any speed ramps, then compressed by
+		// the base playbackRate (cues after trimEnd drop).
+		const exportCues = shiftCuesForExportWithSpeeds(
+			sfxCues,
+			speedWindows,
+			trimStartSec,
+			playbackRate,
+			mediaSpanExportSec
 		);
+		// Export audio length follows the same curve — ramped spans shrink/grow
+		// the timeline the cues live on.
+		const cueTrack = await cueAudioTrack(mediaSpanExportSec, exportCues, libraryDecodeSound);
 		const extraTracks: MediaStreamTrack[] = [];
 		if (cueTrack) extraTracks.push(cueTrack);
 		const { blob, mimeType } = await renderVideoMeme(stageVideo, overlays, {
@@ -2988,6 +3562,19 @@
 			animPainters: layerAssets.painterFor,
 			target: renderTarget,
 			mediaTransform,
+			// Punch-in zoom rides the media clock (source.currentTime), so the
+			// same media-time windows the preview runs export 1:1 — no trim/rate
+			// remap needed on this path (the recorder replays source time).
+			mediaTransformAt: zoomWindows.length
+				? (mediaTimeMs) =>
+						composeZoomWithFraming(mediaTransform, zoomTransformAt(zoomWindows, mediaTimeMs))
+				: undefined,
+			// Frame-FX windows ride the media clock exactly like zooms — no remap
+			// needed on this path (the recorder replays source time).
+			fxWindows: fxWindows.length ? fxWindows : undefined,
+			// Speed ramps ride the media clock too: renderVideoMeme drives the
+			// video's playbackRate through the curve while recording.
+			speedWindows: speedWindows.length ? speedWindows : undefined,
 			trimStartSec: mediaKind === 'video' ? trimStartSec : undefined,
 			trimEndSec: mediaKind === 'video' ? (trimEndSec ?? undefined) : undefined,
 			playbackRate: mediaKind === 'video' ? playbackRate : undefined,
@@ -3039,14 +3626,26 @@
 			paint: (ctx, elapsedMs) => {
 				ctx.fillStyle = '#000';
 				ctx.fillRect(0, 0, a.width, a.height);
+				// GIF clock for effect tracks: looped media time (a repeated GIF
+				// re-fires zoom/fx windows each pass — preview + offline encoder
+				// parity; raw elapsed would fire them exactly once).
+				const loopMs =
+					decoded.duration > 0 ? Math.round(elapsedMs % (decoded.duration * 1000)) : elapsedMs;
 				paintMemeBase(ctx, a, {
 					mediaKind,
 					gif: decoded,
 					stageImg,
 					stageVideo,
 					lookCss,
-					mediaTransform,
-					stageSeconds: (elapsedMs / 1000) % Math.max(decoded.duration, 0.01)
+					mediaTransform: composeZoomWithFraming(
+						mediaTransform,
+						zoomTransformAt(zoomWindows, loopMs)
+					),
+					stageSeconds: (elapsedMs / 1000) % Math.max(decoded.duration, 0.01),
+					fxWindows: fxWindows.length ? fxWindows : undefined,
+					// FX ride the looped GIF clock — a longer Length pick repeats
+					// the hit each pass (matching what the preview shows).
+					fxAtMs: loopMs
 				});
 				paintImageOverlays(
 					ctx,
@@ -3107,7 +3706,12 @@
 					stageImg,
 					stageVideo,
 					lookCss,
-					mediaTransform
+					mediaTransform: composeZoomWithFraming(
+						mediaTransform,
+						zoomTransformAt(zoomWindows, elapsedMs)
+					),
+					fxWindows: fxWindows.length ? fxWindows : undefined,
+					fxAtMs: elapsedMs
 				});
 				paintImageOverlays(
 					ctx,
@@ -3174,7 +3778,9 @@
 			exportFormat,
 			pinnedLengthSec,
 			cueRuntimeSec: sfxCues.length ? cueTrackDurationSec(sfxCues) : undefined,
-			exportDurationSec,
+			// Ramp-integrated length (mediaMsToExportMs) when ramps exist, else
+			// the flat trim/rate math — imeta must match the exported file.
+			exportDurationSec: speedWindows.length ? mediaSpanExportSec : exportDurationSec,
 			capSec: MAX_VIDEO_MEME_SECONDS
 		});
 		const bitrate =
@@ -3205,7 +3811,17 @@
 				// only when this project actually derives from a source meme.
 				// Rights tags (S-013) always ride: license + optional credit.
 				extraTags: [
-					...(remixSource ? remixTagsFor(remixSource, { overlays, sfxCues, imageLayers }) : []),
+					...(remixSource
+						? remixTagsFor(remixSource, {
+								overlays,
+								sfxCues,
+								...(lookId !== 'none' ? { lookId } : {}),
+								imageLayers,
+								zoomWindows,
+								fxWindows,
+								speedWindows
+							})
+						: []),
 					...rightsTagsFor(license, remixSource ? sourceCredit : ''),
 					// AI-004 provenance — only when the creator says so.
 					...(aiAssisted ? [aiAssistedTag()] : []),
@@ -3310,8 +3926,27 @@
 		const controller = new AbortController();
 		mineController = controller;
 		powProgress = null;
+		// Enter a busy phase before the remix-lineage lookup. That lookup can
+		// wait on relays, and the publish dialog needs to acknowledge the tap
+		// immediately rather than appearing frozen until rendering begins.
+		track('rendering', 'Preparing your public post…', 0);
 		try {
 			if (mediaKind === 'video') stageVideo?.pause();
+			// Lineage pre-flight (S-014): refuse to extend a cyclic/self-referential
+			// chain — a malformed source would poison every remix downstream of it.
+			// Unknown ancestors degrade to chain-ends and stay publishable.
+			if (remixSource) {
+				const result = await remixChainOf(
+					[
+						['remix', remixSource.eventId, ...(remixSource.relays ?? [])],
+						['p', remixSource.pubkey]
+					],
+					(eventId, hintUrls) => lookupEventTags(eventId, hintUrls ?? [])
+				);
+				if (!result.ok && result.reason === 'cycle') {
+					throw new Error('This remix chain loops — clear the remix source before publishing');
+				}
+			}
 			const rendered = await exportMeme();
 			const uploaded = await uploadRendered(rendered);
 			track('publishing', 'Publishing to Nostr…');
@@ -3470,6 +4105,15 @@
 	 *  dialog/menu owns the screen, or mid-export. */
 	function handleStudioShortcut(event: KeyboardEvent): void {
 		if (!open || soundDialogOpen || popovers.active) return;
+		// The crop editor owns the screen while open — Escape closes it and
+		// every other key stays inert (no nudging the layer mid-crop).
+		if (croppingLayerId) {
+			if (event.key === 'Escape') {
+				event.preventDefault();
+				croppingLayerId = null;
+			}
+			return;
+		}
 		if (isTypingTarget(event.target)) return;
 		if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
 			event.preventDefault();
@@ -3488,6 +4132,43 @@
 			return;
 		}
 		if (busy) return;
+		// Selected image layer: arrows nudge (Shift = 10×), ⌥/Alt+↑/↓ arranges
+		// z-order, Delete/Backspace removes (mirrors the drawing shortcuts).
+		if (selectedLayerId) {
+			if (
+				event.key === 'ArrowLeft' ||
+				event.key === 'ArrowRight' ||
+				event.key === 'ArrowUp' ||
+				event.key === 'ArrowDown'
+			) {
+				if (event.altKey) {
+					event.preventDefault();
+					if (event.key === 'ArrowUp' || event.key === 'ArrowRight')
+						arrangeLayer(selectedLayerId, 'up');
+					else arrangeLayer(selectedLayerId, 'down');
+					return;
+				}
+				event.preventDefault();
+				const step = event.shiftKey ? 0.05 : 0.005;
+				const layer = imageLayers.find((l) => l.id === selectedLayerId);
+				if (layer) {
+					patchLayer(layer.id, {
+						x: clamp01(
+							layer.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0)
+						),
+						y: clamp01(
+							layer.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0)
+						)
+					});
+				}
+				return;
+			}
+			if (event.key === 'Delete' || event.key === 'Backspace') {
+				event.preventDefault();
+				removeLayer(selectedLayerId);
+				return;
+			}
+		}
 		if ((event.key === 'Delete' || event.key === 'Backspace') && selectedDrawingGroup) {
 			event.preventDefault();
 			removeDrawingGroup(selectedDrawingGroup.id);
@@ -3579,7 +4260,11 @@
 		// Draft recovery (plan F-010): restore work-in-progress after a crash,
 		// refresh or accidental close. Runs once per component lifetime.
 		const draft = readMemeDraft();
-		if (draft && !file) {
+		// An explicit studio handoff owns the initial canvas. In particular, the
+		// async draft-media decode can finish after a Bitz remix fetch and replace
+		// its source/layout, making Remix appear to restore an unrelated draft.
+		// Slots and templates are likewise intentional starts, not recovery.
+		if (draft && !file && !remixHandoff && !slotHandoff && !templateHandoff) {
 			let restored = false;
 			void draftMediaFile(draft).then((media) => {
 				if (media) {
@@ -3720,13 +4405,14 @@
 				onSkip={() => void stageNextQueued()}
 				onClear={() => batch.clear()}
 			/>
-
 			<div class="flex min-h-0 flex-1 flex-col">
 				{#if !file}
 					<MemeStudioEmptyState
-						remixing={!!remixSource}
-						{remixLabel}
+						remixing={!!remixSource || remixLoading}
+						remixLabel={remixLoading ? remixLoadLabel : remixLabel}
+						{remixLoading}
 						staging={gifStageBusy}
+						loadPercent={remixLoading ? remixLoadPercent : gifStageBusy ? stageLoadPercent : 0}
 						{busy}
 						gifPickerId={gifPickerMenuId}
 						blankPickerId={blankMenuId}
@@ -3746,6 +4432,7 @@
 							void addImageLayer({ url: source.url }, undefined, {
 								atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
 							})}
+						onOpenSoundStudio={() => (soundDialogOpen = true)}
 					/>
 				{:else}
 					<!-- Panes as snippets — one markup source, two layouts: the dialog grid
@@ -3823,8 +4510,8 @@
 												crossOrigin="anonymous"
 												class="absolute object-cover"
 												style={mediaFrame
-													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
-													: `filter:${lookCss};`}
+													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${previewMediaFilterCss}; transform:${previewMediaBoxCss};`
+													: `filter:${previewMediaFilterCss}; transform:${previewMediaBoxCss};`}
 												autoplay
 												muted
 												loop
@@ -3880,10 +4567,76 @@
 												crossOrigin="anonymous"
 												class="absolute object-cover"
 												style={mediaFrame
-													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${lookCss};`
-													: `filter:${lookCss};`}
+													? `left:${mediaFrame.left}%; top:${mediaFrame.top}%; width:${mediaFrame.width}%; height:${mediaFrame.height}%; filter:${previewMediaFilterCss}; transform:${previewMediaBoxCss};`
+													: `filter:${previewMediaFilterCss}; transform:${previewMediaBoxCss};`}
 												onload={onImageLoad}
 											/>
+										{/if}
+										{#if remixLoading}
+											<!-- The source type is unknown until its bytes finish loading, so this
+											     must sit outside the video/image branch. -->
+											<div
+												class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
+												role="status"
+												aria-live="polite"
+											>
+												<Icon
+													name="i-lucide-wand-sparkles"
+													class="size-8 animate-pulse text-warm-400"
+												/>
+												<p class="px-6 text-center text-[13px] font-semibold text-white">
+													Loading “{remixLoadLabel}” to remix…
+												</p>
+												<div
+													class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15"
+													aria-hidden="true"
+												>
+													<div
+														class="h-full rounded-full bg-warm-400 transition-[width] duration-200"
+														style="width:{remixLoadPercent > 0 ? remixLoadPercent : 12}%"
+													></div>
+												</div>
+												<p class="text-[11px] font-medium text-white/60">
+													{remixLoadPercent > 0 ? `${remixLoadPercent}%` : 'Connecting…'}
+												</p>
+											</div>
+										{/if}
+										{#if gifStageBusy && stageLoadPercent > 0}
+											<!-- Base-media loads (URL paste / GIF pick / library open):
+											     byte-level progress over the stage, not a dead spinner. -->
+											<div
+												class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 backdrop-blur-sm"
+												role="status"
+												aria-live="polite"
+											>
+												<Icon name="i-lucide-film" class="size-8 animate-pulse text-warm-400" />
+												<p class="px-6 text-center text-[13px] font-semibold text-white">
+													Loading {stageLoadLabel}…
+												</p>
+												<div
+													class="h-1.5 w-40 overflow-hidden rounded-full bg-white/15"
+													aria-hidden="true"
+												>
+													<div
+														class="h-full rounded-full bg-warm-400 transition-[width] duration-200"
+														style="width:{stageLoadPercent}%"
+													></div>
+												</div>
+												<p class="text-[11px] font-medium text-white/60">
+													{stageLoadPercent}%
+												</p>
+											</div>
+										{/if}
+										<!-- Frame-FX overlay mirror (flash/color/strobe/vignette/spotlight
+			     paint as a translucent layer over the media box — the same values
+			     paintFxFrame burns into exports). -->
+										{#if previewFx.overlayBackground}
+											<div
+												class="pointer-events-none absolute inset-0 z-10"
+												style="background:{previewFx.overlayBackground}; opacity:{previewFx.overlayOpacity ??
+													0};"
+												aria-hidden="true"
+											></div>
 										{/if}
 										<MemeDrawingSurface
 											active={drawActive && !busy}
@@ -3950,24 +4703,56 @@
 														? 'ring-2 ring-warm-500/80'
 														: 'hover:ring-1 hover:ring-white/40'}"
 													style="left:{layer.x * 100}%; top:{layer.y * 100}%; height:{layer.size *
-														100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) rotate({layer.rotate ??
-														0}deg) scaleX({layer.flipH ? -1 : 1}) scaleY({layer.flipV
+														100}%; aspect-ratio:{layer.aspect}; transform:translate(-50%, -50%) {layerMotionCss(
+														layer.motionId ?? 'none',
+														timelineActive && mediaKind === 'video'
+															? Math.round(stageSeconds * 1000)
+															: motionTickMs,
+														layer.startMs
+													) ?? ''} rotate({layer.rotate ?? 0}deg) scaleX({layer.flipH
 														? -1
-														: 1}); opacity:{layer.opacity ?? 1}; filter:{layerLookCss(layer)};"
+														: 1}) scaleY({layer.flipV ? -1 : 1}); opacity:{layer.opacity ??
+														1}; filter:{layerLookCss(layer)};"
 													aria-label={`Image layer ${li + 1}`}
 												>
 													{#if layerAssets.bitmaps.has(layer.src)}
-														<img
-															src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
-															alt=""
-															crossOrigin="anonymous"
-															class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
-																layer.src
-															)?.complete
-																? ''
-																: 'opacity-60'}"
-															draggable="false"
-														/>
+														<!-- Crop preview (user ask 2026-08-26): with a crop, the box
+												     shows ONLY the cropped region — the full bitmap sits inside
+												     at scaled negative insets, mirroring the exact source-rect
+												     the export draws (paintImageOverlays). -->
+														{#if layer.crop}
+															<div class="pointer-events-none relative size-full overflow-hidden">
+																<img
+																	src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
+																	alt=""
+																	crossOrigin="anonymous"
+																	class="absolute max-h-none max-w-none select-none {layerAssets.bitmaps.get(
+																		layer.src
+																	)?.complete
+																		? ''
+																		: 'opacity-60'}"
+																	style="left:{(-layer.crop.x / layer.crop.w) * 100}%; top:{(-layer
+																		.crop.y /
+																		layer.crop.h) *
+																		100}%; width:{(1 / layer.crop.w) * 100}%; height:{(1 /
+																		layer.crop.h) *
+																		100}%; max-width:none; max-height:none;"
+																	draggable="false"
+																/>
+															</div>
+														{:else}
+															<img
+																src={layerAssets.renderSrcs.get(layer.src) ?? layer.src}
+																alt=""
+																crossOrigin="anonymous"
+																class="pointer-events-none max-h-full max-w-full select-none {layerAssets.bitmaps.get(
+																	layer.src
+																)?.complete
+																	? ''
+																	: 'opacity-60'}"
+																draggable="false"
+															/>
+														{/if}
 													{:else}
 														<span
 															class="grid size-full place-items-center rounded-lg border border-dashed border-white/40 bg-black/30 text-[10px] font-bold text-white/80"
@@ -4166,6 +4951,14 @@
 								onSplitSelected={splitSelectedAtPlayhead}
 								onAddCaption={addCaptionAtPlayhead}
 								onAddSound={() => popovers.open(sfxMenuId)}
+								onAutoMeme={() => {
+									// One-tap Auto Meme: analyze (if no cards yet), then open the
+									// Sound Studio where the ladder renders — no hunting for it.
+									if (!suggestionGroups.length) void buildSuggestions();
+									soundDialogOpen = true;
+								}}
+								autoMemeReady={suggestionGroups.length > 0}
+								analyzing={suggestBusy}
 							/>
 							<MemeTimelineImagePicker
 								id={tlImageMenuId}
@@ -4205,6 +4998,7 @@
 						<div class="flex min-w-0 flex-col gap-3">
 							<MemeTemplateSlotTools
 								{overlays}
+								mediaKind={mediaKind ?? undefined}
 								{busy}
 								{dirty}
 								{slotBusyId}
@@ -4212,6 +5006,7 @@
 								bind:showTemplateSave
 								bind:slotName
 								{applyTemplate}
+								{applyImageLayout}
 								{addOverlay}
 								{applySavedTemplate}
 								{newDraftFromSavedTemplate}
@@ -4222,6 +5017,7 @@
 								{renameSlot}
 								{removeSlot}
 								{saveCurrentSlot}
+								currentPubkey={me?.pk ?? ''}
 							/>
 							<div
 								class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)] px-3 py-2.5"
@@ -4745,26 +5541,47 @@
 										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
 									});
 								}}
+								onPickSvg={(icon) => {
+									void addImageLayer({ url: icon.url, name: icon.name }, undefined, {
+										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									});
+								}}
 							/>
 
-							<!-- Image layers: PNG/GIF/JPEG drops as movable layers (rec #1).
-							     Sources: local file, https URL, GIF library (as a sticker-sized
-							     layer — NOT the base-media swap in the footer). -->
+							<!-- Buddy picker (tp-bitcoin §16): the Bitz Buddy mascot pack as
+							     bundled sticker layers — rides the image-layer pipeline. -->
+							<MemeBuddyPicker
+								id={buddyMenuId}
+								{busy}
+								layerCount={imageLayers.length}
+								onAdd={(figure, _atMs) => {
+									// Buddy figures drop in with their feel-good default motion
+									// (breathe/pop/bounce…) — clearable in the inspector.
+									void addImageLayer(
+										{
+											url: figure.src,
+											motionId: figure.motion === 'none' ? undefined : figure.motion
+										},
+										1,
+										{ atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined }
+									);
+								}}
+							/>
+
+							<!-- Add image layers (PNG/GIF/WebP/SVG): local file, https URL or
+							     GIF library (sticker-sized layer — NOT the base-media swap).
+							     Managing layers (select/z-order/timing/replace/remove/edit)
+							     lives in the right-panel Image-layers card — one surface. -->
 							<MemeImageLayerTools
 								id={imageMenuId}
 								layers={imageLayers}
-								bind:selectedId={selectedLayerId}
-								bind:timingId={layerTimingId}
 								bind:showUrlForm={showLayerUrlForm}
 								bind:url={layerUrl}
 								{mediaKind}
 								{timelineActive}
 								{stageSeconds}
-								{busy}
 								loading={layerBusy}
 								urlBusy={layerUrlBusy}
-								loadedSources={layerAssets.bitmaps}
-								renderSrcs={layerAssets.renderSrcs}
 								onBrowse={() => {
 									pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
 									layerInput?.click();
@@ -4772,26 +5589,54 @@
 								onInsertFrame={() => void insertFrameLayer()}
 								onAddUrl={() => void addLayerFromUrl()}
 								onAddGif={(gif, atMs) => void addLayerFromGifLib(gif, atMs)}
-								onMove={moveLayerRow}
-								onPatch={patchLayer}
-								onRemove={removeLayer}
 							/>
 
-							<!-- Look picker: one-tap color presets. Preview = CSS filter,
-							     export = ctx.filter (same syntax) — WYSIWYG by construction. -->
-							{#if looksAvailable}
-								<MemeLookPicker id={lookMenuId} {lookId} onPick={(id) => (lookId = id)} />
-							{/if}
+							<!-- Frame-FX picker (Meme Pack V1 Layer 2): timed windows of
+							     glitch/flash/shake/… burned into every export + remix wire. -->
+							<MemeFxPicker
+								id={fxMenuId}
+								windows={fxWindows}
+								stageSeconds={timelineActive ? stageSeconds : 0}
+								{timelineActive}
+								durationSec={timelineDurationSec}
+								{busy}
+								onAdd={addFxWindow}
+								onRemove={removeFxWindow}
+								onIntensity={patchFxIntensity}
+							/>
+
+							<!-- Speed-ramp picker (Meme Pack V1 Layer 2): timed
+							     slow-mo/speed-up windows riding the preview clock. -->
+							<MemeSpeedPicker
+								id={speedMenuId}
+								windows={speedWindows}
+								stageSeconds={timelineActive ? stageSeconds : 0}
+								{timelineActive}
+								durationSec={timelineDurationSec}
+								{busy}
+								onAdd={addSpeedWindow}
+								onRate={patchSpeedRate}
+								onRemove={removeSpeedWindow}
+							/>
 						</div>
 					{/snippet}
 
 					{#snippet inspectorPane()}
 						<MemeInspectorPanel
-							{selectedLayer}
-							imageLayerIndex={imageLayers.findIndex((layer) => layer.id === selectedLayer?.id) + 1}
-							renderSrc={selectedLayer
-								? (layerAssets.renderSrcs.get(selectedLayer.src) ?? null)
-								: null}
+							{imageLayers}
+							bind:selectedLayerId
+							bind:layerTimingId
+							layerBitmaps={layerAssets.bitmaps}
+							layerRenderSrcs={layerAssets.renderSrcs}
+							{layerBusy}
+							onAddLayerImage={() => layerInput?.click()}
+							onMoveLayer={moveLayerRow}
+							onOpenCropLayer={openLayerCrop}
+							onArrangeLayer={arrangeLayer}
+							onReplaceLayer={(id) => {
+								replaceLayerForId = id;
+								replaceLayerInput?.click();
+							}}
 							{busy}
 							videoExportSupported={videoMemeSupported}
 							{overlays}
@@ -4849,7 +5694,10 @@
 							bind:includeSourceAudio
 							analyzing={suggestBusy}
 							suggestions={suggestionGroups}
+							{smartMatches}
+							onApplySmartMatch={applySmartMatch}
 							onOpenSoundStudio={() => (soundDialogOpen = true)}
+							onOpenShareSound={() => (shareSoundDialogOpen = true)}
 							onPreviewSynth={previewSfx}
 							onAddSynth={addSfxCue}
 							onAddCustom={addCustomCue}
@@ -4980,6 +5828,16 @@
 				}}
 			/>
 		{/if}
+
+		<!-- Layer source-image crop editor (user ask 2026-08-26). -->
+		{#if croppingLayer}
+			<MemeLayerCropDialog
+				layer={croppingLayer}
+				renderSrc={layerAssets.renderSrcs.get(croppingLayer.src) ?? null}
+				onApply={(crop) => applyLayerCrop(croppingLayer!.id, crop)}
+				onCancel={() => (croppingLayerId = null)}
+			/>
+		{/if}
 	</div>
 {/if}
 
@@ -4989,13 +5847,42 @@
 	bind:layerInput
 	bind:queueInput
 	bind:soundInput={soundFileInput}
+	bind:replaceInput={replaceLayerInput}
 	{pickFormat}
 	onFile={onFileInput}
 	onOtherSource={onOtherSourceInput}
 	onLayer={onLayerFileInput}
+	onReplace={onReplaceLayerInput}
 	onQueue={onQueueInput}
 	onSound={(sound) => void soundIO.importFile(sound)}
 />
+<MemePublishOptions
+	bind:destinations
+	bind:caption
+	bind:open={publishDetailsOpen}
+	bind:sensitive
+	bind:showPow
+	bind:license
+	bind:aiAssisted
+	bind:splitsOpen
+	bind:splitRows
+	bind:selectedProvider
+	bind:pow
+	{busy}
+	{phase}
+	{powProgress}
+	{writeRelayCount}
+	kindNip={kindInfo?.nip}
+	softCaptionLimit={SOFT_CAP}
+	hardCaptionLimit={HARD_CAP}
+	{exportFormat}
+	{mediaKind}
+	videoExportSupported={videoMemeSupported}
+	onFormat={(format) => (exportFormat = format)}
+	onCancelMining={() => mineController?.abort()}
+	onPublish={() => void submit()}
+/>
+<MemeShareSoundWidget bind:open={shareSoundDialogOpen} showTrigger={false} />
 <MemeSoundDialog
 	bind:open={soundDialogOpen}
 	bind:cues={sfxCues}

@@ -6,6 +6,7 @@ import { canRenderVideoMeme, coverRect, type MediaTransform } from '$lib/meme/re
 import { paintGifFrameAt, type DecodedGif } from '$lib/meme/gif';
 import { createSfxAudioTrack } from '$lib/meme/sfx';
 import type { MemeSfxCue } from '$lib/meme/schema';
+import { paintFxFrame, type FrameFxWindow } from '$lib/meme/fx-track';
 import { pickRecorderMime, RecorderSession } from '$lib/meme/export-support';
 
 /** The base media of an export, as the studio stages it. Exactly one of the
@@ -20,6 +21,10 @@ export interface MemeExportBase {
 	mediaTransform: MediaTransform;
 	/** Playhead for the GIF path when no explicit time is passed. */
 	stageSeconds?: number;
+	/** Frame-FX windows painted over the base media (media-timed ms). */
+	fxWindows?: FrameFxWindow[];
+	/** FX playhead override (export-timeline ms); defaults to atSec/stageSeconds. */
+	fxAtMs?: number;
 }
 
 /** Paint the base media cover-fitted onto `a`, look applied. Video draws its
@@ -32,6 +37,7 @@ export function paintMemeBase(
 	base: MemeExportBase,
 	atSec?: number
 ): void {
+	const fxAtMs = base.fxAtMs ?? (atSec ?? base.stageSeconds ?? 0) * 1000;
 	if (base.lookCss !== 'none') ctx.filter = base.lookCss;
 	if (base.mediaKind === 'video' && base.stageVideo) {
 		const rect = coverRect(
@@ -56,6 +62,7 @@ export function paintMemeBase(
 		ctx.drawImage(base.stageImg, rect.x, rect.y, rect.w, rect.h);
 	}
 	ctx.filter = 'none';
+	if (base.fxWindows?.length) paintFxFrame(ctx, base.fxWindows, fxAtMs, a);
 }
 
 /** Mix the cue sheet (synth + custom sounds) and wrap it as a MediaRecorder

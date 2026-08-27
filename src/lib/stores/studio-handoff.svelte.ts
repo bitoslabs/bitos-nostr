@@ -20,8 +20,26 @@ export interface StudioRemixHandoff {
 	mediaType: 'image' | 'video';
 	overlays: unknown[];
 	sfxCues: unknown[];
+	/** Color look preset id (remix wire `l`) — applied on studio arrival. */
+	lookId?: string;
 	relays?: string[];
 	imageLayers?: unknown[];
+	/** Punch-in zoom windows from the source's meme tag (media-timed). */
+	zoomWindows?: unknown[];
+	/** Frame-FX windows from the source's meme tag (media-timed). */
+	fxWindows?: unknown[];
+	speedWindows?: unknown[];
+}
+
+/** A sound the creator picked from the Sounds page, staged into the studio
+ *  on arrival — completes the "hear it → use it" loop. Synth ids only;
+ *  custom library sounds travel by soundId. */
+export interface StudioSoundSeed {
+	/** 'synth' = a MemeSfxId from the trending catalog; 'custom' = a saved
+	 *  library sound (by id, resolved inside the studio). */
+	kind: 'synth' | 'custom';
+	id: string;
+	label?: string;
 }
 
 /** Which studio the /studio/create page should open with. */
@@ -34,6 +52,8 @@ export interface StudioHandoff {
 	resumeSlotId?: string;
 	/** Apply a saved layout template (meme-templates store) on arrival. */
 	template?: { id: string; overlays: MemeTextOverlay[] };
+	/** Stage a sound cue at playhead 0 when the Meme Studio opens. */
+	soundSeed?: StudioSoundSeed;
 }
 
 // Module-level $state: read/write directly (no getter/setter indirection —
@@ -89,6 +109,12 @@ export const studioHandoff = {
 	/** Start a fresh meme with a saved layout pre-applied. */
 	useTemplate(templateId: string, overlays: MemeTextOverlay[]) {
 		setHandoff({ tab: 'meme', template: { id: templateId, overlays } });
+		return goto('/studio/create?tab=meme');
+	},
+	/** Open the Meme Studio with a picked sound staged as the first cue —
+	 *  the /more/sounds "Use sound" button lands here. */
+	useSound(seed: StudioSoundSeed) {
+		setHandoff({ tab: 'meme', soundSeed: seed });
 		return goto('/studio/create?tab=meme');
 	},
 	/** Consume the pending handoff (one-shot — returns null after). */

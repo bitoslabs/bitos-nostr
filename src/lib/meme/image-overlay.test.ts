@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	croppedLayerGeometry,
 	decodeImageOverlay,
 	encodeImageOverlay,
 	imageOverlayVisibleAt,
 	isHttpUrl,
 	makeImageOverlay,
+	normalizeCrop,
 	normalizeImageOverlay,
-	MAX_IMAGE_OVERLAYS
+	wholeImageAspect,
+	MAX_IMAGE_OVERLAYS,
+	MIN_CROP
 } from './image-overlay';
 
 describe('image-overlay', () => {
@@ -165,5 +169,98 @@ describe('image-overlay', () => {
 	it('caps layers at the collage limit', () => {
 		expect(MAX_IMAGE_OVERLAYS).toBeLessThanOrEqual(6);
 		expect(MAX_IMAGE_OVERLAYS).toBeGreaterThan(0);
+	});
+
+	it('normalizeCrop clamps into the unit box and floors tiny edges', () => {
+		// Junk → undefined (whole image).
+		expect(normalizeCrop(undefined)).toBeUndefined();
+		expect(normalizeCrop('nope')).toBeUndefined();
+		// Missing fields default to the whole image.
+		expect(normalizeCrop({})).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+		// Edges floor at MIN_CROP so crops stay pickable.
+		const tiny = normalizeCrop({ x: 0.5, y: 0.5, w: 0.001, h: 0.001 })!;
+		expect(tiny.w).toBeCloseTo(MIN_CROP);
+		expect(tiny.h).toBeCloseTo(MIN_CROP);
+		// Over-sized edges clamp, and origin pulls back inside the box.
+		const over = normalizeCrop({ x: 0.8, y: 0.8, w: 2, h: 2 })!;
+		expect(over).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+		const shifted = normalizeCrop({ x: 0.9, y: 0.9, w: 0.5, h: 0.2 })!;
+		expect(shifted.x).toBeCloseTo(0.5);
+		expect(shifted.y).toBeCloseTo(0.8);
+		expect(shifted.x + shifted.w).toBeLessThanOrEqual(1 + 1e-9);
+		expect(shifted.y + shifted.h).toBeLessThanOrEqual(1 + 1e-9);
+	});
+
+	it('crop round-trips the wire and stays silent when absent', () => {
+		const cropped = normalizeImageOverlay({
+			src: 'https://cdn.example.com/s.png',
+			crop: { x: 0.1, y: 0.2, w: 0.5, h: 0.4 }
+		})!;
+		expect(cropped.crop).toEqual({ x: 0.1, y: 0.2, w: 0.5, h: 0.4 });
+		const wire = encodeImageOverlay(cropped);
+		expect(wire.c).toEqual([0.1, 0.2, 0.5, 0.4]);
+		const back = decodeImageOverlay(wire)!;
+		expect(back.crop).toEqual({ x: 0.1, y: 0.2, w: 0.5, h: 0.4 });
+
+		// Untouched layers carry no crop on the wire.
+		const plain = normalizeImageOverlay({ src: 'https://cdn.example.com/p.png' })!;
+		expect(encodeImageOverlay(plain).c).toBeUndefined();
+		expect(plain.crop).toBeUndefined();
+
+		// Partial crops default sensibly, never throw.
+		const partial = normalizeImageOverlay({
+			src: 'https://cdn.example.com/j.png',
+			crop: { x: -5, w: 99 }
+		})!;
+		expect(partial.crop).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+	});
+
+	it('croppedLayerGeometry keeps the crop window at its dialog scale', () => {
+		// 2:1 image, box 0.4 tall × 0.8 wide.
+		const layer = { size: 0.4, aspect: 2 };
+		// Crop the LEFT HALF: the selected 50% × 100% source window must be
+		// exactly half the stage width, rather than being zoomed back up.
+		const left = croppedLayerGeometry(layer, { x: 0, y: 0, w: 0.5, h: 1 }, 2);
+		expect(left.aspect).toBeCloseTo(1); // 2 · (0.5/1)
+		expect(left.size).toBeCloseTo(0.4);
+		expect(left.size * left.aspect).toBeCloseTo(0.4); // 0.8 × 50%
+
+		// A 50% × 50% window has the original ratio and scales both dimensions.
+		const same = croppedLayerGeometry(layer, { x: 0.25, y: 0.25, w: 0.5, h: 0.5 }, 2);
+		expect(same.size).toBeCloseTo(0.2);
+		expect(same.aspect).toBeCloseTo(2);
+	});
+
+	it('croppedLayerGeometry returns the exact box when the crop clears', () => {
+		// Crop to a 1:1 window, then clear: whole-image geometry is recovered.
+		const layer = { size: 0.4, aspect: 2 };
+		const cropped = croppedLayerGeometry(layer, { x: 0, y: 0, w: 0.5, h: 1 }, 2);
+		const restored = croppedLayerGeometry(
+			{ ...cropped, crop: { x: 0, y: 0, w: 0.5, h: 1 } },
+			undefined,
+			2
+		);
+		expect(restored.size).toBeCloseTo(layer.size);
+		expect(restored.aspect).toBeCloseTo(layer.aspect);
+	});
+
+	it('croppedLayerGeometry re-crops against the whole image, not the prior window', () => {
+		const first = croppedLayerGeometry({ size: 0.4, aspect: 2 }, { x: 0, y: 0, w: 0.5, h: 0.5 }, 2);
+		const second = croppedLayerGeometry(
+			{ ...first, crop: { x: 0, y: 0, w: 0.5, h: 0.5 } },
+			{ x: 0, y: 0, w: 0.75, h: 0.25 },
+			2
+		);
+		expect(second.size).toBeCloseTo(0.1); // original height × 25%
+		expect(second.aspect).toBeCloseTo(6); // 2 × (75% / 25%)
+	});
+
+	it('wholeImageAspect inverts an existing crop back to the natural ratio', () => {
+		// Natural 2:1 image cropped to the left half → window ratio 1:1,
+		// aspect was rewritten to 1 → whole = 1 / (0.5/1) = 2.
+		const layer = { aspect: 1, crop: { x: 0, y: 0, w: 0.5, h: 1 } };
+		expect(wholeImageAspect(layer)).toBeCloseTo(2);
+		// Uncropped → aspect already is the whole ratio.
+		expect(wholeImageAspect({ aspect: 1.33, crop: undefined })).toBeCloseTo(1.33);
 	});
 });

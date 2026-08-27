@@ -1,6 +1,8 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { canDecodeGif, decodeGif, gifLayerPainter, type DecodedGif } from '$lib/meme/gif';
 import { MAX_IMAGE_OVERLAY_BYTES } from '$lib/meme/image-overlay';
+import { isBuddySrc } from '$lib/meme/bitz-buddy';
+import { isBitzverseSrc } from '$lib/meme/bitzverse';
 import { fetchRemoteMedia } from '$lib/meme/remote-media';
 import type { AnimatedLayerPainter } from '$lib/meme/render';
 
@@ -28,7 +30,13 @@ import type { AnimatedLayerPainter } from '$lib/meme/render';
 /** CORS-minded byte fetch for URL-sourced layers (cap-checked, null on any
  *  failure — callers fall back to the plain URL path). */
 export async function fetchLayerBlob(url: string): Promise<Blob | null> {
-	const res = await fetchRemoteMedia(url);
+	// Bundled assets (Bitz Buddy stickers + Bitzverse props) are same-origin —
+	// fetch them directly; routing a relative path through the remote proxy
+	// chain would mangle it. Everything else keeps the CORS-minded policy.
+	const res =
+		isBuddySrc(url) || isBitzverseSrc(url)
+			? await fetchRemoteMedia(url, { proxy: false })
+			: await fetchRemoteMedia(url);
 	if (!res) return null;
 	const blob = await res.blob();
 	if (!blob.size || blob.size > MAX_IMAGE_OVERLAY_BYTES) return null;
@@ -193,11 +201,20 @@ export class LayerAssetCache {
 	/**
 	 * Arrow property deliberately retains this cache when supplied to the
 	 * renderer as a callback (`animPainters: layerAssets.painterFor`).
+	 * The size key includes the crop box — a src used uncropped AND cropped
+	 * (two layers, or a re-crop mid-session) needs distinct painters, and a
+	 * crop change must invalidate the cached one.
 	 */
-	painterFor = (src: string, box: { w: number; h: number }): AnimatedLayerPainter | null => {
+	painterFor = (
+		src: string,
+		box: { w: number; h: number; crop?: { x: number; y: number; w: number; h: number } }
+	): AnimatedLayerPainter | null => {
 		const decoded = this.gifs.get(src);
 		if (!decoded) return null;
-		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}`;
+		const cropKey = box.crop
+			? `c${Math.round(box.crop.x * 1000)}-${Math.round(box.crop.y * 1000)}-${Math.round(box.crop.w * 1000)}-${Math.round(box.crop.h * 1000)}`
+			: '';
+		const sizeKey = `${Math.round(box.w)}x${Math.round(box.h)}${cropKey}`;
 		const cached = this.painters.get(src);
 		let handle = cached && cached.key === sizeKey ? cached.handle : undefined;
 		if (!handle) {

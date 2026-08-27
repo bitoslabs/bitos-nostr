@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitzverse — BUG MONSTER: the production-incident critter -->
+	<defs>
+		<radialGradient id="bugbody" cx="0.4" cy="0.35" r="0.85">
+			<stop offset="0" stop-color="#fb923c"/><stop offset="1" stop-color="#c2410c"/>
+		</radialGradient>
+	</defs>
+	<!-- legs -->
+	<g stroke="#3a2a10" stroke-width="6" stroke-linecap="round" fill="none">
+		<path d="M 64 120 q -26 -10 -34 -30"/>
+		<path d="M 64 140 q -28 2 -38 18"/>
+		<path d="M 176 120 q 26 -10 34 -30"/>
+		<path d="M 176 140 q 28 2 38 18"/>
+	</g>
+	<!-- body -->
+	<ellipse cx="120" cy="132" rx="62" ry="54" fill="url(#bugbody)" stroke="#3a2a10" stroke-width="6"/>
+	<!-- shell segments -->
+	<path d="M 88 92 q 32 -14 64 0 M 80 116 q 40 -16 80 0 M 78 142 q 42 -14 84 0"
+		fill="none" stroke="#3a2a10" stroke-width="4" opacity="0.5"/>
+	<!-- antennae -->
+	<path d="M 100 82 q -8 -22 -22 -28 M 140 82 q 8 -22 22 -28" fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<circle cx="76" cy="52" r="6" fill="#fde047" stroke="#3a2a10" stroke-width="4"/>
+	<circle cx="164" cy="52" r="6" fill="#fde047" stroke="#3a2a10" stroke-width="4"/>
+	<!-- big glitchy eyes -->
+	<ellipse cx="100" cy="124" rx="17" ry="20" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<ellipse cx="140" cy="124" rx="17" ry="20" fill="#fff" stroke="#3a2a10" stroke-width="5"/>
+	<circle cx="97" cy="126" r="7" fill="#241804"/>
+	<circle cx="143" cy="126" r="7" fill="#241804"/>
+	<!-- glitch grin -->
+	<path d="M 100 154 q 10 8 20 0 q 10 8 20 -2" fill="none" stroke="#3a2a10" stroke-width="5" stroke-linecap="round"/>
+	<!-- stack-trace crumbs -->
+	<g font-family="monospace" font-size="13" font-weight="bold" fill="#c2410c" opacity="0.85">
+		<text x="30" y="196">null</text>
+		<text x="178" y="206">undefined</text>
+		<text x="88" y="216">;)</text>
+	</g>
+</svg>

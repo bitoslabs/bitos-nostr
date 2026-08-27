@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitzverse — SAT SPARKS: a burst of tiny satoshi coins -->
+	<defs>
+		<radialGradient id="satcoin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+	</defs>
+	<g stroke="#ffb020" stroke-width="4" stroke-linecap="round" fill="none">
+		<path d="M 120 28 l 0 18"/><path d="M 120 194 l 0 18"/>
+		<path d="M 40 120 l -18 0"/><path d="M 200 120 l 18 0"/>
+		<path d="M 62 62 l -12 -12"/><path d="M 178 62 l 12 -12"/>
+		<path d="M 62 178 l -12 12"/><path d="M 178 178 l 12 12"/>
+	</g>
+	<!-- center sats (₿) -->
+	<circle cx="120" cy="120" r="44" fill="url(#satcoin)" stroke="#3a2a10" stroke-width="6"/>
+	<path d="M 120 96 h 12 a 10 10 0 0 1 0 20 h -16 a 10 10 0 0 0 0 20 h 16"
+		fill="none" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<path d="M 114 92 v 56 M 124 92 v 56" stroke="#3a2a10" stroke-width="6" stroke-linecap="round"/>
+	<!-- orbiting sats -->
+	<circle cx="58" cy="86" r="20" fill="url(#satcoin)" stroke="#3a2a10" stroke-width="5"/>
+	<path d="M 58 76 v 20 M 52 80 h 12 M 52 92 h 12" stroke="#3a2a10" stroke-width="4" stroke-linecap="round"/>
+	<circle cx="186" cy="152" r="16" fill="url(#satcoin)" stroke="#3a2a10" stroke-width="5"/>
+	<path d="M 186 144 v 16 M 181 147 h 10 M 181 157 h 10" stroke="#3a2a10" stroke-width="3.5" stroke-linecap="round"/>
+	<circle cx="76" cy="178" r="12" fill="url(#satcoin)" stroke="#3a2a10" stroke-width="4"/>
+	<path d="M 76 172 v 12" stroke="#3a2a10" stroke-width="3.5" stroke-linecap="round"/>
+	<circle cx="172" cy="72" r="10" fill="url(#satcoin)" stroke="#3a2a10" stroke-width="4"/>
+	<path d="M 172 67 v 10" stroke="#3a2a10" stroke-width="3" stroke-linecap="round"/>
+</svg>

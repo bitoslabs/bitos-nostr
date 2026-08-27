@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+	<!-- Bitz Buddy — MOON: victory! glasses-thumbs, star eyes, to the moon -->
+	<defs>
+		<radialGradient id="coin" cx="0.38" cy="0.32" r="0.9">
+			<stop offset="0" stop-color="#ffd968"/><stop offset="0.55" stop-color="#f7b32b"/><stop offset="1" stop-color="#e09415"/>
+		</radialGradient>
+		<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffe9a3"/><stop offset="1" stop-color="#d98812"/>
+		</linearGradient>
+	</defs>
+	<!-- confetti + stars -->
+	<g fill="#fbbf24" stroke="#8a5a0a" stroke-width="2.5" stroke-linejoin="round">
+		<path d="M 40 30 l 5 10 11 2 -8 8 2 11 -10 -5 -10 5 2 -11 -8 -8 11 -2 z"/>
+	</g>
+	<g stroke-linecap="round" stroke-width="5" fill="none">
+		<path d="M 200 26 l 0 14 M 193 33 l 14 0" stroke="#f97316"/>
+		<path d="M 214 48 l 0 10 M 209 53 l 10 0" stroke="#22d3ee"/>
+	</g>
+	<!-- moon -->
+	<path d="M 196 60 a 16 16 0 1 0 10 28 a 20 20 0 1 1 -10 -28 z" fill="#fef9c3" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- jumping legs -->
+	<g stroke="#3a2a10" stroke-width="14" stroke-linecap="round" fill="none">
+		<path d="M 100 188 q -8 14 -20 16"/>
+		<path d="M 140 188 q 8 14 20 16"/>
+	</g>
+	<g fill="#ff7a1a" stroke="#3a2a10" stroke-width="5" stroke-linejoin="round">
+		<path d="M 62 202 q 12 -6 22 -2 l 2 9 q -16 6 -26 1 z"/>
+		<path d="M 178 202 q -12 -6 -22 -2 l -2 9 q 16 6 26 1 z"/>
+	</g>
+	<!-- thumbs up both hands -->
+	<g stroke="#3a2a10" stroke-width="13" stroke-linecap="round" fill="none">
+		<path d="M 46 130 q -16 -6 -20 -24"/>
+		<path d="M 194 130 q 16 -6 20 -24"/>
+	</g>
+	<g fill="#ffd968" stroke="#3a2a10" stroke-width="5">
+		<circle cx="26" cy="102" r="11"/>
+		<circle cx="214" cy="102" r="11"/>
+		<rect x="20" y="88" width="8" height="14" rx="4"/>
+		<rect x="208" y="88" width="8" height="14" rx="4"/>
+	</g>
+	<circle cx="120" cy="120" r="96" fill="url(#rim)" stroke="#3a2a10" stroke-width="6"/>
+	<circle cx="120" cy="120" r="82" fill="url(#coin)" stroke="#8a5a0a" stroke-width="3"/>
+	<!-- star-struck eyes -->
+	<g fill="#f59e0b" stroke="#3a2a10" stroke-width="3" stroke-linejoin="round">
+		<path d="M 93 88 l 6 13 14 2 -10 10 2 14 -12 -6 -12 6 2 -14 -10 -10 14 -2 z"/>
+		<path d="M 147 88 l 6 13 14 2 -10 10 2 14 -12 -6 -12 6 2 -14 -10 -10 14 -2 z"/>
+	</g>
+	<!-- victory grin -->
+	<path d="M 92 142 q 28 22 56 0 q -6 20 -28 20 q -22 0 -28 -20 z" fill="#5b2d0e" stroke="#3a2a10" stroke-width="5"/>
+	<ellipse cx="74" cy="132" rx="10" ry="5" fill="#ff9d5c" opacity="0.5"/>
+	<ellipse cx="166" cy="132" rx="10" ry="5" fill="#ff9d5c" opacity="0.5"/>
+</svg>
