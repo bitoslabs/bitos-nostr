@@ -26,8 +26,7 @@
 	 * (disabled under prefers-reduced-motion).
 	 */
 
-	// Keep in sync with package.json
-	const APP_VERSION = '0.4.8';
+	const APP_VERSION = __APP_VERSION__;
 
 	type Tile = {
 		to: string;
