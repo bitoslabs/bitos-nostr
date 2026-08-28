@@ -16,18 +16,21 @@ function lnurlMetadata(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-function lnurlFetchMock(body: () => Record<string, unknown>) {
-	return vi.fn(async () => new Response(JSON.stringify(body())));
-}
-
 describe('fetchLnurlPayDetails', () => {
 	it('parses metadata and detects NIP-57 support', async () => {
-		const fetchMock = lnurlFetchMock(() => lnurlMetadata());
-		vi.stubGlobal('fetch', fetchMock);
+		const body = JSON.stringify(lnurlMetadata());
+		const calls: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			async (input: RequestInfo | URL) => {
+				calls.push(String(input));
+				return new Response(body);
+			}
+		);
 		const details = await fetchLnurlPayDetails('user@provider.example');
 		expect(details.supportsZap).toBe(true);
 		expect(details.callback).toBe('https://provider.example/callback');
-		expect(fetchMock.mock.calls[0][0]).toBe('https://provider.example/.well-known/lnurlp/user');
+		expect(calls[0]).toBe('https://provider.example/.well-known/lnurlp/user');
 		vi.unstubAllGlobals();
 	});
 

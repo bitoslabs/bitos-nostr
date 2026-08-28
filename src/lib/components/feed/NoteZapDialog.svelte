@@ -12,7 +12,7 @@
 	import { subscribe } from '$lib/nostr/pool';
 	import { wallet } from '$lib/nostr/wallet.svelte';
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
-	import { pendingZaps } from '$lib/stores/pending-zaps.svelte';
+	import { pendingZaps, onPendingZapConfirmed } from '$lib/stores/pending-zaps.svelte';
 	import { hasConnectedWallet, hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
 	import { isNwcConnected } from '$lib/nostr/nwc';
 	import { bolt11Expiry } from '$lib/nostr/zaps';
@@ -47,6 +47,10 @@
 	const MAX_COMMENT = 200;
 	/** Slack when re-querying for a receipt: covers provider publish delay. */
 	const RECEIPT_QUERY_SLACK_SEC = 120;
+	/** Belt-and-braces re-subscribe cadence while an invoice is unpaid. Catches
+	 * relay reconnect races that neither the creation-time listener nor the
+	 * visibilitychange re-arm happens to survive. */
+	const RECEIPT_REARM_MS = 20_000;
 
 	const amounts = $derived(walletPrefs.state.amounts);
 	let selectedAmount = $state(walletPrefs.state.defaultAmount);
@@ -103,6 +107,29 @@
 		if (!invoice || paid) return;
 		const tick = setInterval(() => (nowSec = Math.floor(Date.now() / 1000)), 1000);
 		return () => clearInterval(tick);
+	});
+
+	// Periodic re-arm while a zap invoice is outstanding: covers relay
+	// reconnect races (socket died mid-session without a visibility change,
+	// reconnect backoff landing after our re-subscribe) that would otherwise
+	// leave the dialog stuck on the invoice step even though the zap was paid.
+	$effect(() => {
+		if (!invoice || !isZap || paid) return;
+		const rearm = setInterval(() => {
+			if (document.visibilityState === 'visible') relistenForReceipt();
+		}, RECEIPT_REARM_MS);
+		return () => clearInterval(rearm);
+	});
+
+	// The pending-zap tracker runs its own receipt subscription app-wide. When
+	// it confirms THIS zap (often faster — its socket survived, or it caught
+	// the receipt on its visibility re-arm) mirror the success here so the
+	// dialog closes even if our own subscription missed the event.
+	$effect(() => {
+		return onPendingZapConfirmed((zap) => {
+			if (!zapRequestEvent || zap.requestId !== zapRequestEvent.id) return;
+			confirmPaid(zap.sats, { fromReceipt: true });
+		});
 	});
 
 	/** YakiHonne-style amount tiers: each preset gets its own zap emoji. */
@@ -182,30 +209,43 @@
 		paying = false;
 	}
 
-	/** Receipt matched → mark paid, record, close. Shared by listener paths. */
+/** Record a successfully-sent zap into the local wallet ledger. */
+	function recordSentFor(sats: number) {
+		wallet.recordSent({
+			id: sentRecordId || `${eventId}:${sats}:${Date.now()}`,
+			amountSats: sats,
+			recipientPubkey,
+			targetNoteId: eventId,
+			memo: comment.trim() || undefined
+		});
+	}
+
+	/**
+	 * Success path shared by every confirmation source (own subscription,
+	 * pending-zap tracker, connected-wallet payment). Idempotent — the first
+	 * caller wins, later ones are ignored — so the dialog can never end up in
+	 * a half-paid state or double-record the zap.
+	 */
+	function confirmPaid(sats: number, opts: { fromReceipt: boolean }) {
+		if (!dialogActive || paid) return;
+		paid = true;
+		receiptConfirmed = opts.fromReceipt;
+		recordSentFor(sats); // idempotent by record id
+		if (zapRequestEvent) pendingZaps.forget(zapRequestEvent.id);
+		onPaid?.(sats);
+		cleanupReceipt();
+		closeAfterPayment();
+	}
+
+	/** Receipt matched via our own subscription → confirm + close. */
 	function handleReceiptEvent(event: { tags: string[][] }) {
-		if (!zapRequestEvent) return;
+		if (!zapRequestEvent || paid) return;
 		const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
 		if (!description) return;
 		try {
 			const receipt = JSON.parse(description) as { id?: string };
 			if (receipt.id !== zapRequestEvent.id) return;
-			if (!dialogActive) return;
-			paid = true;
-			receiptConfirmed = true;
-			if (zapContext) {
-				wallet.recordSent({
-					id: sentRecordId,
-					amountSats: zapContext.sats,
-					recipientPubkey: zapContext.recipient,
-					targetNoteId: zapContext.targetEventId,
-					memo: zapContext.comment || undefined
-				});
-			}
-			pendingZaps.forget(zapRequestEvent.id);
-			onPaid?.(zapContext?.sats ?? amount);
-			cleanupReceipt();
-			closeAfterPayment();
+			confirmPaid(zapContext?.sats ?? amount, { fromReceipt: true });
 		} catch {
 			/* Ignore malformed receipts. */
 		}
@@ -312,17 +352,6 @@
 		setTimeout(() => (copied = null), 1800);
 	}
 
-	/** Record a successfully-sent zap into the local wallet ledger. */
-	function recordSent() {
-		wallet.recordSent({
-			id: sentRecordId || `${eventId}:${amount}:${Date.now()}`,
-			amountSats: amount,
-			recipientPubkey,
-			targetNoteId: eventId,
-			memo: comment.trim() || undefined
-		});
-	}
-
 	/** Pay the current invoice via the connected wallet (WebLN or NWC). */
 	async function payWithWallet() {
 		if (!invoice || paid || !hasConnectedWallet()) return;
@@ -340,12 +369,8 @@
 			// A successful WebLN payment is definitive for the local sent history.
 			// The receipt listener remains useful for the public NIP-57 confirmation,
 			// but relay delays must not hide a completed payment from this ledger.
-			paid = true;
-			recordSent();
-			if (zapRequestEvent) pendingZaps.forget(zapRequestEvent.id);
-			onPaid?.(amount);
+			confirmPaid(amount, { fromReceipt: false });
 			void wallet.refreshBalance();
-			closeAfterPayment();
 			// Keep listening so the UI can distinguish a settled invoice from a
 			// publicly confirmed NIP-57 zap receipt.
 		} catch (e) {
@@ -372,14 +397,18 @@
 		dialogActive = false;
 		cleanupReceipt();
 		document.removeEventListener('visibilitychange', onVisibleRelisten);
+		window.removeEventListener('pageshow', onVisibleRelisten);
 	});
 
 	// Re-arm the receipt listener when the user returns from an external
 	// wallet. The `lightning:` deeplink freezes this tab and the OS kills its
 	// WebSockets — without re-subscribing, the dialog would sit on
 	// "Confirming the zap on relays…" forever even though Wall of Satoshi (or
-	// any wallet) already paid the invoice while we were backgrounded.
+	// any wallet) already paid the invoice while we were backgrounded. iOS
+	// Safari often skips visibilitychange on app-switch returns, so pageshow
+	// is registered too.
 	document.addEventListener('visibilitychange', onVisibleRelisten);
+	window.addEventListener('pageshow', onVisibleRelisten);
 </script>
 
 <Dialog bind:open title={paid ? 'Zap sent' : 'Zap this note'} zIndex={dialogZIndex} onClose={close}>
