@@ -896,21 +896,23 @@
 							Show {Math.min(RENDER_PAGE_SIZE, hiddenCount)} more of {hiddenCount} older activities
 						</button>
 					{/if}
-					<button
-						type="button"
-						onclick={() => notifications.loadMore()}
-						disabled={notifications.loadingMore || !notifications.hasMore}
-						class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
-					>
-						{#if notifications.loadingMore}
-							<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-							Loading older activity
-						{:else if notifications.hasMore}
-							Load older notifications
-						{:else}
-							End of relay results
-						{/if}
-					</button>
+					{#if hiddenCount === 0}
+						<button
+							type="button"
+							onclick={() => notifications.loadMore()}
+							disabled={notifications.loadingMore || !notifications.hasMore}
+							class="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] px-6 py-2.5 text-[13px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-accented)] disabled:cursor-default disabled:opacity-60 disabled:hover:bg-[var(--surface-bg)]"
+						>
+							{#if notifications.loadingMore}
+								<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+								Loading older activity
+							{:else if notifications.hasMore}
+								Load older notifications
+							{:else}
+								End of relay results
+							{/if}
+						</button>
+					{/if}
 				</div>
 			{/if}
 		</div>
