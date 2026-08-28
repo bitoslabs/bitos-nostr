@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { encodeBytes, npubEncode } from 'nostr-tools/nip19';
-	import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+	import { npubEncode } from 'nostr-tools/nip19';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -11,13 +10,13 @@
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { subscribe } from '$lib/nostr/pool';
-	import { hexToBytes } from '$lib/nostr/hex';
 	import { wallet } from '$lib/nostr/wallet.svelte';
 	import { walletPrefs } from '$lib/stores/wallet-prefs.svelte';
+	import { pendingZaps } from '$lib/stores/pending-zaps.svelte';
 	import { hasConnectedWallet, hasWebLN, enableWebLN, payWithWebLN } from '$lib/nostr/webln';
 	import { isNwcConnected } from '$lib/nostr/nwc';
-	import { bolt11Expiry, lnurlSupportsZap, zapRelayTagUrls } from '$lib/nostr/zaps';
-	import { queryNip65RelayList } from '$lib/nostr/nip65';
+	import { bolt11Expiry } from '$lib/nostr/zaps';
+	import { createZapInvoice, ZapInvoiceError } from '$lib/nostr/zap-invoice';
 	import { shortKey } from '$lib/utils/format';
 
 	type Props = {
@@ -46,6 +45,8 @@
 
 	const AUTO_CLOSE_MS = 2400;
 	const MAX_COMMENT = 200;
+	/** Slack when re-querying for a receipt: covers provider publish delay. */
+	const RECEIPT_QUERY_SLACK_SEC = 120;
 
 	const amounts = $derived(walletPrefs.state.amounts);
 	let selectedAmount = $state(walletPrefs.state.defaultAmount);
@@ -60,7 +61,10 @@
 	let copied = $state<string | null>(null);
 	let paying = $state(false);
 	let sentRecordId = $state('');
-	let zapRequestEvent = $state<ReturnType<typeof finalizeEvent> | null>(null);
+	let zapRequestEvent = $state<import('nostr-tools/pure').Event | null>(null);
+	let invoiceCreatedAt = 0;
+	let zapContext: { sats: number; recipient: string; targetEventId: string; comment: string } | null =
+		null;
 	let nowSec = $state(Math.floor(Date.now() / 1000));
 	let dialogActive = true;
 	let stopReceipt: (() => void) | undefined;
@@ -127,6 +131,8 @@
 		sentRecordId = '';
 		comment = '';
 		zapRequestEvent = null;
+		invoiceCreatedAt = 0;
+		zapContext = null;
 	}
 
 	function close() {
@@ -176,22 +182,73 @@
 		paying = false;
 	}
 
+	/** Receipt matched → mark paid, record, close. Shared by listener paths. */
+	function handleReceiptEvent(event: { tags: string[][] }) {
+		if (!zapRequestEvent) return;
+		const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
+		if (!description) return;
+		try {
+			const receipt = JSON.parse(description) as { id?: string };
+			if (receipt.id !== zapRequestEvent.id) return;
+			if (!dialogActive) return;
+			paid = true;
+			receiptConfirmed = true;
+			if (zapContext) {
+				wallet.recordSent({
+					id: sentRecordId,
+					amountSats: zapContext.sats,
+					recipientPubkey: zapContext.recipient,
+					targetNoteId: zapContext.targetEventId,
+					memo: zapContext.comment || undefined
+				});
+			}
+			pendingZaps.forget(zapRequestEvent.id);
+			onPaid?.(zapContext?.sats ?? amount);
+			cleanupReceipt();
+			closeAfterPayment();
+		} catch {
+			/* Ignore malformed receipts. */
+		}
+	}
+
+	/**
+	 * (Re)open the receipt subscription. Called after invoice creation and
+	 * again whenever this tab becomes visible: the `lightning:` deeplink
+	 * backgrounds the page and the OS kills its WebSockets, so the listener
+	 * armed at creation time is usually gone by the time the wallet pays.
+	 * Re-subscribing with `since` rooted at invoice creation re-fetches any
+	 * receipt the provider published while we were frozen.
+	 */
+	function relistenForReceipt() {
+		if (!zapRequestEvent || paid || !dialogActive) return;
+		cleanupReceipt();
+		stopReceipt = subscribe(
+			[
+				{
+					kinds: [9735],
+					'#p': [recipientPubkey],
+					since: Math.max(0, invoiceCreatedAt - RECEIPT_QUERY_SLACK_SEC)
+				}
+			],
+			{ onevent: handleReceiptEvent }
+		);
+	}
+
+	function onVisibleRelisten() {
+		if (document.visibilityState === 'visible') relistenForReceipt();
+	}
+
 	async function createInvoice() {
-		// This operation can outlive the dialog (for example, when its parent
-		// chain sheet closes). Snapshot every component-owned input before the
-		// first await so no continuation reads an inert `$derived` value.
-		const address = lightningAddress;
+		// Snapshot every component-owned input before the first await so no
+		// continuation reads an inert `$derived` value when the dialog's parent
+		// chain closes mid-flight.
 		const sats = Math.max(1, Math.round(Number(customAmount) || selectedAmount));
 		const selectedSats = selectedAmount;
 		const zapComment = comment.trim();
-		const recipient = recipientPubkey;
-		const targetEventId = eventId;
-		const targetEventKind = eventKind;
-		const relayUrls = relays.urls.slice(0, 8);
 		const signingSecret = identity.current?.sk;
 		const anonymous = walletPrefs.state.anonymousZaps || !signingSecret;
 
-		if (!address || address.includes('://')) {
+		if (!hasAddress) {
 			error = 'This author has no Lightning address.';
 			return;
 		}
@@ -201,131 +258,48 @@
 		paid = false;
 		cleanupReceipt();
 		try {
-			const [user, domain] = address.split('@');
-			if (!user || !domain) throw new Error('The author Lightning address is invalid.');
-			const lnurlEndpoint = `https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`;
-			const metadataResponse = await fetch(lnurlEndpoint);
-			if (!metadataResponse.ok) throw new Error('Could not reach the Lightning provider.');
-			const metadata = (await metadataResponse.json()) as {
-				status?: string;
-				errors?: string;
-				callback?: string;
-				commentAllowed?: number;
-				minSendable?: number;
-				maxSendable?: number;
-				allowsNostr?: boolean;
-				nostrPubkey?: string;
-			};
-			if (!dialogActive) return;
-			if (metadata.status === 'ERROR' || !metadata.callback) {
-				throw new Error(metadata.errors || 'The Lightning provider rejected the request.');
-			}
-			const millisats = sats * 1000;
-			if (metadata.minSendable && millisats < metadata.minSendable) {
-				throw new Error(`Minimum amount is ${Math.ceil(metadata.minSendable / 1000)} sats.`);
-			}
-			if (metadata.maxSendable && millisats > metadata.maxSendable) {
-				throw new Error(`Maximum amount is ${Math.floor(metadata.maxSendable / 1000)} sats.`);
-			}
 			// Remember the chosen amount as the user's new default (YakiHonne-style).
 			walletPrefs.setDefaultAmount(selectedSats);
-			const callback = new URL(metadata.callback);
-			callback.searchParams.set('amount', String(millisats));
-			// NIP-57: nostrPubkey is the provider's receipt-signing key, not the
-			// recipient's pubkey — requiresNostr support only, never key equality.
-			const supportsZap = lnurlSupportsZap(metadata);
-			let receiptRelays = relayUrls;
-			if (supportsZap) {
-				// The zapper publishes the 9735 receipt only to the relays in the
-				// request, so use the recipient's NIP-65 read relays (where they
-				// listen) plus a few of ours for the sender-side confirmation.
-				try {
-					const readRelays = (await queryNip65RelayList(recipient))
-						.filter((relay) => relay.read)
-						.map((relay) => relay.url);
-					if (!dialogActive) return;
-					receiptRelays = zapRelayTagUrls(readRelays, relayUrls);
-				} catch {
-					/* NIP-65 list unavailable — fall back to our relays. */
+			const outcome = await createZapInvoice(
+				{
+					recipientPubkey,
+					lightningAddress,
+					sats,
+					comment: zapComment,
+					eventId,
+					eventKind,
+					anonymous
+				},
+				{
+					signingSecretHex: signingSecret,
+					ownWritableUrls: relays.writeUrls.slice(0, 3)
 				}
-			}
-			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
-			if (supportsZap) {
-				zapRequest = finalizeEvent(
-					{
-						kind: 9734,
-						content: zapComment,
-						created_at: Math.floor(Date.now() / 1000),
-						tags: [
-							['relays', ...receiptRelays],
-							['amount', String(millisats)],
-							['p', recipient],
-							['e', targetEventId],
-							['k', String(targetEventKind)]
-						]
-					},
-					anonymous ? generateSecretKey() : hexToBytes(signingSecret!)
-				);
-				callback.searchParams.set('nostr', JSON.stringify(zapRequest));
-				callback.searchParams.set(
-					'lnurl',
-					encodeBytes('lnurl', new TextEncoder().encode(lnurlEndpoint))
-				);
-			} else if (zapComment && (metadata.commentAllowed ?? 0) > 0) {
-				// Plain LNURL pay: forward the message via the comment param when allowed.
-				callback.searchParams.set('comment', zapComment.slice(0, metadata.commentAllowed!));
-			}
-			const recordId = zapRequest?.id ?? `${targetEventId}:${sats}:${Date.now()}`;
-			const invoiceResponse = await fetch(callback);
+			);
 			if (!dialogActive) return;
-			if (!invoiceResponse.ok) throw new Error('Could not create a Lightning invoice.');
-			const payment = (await invoiceResponse.json()) as {
-				status?: string;
-				pr?: string;
-				reason?: string;
-			};
-			if (!dialogActive) return;
-			if (payment.status === 'ERROR' || !payment.pr)
-				throw new Error(payment.reason || 'No invoice was returned.');
-			sentRecordId = recordId;
-			invoice = payment.pr;
-			isZap = !!zapRequest;
-			zapRequestEvent = zapRequest ?? null;
-			if (zapRequest) {
-				const requestId = zapRequest.id;
-				stopReceipt = subscribe(
-					[{ kinds: [9735], '#p': [recipient], since: Math.floor(Date.now() / 1000) - 120 }],
-					{
-						onevent: (event) => {
-							const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
-							if (!description) return;
-							try {
-								const receipt = JSON.parse(description) as { id?: string };
-								if (receipt.id !== requestId) return;
-								if (!dialogActive) return;
-								paid = true;
-								receiptConfirmed = true;
-								wallet.recordSent({
-									id: recordId,
-									amountSats: sats,
-									recipientPubkey: recipient,
-									targetNoteId: targetEventId,
-									memo: zapComment || undefined
-								});
-								onPaid?.(sats);
-								cleanupReceipt();
-								closeAfterPayment();
-							} catch {
-								/* Ignore malformed receipts. */
-							}
-						}
-					}
-				);
+			sentRecordId = outcome.recordId;
+			invoice = outcome.invoice;
+			isZap = !!outcome.zapRequest;
+			zapRequestEvent = outcome.zapRequest;
+			invoiceCreatedAt = Math.floor(Date.now() / 1000);
+			zapContext = { sats, recipient: recipientPubkey, targetEventId: eventId, comment: zapComment };
+			if (zapRequestEvent) {
+				pendingZaps.track({
+					requestId: zapRequestEvent.id,
+					recordId: outcome.recordId,
+					recipientPubkey,
+					recipientName,
+					targetNoteId: eventId,
+					sats,
+					memo: zapComment || undefined,
+					invoice: outcome.invoice
+				});
+				relistenForReceipt();
 			}
 			// Keep payment explicit: the user can choose NWC/WebLN or use the QR
 			// invoice with another Lightning wallet.
 		} catch (e) {
-			if (dialogActive) error = e instanceof Error ? e.message : 'Could not prepare the zap.';
+			if (dialogActive)
+				error = e instanceof ZapInvoiceError ? e.message : 'Could not prepare the zap.';
 		} finally {
 			if (dialogActive) loading = false;
 		}
@@ -368,6 +342,7 @@
 			// but relay delays must not hide a completed payment from this ledger.
 			paid = true;
 			recordSent();
+			if (zapRequestEvent) pendingZaps.forget(zapRequestEvent.id);
 			onPaid?.(amount);
 			void wallet.refreshBalance();
 			closeAfterPayment();
@@ -396,7 +371,15 @@
 	onDestroy(() => {
 		dialogActive = false;
 		cleanupReceipt();
+		document.removeEventListener('visibilitychange', onVisibleRelisten);
 	});
+
+	// Re-arm the receipt listener when the user returns from an external
+	// wallet. The `lightning:` deeplink freezes this tab and the OS kills its
+	// WebSockets — without re-subscribing, the dialog would sit on
+	// "Confirming the zap on relays…" forever even though Wall of Satoshi (or
+	// any wallet) already paid the invoice while we were backgrounded.
+	document.addEventListener('visibilitychange', onVisibleRelisten);
 </script>
 
 <Dialog bind:open title={paid ? 'Zap sent' : 'Zap this note'} zIndex={dialogZIndex} onClose={close}>

@@ -31,6 +31,7 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { notifications } from '$lib/nostr/notifications.svelte';
+	import { pendingZaps } from '$lib/stores/pending-zaps.svelte';
 	import { ensureConnected, onRelayAck, publish as publishEvent } from '$lib/nostr/pool';
 	import { DEFAULT_MIN_ACKS, pendingOutbox, recordAck } from '$lib/stores/event-outbox';
 	import { profiles } from '$lib/nostr/profiles.svelte';
@@ -193,6 +194,7 @@
 		feed.stop();
 		dms.stop();
 		notifications.stop();
+		pendingZaps.stop();
 	}
 
 	function clearRuntimeAccountState() {
@@ -379,6 +381,8 @@
 			dms.start();
 			notifications.start();
 			nip29.start();
+			// Reconcile zaps issued before a reload/tab-kill (mobile wallet deeplink).
+			pendingZaps.start();
 			// NIP-51: merge mute/block lists from relays, push local-only entries.
 			void mutes.sync();
 			void blocks.sync();
@@ -408,6 +412,7 @@
 			stories.start();
 			dms.start();
 			notifications.start();
+			pendingZaps.start();
 			// Relay set changed — re-merge moderation lists from the new sources.
 			void mutes.sync();
 			void blocks.sync();

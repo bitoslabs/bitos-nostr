@@ -91,6 +91,23 @@ export interface LnurlPayMetadata {
 }
 
 /**
+ * Well-known writable relays used to pad the `relays` tag of a zap request
+ * when the recipient's NIP-65 list can't be fetched. The LNURL provider
+ * publishes the kind 9735 receipt ONLY to the relays in that tag, so when we
+ * can't learn where the recipient actually listens we must spread the receipt
+ * across popular relays — a sender-only tag would deliver sats but never a
+ * notification (the mobile Wall of Satoshi issue).
+ */
+export const ZAP_FALLBACK_RELAYS: readonly string[] = [
+	'wss://nostr-01.yakihonne.com',
+	'wss://relay.damus.io',
+	'wss://nos.lol',
+	'wss://relay.primal.net',
+	'wss://nostr-pub.wellorder.net',
+	'wss://relay.nostr.band'
+];
+
+/**
  * Whether an LNURL-pay endpoint supports NIP-57 zaps.
  *
  * `nostrPubkey` is the *Lightning provider's* key that will sign the kind 9735
@@ -110,9 +127,18 @@ export function lnurlSupportsZap(metadata: LnurlPayMetadata | null | undefined):
  * the kind 9735 receipt to these relays only, so they must reach the
  * *recipient*: prefer their NIP-65 read relays, then add a few of ours so the
  * sender's confirmation listener also sees the receipt.
+ *
+ * `ownUrls` may contain read-only relays (e.g. indexers) which can never
+ * receive a published receipt, so pad the tag with popular writable relays
+ * from {@link ZAP_FALLBACK_RELAYS} until the cap is reached.
  */
 export function zapRelayTagUrls(recipientReadRelays: string[], ownUrls: string[]): string[] {
-	return [...new Set([...recipientReadRelays.slice(0, 6), ...ownUrls.slice(0, 3)])].slice(0, 8);
+	const merged = [...new Set([...recipientReadRelays.slice(0, 6), ...ownUrls.slice(0, 3)])];
+	for (const fallback of ZAP_FALLBACK_RELAYS) {
+		if (merged.length >= 8) break;
+		merged.push(fallback);
+	}
+	return [...new Set(merged)].slice(0, 8);
 }
 
 export function applyActivityToNotes(

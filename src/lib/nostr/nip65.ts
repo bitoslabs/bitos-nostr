@@ -5,7 +5,9 @@
  * the relay supports both reads and writes.
  */
 import type { Event } from 'nostr-tools/pure';
-import { queryPrimaryFirst } from './pool';
+import { browser } from '$app/environment';
+import { queryPrimaryFirst, subscribeUrls } from './pool';
+import { relays } from './relays.svelte';
 import { NOSTR_KINDS, type RecommendedRelay } from './types';
 
 export interface Nip65Relay {
@@ -50,6 +52,83 @@ export async function queryNip65RelayList(pubkey: string): Promise<Nip65Relay[]>
 		.filter((event) => event.kind === NOSTR_KINDS.RELAY_LIST && event.pubkey === pubkey)
 		.sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0];
 	return latest ? parseNip65RelayList(latest) : [];
+}
+
+export interface Nip65Lookup {
+	/** True when a kind 10002 event was actually found somewhere on the network. */
+	found: boolean;
+	/** Read relay URLs from that event (empty when not found). */
+	readRelays: string[];
+}
+
+/**
+ * Robust network-wide lookup of a pubkey's NIP-65 relay list — the input to
+ * the zap-receipt `relays` tag. Unlike {@link queryNip65RelayList}, this:
+ *
+ *  • queries ALL read relays (not just the primary), each with its own
+ *    `maxWait`, so one slow/dead primary can't starve the result;
+ *  • distinguishes "no list exists" (found=false) from "couldn't fetch"
+ *    (found=true + non-empty, or found=false + we tried), letting the zap
+ *    flow pick a fallback instead of silently degrading to a sender-only tag.
+ *
+ * Returns as soon as any relay returns a list; otherwise after all settle or
+ * `timeoutMs` elapses.
+ */
+export async function lookupNip65RelayList(
+	pubkey: string,
+	options: { timeoutMs?: number } = {}
+): Promise<Nip65Lookup> {
+	const { timeoutMs = 2500 } = options;
+	if (!browser) return { found: false, readRelays: [] };
+	const urls = relays.urls;
+	if (!urls.length) return { found: false, readRelays: [] };
+
+	const filter = { kinds: [NOSTR_KINDS.RELAY_LIST], authors: [pubkey], limit: 1 };
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+	const readUrlsOf = (event: Event | undefined) =>
+		event ? parseNip65RelayList(event).filter((relay) => relay.read).map((relay) => relay.url) : [];
+
+	try {
+		return await new Promise<Nip65Lookup>((resolve) => {
+			let done = false;
+			const finish = (result: Nip65Lookup) => {
+				if (done) return;
+				done = true;
+				clearTimeout(timeout);
+				closers.forEach((close) => {
+					try {
+						close();
+					} catch {
+						/* already closed */
+					}
+				});
+				resolve(result);
+			};
+
+			const closers: Array<() => void> = [];
+			let pending = urls.length;
+
+			const sub = subscribeUrls(urls, [filter], {
+				onevent: (event) => {
+					// First relay to deliver the list wins — a kind 10002 is a
+					// full snapshot, there is nothing to merge across relays.
+					const readRelays = readUrlsOf(event);
+					if (readRelays.length) finish({ found: true, readRelays });
+				},
+				oneose: () => {
+					// EOSE from every relay without a single event → no list exists.
+					if (--pending <= 0) finish({ found: false, readRelays: [] });
+				}
+			});
+			closers.push(sub);
+
+			controller.signal.addEventListener('abort', () => finish({ found: false, readRelays: [] }));
+		});
+	} catch {
+		return { found: false, readRelays: [] };
+	}
 }
 
 /**
