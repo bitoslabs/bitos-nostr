@@ -72,7 +72,7 @@ describe('zapRelayTagUrls', () => {
 	it('prefers recipient read relays and appends a few of our own', () => {
 		const recipient = ['wss://a.example', 'wss://b.example', 'wss://c.example'];
 		const own = ['wss://own1.example', 'wss://own2.example'];
-		expect(zapRelayTagUrls(recipient, own)).toEqual([
+		expect(zapRelayTagUrls(recipient, own).slice(0, 5)).toEqual([
 			'wss://a.example',
 			'wss://b.example',
 			'wss://c.example',
@@ -88,7 +88,33 @@ describe('zapRelayTagUrls', () => {
 		expect(new Set(zapRelayTagUrls(recipient, own)).size).toBe(8);
 	});
 
-	it('falls back to our relays when the recipient list is empty', () => {
-		expect(zapRelayTagUrls([], ['wss://only.example'])).toEqual(['wss://only.example']);
+	it('pads a sender-only tag with popular writable relays', () => {
+		// The mobile failure mode: the recipient's NIP-65 list couldn't be
+		// fetched, so without padding the 9735 receipt would land only on our
+		// relays — sats move, the recipient is never notified.
+		const result = zapRelayTagUrls([], ['wss://only.example']);
+		expect(result).toHaveLength(7); // 1 own + all 6 popular fallbacks
+		expect(result[0]).toBe('wss://only.example');
+		expect(result).toContain('wss://relay.damus.io');
+		expect(result).toContain('wss://nos.lol');
+	});
+
+	it('appends popular relays after sparse inputs, deduplicated', () => {
+		const result = zapRelayTagUrls(['wss://r.example'], []);
+		expect(result).toHaveLength(7);
+		expect(result[0]).toBe('wss://r.example');
+		expect(new Set(result).size).toBe(7);
+	});
+
+	it('includes the fallback relays themselves in the cap', () => {
+		const result = zapRelayTagUrls([], []);
+		expect(result).toEqual([
+			'wss://nostr-01.yakihonne.com',
+			'wss://relay.damus.io',
+			'wss://nos.lol',
+			'wss://relay.primal.net',
+			'wss://nostr-pub.wellorder.net',
+			'wss://relay.nostr.band'
+		]);
 	});
 });

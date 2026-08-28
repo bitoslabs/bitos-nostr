@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { decode, encodeBytes } from 'nostr-tools/nip19';
-	import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
+	import { decode } from 'nostr-tools/nip19';
+	import type { Event } from 'nostr-tools/pure';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import HexIcon from '$lib/components/ui/HexIcon.svelte';
 	import QrCode from '$lib/components/ui/QrCode.svelte';
@@ -9,9 +9,8 @@
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { subscribe } from '$lib/nostr/pool';
-	import { hexToBytes } from '$lib/nostr/hex';
-	import { lnurlSupportsZap, zapRelayTagUrls } from '$lib/nostr/zaps';
-	import { queryNip65RelayList } from '$lib/nostr/nip65';
+	import { pendingZaps } from '$lib/stores/pending-zaps.svelte';
+	import { createZapInvoice, ZapInvoiceError } from '$lib/nostr/zap-invoice';
 	import { shortKey } from '$lib/utils/format';
 
 	type Props = { compact?: boolean };
@@ -35,6 +34,8 @@
 	let copied = $state(false);
 	let paid = $state(false);
 	let isZap = $state(false);
+	let zapRequest = $state<Event | null>(null);
+	let invoiceCreatedAt = 0;
 	let stopReceipt = $state<(() => void) | undefined>(undefined);
 
 	const profile = $derived(pubkey ? profiles.get(pubkey) : undefined);
@@ -52,7 +53,11 @@
 			loadingProfile = false;
 			error = 'The support profile could not be decoded.';
 		}
-		return () => stopReceipt?.();
+		document.addEventListener('visibilitychange', onVisibleRelisten);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibleRelisten);
+			stopReceipt?.();
+		};
 	});
 
 	function selectTier(sats: number) {
@@ -82,119 +87,75 @@
 		invoice = '';
 		paid = false;
 		isZap = false;
+		zapRequest = null;
 		stopReceipt?.();
 		stopReceipt = undefined;
 		try {
-			const [user, domain] = lightningAddress.split('@');
-			if (!user || !domain || lightningAddress.includes('://')) {
-				throw new Error('The published Lightning address is not a valid LN address.');
-			}
-			const metadataResponse = await fetch(
-				`https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`
-			);
-			if (!metadataResponse.ok) throw new Error('Could not reach the Lightning address provider.');
-			const metadata = (await metadataResponse.json()) as {
-				status?: string;
-				errors?: string;
-				callback?: string;
-				minSendable?: number;
-				maxSendable?: number;
-				allowsNostr?: boolean;
-				nostrPubkey?: string;
-			};
-			if (metadata.status === 'ERROR' || !metadata.callback) {
-				throw new Error(metadata.errors || 'The Lightning provider rejected the request.');
-			}
-			const millisats = amount * 1000;
-			if (metadata.minSendable && millisats < metadata.minSendable) {
-				throw new Error(
-					`The minimum supported amount is ${Math.ceil(metadata.minSendable / 1000)} sats.`
-				);
-			}
-			if (metadata.maxSendable && millisats > metadata.maxSendable) {
-				throw new Error(
-					`The maximum supported amount is ${Math.floor(metadata.maxSendable / 1000)} sats.`
-				);
-			}
-			const callback = new URL(metadata.callback);
-			callback.searchParams.set('amount', String(millisats));
-			// NIP-57: nostrPubkey is the provider's receipt-signing key, not the
-			// recipient's pubkey — requiresNostr support only, never key equality.
-			const supportsZap = lnurlSupportsZap(metadata);
-			let receiptRelays = relays.urls.slice(0, 8);
-			if (supportsZap) {
-				try {
-					const readRelays = (await queryNip65RelayList(pubkey))
-						.filter((relay) => relay.read)
-						.map((relay) => relay.url);
-					receiptRelays = zapRelayTagUrls(readRelays, relays.urls);
-				} catch {
-					/* NIP-65 list unavailable — fall back to our relays. */
+			const outcome = await createZapInvoice(
+				{
+					recipientPubkey: pubkey,
+					lightningAddress,
+					sats: amount,
+					anonymous: !identity.current?.sk
+				},
+				{
+					signingSecretHex: identity.current?.sk,
+					ownWritableUrls: relays.writeUrls.slice(0, 3)
 				}
-			}
-			let zapRequest: ReturnType<typeof finalizeEvent> | undefined;
-			if (supportsZap) {
-				zapRequest = finalizeEvent(
-					{
-						kind: 9734,
-						content: '',
-						created_at: Math.floor(Date.now() / 1000),
-						tags: [
-							['relays', ...receiptRelays],
-							['amount', String(millisats)],
-							['p', pubkey]
-						]
-					},
-					identity.current?.sk ? hexToBytes(identity.current.sk) : generateSecretKey()
-				);
-				callback.searchParams.set('nostr', JSON.stringify(zapRequest));
-				callback.searchParams.set(
-					'lnurl',
-					encodeBytes(
-						'lnurl',
-						new TextEncoder().encode(
-							`https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`
-						)
-					)
-				);
-			}
-			const invoiceResponse = await fetch(callback);
-			if (!invoiceResponse.ok) throw new Error('Could not create a Lightning invoice.');
-			const payment = (await invoiceResponse.json()) as {
-				status?: string;
-				pr?: string;
-				reason?: string;
-			};
-			if (payment.status === 'ERROR' || !payment.pr)
-				throw new Error(payment.reason || 'The provider returned no invoice.');
-			invoice = payment.pr;
-			isZap = !!zapRequest;
+			);
+			invoice = outcome.invoice;
+			isZap = !!outcome.zapRequest;
+			zapRequest = outcome.zapRequest;
+			invoiceCreatedAt = Math.floor(Date.now() / 1000);
 			if (zapRequest) {
-				const requestId = zapRequest.id;
-				stopReceipt = subscribe(
-					[{ kinds: [9735], '#p': [pubkey], since: Math.floor(Date.now() / 1000) - 120 }],
-					{
-						onevent: (event) => {
-							const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
-							if (!description) return;
-							try {
-								const receipt = JSON.parse(description) as { id?: string };
-								if (receipt.id !== requestId) return;
-								paid = true;
-								stopReceipt?.();
-								stopReceipt = undefined;
-							} catch {
-								/* Ignore malformed zap receipts. */
-							}
-						}
-					}
-				);
+				pendingZaps.track({
+					requestId: zapRequest.id,
+					recordId: outcome.recordId,
+					recipientPubkey: pubkey,
+					recipientName: displayName,
+					sats: amount,
+					invoice: outcome.invoice
+				});
+				relistenForReceipt();
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not prepare the donation.';
+			error = e instanceof ZapInvoiceError ? e.message : 'Could not prepare the donation.';
 		} finally {
 			loadingInvoice = false;
 		}
+	}
+
+	function handleReceiptEvent(event: { tags: string[][] }) {
+		if (!zapRequest) return;
+		const description = event.tags.find((tag) => tag[0] === 'description')?.[1];
+		if (!description) return;
+		try {
+			const receipt = JSON.parse(description) as { id?: string };
+			if (receipt.id !== zapRequest.id) return;
+			paid = true;
+			pendingZaps.forget(zapRequest.id);
+			stopReceipt?.();
+			stopReceipt = undefined;
+		} catch {
+			/* Ignore malformed zap receipts. */
+		}
+	}
+
+	/**
+	 * Re-open the receipt subscription. Re-armed on visibility change because
+	 * the `lightning:` deeplink freezes the page and kills its sockets.
+	 */
+	function relistenForReceipt() {
+		if (!zapRequest || paid) return;
+		stopReceipt?.();
+		stopReceipt = subscribe(
+			[{ kinds: [9735], '#p': [pubkey], since: Math.max(0, invoiceCreatedAt - 120) }],
+			{ onevent: handleReceiptEvent }
+		);
+	}
+
+	function onVisibleRelisten() {
+		if (document.visibilityState === 'visible') relistenForReceipt();
 	}
 
 	async function copyInvoice() {
