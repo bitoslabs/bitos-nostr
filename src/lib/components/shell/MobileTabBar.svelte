@@ -35,6 +35,12 @@
 		}
 	];
 
+	// These are the sections people switch between most often. Loading their
+	// route code once while the persistent tab bar is visible removes the code
+	// import from the tap path; route data still follows the existing hover/tap
+	// policy, so we do not fetch stale relay data unnecessarily.
+	const fastSwitchRoutes = new Set(['/', '/bitz', '/discover', '/messages', '/notifications']);
+
 	// Routes that live behind the "You" tab — the avatar lights up for them.
 	const youPrefixes = [
 		'/more',
@@ -81,6 +87,7 @@
 			{@const active = isActive(tab.to)}
 			<a
 				href={tab.to}
+				data-sveltekit-preload-code={fastSwitchRoutes.has(tab.to) ? 'viewport' : undefined}
 				class="relative flex flex-1 items-center justify-center px-1.5 py-2"
 				aria-current={active ? 'page' : undefined}
 			>
@@ -117,6 +124,7 @@
 		<!-- You: avatar → /more hub -->
 		<a
 			href="/more"
+			data-sveltekit-preload-code="viewport"
 			class="relative flex flex-1 items-center justify-center px-1.5 py-2"
 			aria-current={youActive ? 'page' : undefined}
 			aria-label="You — profile and more"

@@ -266,7 +266,7 @@
 	onclick={onClose}
 ></button>
 <aside
-	class="reel-comments-panel fixed inset-x-0 bottom-0 z-50 flex max-h-[78vh] flex-col overflow-hidden rounded-t-3xl bg-[var(--ui-bg)] text-[var(--ui-text)] md:border-l md:border-[var(--ui-border-muted)] lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none"
+	class="reel-comments-panel fixed inset-x-0 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-50 flex max-h-[min(78dvh,calc(100dvh-4.25rem-env(safe-area-inset-bottom)))] flex-col overflow-hidden rounded-t-3xl bg-[var(--ui-bg)] text-[var(--ui-text)] md:border-l md:border-[var(--ui-border-muted)] lg:inset-y-0 lg:right-0 lg:left-auto lg:h-full lg:max-h-none lg:w-[390px] lg:rounded-none"
 	aria-label="Bitz comments"
 >
 	<header class="flex h-14 shrink-0 items-center justify-between px-4">
@@ -480,7 +480,12 @@
 		{/if}
 	</div>
 
-	<div class="shrink-0 bg-transparent p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+	<!-- On mobile the sheet sits directly above the persistent tab bar. Keep the
+	     composer visually distinct as well, so its field and send action are
+	     never mistaken for content beneath the sheet. -->
+	<div
+		class="shrink-0 border-t border-[var(--ui-border-muted)] bg-[var(--ui-bg)] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+	>
 		{#key `${reel.id}:${commentReplyTarget?.id ?? ''}`}
 			{@const replyTargetProfile = commentReplyTarget
 				? profiles.get(commentReplyTarget.pubkey)

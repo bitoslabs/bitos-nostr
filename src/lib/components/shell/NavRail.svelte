@@ -49,6 +49,10 @@
 		{ to: '/settings', label: 'Settings', icon: 'i-lucide-settings-2', requiresAuth: true }
 	];
 
+	// Keep the routes used for everyday section switching warm. SvelteKit skips
+	// this for Save-Data users; data itself remains hover/tap-prefetched only.
+	const fastSwitchRoutes = new Set(['/', '/bitz', '/discover', '/messages', '/notifications']);
+
 	function isActive(to: string) {
 		const path = page.url.pathname;
 		return to === '/' ? path === '/' : path.startsWith(to);
@@ -141,6 +145,7 @@
 			{:else}
 				<a
 					href={item.to}
+					data-sveltekit-preload-code={fastSwitchRoutes.has(item.to) ? 'viewport' : undefined}
 					class="ui4-nav-item ui4-nav-row group relative flex items-center gap-4 rounded-xl px-4 py-3 text-[17px] font-medium transition-all"
 					aria-label={item.label}
 					aria-current={active ? 'page' : undefined}
