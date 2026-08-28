@@ -105,7 +105,7 @@ export const PICK_FORMATS: Array<MemeMediaFormatOption & { id: MemeMediaFormat; 
 		{
 			id: 'image',
 			label: 'Image meme',
-			hint: 'JPG · PNG · WebP',
+			hint: 'JPG · PNG · WebP (animated too)',
 			icon: 'i-lucide-image',
 			accept: 'image/png,image/jpeg,image/webp,image/*'
 		},

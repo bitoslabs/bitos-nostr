@@ -302,7 +302,7 @@
 	/** Warm an animated layer: bitmap (preview/stills) + decode (exports). */
 	async function cacheLayerAssets(src: string): Promise<void> {
 		await cacheLayerBitmap(src);
-		if (layerAssets.looksAnimatedGif(src)) await layerAssets.cacheGif(src);
+		if (layerAssets.looksAnimatedMedia(src)) await layerAssets.cacheGif(src);
 	}
 
 	/** GIF library pick as a STICKER layer (Giphy stickers are transparent

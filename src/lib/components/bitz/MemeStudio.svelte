@@ -93,7 +93,15 @@
 	} from '$lib/meme/image-overlay';
 	import { buddyFigure, isBuddySrc } from '$lib/meme/bitz-buddy';
 	import { layerMotionCss, layerMotionOf } from '$lib/meme/layer-motion';
-	import { canDecodeGif, decodeGif, paintGifFrameAt, type DecodedGif } from '$lib/meme/gif';
+	import {
+		canDecodeAnimatedWebp,
+		canDecodeGif,
+		decodeAnimatedWebp,
+		decodeGif,
+		isAnimatedWebp,
+		paintGifFrameAt,
+		type DecodedGif
+	} from '$lib/meme/gif';
 	import { planGifExport } from '$lib/meme/gif-export';
 	import {
 		CUSTOM_SOUND_KEY,
@@ -275,9 +283,9 @@
 	let stageBox = $state<HTMLElement | null>(null);
 	let gifStageCanvas = $state<HTMLCanvasElement | null>(null);
 
-	// ---- GIF + SFX state (animated source / sound-effect cues) -----------------
+	// ---- Animated-image + SFX state (animated source / sound-effect cues) ------
 	let gif = $state<DecodedGif | null>(null);
-	/** Animated sources (GIF) behave like video for timing/SFX. */
+	/** Animated GIF/WebP sources behave like video for timing/SFX. */
 	const animated = $derived(!!gif);
 	let sfxCues = $state<MemeSfxCue[]>([]);
 	let sfxMenuId = `meme-sfx-${Math.random().toString(36).slice(2, 8)}`;
@@ -1941,13 +1949,17 @@
 		mediaLibrary.remember(layer.src, source.name ?? buddyFigureLabel(src), bytes?.type);
 		const ok = await cacheLayerBitmap(layer.src);
 		if (!ok) toasts.warning('Layer added — but the image failed to load (will retry on export)');
-		// Animated GIF layers keep their motion in previews AND exports;
+		// Animated GIF/WebP layers keep their motion in previews AND exports;
 		// static layers just fall through to the bitmap path. Browsers without
 		// WebCodecs ImageDecoder (Safari/Firefox) can't — say so up front.
 		void layerAssets.cacheGif(layer.src).then((animated) => {
-			if (!animated && layerAssets.looksAnimatedGif(layer.src) && !canDecodeGif()) {
+			if (
+				!animated &&
+				layerAssets.isAnimatedSource(layer.src) &&
+				!layerAssets.canDecodeAnimation(layer.src)
+			) {
 				toasts.info(
-					'This GIF plays in the preview but exports as a still on this browser — Chrome or Edge keeps layers moving',
+					'This animated image plays in the preview but exports as a still on this browser — Chrome or Edge keeps layers moving',
 					5000
 				);
 			}
@@ -2570,6 +2582,7 @@
 	) {
 		if (!next) return;
 		const isGif = next.type === 'image/gif';
+		const isWebp = next.type === 'image/webp' || /\.webp$/i.test(next.name);
 		const kind = next.type.startsWith('video/')
 			? ('video' as const)
 			: next.type.startsWith('image/')
@@ -2623,8 +2636,8 @@
 		// one source selection, then fresh picks return to their normal behavior.
 		preserveLayoutOnNextMedia = false;
 		previewUrl = URL.createObjectURL(next);
-		// Animated GIFs decode into a timed frame reel (overlay timing + SFX cues
-		// ride the stage clock). Static images and videos skip this entirely.
+		// Animated GIF/WebP files decode into a timed frame reel (overlay timing +
+		// SFX cues ride the stage clock). Static images and videos skip this entirely.
 		if (isGif && canDecodeGif()) {
 			try {
 				const decoded = await decodeGif(await next.arrayBuffer());
@@ -2634,6 +2647,28 @@
 			} catch (e) {
 				resetGif();
 				toasts.warning(`${(e as Error).message} — publishing it as a static image`);
+			}
+		} else if (isWebp) {
+			const bytes = await next.arrayBuffer();
+			if (isAnimatedWebp(bytes)) {
+				if (!canDecodeAnimatedWebp()) {
+					resetGif();
+					toasts.info(
+						'Animated WebP editing needs a browser with ImageDecoder — publishing as a static image'
+					);
+				} else {
+					try {
+						const decoded = await decodeAnimatedWebp(bytes);
+						resetGif();
+						gif = decoded;
+						meta = { width: decoded.width, height: decoded.height, duration: decoded.duration };
+					} catch (e) {
+						resetGif();
+						toasts.warning(`${(e as Error).message} — publishing it as a static image`);
+					}
+				}
+			} else {
+				resetGif();
 			}
 		} else {
 			resetGif();
@@ -3486,9 +3521,9 @@
 			for (let i = 0; i < imageLayers.length; i++) {
 				const src = imageLayers[i]!.src;
 				if (!(await cacheLayerBitmap(src))) missing.push(i + 1);
-				// GIF decode retry right before recording — held bytes make this
+				// Animated-image decode retry right before recording — held bytes make this
 				// local and certain; failure means the layer freezes at frame 1.
-				if (layerAssets.looksAnimatedGif(src) && !(await layerAssets.cacheGif(src)))
+				if ((await layerAssets.cacheGif(src)) === false && layerAssets.isAnimatedSource(src))
 					frozen.push(i + 1);
 			}
 			if (missing.length) {
@@ -3783,15 +3818,11 @@
 		const posterFile = new File([posterBlob], `poster-${Date.now()}.jpg`, {
 			type: 'image/jpeg'
 		});
-		const uploaded = await media.upload(
-			posterFile,
-			selectedProvider,
-			{
-				pubkey: me?.pk,
-				purpose: 'note',
-				signal: mineController?.signal
-			}
-		);
+		const uploaded = await media.upload(posterFile, selectedProvider, {
+			pubkey: me?.pk,
+			purpose: 'note',
+			signal: mineController?.signal
+		});
 		posterUploadedUrl = uploaded.url;
 		return uploaded.url;
 	}

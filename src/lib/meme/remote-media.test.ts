@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchRemoteMedia } from './remote-media';
+import { fetchRemoteMedia, mediaProxyUrl } from './remote-media';
 
 describe('fetchRemoteMedia', () => {
+	it('builds a same-origin display URL for CORS-hostile image CDNs', () => {
+		expect(mediaProxyUrl('https://cdn.betterttv.net/emote/id/3x.webp')).toBe(
+			'/api/media/proxy?url=https%3A%2F%2Fcdn.betterttv.net%2Femote%2Fid%2F3x.webp'
+		);
+	});
+
 	it('uses the same-origin relay for proxyable media', async () => {
 		const fetch = vi.fn().mockResolvedValue(new Response('ok'));
 

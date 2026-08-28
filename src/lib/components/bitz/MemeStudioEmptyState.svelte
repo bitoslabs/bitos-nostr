@@ -140,32 +140,23 @@
 			{/snippet}
 			<GifPicker multiple max={6} onpick={onPickGif} onpickmany={onPickGifs} />
 		</Popover>
-		<Popover
-			id={blankPickerId}
-			float
-			placement="top-start"
-			width="auto"
-			label="Start from a blank canvas"
-			triggerClass="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"
-		>
-			{#snippet trigger()}
+		<div class="flex items-center gap-1.5" role="group" aria-label="Start from a blank canvas">
+			<span class="flex items-center gap-1 text-[11.5px] font-semibold text-[var(--ui-text-muted)]">
 				<Icon name="i-lucide-square-plus" class="size-3.5" />
 				Blank canvas
-			{/snippet}
-			<div class="flex items-center gap-1.5 p-1.5">
-				{#each BLANK_CANVAS_COLORS as color (color)}
-					<button
-						type="button"
-						aria-label={`Start a blank ${color} canvas`}
-						title={color}
-						disabled={staging}
-						onclick={() => onBlank(color)}
-						class="size-7 rounded-full border border-black/10 transition hover:scale-110 active:scale-95 dark:border-white/20"
-						style="background:{color};"
-					></button>
-				{/each}
-			</div>
-		</Popover>
+			</span>
+			{#each BLANK_CANVAS_COLORS as color (color)}
+				<button
+					type="button"
+					aria-label={`Start a blank ${color} canvas`}
+					title={color}
+					disabled={staging}
+					onclick={() => onBlank(color)}
+					class="size-7 rounded-full border border-black/10 transition hover:scale-110 active:scale-95 disabled:opacity-40 dark:border-white/20"
+					style="background:{color};"
+				></button>
+			{/each}
+		</div>
 		<button
 			type="button"
 			class="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg)] hover:text-[var(--ui-text)]"

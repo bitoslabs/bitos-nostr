@@ -15,6 +15,13 @@ export interface RemoteMediaFetchOptions {
 const WSRV_URL = 'https://wsrv.nl/?url=';
 const LOCAL_PROXY_URL = '/api/media/proxy?url=';
 
+/** Same-origin URL for displaying a CORS-hostile remote image in an <img> or
+ * canvas-facing picker. Keep the original URL as the media identity; this is
+ * only the browser-safe delivery URL. */
+export function mediaProxyUrl(url: string): string {
+	return `${LOCAL_PROXY_URL}${encodeURIComponent(url)}`;
+}
+
 function isWsrvUrl(url: string): boolean {
 	return /^https:\/\/wsrv\.nl\//i.test(url);
 }
@@ -33,7 +40,7 @@ export async function fetchRemoteMedia(
 	// only for callers that explicitly opt out of proxying.
 	const targets =
 		proxy && !isWsrvUrl(url)
-			? [`${LOCAL_PROXY_URL}${encodeURIComponent(url)}`, `${WSRV_URL}${encodeURIComponent(url)}`]
+			? [mediaProxyUrl(url), `${WSRV_URL}${encodeURIComponent(url)}`]
 			: [url];
 
 	for (const target of targets) {

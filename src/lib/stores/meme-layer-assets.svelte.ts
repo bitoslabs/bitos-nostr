@@ -1,5 +1,13 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { canDecodeGif, decodeGif, gifLayerPainter, type DecodedGif } from '$lib/meme/gif';
+import {
+	canDecodeAnimatedWebp,
+	canDecodeGif,
+	decodeAnimatedWebp,
+	decodeGif,
+	gifLayerPainter,
+	isAnimatedWebp,
+	type DecodedGif
+} from '$lib/meme/gif';
 import { MAX_IMAGE_OVERLAY_BYTES } from '$lib/meme/image-overlay';
 import { isBuddySrc } from '$lib/meme/bitz-buddy';
 import { isBitzverseSrc } from '$lib/meme/bitzverse';
@@ -80,6 +88,13 @@ export class LayerAssetCache {
 		string,
 		{ key: string; handle: ReturnType<typeof gifLayerPainter> }
 	>();
+	/** One decode per source at a time. The background preview decode and the
+	 * export preflight often overlap; without this, a successful painter could
+	 * coexist with a second failed decode and trigger a false frozen warning. */
+	private readonly decodeTasks = new Map<string, Promise<boolean>>();
+	/** Sources whose bytes confirm actual animation. A `.webp` suffix alone is
+	 * not enough: most sticker WebPs are static. */
+	private readonly animatedSources = new Set<string>();
 
 	/** Last GIF decode failure reason — surfaces in the export warning so the
 	 *  failure is diagnosable instead of a silent frame-1 freeze. */
@@ -106,6 +121,8 @@ export class LayerAssetCache {
 		this.blobs.delete(src);
 		this.gifs.get(src)?.close();
 		this.gifs.delete(src);
+		this.decodeTasks.delete(src);
+		this.animatedSources.delete(src);
 		this.painters.get(src)?.handle.close();
 		this.painters.delete(src);
 	}
@@ -118,16 +135,39 @@ export class LayerAssetCache {
 		this.renderSrcs.clear();
 		this.blobs.clear();
 		this.gifs.clear();
+		this.decodeTasks.clear();
+		this.animatedSources.clear();
 		this.painters.clear();
 		this.lastGifDecodeError = '';
 	}
 
-	/** Does this src look like an animated GIF layer? (content type when we
-	 *  hold the bytes; else the URL extension). */
+	/** Does this src name an animation-capable image format? The WebP bytes are
+	 *  checked before decoding so a static WebP remains a normal bitmap. */
+	looksAnimatedMedia(src: string): boolean {
+		const type = this.blobs.get(src)?.type;
+		if (type) return type === 'image/gif' || type === 'image/webp';
+		return /\.(?:gif|webp)(\?|$)/i.test(src);
+	}
+
+	/** Legacy GIF-only predicate retained for mobile editor callers and the
+	 * format-specific tests. New render paths should use looksAnimatedMedia. */
 	looksAnimatedGif(src: string): boolean {
 		const type = this.blobs.get(src)?.type;
 		if (type) return type === 'image/gif';
 		return /\.gif(\?|$)/i.test(src);
+	}
+
+	/** Capability differs by format: GIF has the JS fallback, while animated
+	 * WebP requires the browser's native ImageDecoder. */
+	canDecodeAnimation(src: string): boolean {
+		const type = this.blobs.get(src)?.type;
+		const webp = type === 'image/webp' || (!type && /\.webp(\?|$)/i.test(src));
+		return webp ? canDecodeAnimatedWebp() : canDecodeGif();
+	}
+
+	/** Whether this source has been byte-checked and confirmed animated. */
+	isAnimatedSource(src: string): boolean {
+		return this.animatedSources.has(src);
 	}
 
 	/** Decode (and cache) the bitmap for a src; resolves even on failure.
@@ -179,14 +219,33 @@ export class LayerAssetCache {
 	 *  layers (draft restore) fall back to a network fetch. */
 	async cacheGif(src: string): Promise<boolean> {
 		if (this.gifs.has(src)) return true;
-		if (!canDecodeGif()) return false;
+		const pending = this.decodeTasks.get(src);
+		if (pending) return pending;
+		const task = this.decodeAnimation(src);
+		this.decodeTasks.set(src, task);
+		try {
+			return await task;
+		} finally {
+			if (this.decodeTasks.get(src) === task) this.decodeTasks.delete(src);
+		}
+	}
+
+	private async decodeAnimation(src: string): Promise<boolean> {
 		try {
 			const blob = this.blobs.get(src) ?? (await fetchLayerBlob(src));
 			if (!blob) {
 				this.lastGifDecodeError = 'no bytes';
 				return false;
 			}
-			const decoded = await decodeGif(await blob.arrayBuffer());
+			const bytes = await blob.arrayBuffer();
+			const webp = blob.type === 'image/webp' || /\.webp(\?|$)/i.test(src);
+			const gif = blob.type === 'image/gif' || /\.gif(\?|$)/i.test(src);
+			if (!webp && !gif) return false;
+			if (webp && !isAnimatedWebp(bytes)) return false;
+			this.animatedSources.add(src);
+			if (webp && !canDecodeAnimatedWebp()) return false;
+			if (!webp && !canDecodeGif()) return false;
+			const decoded = webp ? await decodeAnimatedWebp(bytes) : await decodeGif(bytes);
 			this.gifs.set(src, decoded);
 			return true;
 		} catch (e) {
