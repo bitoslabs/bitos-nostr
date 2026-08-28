@@ -575,7 +575,7 @@
 		{/if}
 
 		{#if showPow}
-			<PowCard bind:pow {mining} progress={powProgress} compact oncancel={cancelMining} />
+			<PowCard bind:pow {mining} progress={powProgress} mini oncancel={cancelMining} />
 		{/if}
 
 		<!-- Toolbar -->

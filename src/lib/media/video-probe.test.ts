@@ -15,21 +15,21 @@ const tightLimits: ProbeLimits = { maxBytes: 1000, maxDurationSeconds: 10, maxMe
 describe('DEFAULT_PROBE_LIMITS', () => {
 	it('matches the V1 plan values', () => {
 		expect(DEFAULT_PROBE_LIMITS.maxBytes).toBe(200 * 1024 * 1024);
-		expect(DEFAULT_PROBE_LIMITS.maxDurationSeconds).toBe(60);
+		expect(DEFAULT_PROBE_LIMITS.maxDurationSeconds).toBe(10 * 60);
 		expect(DEFAULT_PROBE_LIMITS.maxMegapixels).toBe(50);
 	});
 });
 
 describe('probeMediaLimits', () => {
 	it('accepts metadata within every limit', () => {
-		expect(probeMediaLimits({ width: 1080, height: 1920, duration: 59.9 })).toBeNull();
+		expect(probeMediaLimits({ width: 1080, height: 1920, duration: 599.9 })).toBeNull();
 		expect(probeMediaLimits({ width: 1000, height: 1000 }, tightLimits)).toBeNull();
 	});
 
 	it('flags over-long durations with the limit in the detail', () => {
-		const err = probeMediaLimits({ width: 1080, height: 1920, duration: 61 });
+		const err = probeMediaLimits({ width: 1080, height: 1920, duration: 601 });
 		expect(err).toMatchObject({ ok: false, reason: 'too-long' });
-		expect(err?.detail).toContain('60s');
+		expect(err?.detail).toContain('600s');
 	});
 
 	it('flags decompression-bomb dimensions', () => {

@@ -30,6 +30,9 @@ const PROJECT_MEDIA_STORE = 'files';
 
 export interface MemeSlotMedia {
 	dataUrl?: string;
+	/** Tiny in-slot JPEG preview (~144px wide) for draft thumbnails in the
+	 *  studio home hero and the mobile Drafts sheet. Bounded at parse time. */
+	previewDataUrl?: string;
 	blobId?: string;
 	name: string;
 	mimeType: string;
@@ -93,10 +96,13 @@ function parseSlot(raw: unknown): MemeSlot | null {
 	const mediaRaw = s.media && typeof s.media === 'object' ? (s.media as MemeSlotMedia) : null;
 	const mediaDataUrl = typeof mediaRaw?.dataUrl === 'string' ? mediaRaw.dataUrl : null;
 	const mediaBlobId = typeof mediaRaw?.blobId === 'string' ? mediaRaw.blobId : null;
+	const mediaPreview =
+		typeof mediaRaw?.previewDataUrl === 'string' ? mediaRaw.previewDataUrl : null;
 	const media =
 		mediaDataUrl || mediaBlobId
 			? {
 					...(mediaDataUrl ? { dataUrl: mediaDataUrl.slice(0, MAX_SLOT_BYTES * 2) } : {}),
+					...(mediaPreview ? { previewDataUrl: mediaPreview.slice(0, 192 * 1024) } : {}),
 					...(mediaBlobId ? { blobId: mediaBlobId.slice(0, 96) } : {}),
 					name: typeof mediaRaw?.name === 'string' ? mediaRaw.name.slice(0, 80) : 'meme',
 					mimeType:

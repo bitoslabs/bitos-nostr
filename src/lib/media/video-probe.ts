@@ -41,7 +41,7 @@ export type VideoProbeResult = VideoProbeOk | VideoProbeErr;
 export interface ProbeLimits {
 	/** Hard byte cap before any upload attempt. */
 	maxBytes: number;
-	/** Hard duration cap in seconds (product limit, initially 60). */
+	/** Hard duration cap in seconds (product limit: 10 minutes). */
 	maxDurationSeconds: number;
 	/** Megapixel ceiling for images/frames (decompression-bomb guard). */
 	maxMegapixels: number;
@@ -50,7 +50,7 @@ export interface ProbeLimits {
 /** Plan §11 V1 defaults. */
 export const DEFAULT_PROBE_LIMITS: ProbeLimits = {
 	maxBytes: 200 * 1024 * 1024,
-	maxDurationSeconds: 60,
+	maxDurationSeconds: 10 * 60,
 	maxMegapixels: 50
 };
 

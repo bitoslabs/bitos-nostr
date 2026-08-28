@@ -13,6 +13,7 @@
  */
 import { getPow } from 'nostr-tools/nip13';
 import type { UnsignedEvent } from 'nostr-tools/pure';
+import { powPrefs } from '../stores/pow-prefs.svelte';
 
 /** Live stats streamed from the NIP-13 worker while mining. */
 export type PowProgress = {
@@ -33,12 +34,16 @@ export function minePowAsync(
 	return new Promise<UnsignedEvent>((resolve, reject) => {
 		const worker = new Worker(new URL('./pow.worker.ts', import.meta.url), { type: 'module' });
 		let settled = false;
+		// Hashrate seen in the latest progress tick — persisted once, at settle,
+		// so the PoW panel can show device-calibrated time estimates next time.
+		let lastRate = 0;
 		const settle = (fn: () => void) => {
 			if (settled) return;
 			settled = true;
 			worker.onmessage = null;
 			worker.onerror = null;
 			worker.terminate();
+			powPrefs.rememberHashrate(lastRate);
 			fn();
 		};
 		const onAbort = () => settle(() => reject(new Error('Proof of Work cancelled')));
@@ -59,6 +64,8 @@ export function minePowAsync(
 		) => {
 			const data = message.data;
 			if (data.type === 'progress') {
+				lastRate = data.progress!.hashrate;
+				powPrefs.noteHashrate(lastRate);
 				options.onProgress?.(data.progress!);
 				return;
 			}

@@ -53,7 +53,10 @@ describe('defaultTrim', () => {
 	});
 
 	it('pre-cuts longer sources to the publish cap', () => {
-		expect(defaultTrim(120)).toEqual({ inSeconds: 0, outSeconds: MAX_PUBLISH_SECONDS });
+		expect(defaultTrim(MAX_PUBLISH_SECONDS + 1)).toEqual({
+			inSeconds: 0,
+			outSeconds: MAX_PUBLISH_SECONDS
+		});
 	});
 });
 
@@ -79,7 +82,7 @@ describe('validateTrim', () => {
 	});
 
 	it('flags publish-cap overruns and shortens from the tail', () => {
-		const over = validateTrim({ inSeconds: 10, outSeconds: 90 });
+		const over = validateTrim({ inSeconds: 10, outSeconds: 10 + MAX_PUBLISH_SECONDS + 1 });
 		expect(over.valid).toBe(false);
 		expect(over.reason).toBe('over-publish-cap');
 		expect(over.suggested).toEqual({ inSeconds: 10, outSeconds: 10 + MAX_PUBLISH_SECONDS });

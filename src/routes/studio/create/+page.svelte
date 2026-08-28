@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { createMediaQuery } from '$lib/utils/media-query.svelte';
+	import { takeSharedFile } from '$lib/utils/share-inbox';
 	import {
 		studioHandoff,
 		type CreateTab,
@@ -59,6 +61,27 @@
 	let pendingSlotId = $state(pending?.resumeSlotId ?? null);
 	let pendingSound: StudioSoundSeed | null = $state(pending?.soundSeed ?? null);
 
+	// PWA share-target pickup: the service worker banked the OS-shared file
+	// and redirected here with ?shared=1 — drain the inbox once, strip the
+	// flag, and hand the file to the meme shell as a staged pick.
+	let sharedFile = $state<File | null>(null);
+	onMount(() => {
+		if (!page.url.searchParams.get('shared')) return;
+		void (async () => {
+			const file = await takeSharedFile();
+			if (file) {
+				sharedFile = file;
+				tab = 'meme';
+				memeOpen = true;
+				bitzOpen = false;
+			}
+			// Strip the flag either way — a failed stash must not re-trigger.
+			const next = new URL(page.url);
+			next.searchParams.delete('shared');
+			history.replaceState(history.state, '', next);
+		})();
+	});
+
 	// Mobile-native shell (docs/studio-mobile-ux.md): auto-selected on narrow
 	// viewports, forced with `?shell=app` (desktop preview / QA) and overridden
 	// back to the desktop 3-pane with `?shell=full`.
@@ -112,9 +135,13 @@
 	onkeydown={(event) => {
 		if (event.key === 'Escape') {
 			event.preventDefault();
-			// Native feel: with a bottom sheet open (`?panel=` / `?edit=`), back/ESC
-			// closes the sheet instead of leaving the editor.
-			if (page.url.searchParams.get('panel') || page.url.searchParams.get('edit')) {
+			// Native feel: with a bottom sheet open (`?panel=` / `?edit=` / `?layer=`),
+			// back/ESC closes the sheet instead of leaving the editor.
+			if (
+				page.url.searchParams.get('panel') ||
+				page.url.searchParams.get('edit') ||
+				page.url.searchParams.get('layer')
+			) {
 				history.back();
 				return;
 			}
@@ -177,6 +204,7 @@
 				remixHandoff={remixPayload}
 				templateHandoff={pendingTemplate}
 				slotHandoff={pendingSlotId}
+				{sharedFile}
 			/>
 		{:else if tab === 'meme'}
 			<MemeStudio
