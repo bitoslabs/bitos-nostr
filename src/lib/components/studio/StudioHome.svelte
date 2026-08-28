@@ -78,6 +78,7 @@
 	<!-- Continue creating: the freshest WIP slot as a hero card — one tap from
 	     cold start back into the exact meme you were making. -->
 	{#if newestSlot}
+		{@const heroThumb = newestSlot.media?.previewDataUrl ?? newestSlot.media?.dataUrl}
 		<section class="mb-6" aria-label="Continue creating">
 			<div
 				class="group relative overflow-hidden rounded-2xl border border-warm-500/35 bg-gradient-to-br from-warm-500/12 via-[var(--ui-bg-muted)]/60 to-[var(--ui-bg-muted)]/40 p-4 transition hover:border-warm-500/60"
@@ -89,8 +90,8 @@
 						class="relative block h-[86px] w-[52px] shrink-0 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-accented)] text-[var(--ui-text-dimmed)] transition group-hover:border-warm-500/50"
 						title="Resume “{newestSlot.label}” in the Meme Studio"
 					>
-						{#if newestSlot.media?.dataUrl}
-							<img src={newestSlot.media.dataUrl} alt="" class="size-full object-cover" />
+						{#if heroThumb}
+							<img src={heroThumb} alt="" class="size-full object-cover" />
 						{:else}
 							<span class="grid size-full place-items-center">
 								{#if newestSlot.mediaKindValue === 'video'}
@@ -215,13 +216,16 @@
 			</div>
 			<div class="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
 				{#each memeSlots.list as slot (slot.id)}
+					{@const slotThumb = slot.media?.previewDataUrl ?? slot.media?.dataUrl}
 					<div
 						class="group flex items-start gap-3 rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/40 p-3.5 transition hover:border-warm-500/35"
 					>
 						<span
-							class="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
+							class="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-[var(--ui-bg-accented)] text-[var(--ui-text-muted)]"
 						>
-							{#if slot.mediaKindValue === 'video'}
+							{#if slotThumb}
+								<img src={slotThumb} alt="" class="size-full object-cover" />
+							{:else if slot.mediaKindValue === 'video'}
 								<Icon name="i-lucide-film" class="size-4.5" />
 							{:else if slot.mediaKindValue === 'image'}
 								<Icon name="i-lucide-image" class="size-4.5" />

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Dialog from '$lib/components/ui/Dialog.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -75,9 +75,14 @@
 		{ key: 'repost', label: 'Reposts', icon: 'i-lucide-repeat-2' },
 		{ key: 'follow', label: 'Follows', icon: 'i-lucide-user-plus' }
 	];
+	const INITIAL_RENDER_LIMIT = 24;
+	const RENDER_PAGE_SIZE = 24;
 
 	let filter = $state<Filter>('all');
+	/** The input updates instantly; the expensive list search waits for a pause in typing. */
+	let searchText = $state('');
 	let query = $state('');
+	let renderLimit = $state(INITIAL_RENDER_LIMIT);
 	let mobileSearchOpen = $state(false);
 	let rawOpen = $state(false);
 	let rawEvent = $state('');
@@ -90,16 +95,32 @@
 		return notifications.countByType[filterKey] ?? 0;
 	}
 
-	const filtered = $derived(
-		notifications.visible.filter((item) => {
-			if (filter === 'unread' && item.read) return false;
-			if (filter !== 'all' && filter !== 'unread' && item.type !== filter) return false;
-			if (!query.trim()) return true;
-			const q = query.trim().toLowerCase();
-			const name = actorName(item.pubkey).toLowerCase();
-			return name.includes(q) || item.content.toLowerCase().includes(q);
-		})
+	const normalizedQuery = $derived(query.trim().toLocaleLowerCase());
+
+	/**
+	 * Build the searchable text only when events or profiles change, rather than
+	 * recalculating display names and lower-casing every notification per keypress.
+	 */
+	const searchable = $derived(
+		notifications.visible.map((item) => ({
+			item,
+			haystack: `${actorName(item.pubkey)}\n${item.content}`.toLocaleLowerCase()
+		}))
 	);
+
+	const filtered = $derived(
+		searchable
+			.filter(({ item, haystack }) => {
+				if (filter === 'unread' && item.read) return false;
+				if (filter !== 'all' && filter !== 'unread' && item.type !== filter) return false;
+				return !normalizedQuery || haystack.includes(normalizedQuery);
+			})
+			.map(({ item }) => item)
+	);
+
+	/** Keep the initial DOM small. Older matching rows mount only on request. */
+	const rendered = $derived(filtered.slice(0, renderLimit));
+	const hiddenCount = $derived(Math.max(0, filtered.length - rendered.length));
 
 	/** Fold consecutive same-type + same-target items into a single row (iOS-style). */
 	type Row =
@@ -121,7 +142,7 @@
 
 		let buf: NotificationItem[] = [];
 		let lastKey = '';
-		for (const item of filtered) {
+		for (const item of rendered) {
 			const day = dayLabel(item.createdAt);
 			if (day !== currentDay) {
 				flushGroup(buf);
@@ -144,6 +165,21 @@
 		}
 		flushGroup(buf);
 		return out;
+	});
+
+	$effect(() => {
+		const text = searchText;
+		const timer = setTimeout(() => {
+			query = text;
+		}, 180);
+		return () => clearTimeout(timer);
+	});
+
+	$effect(() => {
+		// A filter or committed search starts from the fast, compact first page.
+		void filter;
+		void query;
+		renderLimit = INITIAL_RENDER_LIMIT;
 	});
 
 	/** Track which items were present when the list opened, so live new arrivals
@@ -343,14 +379,6 @@
 			seenAt = 0;
 		};
 	});
-
-	// Keep sections in view when new live items arrive above the fold.
-	let listEl: HTMLDivElement | undefined = $state();
-	$effect(() => {
-		void notifications.visible.length;
-		void tick();
-		if (listEl) listEl.scrollTop = listEl.scrollTop; // no-op ref to keep linter calm
-	});
 </script>
 
 <svelte:head>
@@ -369,7 +397,7 @@
 {/snippet}
 
 <div class="flex h-full">
-	<div bind:this={listEl} class="min-w-0 flex-1 overflow-y-auto">
+	<div class="min-w-0 flex-1 overflow-y-auto">
 		<PageHeader title="Notifications">
 			{#snippet subtitle()}
 				<span class="inline-flex items-center gap-1">
@@ -437,7 +465,7 @@
 						<Icon name="i-lucide-search" class="size-3.5 shrink-0 text-[var(--ui-text-dimmed)]" />
 						<input
 							type="search"
-							bind:value={query}
+							bind:value={searchText}
 							placeholder="Search activity…"
 							aria-label="Search notifications"
 							class="w-full bg-transparent text-[12px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
@@ -454,7 +482,7 @@
 					<Icon name="i-lucide-search" class="size-4 shrink-0 text-[var(--ui-text-dimmed)]" />
 					<input
 						type="search"
-						bind:value={query}
+						bind:value={searchText}
 						placeholder="Search activity…"
 						class="w-full bg-transparent text-[13px] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 					/>
@@ -534,16 +562,16 @@
 						class="grid size-14 place-items-center rounded-2xl bg-[var(--ui-bg-muted)] text-[var(--ui-text-dimmed)]"
 					>
 						<Icon
-							name={query || filter !== 'all' ? 'i-lucide-search-x' : 'i-lucide-bell'}
+							name={searchText || filter !== 'all' ? 'i-lucide-search-x' : 'i-lucide-bell'}
 							class="size-7"
 						/>
 					</div>
 					<div>
 						<p class="text-[15px] font-semibold">
-							{query || filter !== 'all' ? 'No matching activity' : 'No notifications yet'}
+							{searchText || filter !== 'all' ? 'No matching activity' : 'No notifications yet'}
 						</p>
 						<p class="mt-1 text-[13px] text-[var(--ui-text-muted)]">
-							{query || filter !== 'all'
+							{searchText || filter !== 'all'
 								? 'Try a different filter or search term.'
 								: 'Likes, comments, reposts, mentions, zaps and follows will appear here.'}
 						</p>
@@ -858,7 +886,16 @@
 					{/each}
 				</div>
 
-				<div class="py-8 text-center">
+				<div class="flex flex-col items-center gap-3 py-8 text-center">
+					{#if hiddenCount > 0}
+						<button
+							type="button"
+							onclick={() => (renderLimit += RENDER_PAGE_SIZE)}
+							class="inline-flex items-center justify-center gap-2 rounded-full bg-primary-500 px-5 py-2.5 text-[13px] font-semibold text-white shadow-[var(--glow-primary)] transition hover:bg-primary-600"
+						>
+							Show {Math.min(RENDER_PAGE_SIZE, hiddenCount)} more of {hiddenCount} older activities
+						</button>
+					{/if}
 					<button
 						type="button"
 						onclick={() => notifications.loadMore()}

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeGif, gifLayerPainter } from './gif';
 import { encodeAnimatedGif, type GifEncodeFrame } from './gif-encode';
 import { planGifExport } from './gif-export';
-import { paintImageOverlays } from './render';
+import { paintImageOverlays, type AnimatedLayerPainter } from './render';
 import type { MemeImageOverlay } from './image-overlay';
 
 /** Solid-color canvas (the frame source for synthetic GIFs). */
@@ -60,10 +60,12 @@ describe('GIF export round trip (browser)', () => {
 			y: 0.5,
 			size: 0.5
 		};
-		let painter: ReturnType<typeof gifLayerPainter> | null = null;
-		const resolver = (_src: string, box: { w: number; h: number }) => {
-			if (!painter) painter = gifLayerPainter(decoded, box);
-			return (ctx, x, y, timeSec) => painter!.paint(ctx, x, y, timeSec);
+		// A ref object dodges TS's closure-narrowing (a `let painter` captured and
+		// assigned inside the resolver narrows back to `null` at the close call).
+		const painterRef: { current: ReturnType<typeof gifLayerPainter> | null } = { current: null };
+		const resolver = (_src: string, box: { w: number; h: number }): AnimatedLayerPainter => {
+			if (!painterRef.current) painterRef.current = gifLayerPainter(decoded, box);
+			return (ctx, x, y, timeSec) => painterRef.current!.paint(ctx, x, y, timeSec);
 		};
 		const outFrames: GifEncodeFrame[] = [];
 		for (const step of plan.steps) {
@@ -72,7 +74,7 @@ describe('GIF export round trip (browser)', () => {
 			paintImageOverlays(ctx, [layer], () => null, a, step.atSec * 1000, resolver);
 			outFrames.push({ source: a, delayMs: step.delayMs });
 		}
-		painter?.close();
+		painterRef.current?.close();
 
 		const outBlob = await encodeAnimatedGif(outFrames, { width: 80, height: 80 });
 		const roundTripped = await decodeGif(await outBlob.arrayBuffer());

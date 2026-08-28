@@ -99,7 +99,8 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob 
 /**
  * Render the trim window to a portable video blob.
  *
- * Real-time by design (canvas capture), so a 60s bitz renders in ~60s; the
+ * Real-time by design (canvas capture), so a ten-minute bitz can take about
+ * ten minutes to render; the
  * caller should surface `onProgress` and keep the stage responsive.
  */
 export async function renderVideoCut(

@@ -4,8 +4,9 @@
 
 	/** Proof-of-Work visualization: a row of 16 segments whose fill count maps
 	 * to the mined difficulty (bits), plus the numeric label. Used on notes,
-	 * quotes, and the composer. `micro` renders a dense shield + bits inline
-	 * variant for comment rows where a full segment bar would be noise. */
+	 * quotes, and the composer. `micro` renders a dense inline variant for
+	 * comment/notification rows: shield + tiny 8-segment bar (the same 4-bit
+	 * mapping as the composer's drag-rank bar) + bits. */
 	let {
 		bits = 0,
 		max = 32,
@@ -19,7 +20,7 @@
 		max?: number;
 		showLabel?: boolean;
 		compact?: boolean;
-		/** Dense inline variant (shield + bits) for comment/list rows. */
+		/** Dense inline variant (shield + tiny 8-segment bar + bits) for rows. */
 		micro?: boolean;
 		/** Optional event id — full variant appends the raw `00009215` receipt;
 		 * micro adds it to the tooltip. */
@@ -31,12 +32,22 @@
 	const SEGMENTS = 16;
 	const filled = $derived(Math.min(SEGMENTS, Math.round((Math.min(bits, max) / max) * SEGMENTS)));
 	const segments = $derived(Array.from({ length: SEGMENTS }, (_, i) => i < filled));
+
+	// Micro bar: same 8×4-bit mapping as the composer's drag-rank bar, so a
+	// comment badge reads the same way as the control that set it.
+	const MICRO_SEGS = 8;
+	const microSegments = $derived(
+		Array.from(
+			{ length: MICRO_SEGS },
+			(_, i) => i < Math.round((Math.min(bits, 32) / 32) * MICRO_SEGS)
+		)
+	);
 </script>
 
 {#if micro}
 	<span
 		class={cn(
-			'inline-flex shrink-0 items-center gap-0.5 rounded-md border px-1 py-px',
+			'inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px',
 			'bg-[color-mix(in_oklab,var(--ui-color-primary-500)_7%,transparent)]',
 			'border-[color-mix(in_oklab,var(--ui-color-primary-500)_18%,transparent)]',
 			cls
@@ -54,6 +65,11 @@
 				d="M12 2 4 6.2v5.6c0 4.5 3.4 8.7 8 9.9 4.6-1.2 8-5.4 8-9.9V6.2L12 2Zm-1 14-4-4 1.4-1.4L11 13.2l4.6-4.6L17 10l-6 6Z"
 			/>
 		</svg>
+		<span class="pow-bar-xs" aria-hidden="true">
+			{#each microSegments as on, index (index)}
+				<span class={on ? 'is-filled' : ''}></span>
+			{/each}
+		</span>
 		<span
 			class="font-mono text-[9.5px] leading-none font-semibold text-[var(--ui-color-primary-500)]"
 		>

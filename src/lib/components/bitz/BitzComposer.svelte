@@ -19,6 +19,7 @@
 		coverScrubBounds,
 		defaultTrim,
 		isTrimmlable,
+		MAX_PUBLISH_SECONDS,
 		validateTrim
 	} from '$lib/media/video-trim';
 	import { canRenderVideoCut, renderVideoCut, browserEnvironment } from '$lib/media/video-cut';
@@ -59,6 +60,12 @@
 	 * opt-in proof-of-work “rare bitz” mining) makes the flow unmistakably
 	 * Nostr: the published event is a standard NIP-68 / NIP-71 media note that
 	 * renders in every short-video client, not just BitOS.
+	 *
+	 * Mobile-native pass (page variant on touch devices): tap-first empty
+	 * state with a **Record** CTA (`capture=environment` opens the rear
+	 * camera — detected after mount so SSR/hydration agree), a wider 9:16
+	 * stage on phones, and safe-area padding under the publish bar. Desktop
+	 * keeps the drag & drop affordances unchanged.
 	 */
 	let {
 		open = $bindable(false),
@@ -90,6 +97,13 @@
 	let caption = $state('');
 	let sensitive = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
+	/** Camera capture input (touch devices): share the accept/onchange path —
+	 *  `capture` makes the OS open the rear camera instead of the picker. */
+	let cameraInput = $state<HTMLInputElement | null>(null);
+	/** Touch-first chrome: coarse pointers get tap copy + a Record CTA; fine
+	 *  pointers keep the drag & drop affordances. Detected after mount so
+	 *  SSR/hydration agree (defaults to the desktop presentation). */
+	let touchPicker = $state(false);
 	let dragOver = $state(false);
 	let confirmDiscard = $state(false);
 
@@ -344,6 +358,7 @@
 	});
 
 	onMount(() => {
+		if (typeof matchMedia !== 'undefined') touchPicker = matchMedia('(pointer: coarse)').matches;
 		return () => {
 			mineController?.abort();
 			if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -642,11 +657,10 @@
 						`bitz-cut-${Date.now()}.${cut.mimeType.includes('mp4') ? 'mp4' : 'webm'}`,
 						{ type: cut.mimeType }
 					);
-					publishUploaded = await media.upload(
-						renderedFile,
-						provider,
-						{ pubkey: me?.pk, purpose: 'note' }
-					);
+					publishUploaded = await media.upload(renderedFile, provider, {
+						pubkey: me?.pk,
+						purpose: 'note'
+					});
 					publishMeta = {
 						width: cut.width,
 						height: cut.height,
@@ -657,11 +671,10 @@
 							type: 'image/jpeg'
 						});
 						try {
-							const shot = await media.upload(
-								coverFile,
-								provider,
-								{ pubkey: me?.pk, purpose: 'note' }
-							);
+							const shot = await media.upload(coverFile, provider, {
+								pubkey: me?.pk,
+								purpose: 'note'
+							});
 							publishCover = shot.url;
 						} catch {
 							/* keep any existing cover — rendering to HD matters more */
@@ -938,18 +951,33 @@
 							</span>
 							<div>
 								<p class="text-[15px] font-bold text-[var(--ui-text-highlighted)]">
-									Drop a video or picture
+									{touchPicker ? 'Add a video or picture' : 'Drop a video or picture'}
 								</p>
 								<p class="mt-1 text-[13px] leading-relaxed text-[var(--ui-text-muted)]">
-									Portrait videos become short-form bitz — up to 200 MB.
+									Videos can be up to 10 minutes and 200 MB.
 								</p>
 							</div>
-							<span
-								class="mt-1 inline-flex items-center gap-1.5 rounded-full bg-warm-500 px-4 py-2 text-[12.5px] font-bold text-white transition group-hover:brightness-110 active:scale-95"
-							>
-								<Icon name="i-lucide-upload" class="size-4" />
-								Choose file
-							</span>
+							<div class="flex flex-wrap items-center justify-center gap-2">
+								<span
+									class="inline-flex items-center gap-1.5 rounded-full bg-warm-500 px-4 py-2 text-[12.5px] font-bold text-white transition group-hover:brightness-110 active:scale-95"
+								>
+									<Icon name="i-lucide-upload" class="size-4" />
+									{touchPicker ? 'Choose from device' : 'Choose file'}
+								</span>
+								{#if touchPicker}
+									<button
+										type="button"
+										onclick={(e) => {
+											e.stopPropagation();
+											cameraInput?.click();
+										}}
+										class="inline-flex items-center gap-1.5 rounded-full border border-warm-500/50 bg-warm-500/10 px-4 py-2 text-[12.5px] font-bold text-warm-500 transition active:scale-95"
+									>
+										<Icon name="i-lucide-video" class="size-4" />
+										Record
+									</button>
+								{/if}
+							</div>
 							<p class="flex items-center gap-1 text-[11px] text-[var(--ui-text-dimmed)]">
 								<Icon name="i-lucide-globe" class="size-3.5" />
 								Publishes a standard Nostr media event — playable in every Nostr app
@@ -959,7 +987,7 @@
 				{:else}
 					<div class="grid gap-4 p-4 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)] sm:gap-5 sm:p-5">
 						<!-- 9:16 WYSIWYG stage -->
-						<div class="mx-auto w-full max-w-[260px] sm:mx-0">
+						<div class="mx-auto w-full max-w-[300px] sm:mx-0 sm:max-w-[260px]">
 							<p
 								class="mb-1.5 text-[10px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase"
 							>
@@ -1215,7 +1243,7 @@
 											{#if trimValidation.reason === 'too-short' || trimValidation.reason === 'inverted'}
 												Cuts need at least 1 second
 											{:else}
-												Keep the cut at 60s or less to publish
+												Keep the cut at {formatDuration(MAX_PUBLISH_SECONDS)} or less to publish
 											{/if}
 										</p>
 									{/if}
@@ -1461,6 +1489,9 @@
 			{#if file}
 				<footer
 					class="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--ui-border-muted)] px-4 py-3"
+					style={full
+						? 'padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.75rem)'
+						: undefined}
 				>
 					<p
 						class="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-[var(--ui-text-muted)]"
@@ -1564,6 +1595,15 @@
 	bind:this={fileInput}
 	type="file"
 	accept="video/*,image/*"
+	class="hidden"
+	onchange={onFileInput}
+/>
+
+<input
+	bind:this={cameraInput}
+	type="file"
+	accept="video/*"
+	capture="environment"
 	class="hidden"
 	onchange={onFileInput}
 />

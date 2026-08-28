@@ -32,9 +32,45 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
 	const { request } = event;
+	const url = new URL(request.url);
+
+	// PWA share-target (manifest `share_target`): the OS share sheet POSTs
+	// multipart data here with the shared media. The file is banked into a
+	// dedicated cache BEFORE the redirect resolves (waitUntil), and the page
+	// boots at ?tab=meme&shared=1 where the studio picks it up
+	// (`takeSharedFile`) and stages it on the canvas.
+	if (
+		request.method === 'POST' &&
+		url.origin === self.location.origin &&
+		url.pathname === '/studio/create'
+	) {
+		event.respondWith(Response.redirect('/studio/create?tab=meme&shared=1', 303));
+		event.waitUntil(
+			(async () => {
+				try {
+					const form = await request.formData();
+					const shared = form.get('files');
+					if (!(shared instanceof File)) return;
+					const cache = await caches.open('bitos-share-inbox');
+					await cache.put(
+						'/__bitos-shared-file__',
+						new Response(shared, {
+							headers: {
+								'Content-Type': shared.type || 'application/octet-stream',
+								'X-File-Name': encodeURIComponent(shared.name || 'shared')
+							}
+						})
+					);
+				} catch {
+					/* a failed stash just opens an empty studio */
+				}
+			})()
+		);
+		return;
+	}
+
 	if (request.method !== 'GET') return;
 
-	const url = new URL(request.url);
 	if (url.origin !== self.location.origin) return;
 
 	if (request.mode === 'navigate') {

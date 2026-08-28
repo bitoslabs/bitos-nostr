@@ -36,7 +36,7 @@ export interface VideoOutputPolicy {
 	framesPerSecond: number;
 	/** JPEG quality for the rendered cover frame. */
 	coverQuality: number;
-	/** Hard product cap — renders never exceed this (plan: initially 60s). */
+	/** Hard product cap — renders never exceed ten minutes. */
 	maxPublishSeconds: number;
 }
 

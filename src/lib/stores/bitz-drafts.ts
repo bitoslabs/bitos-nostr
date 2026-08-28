@@ -9,7 +9,7 @@
  * never re-uploads bytes, and a crash before publish resumes at "verify then
  * sign".
  *
- * Source video bytes are deliberately NOT stored (a 60s clip dwarfs the
+ * Source video bytes are deliberately NOT stored (a ten-minute clip dwarfs the
  * ~5 MB localStorage budget); the draft records the file reference fields
  * needed to re-probe once the user re-picks the file. Everything else —
  * trim window, cover URL, uploaded URL/hash — survives intact.

@@ -1491,7 +1491,7 @@ html[data-reduced-motion='true'] *::after {
 		border-radius: 24%;
 	}
 
-	/* Proof-of-Work segments. */
+	/* Proof-of-Work segments — rounded pills matching the mini-bar rank track. */
 	.pow-bar {
 		display: inline-flex;
 		gap: 2px;
@@ -1499,15 +1499,36 @@ html[data-reduced-motion='true'] *::after {
 	}
 	.pow-bar > span {
 		width: 3px;
-		height: 9px;
+		height: 10px;
 		background: var(--ui-color-primary-500);
-		border-radius: 1px;
+		border-radius: 999px;
 		opacity: 0.18;
 		transition:
 			opacity 0.3s ease,
 			box-shadow 0.3s ease;
 	}
 	.pow-bar > span.is-filled {
+		opacity: 1;
+		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	/* Micro variant for dense rows (comments, notifications, reels) — same
+	 * 8×4-bit mapping as the composer's drag-rank bar, at a glance. */
+	.pow-bar-xs {
+		display: inline-flex;
+		gap: 1.5px;
+		align-items: center;
+	}
+	.pow-bar-xs > span {
+		width: 2px;
+		height: 8px;
+		background: var(--ui-color-primary-500);
+		border-radius: 999px;
+		opacity: 0.18;
+		transition:
+			opacity 0.3s ease,
+			box-shadow 0.3s ease;
+	}
+	.pow-bar-xs > span.is-filled {
 		opacity: 1;
 		box-shadow: 0 0 4px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
 	}
@@ -1780,6 +1801,98 @@ html[data-reduced-motion='true'] *::after {
 	.hash-viz.is-mining > span.is-on {
 		animation: hash-viz-pulse 1.15s ease-in-out infinite alternate;
 	}
+	/* Larger variant used inside the composer's PoW panel. */
+	.hash-viz-lg {
+		gap: 3px;
+	}
+	.hash-viz-lg > span {
+		width: 4px;
+		height: 16px;
+		border-radius: 1.5px;
+	}
+	/* Quick-rank drag track inside the mini PoW pill: 21 slim tick marks
+	 * spread across the track (1 tick ≈ 1 bit, 0–20); an invisible native
+	 * range input overlaid on top provides click / drag / keyboard scrubbing
+	 * for free. Width comes from utility classes on the element (max-w-52
+	 * w-full inside a flex-1 wrapper). */
+	.pow-rank-track {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 16px;
+		border-radius: 999px;
+	}
+	/* Thin baseline under the ticks so the ruler reads as a slider track. */
+	.pow-rank-track::before {
+		content: '';
+		position: absolute;
+		left: 1px;
+		right: 1px;
+		top: 50%;
+		height: 2px;
+		transform: translateY(-50%);
+		border-radius: 999px;
+		background: var(--ui-text-dimmed);
+		opacity: 0.3;
+		pointer-events: none;
+	}
+	.pow-rank-track > span {
+		position: relative;
+		flex: 0 0 3px;
+		width: 3px;
+		height: 100%;
+		border-radius: 999px;
+		background: var(--ui-text-dimmed);
+		opacity: 0.45;
+		transition:
+			opacity 0.15s ease,
+			box-shadow 0.15s ease,
+			transform 0.15s ease;
+		pointer-events: none;
+	}
+	.pow-rank-track > span.is-filled {
+		background: var(--ui-color-primary-500);
+		opacity: 1;
+		box-shadow: 0 0 6px color-mix(in oklab, var(--ui-color-primary-500) 45%, transparent);
+	}
+	.pow-rank-track:hover > span {
+		opacity: 0.75;
+	}
+	.pow-rank-track:hover > span.is-filled {
+		opacity: 1;
+		transform: scaleY(1.15);
+	}
+	.pow-rank-input {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		opacity: 0;
+		cursor: ew-resize;
+		appearance: none;
+		-webkit-appearance: none;
+		background: transparent;
+	}
+	.pow-rank-track:has(.pow-rank-input:focus-visible) {
+		outline: 2px solid color-mix(in oklab, var(--ui-color-primary-500) 55%, transparent);
+		outline-offset: 2px;
+	}
+	/* Pickaxe wiggle while the note is being mined. */
+	.pow-pick-swing {
+		display: inline-block;
+		transform-origin: 50% 85%;
+		animation: pow-pick-swing 0.9s ease-in-out infinite;
+	}
+	@keyframes pow-pick-swing {
+		0%,
+		100% {
+			transform: rotate(-16deg);
+		}
+		50% {
+			transform: rotate(12deg);
+		}
+	}
 	.mining-nonce {
 		animation: mining-nonce-glow 0.55s ease-in-out infinite alternate;
 	}
@@ -1833,6 +1946,9 @@ html[data-reduced-motion='true'] *::after {
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.pow-live-zeros {
+			animation: none;
+		}
+		.pow-pick-swing {
 			animation: none;
 		}
 	}
