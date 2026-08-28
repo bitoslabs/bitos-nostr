@@ -1,8 +1,7 @@
 /**
- * Animated-GIF engine for Meme Studio - decodes a GIF into canvas-friendly
- * frames using WebCodecs ImageDecoder (Chromium; other browsers fall back to
- * the plain <img> preview), extends the meme timeline to full GIF duration,
- * and reuses the canvas-capture recorder for export.
+ * Animated-image engine for Meme Studio. GIFs use WebCodecs ImageDecoder with
+ * a pure-JS fallback; animated WebP uses ImageDecoder. Both become the same
+ * timed, canvas-friendly frame reel so the studio can export them as GIFs.
  *
  * Why frames instead of a looping <img>? Frame accuracy: overlays and SFX cues
  * schedule against decoded timestamps, and the export paints exact frames -
@@ -43,7 +42,12 @@ interface DecoderTrackList extends Array<DecoderTrack> {
 interface DecoderLike {
 	completed: Promise<void>;
 	tracks?: DecoderTrackList;
-	decode: (options?: { frameIndex?: number; completeFramesOnly?: boolean }) => Promise<VideoFrame>;
+	/** ImageDecoder.decode returns `{ image: VideoFrame, complete }` in browsers.
+	 * Accept a bare VideoFrame too for older test doubles/implementations. */
+	decode: (options?: {
+		frameIndex?: number;
+		completeFramesOnly?: boolean;
+	}) => Promise<VideoFrame | { image: VideoFrame }>;
 	close: () => void;
 }
 
@@ -65,6 +69,34 @@ export function canDecodeGif(): boolean {
 	return decoderCtor() !== null || typeof createImageBitmap === 'function';
 }
 
+/** Animated WebP needs the browser's ImageDecoder; unlike GIF there is no
+ * dependency-free browser fallback for parsing WebP animation frames. */
+export function canDecodeAnimatedWebp(): boolean {
+	return decoderCtor() !== null;
+}
+
+/** True when a RIFF WebP contains an animation header or animation frame.
+ * Static WebP files must stay on the regular image path rather than becoming
+ * one-frame GIF exports. */
+export function isAnimatedWebp(data: ArrayBuffer): boolean {
+	const bytes = new Uint8Array(data);
+	if (
+		bytes.length < 16 ||
+		String.fromCharCode(...bytes.subarray(0, 4)) !== 'RIFF' ||
+		String.fromCharCode(...bytes.subarray(8, 12)) !== 'WEBP'
+	)
+		return false;
+	for (let pos = 12; pos + 8 <= bytes.length;) {
+		const chunk = String.fromCharCode(...bytes.subarray(pos, pos + 4));
+		if (chunk === 'ANIM' || chunk === 'ANMF') return true;
+		const size =
+			bytes[pos + 4]! | (bytes[pos + 5]! << 8) | (bytes[pos + 6]! << 16) | (bytes[pos + 7]! << 24);
+		if (size < 0) return false;
+		pos += 8 + size + (size & 1);
+	}
+	return false;
+}
+
 /**
  * Decode an animated GIF into timestamped frames (one full pass; loop counts
  * are ignored - the export records a single pass by design).
@@ -78,7 +110,7 @@ export async function decodeGif(data: ArrayBuffer): Promise<DecodedGif> {
 	const Ctor = decoderCtor();
 	if (Ctor) {
 		try {
-			return await decodeGifNative(Ctor, data);
+			return await decodeImageNative(Ctor, data, 'image/gif');
 		} catch {
 			/* broken native decoder — the JS path below handles it */
 		}
@@ -86,11 +118,19 @@ export async function decodeGif(data: ArrayBuffer): Promise<DecodedGif> {
 	return decodeGifJs(data);
 }
 
-async function decodeGifNative(
+/** Decode a confirmed animated WebP into the same frame contract as GIF. */
+export async function decodeAnimatedWebp(data: ArrayBuffer): Promise<DecodedGif> {
+	const Ctor = decoderCtor();
+	if (!Ctor) throw new Error('Animated WebP decoding is not available in this browser');
+	return decodeImageNative(Ctor, data, 'image/webp');
+}
+
+async function decodeImageNative(
 	Ctor: new (init: { data: BufferSource; type: string; preferAnimation: boolean }) => DecoderLike,
-	data: ArrayBuffer
+	data: ArrayBuffer,
+	type: 'image/gif' | 'image/webp'
 ): Promise<DecodedGif> {
-	const decoder = new Ctor({ data, type: 'image/gif', preferAnimation: true });
+	const decoder = new Ctor({ data, type, preferAnimation: true });
 	const frames: GifFrame[] = [];
 	try {
 		await decoder.completed;
@@ -103,7 +143,8 @@ async function decodeGifNative(
 		if (!frameCount) throw new Error('The GIF has no frames');
 		let timestamp = 0;
 		for (let index = 0; index < frameCount; index++) {
-			const frame = await decoder.decode({ frameIndex: index, completeFramesOnly: true });
+			const decoded = await decoder.decode({ frameIndex: index, completeFramesOnly: true });
+			const frame = 'image' in decoded ? decoded.image : decoded;
 			const micros = frame.duration ?? 0;
 			const dur = micros / 1_000_000; // us -> s
 			// Snapshot to an ImageBitmap immediately and release the VideoFrame —

@@ -15,6 +15,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { emojiPacks } from '$lib/stores/emoji-packs.svelte';
 	import type { NostrEmojiPack } from '$lib/meme/emoji-packs';
+	import { mediaProxyUrl } from '$lib/meme/remote-media';
 
 	const GIPHY_KEY =
 		(import.meta.env.VITE_GIPHY_API_KEY as string | undefined) ||
@@ -319,6 +320,13 @@
 		};
 	}
 
+	/** Nostr emoji packs commonly point at CDNs such as BetterTTV which reject
+	 * browser CORS. Display those images through our server relay; selections
+	 * retain the original URL and the studio fetches its own export-safe bytes. */
+	function packPreviewUrl(url: string): string {
+		return /^https:\/\//i.test(url) ? mediaProxyUrl(url) : url;
+	}
+
 	function loadMore() {
 		void fetchGifs(query, { append: true });
 	}
@@ -470,7 +478,11 @@
 						<section>
 							<div class="mb-2 flex items-center gap-2">
 								{#if pack.cover}
-									<img src={pack.cover} alt="" class="size-5 rounded object-cover" />
+									<img
+										src={packPreviewUrl(pack.cover)}
+										alt=""
+										class="size-5 rounded object-cover"
+									/>
 								{/if}
 								<p class="min-w-0 truncate text-[11px] font-bold text-[var(--ui-text)]">
 									{pack.title}
@@ -505,7 +517,7 @@
 										style="background-image:repeating-conic-gradient(rgba(127,127,127,0.18) 0% 25%, transparent 0% 50%); background-size:12px 12px;"
 									>
 										<img
-											src={emoji.url}
+											src={packPreviewUrl(emoji.url)}
 											alt={`:${emoji.name}:`}
 											loading="lazy"
 											class="size-full object-contain p-1"
