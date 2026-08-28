@@ -160,22 +160,24 @@ describe('decideRender', () => {
 	});
 
 	it('refuses over-cap full-length windows instead of rendering them', () => {
+		const overCap = DEFAULT_VIDEO_OUTPUT_POLICY.maxPublishSeconds + 1;
 		const decision = decideRender(
-			{ ...base, sourceDurationSeconds: 90, trim: { inSeconds: 0, outSeconds: 90 } },
+			{ ...base, sourceDurationSeconds: overCap, trim: { inSeconds: 0, outSeconds: overCap } },
 			{ isTypeSupported: supportsMp4 }
 		);
-		// A full 90s window exceeds the 60s cap → rejected before any encode;
-		// the composer's PUB-008 defaultTrim would have pre-capped it to 0–60.
+		// A window over the cap is rejected before any encode; the composer's
+		// defaultTrim pre-caps source files to the product maximum.
 		expect(decision.render).toBe(false);
 		expect(decision.reason).toBe('invalid-trim');
 	});
 
 	it('accepts a capped full-length window within policy', () => {
+		const cap = DEFAULT_VIDEO_OUTPUT_POLICY.maxPublishSeconds;
 		const decision = decideRender(
-			{ ...base, sourceDurationSeconds: 90, trim: { inSeconds: 0, outSeconds: 60 } },
+			{ ...base, sourceDurationSeconds: cap + 30, trim: { inSeconds: 0, outSeconds: cap } },
 			{ isTypeSupported: supportsMp4 }
 		);
 		expect(decision.render).toBe(true);
-		expect(decision.durationSeconds).toBe(60);
+		expect(decision.durationSeconds).toBe(cap);
 	});
 });

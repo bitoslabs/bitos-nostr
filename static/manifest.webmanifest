@@ -7,6 +7,17 @@
 	"display": "standalone",
 	"background_color": "#f4f7fb",
 	"theme_color": "#f4f7fb",
+	"share_target": {
+		"action": "/studio/create",
+		"method": "POST",
+		"enctype": "multipart/form-data",
+		"params": {
+			"title": "title",
+			"text": "text",
+			"url": "url",
+			"files": [{ "name": "files", "accept": ["image/*", "video/*"] }]
+		}
+	},
 	"icons": [
 		{
 			"src": "/icons/icon-192-192.png",

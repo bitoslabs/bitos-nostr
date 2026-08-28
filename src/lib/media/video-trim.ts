@@ -14,11 +14,11 @@
 /** How short a cut may be — below this a "trim" is just a seek. */
 export const MIN_TRIM_SECONDS = 1;
 
-/** Published-reel cap (plan §11: product limit, initially 60 seconds). */
-export const MAX_PUBLISH_SECONDS = 60;
+/** Published-reel cap: Bitz support videos up to ten minutes. */
+export const MAX_PUBLISH_SECONDS = 10 * 60;
 
-/** Draft ceiling: source files may be longer precisely so they can be cut. */
-export const MAX_DRAFT_SECONDS = 300;
+/** Draft ceiling used while restoring a video whose source duration is unknown. */
+export const MAX_DRAFT_SECONDS = MAX_PUBLISH_SECONDS;
 
 export interface TrimRange {
 	/** Cut start in seconds (inclusive). */

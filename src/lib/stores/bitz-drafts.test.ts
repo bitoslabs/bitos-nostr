@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MAX_PUBLISH_SECONDS } from '$lib/media/video-trim';
 
 vi.mock('$app/environment', () => ({ browser: true }));
 
@@ -148,9 +149,10 @@ describe('validateDraftForPublish', () => {
 	});
 
 	it('flags over-cap trim windows', () => {
+		const duration = MAX_PUBLISH_SECONDS + 1;
 		seedDraft({
-			meta: { width: 1080, height: 1920, duration: 120 },
-			trim: { in_ms: 0, out_ms: 120_000 }
+			meta: { width: 1080, height: 1920, duration },
+			trim: { in_ms: 0, out_ms: duration * 1000 }
 		});
 		const draft = readBitzDraft()!;
 		const result = validateDraftForPublish(draft);

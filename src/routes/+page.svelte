@@ -36,7 +36,7 @@
 	type FeedFilter = 'all' | 'originals' | 'replies' | 'media' | 'liked' | 'mine';
 	const filterOptions: { key: FeedFilter; label: string; icon: string }[] = [
 		{ key: 'all', label: 'All', icon: 'i-lucide-list-filter' },
-		{ key: 'originals', label: 'Original', icon: 'i-lucide-message-square' },
+		{ key: 'originals', label: 'Originals', icon: 'i-lucide-message-square' },
 		{ key: 'replies', label: 'Replies', icon: 'i-lucide-reply' },
 		{ key: 'media', label: 'Media', icon: 'i-lucide-image' },
 		{ key: 'liked', label: 'Liked', icon: 'i-lucide-heart' },
@@ -696,80 +696,7 @@
 <div class="flex h-full">
 	<!-- Center feed -->
 	<div bind:this={feedScroller} class="min-w-0 flex-1 overflow-y-auto" onscroll={handleFeedScroll}>
-		<div class="page-container page-container--feed feed-timeline py-6">
-			<!-- Header -->
-			<div class="relative z-30 mb-5 flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<h1 class="font-display text-[32px] leading-none font-extrabold tracking-tight">Home</h1>
-					<p class="mt-1.5 text-[12px] text-[var(--ui-text-muted)]">
-						Fresh notes from the global Nostr feed
-					</p>
-				</div>
-				<div class="relative z-40 flex shrink-0 gap-2">
-					<button
-						type="button"
-						onclick={() => {
-							if (feed.pendingCount) {
-								showNewNotes();
-							} else {
-								feed.start();
-								toasts.info('Refreshing feed');
-							}
-						}}
-						class="icon-btn size-10"
-						aria-label={feed.pendingCount ? 'Show new notes' : 'Refresh'}
-					>
-						<Icon name="i-lucide-rotate-cw" class="size-5" />
-					</button>
-					<a
-						href="/discover"
-						class="icon-btn size-10 xl:hidden"
-						aria-label="Search Discover"
-						title="Search Discover"
-					>
-						<Icon name="i-lucide-search" class="size-5" />
-					</a>
-					<button
-						type="button"
-						onclick={(e) => {
-							e.stopPropagation();
-							popovers.toggle(filterMenuId);
-						}}
-						class="icon-btn size-10 {!activeFilters.includes('all') || activeFilters.length > 1
-							? 'is-active'
-							: ''}"
-						aria-label="Filters"
-						aria-expanded={filterOpen}
-					>
-						<Icon name="i-lucide-sliders-horizontal" class="size-5" />
-					</button>
-
-					{#if filterOpen}
-						<div
-							class="absolute top-12 right-0 z-50 w-56 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
-						>
-							{#each filterOptions as option (option.key)}
-								<button
-									type="button"
-									onclick={() => toggleFilter(option.key)}
-									class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold transition-colors hover:bg-[var(--interactive-hover-bg)] {isFilterSelected(
-										option.key
-									)
-										? 'text-primary-600'
-										: 'text-[var(--ui-text-muted)]'}"
-								>
-									<Icon name={option.icon} class="size-4 shrink-0" />
-									<span class="flex-1">{option.label}</span>
-									{#if isFilterSelected(option.key)}
-										<Icon name="i-lucide-check" class="size-4 shrink-0" />
-									{/if}
-								</button>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			</div>
-
+		<div class="page-container page-container--feed feed-timeline py-6 pt-0">
 			<!-- Sticky feed tabs: For you · Following · pinned hashtags -->
 			<div
 				class="sticky top-0 z-10 -mx-[clamp(1rem,3vw,1.5rem)] mb-4 border-b border-[var(--ui-border-muted)] bg-[color-mix(in_oklab,var(--ui-bg)_82%,transparent)] px-[clamp(1rem,3vw,1.5rem)] backdrop-blur-md"
@@ -837,15 +764,69 @@
 							</a>
 						{/each}
 					{/if}
-					<a
-						href="/discover"
-						class="ml-auto flex shrink-0 items-center gap-1 self-center rounded-full px-2.5 py-1 text-[11px] font-bold text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-primary-500"
-						title="Find & follow more tags"
-					>
-						<Icon name="i-lucide-hash" class="size-3.5" />
-						Tags
-					</a>
+					<div class="relative ml-auto flex shrink-0 items-center gap-4 self-stretch">
+						<button
+							type="button"
+							onclick={() => {
+								if (feed.pendingCount) {
+									showNewNotes();
+								} else {
+									feed.start();
+									toasts.info('Refreshing feed');
+								}
+							}}
+							class="size-4 text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]"
+							aria-label={feed.pendingCount ? 'Show new notes' : 'Refresh'}
+						>
+							<Icon name="i-lucide-rotate-cw" class="size-4" />
+						</button>
+						<a
+							href="/discover"
+							class="text-[var(--ui-text-muted)] hover:text-[var(--ui-text)] block size-4 xl:hidden"
+							aria-label="Search Discover"
+							title="Search Discover"
+						>
+							<Icon name="i-lucide-search" class="size-4" />
+						</a>
+						<button
+							type="button"
+							onclick={(e) => {
+								e.stopPropagation();
+								popovers.toggle(filterMenuId);
+							}}
+							class="text-[var(--ui-text-muted)] hover:text-[var(--ui-text)] size-4 {!activeFilters.includes('all') || activeFilters.length > 1
+								? 'is-active text-primary-500'
+								: ''}"
+							aria-label="Filters"
+							aria-expanded={filterOpen}
+						>
+							<Icon name="i-lucide-sliders-horizontal" class="size-4" />
+						</button>
+					</div>
 				</div>
+				{#if filterOpen}
+					<div
+						class="absolute top-[calc(100%+0.25rem)] right-[clamp(1rem,3vw,1.5rem)] z-50 w-56 rounded-xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-1.5 shadow-[var(--shadow-pop)]"
+					>
+						{#each filterOptions as option (option.key)}
+							<button
+								type="button"
+								onclick={() => toggleFilter(option.key)}
+								class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-semibold transition-colors hover:bg-[var(--interactive-hover-bg)] {isFilterSelected(
+									option.key
+								)
+									? 'text-primary-600'
+									: 'text-[var(--ui-text-muted)]'}"
+							>
+								<Icon name={option.icon} class="size-4 shrink-0" />
+								<span class="flex-1">{option.label}</span>
+								{#if isFilterSelected(option.key)}
+									<Icon name="i-lucide-check" class="size-4 shrink-0" />
+								{/if}
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
 			{#if !activeFilters.includes('all') || activeTag}
