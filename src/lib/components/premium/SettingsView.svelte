@@ -234,7 +234,7 @@
 			<div class="premium-card mb-3.5 p-4 text-center">
 				<span class="hex-clip mx-auto mb-3.5 grid size-14 place-items-center bg-[linear-gradient(135deg,var(--ui-color-primary-500),var(--color-warm-500))] text-black"><Icon name="i-lucide-zap" class="size-6" /></span>
 				<h2 class="text-xl font-bold">nostr client</h2>
-				<div class="mb-3.5 mt-1 font-mono text-xs text-[var(--ui-text-muted)]">version 0.4.2 · built on NIP-01</div>
+				<div class="mb-3.5 mt-1 font-mono text-xs text-[var(--ui-text-muted)]">version {__APP_VERSION__} · built on NIP-01</div>
 				<p class="mx-auto mb-4 max-w-sm text-sm leading-relaxed text-[var(--ui-text-muted)]">Open-source Nostr client. MIT licensed. Built with respect for the protocol and the people on it.</p>
 				<div class="flex justify-center gap-2">
 					<button type="button" class="rounded-full border border-[var(--ui-border-accented)] px-3.5 py-2 text-xs transition hover:bg-[var(--interactive-hover-bg)]"><Icon name="i-lucide-github" class="mr-1.5 inline size-3.5" />Source</button>
