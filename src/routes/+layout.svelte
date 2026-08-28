@@ -233,6 +233,7 @@
 	}
 
 	onMount(() => {
+		let stopServiceWorkerUpdateListener: (() => void) | undefined;
 		// Dismiss the static splash from app.html once the app has mounted.
 		const splash = document.getElementById('boot-splash');
 		if (splash) {
@@ -254,8 +255,28 @@
 						/* best-effort cleanup */
 					});
 			} else {
+				// skipWaiting()/clients.claim() activate an updated worker immediately,
+				// but an already-open mobile PWA keeps executing its old JS bundle until
+				// the document reloads. Reload only when this page was already controlled
+				// (not on the first-ever install), so protocol fixes such as NIP-57 zap
+				// invoice generation reach installed apps without a manual cache clear.
+				let wasControlled = !!navigator.serviceWorker.controller;
+				let reloadingForUpdate = false;
+				const onControllerChange = () => {
+					if (!wasControlled) {
+						wasControlled = true;
+						return;
+					}
+					if (reloadingForUpdate) return;
+					reloadingForUpdate = true;
+					window.location.reload();
+				};
+				navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+				stopServiceWorkerUpdateListener = () =>
+					navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
 				void navigator.serviceWorker
 					.register('/service-worker.js', { type: 'module' })
+					.then((registration) => registration.update())
 					.catch((e) => {
 						/* PWA support is best-effort. */
 						console.error('Failed to register service worker:', e);
@@ -296,6 +317,7 @@
 			}
 		}, 15_000);
 		return () => {
+			stopServiceWorkerUpdateListener?.();
 			stopAckObserver();
 			clearInterval(outboxDrain);
 		};
