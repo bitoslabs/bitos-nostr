@@ -13,6 +13,11 @@ export interface PrivacyNotificationSettingsState {
 	/** Show the author's sensitive-content warning reason. */
 	sensitiveReason: boolean;
 	storyShare: boolean;
+	/**
+	 * Send a one-time "viewed" receipt (kind 7 👁️ per NIP-25) when opening
+	 * someone's story. Default OFF: viewing must be private-by-default.
+	 */
+	storyViewReceipts: boolean;
 	messagePermission: 'followers' | 'everyone' | 'none';
 	commentPermission: 'everyone' | 'followers' | 'friends';
 	likes: boolean;
@@ -38,6 +43,8 @@ export const DEFAULTS: PrivacyNotificationSettingsState = {
 	hideSensitiveMedia: true,
 	sensitiveReason: true,
 	storyShare: true,
+	// Story view receipts are opt-in: default OFF (private-by-default).
+	storyViewReceipts: false,
 	messagePermission: 'everyone',
 	commentPermission: 'everyone',
 	likes: true,
