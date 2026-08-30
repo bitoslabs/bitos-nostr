@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { browser } from '$app/environment';
@@ -70,6 +71,7 @@
 	} from '$lib/meme/schema';
 	import { SFX_BUCKETS, SFX_LABELS } from '$lib/meme/sound-catalog';
 	import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
+	import { overlayVisibleAt } from '$lib/meme/schema';
 	import { memeTemplates, type SavedMemeTemplate } from '$lib/stores/meme-templates.svelte';
 	import { sharedTemplatesStore } from '$lib/stores/meme-shared-templates.svelte';
 	import { templateMarketplace } from '$lib/stores/template-marketplace.svelte';
@@ -88,7 +90,9 @@
 		paintMemeBase,
 		recordMeme
 	} from '$lib/meme/export-pipeline';
+	import { renderVideoMeme } from '$lib/meme/render';
 	import { exportErrorMessage } from '$lib/meme/export-support';
+	import { MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
 	import {
 		DEFAULT_FX_INTENSITY,
 		FRAME_FX_IDS,
@@ -132,10 +136,12 @@
 		BLANK_CANVAS_COLORS,
 		DESTINATIONS,
 		LICENSE_OPTIONS,
+		OUTPUT_FORMATS,
 		STAGE_ZOOM_KEY,
 		TEMPLATES,
 		type MemeArtboardId,
 		type MemeDestination,
+		type MemeExportFormat,
 		type MemeStudioTemplate
 	} from '$lib/components/bitz/meme-studio-config';
 	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
@@ -345,6 +351,28 @@
 
 	function patchLayer(id: string, patch: Partial<MemeImageOverlay>) {
 		imageLayers = imageLayers.map((l) => (l.id === id ? { ...l, ...patch } : l));
+	}
+
+	/** Duplicate a sticker layer (desktop `onDuplicateLayer` parity): copy
+	 *  nudged down-right so both stay grabbable. */
+	function duplicateLayer(id: string) {
+		const src = imageLayers.find((l) => l.id === id);
+		if (!src) return;
+		if (imageLayers.length >= 24) {
+			toasts.warning('Sticker layers cap out at 24');
+			return;
+		}
+		imageLayers = [
+			...imageLayers,
+			{
+				...src,
+				id: crypto.randomUUID(),
+				x: Math.min(0.9, src.x + 0.05),
+				y: Math.min(0.9, src.y + 0.06)
+			}
+		];
+		selectedLayerId = null;
+		haptic();
 	}
 
 	/** Draw layer (`?panel=draw` + the Draw quick tool): the shared
@@ -597,14 +625,14 @@
 	let freeText = $state('');
 
 	/* ------------------------------------------------------------------ *
-	 * URL-driven state: `&fmt=` (mode), `?panel=` (sheets), `?edit=` (overlay
-	 * style sheet) — all deep-linkable, reload-safe, and closed by the
-	 * hardware back button. `fmt` uses replaceState (no history spam).
+	 * URL values seed the first editor view for deep links. Subsequent panel and
+	 * mode interactions stay in component state so they never reload the editor.
 	 * ------------------------------------------------------------------ */
 
 	const panelParam = $derived(page.url.searchParams.get('panel'));
-	const panel = $derived<PanelId | null>(
-		panelParam === 'meme' ||
+	let panel = $state<PanelId | null>(
+		untrack(() =>
+			panelParam === 'meme' ||
 			panelParam === 'text' ||
 			panelParam === 'sticker' ||
 			panelParam === 'trim' ||
@@ -617,98 +645,99 @@
 			panelParam === 'gif' ||
 			panelParam === 'fx' ||
 			panelParam === 'templates'
-			? panelParam
-			: null
+				? panelParam
+				: null
+		)
 	);
 	const fmtParam = $derived(page.url.searchParams.get('fmt'));
+	let modeOverride = $state<EditorMode | null>(null);
+	const requestedMode = $derived(modeOverride ?? fmtParam);
+	// The mode tabs follow MEDIA REALITY first: the URL `fmt` only wins when
+	// it is not contradicted by what is staged (a stale fmt=image used to hide
+	// the GIF clock behind an Image toolbar). `setMode` below routes stranded
+	// tabs (GIF with a still staged → the library) instead of dead toolbars.
 	const mode = $derived<EditorMode>(
-		fmtParam === 'image' || fmtParam === 'gif' || fmtParam === 'video'
-			? fmtParam
-			: mediaKind === 'video'
-				? 'video'
-				: 'image'
+		mediaKind === 'video'
+			? 'video'
+			: mediaKind === 'image' && !gifDecoded()
+				? requestedMode === 'gif' || requestedMode === 'video'
+					? requestedMode
+					: 'image'
+				: requestedMode === 'image' || requestedMode === 'gif' || requestedMode === 'video'
+					? requestedMode
+					: 'image'
 	);
-	const editingId = $derived(page.url.searchParams.get('edit'));
+	/** True when the URL pins a mode the staged media cannot deliver — the
+	 *  tab renders but tapping it routes to the library instead of a dead end. */
+	const modeStranded = $derived.by(() => {
+		if (mediaKind === 'video') return mode === 'image' || mode === 'gif';
+		if (gifDecoded()) return mode === 'image' || mode === 'video';
+		if (mediaKind === 'image') return mode === 'gif' || mode === 'video';
+		return mode !== null && mode !== 'image';
+	});
+
+	/** Animated GIF base accessor — declared as a hoistable function so the
+	 *  URL-derived `mode` above can read it before the $state lands. */
+	function gifDecoded(): DecodedGif | null {
+		return gif;
+	}
+	let editingId = $state<string | null>(page.url.searchParams.get('edit'));
 	const editing = $derived(overlays.find((o) => o.id === editingId) ?? null);
 
-	/** True between a pushed sheet and its pop — back() then closes the sheet. */
-	let sheetPushed = false;
-
-	/** Editor URL with one param changed; keeps `tab`/`shell`/`fmt` intact.
-	 *  Param values are whitelist-only (no encoding needed), so the query is
-	 *  assembled as a plain string — URLSearchParams is a mutable builtin. */
-	function editorUrl(changes: {
-		panel?: PanelId | null;
-		edit?: string | null;
-		layer?: string | null;
-		fmt?: EditorMode;
-	}) {
-		const current = page.url.searchParams;
-		const shell = current.get('shell');
-		const fmt = changes.fmt ?? mode;
-		const parts = [`tab=meme`, `fmt=${fmt}`];
-		if (shell === 'app' || shell === 'full') parts.push(`shell=${shell}`);
-		const panelNext = changes.panel !== undefined ? changes.panel : panel;
-		if (panelNext) parts.push(`panel=${panelNext}`);
-		// Layer + overlay style sheets are mutually exclusive deep-links.
-		const editNext = changes.edit !== undefined ? changes.edit : null;
-		if (editNext) parts.push(`edit=${editNext}`);
-		const layerNext = changes.layer !== undefined ? changes.layer : null;
-		if (layerNext) parts.push(`layer=${layerNext}`);
-		return `/studio/create?${parts.join('&')}`;
-	}
-
-	/** Layer style sheet (`?layer=<id>` — second tap on a selected sticker). */
-	const layerEditingId = $derived(page.url.searchParams.get('layer'));
+	/** Layer style sheet — second tap on a selected sticker. */
+	let layerEditingId = $state<string | null>(page.url.searchParams.get('layer'));
 	const layerEditing = $derived(imageLayers.find((l) => l.id === layerEditingId) ?? null);
 
 	function openLayerEdit(id: string) {
-		sheetPushed = true;
-		void goto(editorUrl({ panel: null, edit: null, layer: id }), {
-			keepFocus: true,
-			noScroll: true
-		});
+		panel = null;
+		editingId = null;
+		layerEditingId = id;
 	}
 
 	function openPanel(next: PanelId) {
-		sheetPushed = true;
-		void goto(editorUrl({ panel: next, edit: null }), { keepFocus: true, noScroll: true });
+		editingId = null;
+		layerEditingId = null;
+		panel = next;
 	}
 
 	function setMode(next: EditorMode) {
-		if (next === mode) return;
-		sheetPushed = false; // any open sheet is replaced away, not popped
-		void goto(editorUrl({ fmt: next, panel: null, edit: null }), {
-			keepFocus: true,
-			noScroll: true,
-			replaceState: true
-		});
+		if (next === mode && !modeStranded) return;
+		// A tab the staged media cannot deliver is a SHORTCUT, not a dead end:
+		//  • GIF with no animated base → open the GIF library to pick one
+		//  • Image with video/GIF staged → a still export of the playhead frame
+		//    (legit), so it just switches the toolbar
+		//  • Video with a still + no cues → the Audio sheet (a cue makes a video)
+		if (next === 'gif' && !gif && mediaKind !== 'video') {
+			modeOverride = next;
+			openPanel('gif');
+			if (!mediaUrl) toasts.info('Pick a GIF from the library or your camera roll');
+			return;
+		}
+		if (next === 'video' && mediaKind === 'image' && !sfxCues.length) {
+			openPanel('audio');
+			toasts.info('Add a sound cue — sound memes export as video');
+			return;
+		}
+		modeOverride = next;
+		panel = null;
+		editingId = null;
+		layerEditingId = null;
 	}
 
 	function openEdit(id: string) {
 		snapshot(); // one undo step for the whole edit session
-		sheetPushed = true;
-		void goto(editorUrl({ panel: null, edit: id }), { keepFocus: true, noScroll: true });
+		panel = null;
+		layerEditingId = null;
+		editingId = id;
 	}
 
-	/** Close whatever sheet is open (panel or edit) — back first, else replace. */
+	/** Close the current sheet without changing the editor route. */
 	function closeSheet() {
 		if (publishBusy || pubPhase === 'done') return;
-		if (sheetPushed) {
-			sheetPushed = false;
-			history.back();
-		} else {
-			void goto(editorUrl({ panel: null, edit: null, layer: null }), {
-				keepFocus: true,
-				noScroll: true,
-				replaceState: true
-			});
-		}
+		panel = null;
+		editingId = null;
+		layerEditingId = null;
 	}
-
-	$effect(() => {
-		if (!panel && !editingId && !layerEditingId) sheetPushed = false;
-	});
 
 	/* ------------------------------------------------------------------ *
 	 * Remix handoff (bitz page → mobile studio)
@@ -1079,7 +1108,7 @@
 			toasts.error(`Sound cues cap out at ${MAX_SFX_CUES}`);
 			return;
 		}
-		const atMs = mediaKind === 'video' ? Math.round(currentTime * 1000) : 0;
+		const atMs = playheadMs();
 		const cue = normalizeSfxCue({ sfx, atMs, gain: 1 });
 		if (cue) sfxCues = [...sfxCues, cue];
 	}
@@ -1088,11 +1117,22 @@
 		sfxCues = sfxCues.filter((c) => c.id !== id);
 	}
 
+	/** Import a device audio file into the shared sound library (desktop
+	 *  `soundIO.importFile` parity: size gate, duration probe, toasts). */
+	let soundImportInput = $state<HTMLInputElement | null>(null);
+	function importSoundFile(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		void soundIO.importFile(input.files?.[0] ?? null);
+		input.value = ''; // let the same file re-import later
+	}
+
 	/* Frame-FX windows (shared fx-track model, burned into every export):
 	 * tap an effect to start a 600ms window at the playhead — the same
 	 * addFxWindow the desktop FX picker runs. */
 	function playheadMs(): number {
-		return mediaKind === 'video' ? Math.round(currentTime * 1000) : 0;
+		// GIFs share the timeline clock too — a scrubbed GIF parks the playhead
+		// exactly like video, so windows/cues stamp where the creator sees them.
+		return mediaKind === 'video' || gif ? Math.round(currentTime * 1000) : 0;
 	}
 
 	function addFxWindow(fx: FrameFxId) {
@@ -1227,6 +1267,27 @@
 	/** Patch one overlay (style sheet / drag commit path). */
 	function patchOverlay(id: string, patch: Partial<MemeTextOverlay>) {
 		overlays = overlays.map((o) => (o.id === id ? { ...o, ...patch } : o));
+	}
+
+	/** Duplicate an overlay (desktop `onDuplicateLayer` parity): the copy
+	 *  lands nudged down-right so both stay grabbable, selected + opened. */
+	function duplicateOverlay(id: string) {
+		const src = overlays.find((o) => o.id === id);
+		if (!src) return;
+		if (overlays.length >= 12) {
+			toasts.error('Text overlays cap out at 12');
+			return;
+		}
+		snapshot();
+		const copy: MemeTextOverlay = {
+			...src,
+			id: crypto.randomUUID(),
+			x: Math.min(0.95, src.x + 0.04),
+			y: Math.min(0.95, src.y + 0.05)
+		};
+		overlays = [...overlays, copy];
+		selectedId = copy.id;
+		openEdit(copy.id);
 	}
 
 	function addMemePair() {
@@ -1640,9 +1701,85 @@
 		}
 		const video = videoEl;
 		if (!video) return;
-		if (video.paused) void video.play().catch(() => undefined);
-		else video.pause();
+		if (video.paused) {
+			// Desktop parity: start (or restart) at the trim window so the
+			// transport and the shaded window always agree.
+			const end = trimEnd ?? video.duration ?? 0;
+			if (video.currentTime < trimStart || video.currentTime >= end) {
+				video.currentTime = trimStart;
+			}
+			// Autoplay policy (mobile): a muted autoplay element can still refuse
+			// an unmuted play(); retry once muted so the preview never stalls.
+			void video.play().catch(() =>
+				video
+					.play()
+					.catch(() => undefined)
+					.then(() => (video.muted = true))
+			);
+		} else video.pause();
 	}
+
+	// ---- preview sound: source audio + live cue firing (desktop parity) ----
+	/** Sound toggle for the preview: unmutes the stage video AND fires every
+	 *  cue the playhead crosses — the timeline sounds like the export. */
+	let previewSoundOn = $state(false);
+	/** Carry the clip's own audio into video exports. Off = the export keeps
+	 *  only the sound cues' mix. */
+	let includeSourceAudio = $state(true);
+	/** Last playhead the cue scheduler saw (ms) — crossing windows only fire
+	 *  on small forward deltas, so scrubs/seeks/media swaps never blip. */
+	let lastCueFireMs = 0;
+
+	function togglePreviewSound() {
+		previewSoundOn = !previewSoundOn;
+		if (videoEl) videoEl.muted = !previewSoundOn;
+		if (previewSoundOn) {
+			// A user gesture unlocked audio — retry the play if iOS stalled it.
+			const video = videoEl;
+			if (video && mediaKind === 'video' && video.paused && playing) {
+				void video.play().catch(() => undefined);
+			}
+			lastCueFireMs = playheadMs();
+			haptic();
+		}
+	}
+
+	/** Keep the stage video's mute state glued to the toggle (covers mounts,
+	 *  media swaps and the muted-by-default autoplay attribute). */
+	$effect(() => {
+		if (videoEl) videoEl.muted = !previewSoundOn;
+	});
+
+	/** Live cue firing: while previewing with sound on, each cue the playhead
+	 *  crosses plays immediately — synth recipes render on the fly, custom
+	 *  sounds come from the decoded library. A cue parked at 0 fires once when
+	 *  playback starts (the export mix includes t=0 too). */
+	$effect(() => {
+		void playing; // re-check on transport changes
+		void gifPlaying;
+		const cur = playheadMs();
+		if (!previewSoundOn) {
+			lastCueFireMs = cur; // stay current so toggling on never back-fires
+			return;
+		}
+		const prev = lastCueFireMs;
+		lastCueFireMs = cur;
+		const isPlaying = gif ? gifPlaying : playing;
+		if (!isPlaying) return;
+		const delta = cur - prev;
+		if (delta <= 0 || delta > 600) return; // scrub/seek/loop-wrap guard
+		for (const cue of sfxCues) {
+			const crossed = cue.atMs > prev && cue.atMs <= cur;
+			const startsNow = cue.atMs === 0 && prev === 0 && cur > 0;
+			if (!crossed && !startsNow) continue;
+			if (cue.sfx === CUSTOM_SOUND_KEY) {
+				const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
+				if (sound) void previewSound(sound);
+			} else {
+				previewSfx(cue.sfx as MemeSfxId);
+			}
+		}
+	});
 
 	/** The timeline shows for video (non-image modes) AND animated GIF bases. */
 	// Mode-independent: staging a video while the URL pins fmt=image used to
@@ -1668,8 +1805,48 @@
 		currentTime = videoEl.currentTime;
 	}
 
+	/** Seek the shared clock: video seeks the element; the GIF canvas loop
+	 *  chases `currentTime` — one path for keys, nudges and stop. */
+	function seekPlayhead(sec: number) {
+		if (duration <= 0) return;
+		const next = Math.min(duration, Math.max(0, sec));
+		if (gif) {
+			currentTime = next;
+			return;
+		}
+		if (!videoEl) return;
+		videoEl.currentTime = next;
+		currentTime = next;
+	}
+
+	/** ±0.5s nudge — park the playhead on the beat before dropping a sound
+	 *  cue, FX window, zoom punch or speed ramp (they all stamp at it).
+	 *  Playing GIFs pause first — the canvas clock would otherwise ignore
+	 *  a seek while it advances. */
+	function nudgePlayhead(deltaSec: number) {
+		if (gif) gifPlaying = false;
+		seekPlayhead(currentTime + deltaSec);
+		haptic(10);
+	}
+
+	/** Stop: pause + rewind to the window start (video) / 0 (GIF loop). */
+	function stopPlayback() {
+		if (gif) {
+			gifPlaying = false;
+			currentTime = 0;
+		} else if (videoEl) {
+			videoEl.pause();
+			videoEl.currentTime = trimStart;
+			currentTime = trimStart;
+		}
+		haptic(10);
+	}
+
 	function onTimelinePointerDown(event: PointerEvent) {
 		if (duration <= 0) return;
+		// Desktop parity: freeze the clock under the finger — a playing video
+		// immediately fights a drag with seek-churn.
+		if (!gif && videoEl) videoEl.pause();
 		const track = event.currentTarget as HTMLElement;
 		scrubbing = true;
 		track.setPointerCapture(event.pointerId);
@@ -1685,9 +1862,10 @@
 		scrubbing = false;
 	}
 
-	/** Keyboard scrub (±0.5s, shift = ±5s) — the slider role's a11y path. */
+	/** Keyboard scrub (±0.5s, shift = ±5s) — the slider role's a11y path
+	 *  (works for video AND animated GIF bases via the shared seek). */
 	function onTimelineKeydown(event: KeyboardEvent) {
-		if (!videoEl || duration <= 0) return;
+		if (duration <= 0) return;
 		const step = event.shiftKey ? 5 : 0.5;
 		let next: number | null = null;
 		if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = currentTime - step;
@@ -1696,8 +1874,7 @@
 		else if (event.key === 'End') next = duration;
 		if (next === null) return;
 		event.preventDefault();
-		videoEl.currentTime = Math.min(duration, Math.max(0, next));
-		currentTime = videoEl.currentTime;
+		seekPlayhead(next);
 	}
 
 	/** Keep one side of the video at the playhead — a true non-destructive
@@ -1764,9 +1941,15 @@
 		const span = Math.max(decoded.duration, 0.01);
 		const draw = () => {
 			const now = performance.now();
-			// Scrubbing holds the clock at the timeline playhead; paused freezes.
-			if (scrubbing) clock = Math.min(span, Math.max(0, currentTime));
-			else if (gifPlaying) clock = (clock + (now - last) / 1000) % span;
+			// Paused/scrubbed: the clock chases the timeline playhead (so
+			// nudges, Stop and taps move the paused frame — desktop parity);
+			// playing: the clock advances and pushes the playhead along.
+			if (gifPlaying && !scrubbing) {
+				clock = (clock + (now - last) / 1000) % span;
+				currentTime = clock;
+			} else {
+				clock = Math.min(span, Math.max(0, currentTime));
+			}
 			last = now;
 			const box = el.getBoundingClientRect();
 			const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1791,8 +1974,6 @@
 				)
 			);
 			ctx.filter = 'none';
-			// Feed the shared timeline clock (markers, cue staging, playhead).
-			if (!scrubbing) currentTime = clock;
 			raf = requestAnimationFrame(draw);
 		};
 		raf = requestAnimationFrame(draw);
@@ -2174,9 +2355,27 @@
 	let pubLabel = $state('');
 	let pubPercent = $state(0);
 	let pubError = $state('');
+	/** The rendered artifact's vital stats — surfaced in the progress overlay
+	 *  the moment rendering finishes (size · resolution · duration), so the
+	 *  creator knows exactly what is being uploaded/exported. */
+	let renderedInfo = $state<{ bytes: number; dim: string; durationSec?: number } | null>(null);
 	const publishBusy = $derived(
 		pubPhase === 'rendering' || pubPhase === 'uploading' || pubPhase === 'publishing'
 	);
+
+	/** Which pipeline step the overlay is on (1–3) + its share of the bar —
+	 *  rendering owns 0–70%, uploading 70–99%, broadcast the final sliver. */
+	const pubStep = $derived.by(() => {
+		if (pubPhase === 'rendering' || pubPhase === 'idle') return { index: 1, from: 0, to: 70 };
+		if (pubPhase === 'uploading') return { index: 2, from: 70, to: 99 };
+		return { index: 3, from: 99, to: 100 };
+	});
+	/** The overlay's composite percent — per-step progress mapped into the
+	 *  step's band (uploading's 0–100 becomes 70–99, so the bar never jumps). */
+	const pubPercentTotal = $derived.by(() => {
+		const step = pubStep;
+		return Math.min(100, Math.round(step.from + (pubPercent / 100) * (step.to - step.from)));
+	});
 
 	let imgEl = $state<HTMLImageElement | null>(null);
 
@@ -2422,14 +2621,15 @@
 		return { file, dim: `${size.width}x${size.height}`, durationSec: runtimeSec };
 	}
 
-	/** Video render: realtime canvas capture of the trim window at the picked
-	 *  speed via the shared `recordMeme` recorder session. */
+	/** Video render: the shared `renderVideoMeme` recorder session (the exact
+	 *  desktop path): source-clip audio rides the WebAudio graph, speed ramps
+	 *  drive the element's playbackRate per frame, zoom punches + frame-FX
+	 *  compose at the media clock, and annotations paint over it all. */
 	async function renderVideo(): Promise<RenderedMeme> {
-		if (gif) return renderGifVideo();
 		const video = videoEl;
 		if (!video) throw new Error('Add a video first');
 		const winStart = trimStart;
-		const winEnd = (trimEnd ?? video.duration) || 0;
+		const winEnd = trimEnd ?? (video.duration || 0);
 		// Export length under any speed curve: map the trim end through the
 		// ramps, then compress by the base rate (mirrors the desktop studio's
 		// mediaSpanExportSec math).
@@ -2437,6 +2637,9 @@
 			0.5,
 			(mediaMsToExportMs(speedWindows, winEnd * 1000) / 1000 - winStart) / (playbackRate || 1)
 		);
+		if (runtimeSec > MAX_VIDEO_MEME_SECONDS) {
+			throw new Error(`Video memes top out at ${MAX_VIDEO_MEME_SECONDS}s — trim the window first`);
+		}
 		const size = evenSize(
 			artboardId === 'source'
 				? targetSize({
@@ -2445,76 +2648,220 @@
 					})
 				: renderTarget
 		);
+		// Cue sheet → export timeline (trim window + speed), then a mixed
+		// audio track for the recorder (synth-only cues need no decoder).
+		const exportCues = shiftCuesForExportWithSpeeds(
+			sfxCues,
+			speedWindows,
+			winStart,
+			playbackRate,
+			runtimeSec
+		);
+		const cueTrack = exportCues.length
+			? await cueAudioTrack(runtimeSec, exportCues, cueDecodeSound)
+			: null;
+		video.pause();
+		const { blob, mimeType } = await renderVideoMeme(video, overlays, {
+			extraTracks: cueTrack ? [cueTrack] : [],
+			sourceAudio: mediaKind === 'video' ? includeSourceAudio : false,
+			lookCss: memeLookCss(lookId),
+			imageLayers,
+			drawingGroups,
+			bitmaps: layerAssets.bitmaps,
+			animPainters: layerAssets.painterFor,
+			target: { width: size.width, height: size.height },
+			mediaTransform,
+			// Punch-in zoom rides the media clock (source.currentTime), so the
+			// same media-time windows the preview runs export 1:1 — no trim/rate
+			// remap needed (the recorder replays source time).
+			mediaTransformAt: zoomWindows.length
+				? (mediaTimeMs) =>
+						composeZoomWithFraming(mediaTransform, zoomTransformAt(zoomWindows, mediaTimeMs))
+				: undefined,
+			fxWindows: fxWindows.length ? fxWindows : undefined,
+			speedWindows: speedWindows.length ? speedWindows : undefined,
+			trimStartSec: winStart,
+			trimEndSec: Number.isFinite(winEnd) ? winEnd : undefined,
+			playbackRate,
+			onProgress: (p) => (pubPercent = p.percent)
+		});
+		const file = new File(
+			[blob],
+			`meme-${Date.now()}.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`,
+			{ type: mimeType }
+		);
+		return { file, dim: `${size.width}x${size.height}`, durationSec: runtimeSec };
+	}
+
+	/** Still-image export (user choice): JPEG of the CURRENT playhead frame
+	 *  from ANY source (video draws the element's frame, GIF paints the
+	 *  playhead frame, stills draw their pixels) — the desktop studio's
+	 *  exportStillImageMeme. */
+	async function renderStillImage(): Promise<RenderedMeme> {
+		const size = evenSize(renderTarget);
 		const canvas = document.createElement('canvas');
 		canvas.width = size.width;
 		canvas.height = size.height;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) throw new Error('Canvas is unavailable in this browser');
-		video.pause();
-		video.currentTime = winStart;
-		// Ramps multiply the base rate; re-drive every frame as currentTime
-		// crosses window boundaries (the desktop recorder does the same).
-		const driveRate = () => {
-			video.playbackRate = Math.min(
-				4,
-				Math.max(0.25, playbackRate * rateAt(speedWindows, video.currentTime * 1000))
-			);
+		ctx.fillStyle = '#000';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		if (!(mediaKind === 'video' && videoEl) && !gif && !imgEl) {
+			throw new Error('Add media first');
+		}
+		paintMemeBase(ctx, canvas, {
+			mediaKind,
+			gif,
+			stageImg: imgEl,
+			stageVideo: videoEl,
+			lookCss: memeLookCss(lookId),
+			mediaTransform: composeZoomWithFraming(
+				mediaTransform,
+				zoomTransformAt(zoomWindows, playheadMs())
+			),
+			fxWindows: fxWindows.length ? fxWindows : undefined,
+			fxAtMs: playheadMs()
+		});
+		paintImageOverlays(
+			ctx,
+			imageLayers,
+			layerBitmapFor,
+			canvas,
+			playheadMs(),
+			layerAssets.painterFor
+		);
+		paintDrawingGroups(ctx, drawingGroups, canvas, playheadMs());
+		paintOverlaysAt(ctx, canvas, playheadMs());
+		const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+		if (!blob) throw new Error('Could not encode the still');
+		return {
+			file: new File([blob], `meme-${Date.now()}.jpg`, { type: 'image/jpeg' }),
+			dim: `${size.width}x${size.height}`
 		};
-		driveRate();
-		await video.play().catch(() => undefined);
+	}
+
+	/** Explicit-format renderer (the export sheet's engine): re-runs the SAME
+	 *  burn pipeline as publishing but honors the creator's format choice —
+	 *  image = JPEG frame, gif = true looping .gif (image/GIF bases only),
+	 *  video = the recorder stack. Mirrors the desktop's exportMeme() rules. */
+	async function renderForExport(format: MemeExportFormat): Promise<RenderedMeme> {
+		if (!mediaUrl || !mediaKind) throw new Error('Add a photo or video first');
+		if (format === 'image') return renderStillImage();
+		if (format === 'gif') {
+			if (mediaKind === 'video') {
+				throw new Error('GIF export starts from an image or GIF base — pick Image or Video');
+			}
+			return renderAnimatedGif();
+		}
+		// video: any base with a clock
+		if (!canRenderVideoMeme()) {
+			throw new Error("This browser can't render animated memes — try Chrome or Edge");
+		}
+		if (gif) return renderGifVideo();
+		if (mediaKind === 'video') return renderVideo();
+		if (sfxCues.length) return renderStill(); // sound-on-static → recorder video
+		throw new Error('A video export needs a timeline — add a sound cue, or pick Image / GIF');
+	}
+
+	/* ---- Export to device (functional export of image / GIF / video) ------ */
+	/** Picked export format (publish keeps AUTO — the network gets the
+	 *  inferred format; export is the explicit-format path). */
+	let exportFormat = $state<MemeExportFormat>('auto');
+	/** True while an export-to-device runs (rides the same progress overlay). */
+	let exporting = $state(false);
+	const outputFormatLabel = $derived.by(() => {
+		if (exportFormat === 'image') return 'Image';
+		if (exportFormat === 'gif') return 'GIF';
+		if (exportFormat === 'video') return 'Video';
+		if (gif) return 'GIF';
+		if (mediaKind === 'image') return sfxCues.length ? 'Video' : 'Image';
+		return 'Video';
+	});
+
+	function humanBytes(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	/** "4.2 MB · 1080×1920 · 00:12" — the rendered file's one-line stats. */
+	const renderedStats = $derived.by(() => {
+		const info = renderedInfo;
+		if (!info) return '';
+		const parts = [humanBytes(info.bytes), info.dim];
+		if (info.durationSec && info.durationSec >= 1) parts.push(fmtTime(info.durationSec));
+		return parts.join(' · ');
+	});
+
+	/** Save the rendered meme to the device — the SAME pipeline as publishing
+	 *  (captions, layers, looks, sounds, trim, speed all burned in) but the
+	 *  file goes to Downloads/the share sheet instead of a relay. */
+	async function exportToDevice(): Promise<void> {
+		if (exporting || publishBusy) return;
+		if (!mediaUrl || !mediaKind) {
+			toasts.error('Add a photo or video first');
+			return;
+		}
+		const needsRecorder =
+			exportFormat !== 'image' &&
+			(mediaKind === 'video' || !!gif || (mediaKind === 'image' && sfxCues.length > 0));
+		if (needsRecorder && !canRenderVideoMeme()) {
+			toasts.error("This browser can't render animated memes — try Chrome or Edge");
+			return;
+		}
+		if (mediaKind === 'video' && videoEl) videoEl.pause();
+		exporting = true;
+		pubError = '';
+		pubPercent = 0;
+		renderedInfo = null;
+		pubPhase = 'rendering';
+		pubLabel = `Rendering ${outputFormatLabel}…`;
 		try {
-			// Cue sheet → export timeline (trim window + speed), then a mixed
-			// audio track for the recorder (synth-only cues need no decoder).
-			const exportCues = shiftCuesForExportWithSpeeds(
-				sfxCues,
-				speedWindows,
-				winStart,
-				playbackRate,
-				runtimeSec
-			);
-			const cueTrack = exportCues.length
-				? await cueAudioTrack(runtimeSec, exportCues, cueDecodeSound)
-				: null;
-			const file = await recordMeme({
-				canvas,
-				totalMs: runtimeSec * 1000,
-				extraTracks: cueTrack ? [cueTrack] : [],
-				paint: (c) => {
-					// Rate curve re-driven per frame; the element's currentTime IS
-					// the media clock under the curve.
-					driveRate();
-					paintMemeBase(c, canvas, {
-						mediaKind: 'video',
-						gif: null,
-						stageImg: null,
-						stageVideo: video,
-						lookCss: memeLookCss(lookId),
-						mediaTransform: composeZoomWithFraming(
-							mediaTransform,
-							zoomTransformAt(zoomWindows, Math.round(video.currentTime * 1000))
-						),
-						stageSeconds: video.currentTime,
-						fxWindows: fxWindows.length ? fxWindows : undefined,
-						fxAtMs: Math.round(video.currentTime * 1000)
-					});
-					// Overlays stay media-timed via the element clock (the old
-					// linear proxy drifted under ramps).
-					paintImageOverlays(
-						c,
-						imageLayers,
-						layerBitmapFor,
-						canvas,
-						Math.round(video.currentTime * 1000),
-						layerAssets.painterFor
-					);
-					paintDrawingGroups(c, drawingGroups, canvas, Math.round(video.currentTime * 1000));
-					paintOverlaysAt(c, canvas, Math.round(video.currentTime * 1000));
-				},
-				onProgress: (p) => (pubPercent = p)
+			const rendered = await renderForExport(exportFormat);
+			renderedInfo = {
+				bytes: rendered.file.size,
+				dim: rendered.dim,
+				durationSec: rendered.durationSec
+			};
+			pubPhase = 'idle';
+			const url = URL.createObjectURL(rendered.file);
+			// Web Share API (files) beats an anchor download on mobile — it
+			// hands the file to the OS (Save to Photos / Files / apps). iOS
+			// Safari can't download anchor blobs to the gallery.
+			const shareFile = new File([rendered.file], rendered.file.name, {
+				type: rendered.file.type
 			});
-			return { file, dim: `${size.width}x${size.height}`, durationSec: runtimeSec };
+			const nav = navigator as Navigator & {
+				canShare?: (data: { files?: File[] }) => boolean;
+			};
+			if (nav.canShare?.({ files: [shareFile] })) {
+				try {
+					await navigator.share({
+						files: [shareFile],
+						title: 'BitOS meme'
+					});
+					toasts.success(`Exported ${rendered.file.name} · ${humanBytes(rendered.file.size)}`);
+					return;
+				} catch (e) {
+					// AbortError = user dismissed the sheet — not a failure.
+					if (e instanceof DOMException && e.name === 'AbortError') return;
+					/* fall through to the anchor download */
+				}
+			}
+			const anchor = document.createElement('a');
+			anchor.href = url;
+			anchor.download = rendered.file.name;
+			document.body.appendChild(anchor);
+			anchor.click();
+			anchor.remove();
+			// Give the download a beat to start before revoking the blob URL.
+			setTimeout(() => URL.revokeObjectURL(url), 30_000);
+			toasts.success(`Exported ${rendered.file.name} · ${humanBytes(rendered.file.size)}`);
+		} catch (e) {
+			pubPhase = 'error';
+			pubError = exportErrorMessage(e);
 		} finally {
-			video.pause();
+			exporting = false;
 		}
 	}
 
@@ -2533,12 +2880,18 @@
 		}
 		pubError = '';
 		pubPercent = 0;
+		renderedInfo = null;
 		publishedEventId = null;
 		publishedKind = null;
 		try {
 			pubPhase = 'rendering';
 			pubLabel = 'Rendering meme…';
 			const rendered = mediaKind === 'video' ? await renderVideo() : await renderStill();
+			renderedInfo = {
+				bytes: rendered.file.size,
+				dim: rendered.dim,
+				durationSec: rendered.durationSec
+			};
 
 			pubPhase = 'uploading';
 			pubLabel = 'Uploading to your media server…';
@@ -2859,7 +3212,6 @@
 						lookId
 					)}; transform: scale({previewTransform.scale}) translate({previewCss.x}%, {previewCss.y}%)"
 					playsinline
-					muted
 					loop
 					autoplay
 					onloadedmetadata={(e) => {
@@ -2878,7 +3230,9 @@
 					ondurationchange={(e) => (duration = e.currentTarget.duration || 0)}
 					onplay={() => (playing = true)}
 					onpause={() => (playing = false)}
-				></video>
+				>
+					<track kind="captions" />
+				</video>
 			{:else if mediaUrl && gif}
 				<!-- Animated GIF: canvas clock (look + framing applied) — the
 				     decoded frames play instead of freezing on the first. -->
@@ -2961,41 +3315,45 @@
 				{/if}
 			{/each}
 
-			<!-- Overlay layer (draggable captions / text / stickers) -->
+			<!-- Overlay layer (draggable captions / text / stickers) — timing
+			     windows gate the stage exactly like the export (`overlayVisibleAt`):
+			     scrub the playhead outside the window and the caption hides live. -->
 			{#each overlays as o (o.id)}
-				<div
-					data-overlay
-					class="absolute z-10 max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none text-center leading-[1.1] font-bold whitespace-pre-wrap {isStickerOverlay(
-						o
-					)
-						? ''
-						: 'px-1'} {selectedId === o.id ? 'rounded-md ring-2 ring-warm-500/80' : ''}"
-					style={overlayStyle(o)}
-					onpointerdown={(e) => onOverlayPointerDown(e, o)}
-					onpointermove={onOverlayPointerMove}
-					onpointerup={onOverlayPointerUp}
-					onpointercancel={onOverlayPointerUp}
-					role="button"
-					tabindex="-1"
-					aria-label="Overlay: {o.text}"
-				>
-					{#if selectedId === o.id}
-						<button
-							type="button"
-							onclick={() => removeOverlay(o.id)}
-							aria-label="Delete overlay"
-							class="absolute -top-2.5 -right-2.5 z-20 grid size-6 place-items-center rounded-full bg-warm-500 text-white shadow-lg active:scale-90"
-						>
-							<Icon name="i-lucide-x" class="size-3.5" />
-						</button>
-					{/if}
-					{o.caps ? o.text.toUpperCase() : o.text}
-				</div>
+				{#if mediaKind !== 'video' && !gif ? true : overlayVisibleAt(o, Math.round(currentTime * 1000))}
+					<div
+						data-overlay
+						class="absolute z-10 max-w-[94%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none text-center leading-[1.1] font-bold whitespace-pre-wrap {isStickerOverlay(
+							o
+						)
+							? ''
+							: 'px-1'} {selectedId === o.id ? 'rounded-md ring-2 ring-warm-500/80' : ''}"
+						style={overlayStyle(o)}
+						onpointerdown={(e) => onOverlayPointerDown(e, o)}
+						onpointermove={onOverlayPointerMove}
+						onpointerup={onOverlayPointerUp}
+						onpointercancel={onOverlayPointerUp}
+						role="button"
+						tabindex="-1"
+						aria-label="Overlay: {o.text}"
+					>
+						{#if selectedId === o.id}
+							<button
+								type="button"
+								onclick={() => removeOverlay(o.id)}
+								aria-label="Delete overlay"
+								class="absolute top-[-2.5] right-[-2.5] z-20 grid size-6 place-items-center rounded-full bg-warm-500 text-white shadow-lg active:scale-90"
+							>
+								<Icon name="i-lucide-x" class="size-3.5" />
+							</button>
+						{/if}
+						{o.caps ? o.text.toUpperCase() : o.text}
+					</div>
+				{/if}
 			{/each}
 
 			<!-- Draw layer: the shared surface stages strokes live on the artboard
-			     (pointer-events-none unless draw mode is on, so it never blocks
-			     overlay drags). Drawings burn under the captions on export. -->
+		     (pointer-events-none unless draw mode is on, so it never blocks
+		     overlay drags). Drawings burn under the captions on export. -->
 			<MemeDrawingSurface
 				active={drawActive && !loadingScrim}
 				groups={drawingGroups}
@@ -3095,19 +3453,21 @@
 			{/each}
 		</div>
 
-		<!-- Play / pause (GIF + Video modes with video media) -->
-		{#if mode !== 'image' && mediaKind === 'video'}
+		<!-- Play / pause (any media with a clock: video + animated GIF bases —
+	         the GIF canvas clock freezes on pause, same as the element). -->
+		{#if timelineActive}
+			{@const isPlaying = gif ? gifPlaying : playing}
 			<button
 				type="button"
 				onclick={togglePlay}
-				aria-label={playing ? 'Pause' : 'Play'}
-				class="absolute z-20 grid size-14 place-items-center rounded-full border border-white/15 bg-white/10 text-2xl backdrop-blur-md transition active:scale-95 {playing
+				aria-label={isPlaying ? 'Pause' : 'Play'}
+				class="absolute z-20 grid size-14 place-items-center rounded-full border border-white/15 bg-white/10 text-2xl backdrop-blur-md transition active:scale-95 {isPlaying
 					? 'opacity-0 transition-opacity hover:opacity-100'
 					: ''}"
 			>
 				<Icon
-					name={playing ? 'i-lucide-pause' : 'i-lucide-play'}
-					class="size-6 {playing ? '' : 'ml-0.5'}"
+					name={isPlaying ? 'i-lucide-pause' : 'i-lucide-play'}
+					class="size-6 {isPlaying ? '' : 'ml-0.5'}"
 				/>
 			</button>
 		{/if}
@@ -3118,15 +3478,85 @@
 		<section
 			class="flex shrink-0 flex-col gap-2 border-t border-white/10 bg-[#0d0d0d] px-3 py-2.5 {tracksOpen
 				? ''
-				: 'h-28 justify-between'}"
+				: mediaKind === 'video'
+					? 'h-[9.375rem] justify-between'
+					: 'h-[7.5rem] justify-between'}"
 			aria-label="Timeline"
 		>
-			<div
-				class="flex items-center justify-between px-1 font-mono text-[10px] text-white/45 tabular-nums"
-			>
-				<span>00:00</span>
-				<span class="text-warm-500">{fmtTime(currentTime)} / {fmtTime(duration)}</span>
-				<span class="flex items-center gap-1.5">
+			<!-- Header row: [transport] —— [time] —— [sound · tracks]. -->
+			<div class="flex items-center justify-between gap-2 px-0.5">
+				<!-- Transport: nudge / play-pause / stop — parking the playhead
+				     precisely is how sound cues, FX windows, zoom punches and
+				     speed ramps land on the beat. -->
+				<div
+					class="flex shrink-0 items-center gap-0.5 rounded-full bg-black/40 p-0.5"
+					role="group"
+					aria-label="Transport"
+				>
+					<button
+						type="button"
+						onclick={() => nudgePlayhead(-0.5)}
+						aria-label="Step back 0.5 seconds"
+						title="Step back 0.5s — park the playhead before dropping an effect"
+						class="grid size-6 place-items-center rounded-full text-white/60 transition hover:text-white active:scale-90"
+					>
+						<Icon name="i-lucide-chevrons-left" class="size-3.5" />
+					</button>
+					<button
+						type="button"
+						onclick={togglePlay}
+						aria-label={(gif ? gifPlaying : playing) ? 'Pause' : 'Play'}
+						title="Play / pause"
+						class="grid size-6 place-items-center rounded-full bg-warm-500/20 text-warm-400 transition active:scale-90"
+					>
+						<Icon
+							name={(gif ? gifPlaying : playing) ? 'i-lucide-pause' : 'i-lucide-play'}
+							class="size-3.5 {(gif ? gifPlaying : playing) ? '' : 'ml-0.5'}"
+						/>
+					</button>
+					<button
+						type="button"
+						onclick={stopPlayback}
+						aria-label="Stop and rewind"
+						title="Stop — rewind to the window start"
+						class="grid size-6 place-items-center rounded-full text-white/60 transition hover:text-white active:scale-90"
+					>
+						<Icon name="i-lucide-square" class="size-3" />
+					</button>
+					<button
+						type="button"
+						onclick={() => nudgePlayhead(0.5)}
+						aria-label="Step forward 0.5 seconds"
+						title="Step forward 0.5s"
+						class="grid size-6 place-items-center rounded-full text-white/60 transition hover:text-white active:scale-90"
+					>
+						<Icon name="i-lucide-chevrons-right" class="size-3.5" />
+					</button>
+				</div>
+				<span class="min-w-0 flex-1 text-center font-mono text-[10px] text-warm-500 tabular-nums">
+					{fmtTime(currentTime)} / {fmtTime(duration)}
+				</span>
+				<span class="flex shrink-0 items-center gap-1.5">
+					<!-- Preview sound (desktop parity): unmutes the stage video AND
+					     fires sound cues live as the playhead crosses them. -->
+					{#if sfxCues.length || mediaKind === 'video'}
+						<button
+							type="button"
+							onclick={togglePreviewSound}
+							aria-pressed={previewSoundOn}
+							aria-label={previewSoundOn ? 'Mute preview' : 'Unmute preview'}
+							title={previewSoundOn ? 'Preview sound on' : 'Preview sound off'}
+							class="flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-sans text-[9px] font-bold transition active:scale-90 {previewSoundOn
+								? 'bg-warm-500/20 text-warm-400'
+								: 'text-white/55 hover:text-white'}"
+						>
+							<Icon
+								name={previewSoundOn ? 'i-lucide-volume-2' : 'i-lucide-volume-x'}
+								class="size-3"
+							/>
+							{previewSoundOn ? 'Sound' : 'Muted'}
+						</button>
+					{/if}
 					{#if overlays.length || imageLayers.length || sfxCues.length}
 						<button
 							type="button"
@@ -3144,7 +3574,6 @@
 							/>
 						</button>
 					{/if}
-					<span>{fmtTime(duration)}</span>
 				</span>
 			</div>
 			<div
@@ -3326,7 +3755,7 @@
 				<!-- Cut & window actions (video): contiguous non-destructive cuts at
 			     the playhead (exactly what the export burns), the window reset,
 			     and the Trim & speed sheet. -->
-				<div class="flex items-center justify-around text-white/60">
+				<div class="flex items-center justify-around text-white/60 [&>button]:py-0.5">
 					<button
 						type="button"
 						class="flex flex-col items-center gap-0.5 text-[9px] font-semibold transition active:scale-90"
@@ -3586,6 +4015,28 @@
 					{/each}
 				</div>
 			</div>
+
+			<!-- GIF stickers (desktop parity): animated transparent cut-outs from
+			     the shared Giphy picker — sized by a segmented control so the
+			     sheet never needs a second trip to the GIF Library panel. -->
+			<div>
+				<div class="mb-1.5 flex items-center justify-between gap-2">
+					<p class="text-[11px] font-bold tracking-wide text-white/50 uppercase">GIF stickers</p>
+					<p class="text-[10px] font-semibold text-white/40">
+						{imageLayers.length}/24 layers
+					</p>
+				</div>
+				<div class="h-[44vh]">
+					<GifPicker
+						variant="inline"
+						multiple
+						onpick={(gif) => addGifLayer(gif)}
+						onpickmany={(gifs) => {
+							for (const gif of gifs) addGifLayer(gif);
+						}}
+					/>
+				</div>
+			</div>
 		</div>
 	</StudioSheet>
 
@@ -3679,7 +4130,67 @@
 					</button>
 				</div>
 
+				<!-- Timing window (desktop caption-list parity): show this caption
+				     only inside From–Until on the media clock — the export paints it
+				     with the same window. -->
+				{#if (mediaKind === 'video' || !!gif) && duration > 0}
+					<div class="rounded-xl bg-black/40 p-2.5">
+						<p class="mb-1.5 text-[11px] font-bold tracking-wide text-white/50 uppercase">
+							Visible window
+						</p>
+						<label class="flex flex-col gap-1.5">
+							<span class="font-mono text-[10.5px] text-white/50 tabular-nums">
+								From · {((editing.startMs ?? 0) / 1000).toFixed(1)}s
+							</span>
+							<input
+								type="range"
+								min="0"
+								max={Math.max(0.1, duration).toFixed(1)}
+								step="0.1"
+								value={((editing.startMs ?? 0) / 1000).toFixed(1)}
+								oninput={(e) =>
+									patchOverlay(editing.id, {
+										startMs: Math.round(Number(e.currentTarget.value) * 1000)
+									})}
+								class="accent-warm-500"
+							/>
+						</label>
+						<label class="flex flex-col gap-1.5">
+							<span class="font-mono text-[10.5px] text-white/50 tabular-nums">
+								Until · {((editing.endMs ?? duration * 1000) / 1000).toFixed(1)}s
+							</span>
+							<input
+								type="range"
+								min="0"
+								max={Math.max(0.1, duration).toFixed(1)}
+								step="0.1"
+								value={((editing.endMs ?? duration * 1000) / 1000).toFixed(1)}
+								oninput={(e) =>
+									patchOverlay(editing.id, {
+										endMs: Math.round(Number(e.currentTarget.value) * 1000)
+									})}
+								class="accent-warm-500"
+							/>
+						</label>
+						{#if editing.startMs !== undefined || editing.endMs !== undefined}
+							<button
+								type="button"
+								onclick={() => patchOverlay(editing.id, { startMs: undefined, endMs: undefined })}
+								class="mt-0.5 rounded-full bg-white/10 py-2 text-[11.5px] font-bold text-white/70 transition active:scale-95"
+							>
+								<Icon name="i-lucide-rotate-ccw" class="mr-1 inline size-3.5" />Always visible
+							</button>
+						{/if}
+					</div>
+				{/if}
 				<div class="mt-1 flex gap-2">
+					<button
+						type="button"
+						onclick={() => duplicateOverlay(editing.id)}
+						class="flex-1 rounded-full bg-white/10 py-3 text-[13px] font-bold text-white/80 transition active:scale-[0.98]"
+					>
+						<Icon name="i-lucide-copy" class="mr-1 inline size-4" />Duplicate
+					</button>
 					<button
 						type="button"
 						onclick={() => {
@@ -3856,6 +4367,13 @@
 				{/if}
 
 				<div class="mt-1 flex gap-2">
+					<button
+						type="button"
+						onclick={() => duplicateLayer(id)}
+						class="flex-1 rounded-full bg-white/10 py-3 text-[13px] font-bold text-white/80 transition active:scale-[0.98]"
+					>
+						<Icon name="i-lucide-copy" class="mr-1 inline size-4" />Duplicate
+					</button>
 					<button
 						type="button"
 						onclick={() => {
@@ -4067,6 +4585,34 @@
 					</div>
 				</div>
 			{/if}
+
+			<!-- Import from device (desktop `soundIO.importFile` parity): hidden
+		     input + full-width tile; the store handles size gates, duration
+		     probe and toasts, then the sound appears in “Your sounds” above. -->
+			<input
+				type="file"
+				accept="audio/*"
+				class="hidden"
+				bind:this={soundImportInput}
+				onchange={importSoundFile}
+			/>
+			<button
+				type="button"
+				onclick={() => soundImportInput?.click()}
+				class="flex items-center gap-2 rounded-lg border border-dashed border-white/20 px-2.5 py-3 text-left transition active:scale-[0.98]"
+			>
+				<span
+					class="grid size-9 shrink-0 place-items-center rounded-full bg-white/10 text-white/70"
+					aria-hidden="true"
+				>
+					<Icon name="i-lucide-file-audio" class="size-4" />
+				</span>
+				<span class="min-w-0 flex-1">
+					<span class="block text-[12.5px] font-bold">Import from device</span>
+					<span class="block text-[10.5px] text-white/40">MP3 / M4A / WAV up to 8 MB</span>
+				</span>
+				<Icon name="i-lucide-plus" class="size-4 shrink-0 text-white/40" />
+			</button>
 
 			<!-- Sound pads by vibe -->
 			{#each SFX_BUCKETS as bucket (bucket.id)}
@@ -5221,6 +5767,75 @@
 				</button>
 			</div>
 
+			<!-- Export-to-device (functional export of image / GIF / video): the
+			     shared OUTPUT_FORMATS chips pick the format, the download/share
+			     button renders with the SAME pipeline as publishing. -->
+			<div class="rounded-xl bg-black/40 p-2.5">
+				<div class="mb-2 flex items-center justify-between gap-2">
+					<span class="text-[11px] font-bold text-white/70">Save to device</span>
+					<span class="text-[10px] font-semibold text-white/40">
+						{outputFormatLabel} · burns everything you see
+					</span>
+				</div>
+				<div
+					class="flex gap-1 rounded-full bg-black/40 p-0.5"
+					role="group"
+					aria-label="Export format"
+				>
+					{#each OUTPUT_FORMATS as format (format.id)}
+						{@const disabled =
+							format.id === 'gif' && mediaKind === 'video'
+								? 'GIF export needs an image or GIF base'
+								: format.id === 'video' && !canRenderVideoMeme()
+									? "This browser can't record video"
+									: ''}
+						<button
+							type="button"
+							disabled={publishBusy || !!disabled}
+							onclick={() => (exportFormat = format.id)}
+							aria-pressed={exportFormat === format.id}
+							title={disabled || format.hint}
+							class="flex-1 rounded-full py-1.5 text-[12px] font-bold transition {exportFormat ===
+							format.id
+								? 'bg-warm-500 text-white'
+								: disabled
+									? 'cursor-not-allowed text-white/30'
+									: 'text-white/55'} disabled:opacity-40"
+						>
+							{format.label}
+						</button>
+					{/each}
+				</div>
+				<button
+					type="button"
+					onclick={() => void exportToDevice()}
+					disabled={publishBusy || exporting || !mediaUrl}
+					class="mt-2 flex w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 py-3 text-[13px] font-bold text-white/85 transition active:scale-[0.98] disabled:opacity-40"
+				>
+					<Icon name="i-lucide-download" class="size-4" />
+					Export {outputFormatLabel} to device
+				</button>
+				{#if mediaKind === 'video'}
+					<label
+						class="mt-2 flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-[11px] font-semibold text-white/60"
+					>
+						<span>Include the clip's own audio</span>
+						<button
+							type="button"
+							onclick={() => (includeSourceAudio = !includeSourceAudio)}
+							aria-checked={includeSourceAudio}
+							role="switch"
+							aria-label="Include the clip's own audio in exports"
+							class="inline-flex h-5 w-9 items-center rounded-full px-0.5 transition {includeSourceAudio
+								? 'justify-end bg-warm-500'
+								: 'justify-start bg-white/20'}"
+						>
+							<span class="size-4 rounded-full bg-white"></span>
+						</button>
+					</label>
+				{/if}
+			</div>
+
 			<div class="flex gap-2">
 				<button
 					type="button"
@@ -5259,6 +5874,9 @@
 				<div>
 					<h3 class="text-xl font-bold">Posted successfully!</h3>
 					<p class="mt-1 text-[13px] text-white/50">Your meme is live on Nostr.</p>
+					{#if renderedStats}
+						<p class="mt-1 text-[12px] text-white/40 tabular-nums">{renderedStats}</p>
+					{/if}
 				</div>
 				<button
 					type="button"
@@ -5320,14 +5938,63 @@
 				<div>
 					<h3 class="text-lg font-bold">{pubLabel}</h3>
 					<p class="mt-1 text-[12px] text-white/40">
-						Keep this tab open — signed & broadcast via your relays.
+						{#if exporting}
+							Burning in captions, layers & sounds — then it's handed to your device.
+						{:else}
+							Keep this tab open — signed & broadcast via your relays.
+						{/if}
 					</p>
 				</div>
-				<div class="h-2 w-full max-w-[260px] overflow-hidden rounded-full bg-white/15">
-					<div
-						class="h-full rounded-full bg-gradient-to-r from-warm-500 to-primary-500 transition-all duration-300"
-						style="width:{pubPercent}%"
-					></div>
+				<!-- Step chips: Render → Upload → Broadcast, current one lit (publish only). -->
+				{#if !exporting}
+					{@const steps = ['Render', 'Upload', 'Broadcast']}
+					<div class="flex items-center gap-2" aria-hidden="true">
+						{#each steps as step, i (step)}
+							{@const isActive = pubStep.index === i + 1}
+							{@const isDone = pubStep.index > i + 1}
+							<div
+								class="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold tracking-wide uppercase transition-colors {isActive
+									? 'bg-warm-500/20 text-warm-400'
+									: isDone
+										? 'bg-white/10 text-white/60'
+										: 'text-white/25'}"
+							>
+								{#if isDone}
+									<Icon name="i-lucide-check" class="size-3.5" />
+								{:else if isActive}
+									<span class="size-1.5 animate-pulse rounded-full bg-warm-400"></span>
+								{/if}
+								{step}
+							</div>
+						{/each}
+					</div>
+				{/if}
+				<!-- Bar + numeric % (mapped into the current step's band). -->
+				<div class="w-full max-w-[280px]">
+					<div class="mb-1.5 flex items-baseline justify-between">
+						<span class="text-[11px] font-semibold tracking-wider text-white/40 uppercase">
+							{#if exporting}
+								Rendering
+							{:else}
+								{pubStep.index === 1
+									? 'Rendering'
+									: pubStep.index === 2
+										? 'Uploading'
+										: 'Broadcasting'}
+							{/if}
+						</span>
+						<span class="text-[15px] font-bold text-white tabular-nums">{pubPercentTotal}%</span>
+					</div>
+					<div class="h-2 w-full overflow-hidden rounded-full bg-white/15">
+						<div
+							class="h-full rounded-full bg-gradient-to-r from-warm-500 to-primary-500 transition-all duration-300"
+							style="width:{pubPercentTotal}%"
+						></div>
+					</div>
+					<!-- Rendered file vitals: size · resolution · duration. -->
+					{#if renderedStats}
+						<p class="mt-2 text-[12px] text-white/50 tabular-nums">{renderedStats}</p>
+					{/if}
 				</div>
 			{/if}
 		</div>
