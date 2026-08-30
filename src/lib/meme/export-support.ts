@@ -66,7 +66,6 @@ export function exportImetaDuration(opts: {
 	pinnedLengthSec: number | null;
 	cueRuntimeSec?: number;
 	exportDurationSec?: number;
-	capSec: number;
 }): number | undefined {
 	if (opts.uploadedKind !== 'video') return undefined;
 	if (opts.mediaKind === 'video') return opts.exportDurationSec || undefined;
@@ -76,7 +75,7 @@ export function exportImetaDuration(opts: {
 			: (opts.pinnedLengthSec ?? opts.gifDuration);
 	}
 	if (opts.cueRuntimeSec) {
-		return Math.min(Math.max(opts.pinnedLengthSec ?? opts.cueRuntimeSec, 0.5), opts.capSec);
+		return Math.max(opts.pinnedLengthSec ?? opts.cueRuntimeSec, 0.5);
 	}
 	return undefined;
 }

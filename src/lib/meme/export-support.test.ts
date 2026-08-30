@@ -34,8 +34,7 @@ describe('exportImetaDuration', () => {
 		uploadedKind: 'video',
 		mediaKind: 'image',
 		exportFormat: 'auto',
-		pinnedLengthSec: null,
-		capSec: 60
+		pinnedLengthSec: null
 	} as const;
 
 	it('returns nothing for image uploads', () => {
@@ -67,8 +66,8 @@ describe('exportImetaDuration', () => {
 		expect(exportImetaDuration({ ...base, gifDuration: 3 })).toBe(3);
 	});
 
-	it('sound memes clamp to the cap and floor at 0.5s', () => {
-		expect(exportImetaDuration({ ...base, cueRuntimeSec: 90, capSec: 60 })).toBe(60);
+	it('sound memes retain their full duration and floor at 0.5s', () => {
+		expect(exportImetaDuration({ ...base, cueRuntimeSec: 90 })).toBe(90);
 		expect(exportImetaDuration({ ...base, cueRuntimeSec: 0.2 })).toBe(0.5);
 	});
 });

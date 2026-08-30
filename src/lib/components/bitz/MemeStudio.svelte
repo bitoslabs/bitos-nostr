@@ -113,7 +113,7 @@
 	} from '$lib/meme/schema';
 	import { SFX_RECIPES } from '$lib/meme/sfx';
 	import { SFX_LABELS as sfxLabels, SFX_DURATIONS as sfxDurations } from '$lib/meme/sound-catalog';
-	import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
+	import { cueTrackDurationSec } from '$lib/meme/cue-track';
 	import {
 		clipsDuration,
 		makeVideoClip,
@@ -1696,9 +1696,8 @@
 		toasts.info('Select a caption or image layer, then split it at the playhead');
 	}
 
-	/** Set the export window's LENGTH (user request: “set time 5s, 10s, 30s…”):
-	 *  keeps the current start mark, caps at the source's remaining time and
-	 *  the 90s video-meme limit — and says so when a preset doesn't fit. */
+	/** Set the export window's LENGTH (user request: “set time 5s, 10s, 30s…”),
+	 *  keeping the current start mark and the source's remaining time. */
 	function setTrimLength(sec: number | null): void {
 		// null arrives from the GIF variant's "Full" chip — the video window has
 		// no such control, so treat it as a no-op guard rather than a reset.
@@ -1706,14 +1705,12 @@
 		const dur = meta?.duration ?? 0;
 		if (!Number.isFinite(sec) || sec <= 0 || !dur) return;
 		const avail = Math.max(0, dur - trimStartSec);
-		const capped = Math.min(sec, avail, MAX_VIDEO_MEME_SECONDS);
+		const capped = Math.min(sec, avail);
 		trimEndSec = trimStartSec + capped;
 		clampPlayheadToTrimWindow();
 		toasts.info(`Timeline length set to ${formatDuration(capped)}`);
 		if (sec > avail) {
 			toasts.info(`Only ${formatDuration(avail)} left after the start mark — window capped`);
-		} else if (sec > MAX_VIDEO_MEME_SECONDS) {
-			toasts.info(`Video memes cap at ${MAX_VIDEO_MEME_SECONDS}s`);
 		}
 	}
 
@@ -2296,8 +2293,6 @@
 	let mineController: AbortController | undefined;
 
 	const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
-	// MAX_VIDEO_MEME_SECONDS lives in $lib/meme/cue-track (shared with the
-	// suggestion path so the analysis window and export window always agree).
 	const SOFT_CAP = 300;
 	const HARD_CAP = 1000;
 
@@ -3589,12 +3584,6 @@
 		if (!canRenderVideoMeme()) {
 			throw new Error('This browser cannot export video memes — try Chrome/Edge or use a picture');
 		}
-		// Trim guard: the export window (not the raw source) must fit the cap.
-		if (trimDuration > MAX_VIDEO_MEME_SECONDS) {
-			throw new Error(
-				`Video memes top out at ${MAX_VIDEO_MEME_SECONDS}s — trim the window first (${formatDuration(trimDuration)})`
-			);
-		}
 		track('rendering', 'Recording meme video…', 0);
 		await tick();
 		// Cue mix (synth + custom) rides alongside any source audio; attached
@@ -3670,10 +3659,7 @@
 		// Export length: the GIF's own duration, or the creator's Length pick
 		// (shorter trims the loop, longer repeats the GIF). Cue audio is built
 		// on the same clock so sounds fire inside the exported window.
-		const exportLengthSec = Math.min(
-			Math.max(pinnedLengthSec ?? decoded.duration, 0.2),
-			MAX_VIDEO_MEME_SECONDS
-		);
+		const exportLengthSec = Math.max(pinnedLengthSec ?? decoded.duration, 0.2);
 		track('rendering', 'Recording meme…', 0);
 		// Synthesized + custom cue mix (if any cues exist) becomes the audio track.
 		const cueTrack = await cueAudioTrack(exportLengthSec, sfxCues, libraryDecodeSound);
@@ -3740,13 +3726,9 @@
 		const size = renderTarget;
 		a.width = Math.max(2, size.width - (size.width % 2));
 		a.height = Math.max(2, size.height - (size.height % 2));
-		// Duration: last cue end + tail, clamped to the video-meme cap (shared
-		// with the suggestion path via cue-track). A pinned Length overrides —
+		// Duration: last cue end + tail. A pinned Length overrides —
 		// shorter drops late cues, longer holds the last frame in silence.
-		const durationSec = Math.min(
-			Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5),
-			MAX_VIDEO_MEME_SECONDS
-		);
+		const durationSec = Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5);
 		track('rendering', 'Recording sound meme…', 0);
 		const cueTrack = await cueAudioTrack(durationSec, sfxCues, libraryDecodeSound);
 		// Real-time pass: paint the static frame (look + image layers + timed
@@ -3840,8 +3822,7 @@
 			cueRuntimeSec: sfxCues.length ? cueTrackDurationSec(sfxCues) : undefined,
 			// Ramp-integrated length (mediaMsToExportMs) when ramps exist, else
 			// the flat trim/rate math — imeta must match the exported file.
-			exportDurationSec: speedWindows.length ? mediaSpanExportSec : exportDurationSec,
-			capSec: MAX_VIDEO_MEME_SECONDS
+			exportDurationSec: speedWindows.length ? mediaSpanExportSec : exportDurationSec
 		});
 		const bitrate =
 			durationSec && durationSec > 0.2 && uploaded.bytes > 0
