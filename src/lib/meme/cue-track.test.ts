@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cueTrackDurationSec, MAX_VIDEO_MEME_SECONDS } from './cue-track';
+import { cueTrackDurationSec } from './cue-track';
 
 describe('cue-track (AI-002 static/GIF timeline)', () => {
 	it('empty cues floor at 1s', () => {
@@ -11,8 +11,8 @@ describe('cue-track (AI-002 static/GIF timeline)', () => {
 		expect(cueTrackDurationSec([{ atMs: 0 }, { atMs: 4200 }, { atMs: 900 }])).toBeCloseTo(4.7);
 	});
 
-	it('clamped to the export cap', () => {
-		expect(cueTrackDurationSec([{ atMs: 200_000 }])).toBe(MAX_VIDEO_MEME_SECONDS);
+	it('does not cap long cue tracks', () => {
+		expect(cueTrackDurationSec([{ atMs: 200_000 }])).toBe(200.5);
 	});
 
 	it('never below 1s even with a tiny cue', () => {

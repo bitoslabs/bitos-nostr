@@ -92,7 +92,6 @@
 	} from '$lib/meme/export-pipeline';
 	import { renderVideoMeme } from '$lib/meme/render';
 	import { exportErrorMessage } from '$lib/meme/export-support';
-	import { MAX_VIDEO_MEME_SECONDS } from '$lib/meme/cue-track';
 	import {
 		DEFAULT_FX_INTENSITY,
 		FRAME_FX_IDS,
@@ -2637,9 +2636,6 @@
 			0.5,
 			(mediaMsToExportMs(speedWindows, winEnd * 1000) / 1000 - winStart) / (playbackRate || 1)
 		);
-		if (runtimeSec > MAX_VIDEO_MEME_SECONDS) {
-			throw new Error(`Video memes top out at ${MAX_VIDEO_MEME_SECONDS}s — trim the window first`);
-		}
 		const size = evenSize(
 			artboardId === 'source'
 				? targetSize({
