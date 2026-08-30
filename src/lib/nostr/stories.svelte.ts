@@ -23,6 +23,7 @@ import { zapSats } from './zaps';
 import { clientTag } from './client-tag';
 import { extractHashtagTags } from '$lib/utils/note-content';
 import { minePowAsync, eventPow, type PowProgress } from './pow';
+import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 
 const STORY_TTL = 24 * 60 * 60; // seconds
 /** Hard cap on images per story slide — keeps events + viewer carousels sane. */
@@ -320,6 +321,7 @@ class StoriesStore {
 		this.authors = [];
 		this.loading = false;
 		this.slidesByAuthor.clear();
+		this.viewedSlides.clear();
 	};
 
 	private authorList(me: string): string[] {
@@ -686,7 +688,15 @@ class StoriesStore {
 		return event.id;
 	};
 
-	/** Record that the current user viewed a slide — once per slide (👁️ reaction). */
+	/**
+	 * Record that the current user viewed a slide — at most once per slide
+	 * (kind 7 “👁️” reaction, the standard NIP-25 view-receipt convention).
+	 *
+	 * View receipts are private-by-default: when the `storyViewReceipts`
+	 * setting is OFF (the default) nothing is ever signed or sent to relays.
+	 * The slide is still marked viewed locally so that enabling the setting
+	 * later can never replay a flood of receipts for stories already seen.
+	 */
 	recordView = async (slide: StorySlide): Promise<void> => {
 		if (!browser) return;
 		const me = identity.current;
@@ -695,6 +705,7 @@ class StoriesStore {
 		if (this.viewedSlides.has(slide.id)) return;
 		this.viewedSlides.add(slide.id);
 		this.persistViewed();
+		if (!privacyNotificationSettings.state.storyViewReceipts) return;
 		const event = await signMined({
 			kind: NOSTR_KINDS.REACTION,
 			content: '👁️',

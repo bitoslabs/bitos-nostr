@@ -31,6 +31,11 @@
 			'sensitiveReason',
 			'Show warning reason',
 			'Show details such as “Graphic violence” or “Spoilers” when available'
+		],
+		[
+			'storyViewReceipts',
+			'Story view receipts',
+			'Off by default — when on, let story authors know you viewed their story (sent once per story)'
 		]
 	] as const;
 

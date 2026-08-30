@@ -24,7 +24,8 @@ const EXACT_KEYS = [
 	'bitos:event-outbox',
 	'bitos:feed-preferences',
 	'bitos:call-settings',
-	'bitos:followed-hashtags'
+	'bitos:followed-hashtags',
+	'bitos:story-views'
 ];
 
 const PREFIXES = [
