@@ -93,7 +93,8 @@ describe('BitzSearchStore', () => {
 			authorOf: () => 'Satoshi Vision',
 			profileEnsure: () => {},
 			mediaKinds: [20, 21, 22],
-			textKind: 1,
+			videoKinds: [21, 22],
+			imageKinds: [20],
 			...overrides
 		});
 	}
@@ -116,6 +117,40 @@ describe('BitzSearchStore', () => {
 			// the local copy wins the merge order
 			expect(store.matches[0].content).toContain('local');
 		});
+	});
+
+	it('queries only the configured standard media kinds', async () => {
+		let requests: { kinds: number[]; limit: number; search: string }[] = [];
+		const store = makeStore({
+			mediaKinds: [20, 21, 22, 34235, 34236],
+			relaySearch: async (nextRequests) => {
+				requests = nextRequests;
+				return [];
+			}
+		});
+		store.setQuery('lightning');
+		await store.searchNow();
+		expect(requests).toEqual([
+			{ kinds: [20, 21, 22, 34235, 34236], limit: 80, search: 'lightning' }
+		]);
+	});
+
+	it('uses only NIP-71 video kinds when the Videos filter is selected', async () => {
+		let requests: { kinds: number[]; limit: number; search: string }[] = [];
+		const store = makeStore({
+			mediaKinds: [20, 21, 22, 34235, 34236],
+			videoKinds: [21, 22, 34235, 34236],
+			relaySearch: async (nextRequests) => {
+				requests = nextRequests;
+				return [];
+			}
+		});
+		store.filter = 'video';
+		store.setQuery('lightning');
+		await store.searchNow();
+		expect(requests).toEqual([
+			{ kinds: [21, 22, 34235, 34236], limit: 80, search: 'lightning' }
+		]);
 	});
 
 	it('applies the media filter to results', () => {

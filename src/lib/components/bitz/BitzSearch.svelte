@@ -171,7 +171,7 @@
 									type="button"
 									role="tab"
 									aria-selected={search.filter === chip.key}
-									onclick={() => (search.filter = chip.key)}
+									onclick={() => search.setFilter(chip.key)}
 									class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap transition {search.filter ===
 									chip.key
 										? 'bg-primary-500 text-white'

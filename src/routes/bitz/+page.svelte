@@ -99,11 +99,9 @@
 	// Keep startup fast without retaining the full Bitz feed locally. Older
 	// pages always come from relays through the normal pagination request.
 	const MAX_CACHED_REELS = 10;
-	// Nostr `limit` applies PER RELAY PER FILTER, so a single combined filter
-	// transfers limit × relay-count events. Splitting by kind fixes the yield:
-	// dedicated media kinds are ~100% renderable bitz (query them deep), while
-	// kind-1 text notes are mostly text (query a shallow window for the few
-	// that carry video links). Both filters run in one parallel round trip.
+	// Nostr `limit` applies PER RELAY PER FILTER. Bitz reads its standard
+	// NIP-68/NIP-71 media kinds only, so every event requested is a media
+	// candidate instead of scanning unrelated kind-1 text notes for URLs.
 	const REEL_MEDIA_KINDS = [
 		NOSTR_KINDS.PICTURE,
 		NOSTR_KINDS.VIDEO,
@@ -111,12 +109,16 @@
 		NOSTR_KINDS.ADDRESSABLE_VIDEO,
 		NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
 	];
+	const REEL_VIDEO_KINDS = [
+		NOSTR_KINDS.VIDEO,
+		NOSTR_KINDS.SHORT_VIDEO,
+		NOSTR_KINDS.ADDRESSABLE_VIDEO,
+		NOSTR_KINDS.ADDRESSABLE_SHORT_VIDEO
+	];
 	const REELS_MEDIA_INITIAL_LIMIT = 400;
-	const REELS_TEXT_INITIAL_LIMIT = 120;
 	// "Load more" walks backwards in batches large enough that one or two relay
 	// round-trips usually cover a full media page. The old 10-event batches made
 	// pagination feel dead: dozens of sequential requests before anything showed.
-	const REELS_QUERY_BATCH_LIMIT = 150;
 	const REELS_MEDIA_PAGE_LIMIT = 60;
 	// One "load more" targets a full Explore reveal page (18 tiles) so the grid
 	// never stalls with fewer new tiles than it just revealed.
@@ -387,7 +389,8 @@
 		authorOf: bitzAuthorName,
 		profileEnsure: (pubkeys) => profiles.ensure(pubkeys),
 		mediaKinds: REEL_MEDIA_KINDS,
-		textKind: NOSTR_KINDS.TEXT_NOTE
+		videoKinds: REEL_VIDEO_KINDS,
+		imageKinds: [NOSTR_KINDS.PICTURE]
 	});
 	// Mirror the explore pool into the store — instant local matching that
 	// stays fresh as the feed grows/paginates.
@@ -786,10 +789,7 @@
 			// Author mode: every filter is scoped to one author; discovery relays
 			// never contribute (the profile grid is configured-relay territory).
 			const authorFilter = requestedAuthorPubkey ? { authors: [requestedAuthorPubkey] } : {};
-			const filters = [
-				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter },
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], limit: REELS_TEXT_INITIAL_LIMIT, ...authorFilter }
-			];
+			const filters = [{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter }];
 			const discoveryPromise = queryUrls(isAuthorPlayback ? [] : discoveryUrls(), filters);
 			const events = await queryParallelProgressive(filters, {
 				onSecondary: (mergedEvents) => {
@@ -829,19 +829,13 @@
 				batch < MAX_REEL_QUERY_BATCHES && foundMedia < REELS_MEDIA_PAGE_SIZE;
 				batch += 1
 			) {
-				// Media kinds come back as ready-made bitz (no walking needed); the
-				// kind-1 window is what the cursor walks past. Same round trip.
+				// Standard media kinds come back as ready-made bitz; no kind-1
+				// text-note walk is needed to find video URLs.
 				const authorFilter = authorPubkey ? { authors: [authorPubkey] } : {};
 				const filters = [
 					{
 						kinds: REEL_MEDIA_KINDS,
 						limit: REELS_MEDIA_PAGE_LIMIT,
-						until: oldestReelEventCreatedAt - 1,
-						...authorFilter
-					},
-					{
-						kinds: [NOSTR_KINDS.TEXT_NOTE],
-						limit: REELS_QUERY_BATCH_LIMIT,
 						until: oldestReelEventCreatedAt - 1,
 						...authorFilter
 					}
