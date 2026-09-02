@@ -86,6 +86,24 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
 - Reels published as NIP-68/71 media events (kinds 20/21/22/34235/34236);
   `bitz-codec.ts` is the authoritative media extractor (imeta-first, fallback
   chains, rendition ladders, hash/dim/duration validation).
+- **Bitz discovery/query standard:** the Bitz feed, pagination, author view,
+  and NIP-50 search query only the media kinds below. They do not query
+  kind `1` text notes and infer video from a URL in the note body. This keeps
+  the Bitz “All” results media-specific and interoperable with video clients.
+
+  | Content | Nostr kind | Standard | Notes |
+  | --- | ---: | --- | --- |
+  | Picture | `20` | [NIP-68](https://github.com/nostr-protocol/nips/blob/master/68.md) | Image media post. |
+  | Normal video | `21` | [NIP-71](https://github.com/nostr-protocol/nips/blob/master/71.md) | Usually landscape/long-form. |
+  | Short video | `22` | NIP-71 | Portrait/reels-style video; BitOS's normal publish target. |
+  | Addressable normal video | `34235` | NIP-71 | Requires a `d` tag; newest event per coordinate is used. |
+  | Addressable short video | `34236` | NIP-71 | Requires a `d` tag; newest event per coordinate is used. |
+
+  Video metadata belongs in an `imeta` tag (especially `url`, `m`, `dim`,
+  `x`, preview `image`, `fallback`, and recommended `duration`). `content`
+  is the video description/caption. The codec may still render a legacy
+  kind-`1` video event passed in from elsewhere, but Bitz never discovers one
+  by querying kind `1`.
 - Player: snap-scroll, adaptive renditions + mirror failover (`MediaPlayer`),
   view-mode toggle, persistent mute, emoji bursts, PoW badge.
 - Comments panel (NIP-10/22 threading), zap dialog with invoice resolution,

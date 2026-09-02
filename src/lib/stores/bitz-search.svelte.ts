@@ -37,10 +37,8 @@ export type BitzRelaySearchFn = (requests: BitzSearchRequest[]) => Promise<Event
 /** Debounce for the relay round trip while the user is still typing. */
 export const BITZ_SEARCH_DEBOUNCE_MS = 400;
 
-/** Limits for one relay search round — same split rationale as the feed load
- *  (media kinds deep, kind-1 shallow). */
+/** Limit for one relay search round over standard Bitz media events. */
 export const BITZ_SEARCH_MEDIA_LIMIT = 80;
-export const BITZ_SEARCH_TEXT_LIMIT = 120;
 
 /** A text run inside a highlighted string: plain or matched. */
 export interface HighlightSegment {
@@ -138,8 +136,10 @@ export interface BitsSearchDeps {
 	profileEnsure: (pubkeys: string[]) => void;
 	/** Dedicated media kinds queried deeply (page's REEL_MEDIA_KINDS). */
 	mediaKinds: number[];
-	/** Text-note kind queried shallowly (NOSTR_KINDS.TEXT_NOTE). */
-	textKind: number;
+	/** NIP-71 video kinds used by the Videos filter. */
+	videoKinds: number[];
+	/** NIP-68 picture kind used by the Pictures filter. */
+	imageKinds: number[];
 }
 
 export class BitzSearchStore {
@@ -258,6 +258,14 @@ export class BitzSearchStore {
 		this.debounceTimer = setTimeout(() => void this.searchRelays(), BITZ_SEARCH_DEBOUNCE_MS);
 	}
 
+	/** Change the result type and repeat the relay search with its matching
+	 * standard media kinds. Creator matching still searches every media kind. */
+	setFilter(filter: BitzSearchFilter) {
+		if (this.filter === filter) return;
+		this.filter = filter;
+		if (this.hasQuery) void this.searchNow();
+	}
+
 	/** Immediate search for form submit / tests. */
 	async searchNow() {
 		if (this.debounceTimer) {
@@ -290,10 +298,13 @@ export class BitzSearchStore {
 		const token = ++this.relayToken;
 		this.searching = true;
 		this.error = null;
-		const requests: BitzSearchRequest[] = [
-			{ kinds: this.deps.mediaKinds, limit: BITZ_SEARCH_MEDIA_LIMIT, search: term },
-			{ kinds: [this.deps.textKind], limit: BITZ_SEARCH_TEXT_LIMIT, search: term }
-		];
+		const kinds =
+			this.filter === 'video'
+				? this.deps.videoKinds
+				: this.filter === 'image'
+					? this.deps.imageKinds
+					: this.deps.mediaKinds;
+		const requests: BitzSearchRequest[] = [{ kinds, limit: BITZ_SEARCH_MEDIA_LIMIT, search: term }];
 		try {
 			const events = await this.deps.relaySearch(requests);
 			if (token !== this.relayToken) return;
