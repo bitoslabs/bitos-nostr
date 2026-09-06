@@ -121,7 +121,8 @@
 		<div>
 			<p class="text-[13px] font-semibold">Show protocol messages</p>
 			<p class="mt-0.5 text-[12px] leading-relaxed text-[var(--ui-text-muted)]">
-				Serialized channel records, such as <code>channel:__roster</code>, are hidden by default.
+				Machine messages — channel records, encrypted-mesh handshakes, mix beacons — are
+				hidden by default.
 			</p>
 		</div>
 		<button

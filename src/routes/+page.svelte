@@ -19,7 +19,7 @@
 	import { toFeedNote } from '$lib/nostr/feed-note';
 	import { applyActivityToNotes } from '$lib/nostr/zaps';
 	import { feedPreferences } from '$lib/stores/feed-preferences.svelte';
-	import { isProtocolPayload } from '$lib/nostr/content-classification';
+	import { isProtocolPayload, isMachineEnvelope } from '$lib/nostr/content-classification';
 	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
 	import {
 		algorithmPreferences,
@@ -95,7 +95,11 @@
 		return candidates.filter((note) => {
 			if (seen.has(note.id)) return false;
 			seen.add(note.id);
-			return feedPreferences.state.showProtocolNotes || !isProtocolPayload(note.content);
+			// Machine envelopes (encrypted-mesh handshakes, mix beacons, telemetry
+			// probes) are filtered with channel rosters under the same opt-in.
+			const humanReadable =
+				!isProtocolPayload(note.content) && !isMachineEnvelope(note.content);
+			return feedPreferences.state.showProtocolNotes || humanReadable;
 		});
 	});
 	const selectedFilterOptions = $derived(

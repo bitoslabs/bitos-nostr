@@ -15,6 +15,7 @@ import { algorithmPreferences } from './preferences.svelte';
 import { resolveSignal } from './registry';
 import { applyDiversity } from './diversity';
 import { negativePenalty } from './penalties';
+import { interactionProfile } from './interaction-profile.svelte';
 import { SIGNAL_BY_ID } from './definitions';
 import type { ScoringContext, ScoreBreakdown, SurfaceId } from './types';
 
@@ -55,13 +56,19 @@ export function rankNotes<T extends FeedNote>(
 ): T[] {
 	if (!candidates.length) return candidates;
 
+	// "Not interested" is user intent, not ranking opinion — a note the user
+	// explicitly dismissed stays hidden even when the surface master switch is
+	// off (chronological mode). Otherwise "algo off" would resurrect notes the
+	// user just asked to never see again.
+	const notDismissed = candidates.filter((n) => !interactionProfile.isDismissed(n.id));
+
 	const cfg = algorithmPreferences.config[surface];
 
 	// Off = chronological, never hidden.
-	if (!cfg.enabled) return [...candidates].sort((a, b) => b.createdAt - a.createdAt);
+	if (!cfg.enabled) return [...notDismissed].sort((a, b) => b.createdAt - a.createdAt);
 
-	// Hard-filter notes the user explicitly dismissed, then score the rest.
-	const eligible = candidates.filter((n) => negativePenalty(n) > 0);
+	// Score the rest — negativePenalty handles mutes + learned disfavor.
+	const eligible = notDismissed.filter((n) => negativePenalty(n) > 0);
 	if (!eligible.length) return eligible;
 
 	// Total active weight for normalization (so turning signals off re-balances).
@@ -101,12 +108,15 @@ export function rankNotesWithBreakdown<T extends FeedNote>(
 ): { notes: T[]; breakdown: Map<string, ScoreBreakdown> } {
 	if (!candidates.length) return { notes: candidates, breakdown: new Map() };
 
+	// Dismissed notes stay hidden in chronological mode too (see rankNotes).
+	const notDismissed = candidates.filter((n) => !interactionProfile.isDismissed(n.id));
+
 	const cfg = algorithmPreferences.config[surface];
 	if (!cfg.enabled) {
-		const notes = [...candidates].sort((a, b) => b.createdAt - a.createdAt);
+		const notes = [...notDismissed].sort((a, b) => b.createdAt - a.createdAt);
 		return { notes, breakdown: new Map() };
 	}
-	const eligible = candidates.filter((n) => negativePenalty(n) > 0);
+	const eligible = notDismissed.filter((n) => negativePenalty(n) > 0);
 	if (!eligible.length) return { notes: eligible, breakdown: new Map() };
 
 	const entries = Object.entries(cfg.signals).filter(([, state]) => state.enabled && state.weight > 0);

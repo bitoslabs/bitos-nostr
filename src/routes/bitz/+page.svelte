@@ -528,7 +528,7 @@
 	}
 
 	function notInterestedIn(reel: ReelNote) {
-		interactionProfile.dismissNote(reel.id);
+		interactionProfile.dismissNote(reel.id, reel);
 		feed.hideNote(reel.id);
 		removeReel(reel);
 		toasts.success("Got it — we'll show less like this");

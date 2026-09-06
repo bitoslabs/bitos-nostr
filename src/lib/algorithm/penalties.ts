@@ -7,11 +7,11 @@ import { extractTags, interactionProfile } from './interaction-profile.svelte';
  * are soft: they push notes down the ranking without hiding them, so the user
  * can still discover them if nothing else is available.
  *
- * Returns a multiplier in [0, 1]:
+ * Three layers combine multiplicatively:
  *   • dismissed note (recently "Not interested")     → 0   (effectively hidden)
- *   • soft-muted author ("Show less from @x")        → 0.25
- *   • soft-muted tag ("Show less about #x")           → 0.4
- * Penalties stack multiplicatively.
+ *   • learned disfavor — each "Not interested" on the same author/topic adds
+ *     decaying pressure that scales this multiplier down toward ~0.15
+ *   • explicit soft mutes ("Show less from @x" / "about #x") → 0.25 / 0.4
  */
 export function negativePenalty(note: FeedNote): number {
 	let multiplier = 1;
@@ -27,5 +27,18 @@ export function negativePenalty(note: FeedNote): number {
 		}
 	}
 
-	return multiplier;
+	// Learned "not interested" pressure. A single dismissal nudges similar
+	// notes down gently; repeated dismissals converge toward a near-mute
+	// (~0.15 at the ledger ceiling) that still decays away if the user
+	// stops dismissing — softer and more reversible than the explicit mutes.
+	const authorDisfavor = interactionProfile.disfavorFor(note.pubkey);
+	let tagDisfavor = 0;
+	for (const tag of extractTags(note)) {
+		tagDisfavor = Math.max(tagDisfavor, interactionProfile.tagDisfavorFor(tag));
+		if (tagDisfavor >= 1) break;
+	}
+	const learned = Math.max(authorDisfavor, tagDisfavor);
+	if (learned > 0) multiplier *= 1 - 0.85 * learned;
+
+	return Math.max(0, multiplier);
 }

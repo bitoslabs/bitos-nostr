@@ -17,7 +17,9 @@
 	import MenuItem from '$lib/components/ui/MenuItem.svelte';
 	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import PowCard from '$lib/components/ui/PowCard.svelte';
+	import RecentHashtagChips from '$lib/components/ui/RecentHashtagChips.svelte';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
+	import { recentHashtags } from '$lib/stores/recent-hashtags.svelte';
 	import { readDraft, createDraftWriter } from '$lib/stores/drafts';
 	import { onMount, untrack } from 'svelte';
 	import { shortKey } from '$lib/utils/format';
@@ -384,6 +386,15 @@
 		];
 	}
 
+	/** Recent-hashtag chip tap — hashtags only parse after whitespace, so pad
+	 *  the insertion when the cursor follows a word character. */
+	function insertHashtag(tag: string) {
+		const el = textareaElement();
+		const start = el?.selectionStart ?? text.length;
+		const needsSpace = start > 0 && !/\s/.test(text[start - 1] ?? '');
+		insertAtCursor(`${needsSpace ? ' ' : ''}#${tag} `);
+	}
+
 	function cancelMining() {
 		mineController?.abort();
 	}
@@ -411,6 +422,8 @@
 			// Persist the difficulty actually used so the next composer starts there.
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
+			// Cache this post's hashtags as one-tap chips for the next composer.
+			recentHashtags.record(text);
 			draftWriter.clear();
 			text = '';
 			mentions = [];
@@ -578,6 +591,11 @@
 							Long note. Most relays accept it, but shorter posts render best.
 						{/if}
 					</p>
+				{/if}
+
+				<!-- Recent hashtags: one-tap reuse while composing -->
+				{#if expanded && !posting}
+					<RecentHashtagChips activeText={text} onpick={insertHashtag} class="mt-2" />
 				{/if}
 
 				<!-- In-flight uploads: local preview + live progress -->

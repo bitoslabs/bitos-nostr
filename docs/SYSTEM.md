@@ -71,7 +71,8 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   additively and republished debounced.
 - Hashtag interest sets (kind 30015) power pinned tags + topic signal.
 - Bookmarks, drafts, outbox (signed events held until N relay ACKs),
-  content-classification hides machine protocol payloads.
+  content-classification hides machine protocol payloads (channel rosters,
+  JSON machine envelopes) and coordination tags.
 - Optional NIP-13 PoW mining in a Web Worker (hashrate/progress UI, badge).
 
 ### Ranking (client-side, user-controlled)
@@ -81,6 +82,10 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
 - Presets: Latest / Balanced / Engagement / Trust + custom. Off = pure
   reverse-chron. `RankExplainer` shows per-note score breakdown.
 - Interaction profile persists dismissals, soft-mutes, hashtag interest.
+- "Not interested" learns (decaying author/topic disfavor ledger) so future
+  similar notes sink; dismissed notes stay hidden even in chronological
+  mode. Machine protocol envelopes (swarm handshakes, mix beacons, probes)
+  are filtered structurally — see [`negative-feedback.md`](negative-feedback.md).
 
 ### Bitz (short video)
 - Reels published as NIP-68/71 media events (kinds 20/21/22/34235/34236);

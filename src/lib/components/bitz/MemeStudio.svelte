@@ -188,6 +188,7 @@
 	import { type GifChoice } from '$lib/components/feed/GifPicker.svelte';
 	import { syncOverlaysToCues } from '$lib/meme/caption-sync';
 	import { popovers } from '$lib/stores/popovers.svelte';
+	import { recentHashtags } from '$lib/stores/recent-hashtags.svelte';
 	import { canvasFiltersSupported, memeLookCss, memeLookOf, type MemeLookId } from '$lib/meme/look';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { rewriteMentions } from '$lib/utils/nip27';
@@ -4005,6 +4006,8 @@
 			const eventId = eventIds[0]!;
 			powPrefs.remember(showPow ? pow : 0);
 			powPrefs.rememberPanelVisibility(showPow);
+			// Cache the caption's hashtags for one-tap reuse in the next post.
+			recentHashtags.record(caption);
 			toasts.push(
 				destinations.length > 1
 					? `Meme published to ${destinations.length} public places`
