@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseNotificationContent, parseZapAmount, zapSenderPubkey } from './notifications.svelte';
+import {
+	commentTarget,
+	parseNotificationContent,
+	parseZapAmount,
+	zapSenderPubkey
+} from './notifications.svelte';
 import type { Event } from './types';
 
 describe('parseNotificationContent', () => {
@@ -72,6 +77,126 @@ describe('parseZapAmount', () => {
 	});
 
 	it('prefers the receipt amount tag when present', () => {
-		expect(parseZapAmount([['amount', '50000'], ['description', JSON.stringify({ tags: [['amount', '21000']] })]])).toBe(50);
+		expect(
+			parseZapAmount([
+				['amount', '50000'],
+				['description', JSON.stringify({ tags: [['amount', '21000']] })]
+			])
+		).toBe(50);
+	});
+});
+
+describe('commentTarget', () => {
+	const ME = 'a'.repeat(64);
+	const OTHER = 'b'.repeat(64);
+	const RELAY = 'wss://relay.damus.io';
+
+	it('surfaces the post for a top-level comment on my video', () => {
+		const tags = [
+			['E', 'video1', RELAY, ME],
+			['K', '22'],
+			['P', ME, RELAY],
+			['e', 'video1', RELAY, ME],
+			['k', '22'],
+			['p', ME, RELAY]
+		];
+		expect(commentTarget(tags, ME)).toEqual({
+			id: 'video1',
+			kind: 'note',
+			rootKind: 22,
+			mine: true
+		});
+	});
+
+	it('surfaces the parent comment for a reply to my comment', () => {
+		const tags = [
+			['E', 'video1', RELAY, OTHER],
+			['K', '22'],
+			['P', OTHER, RELAY],
+			['e', 'mycomment', RELAY, ME],
+			['k', '1111'],
+			['p', OTHER, RELAY],
+			['p', ME, RELAY]
+		];
+		expect(commentTarget(tags, ME)).toEqual({
+			id: 'mycomment',
+			kind: 'comment',
+			rootKind: 22,
+			mine: true
+		});
+	});
+
+	it('still opens the post — not a stranger comment — for replies under my video', () => {
+		const tags = [
+			['E', 'video1', RELAY, ME],
+			['K', '22'],
+			['P', ME, RELAY],
+			['e', 'bobcomment', RELAY, OTHER],
+			['k', '1111'],
+			['p', ME, RELAY],
+			['p', OTHER, RELAY]
+		];
+		expect(commentTarget(tags, ME)).toEqual({
+			id: 'video1',
+			kind: 'note',
+			rootKind: 22,
+			mine: true
+		});
+	});
+
+	it('marks a comment that only mentions me as not mine (inline mention)', () => {
+		const tags = [
+			['E', 'video1', RELAY, OTHER],
+			['K', '22'],
+			['P', OTHER, RELAY],
+			['e', 'video1', RELAY, OTHER],
+			['k', '22'],
+			['p', OTHER, RELAY],
+			['p', ME, RELAY]
+		];
+		expect(commentTarget(tags, ME)).toEqual({
+			id: 'video1',
+			kind: 'note',
+			rootKind: 22,
+			mine: false
+		});
+	});
+
+	it('falls back to the parent kind tag when no author hints exist', () => {
+		expect(
+			commentTarget(
+				[
+					['E', 'video1'],
+					['K', '22'],
+					['e', 'video1'],
+					['k', '22']
+				],
+				ME
+			)
+		).toEqual({ id: 'video1', kind: 'note', rootKind: 22, mine: true });
+		expect(
+			commentTarget(
+				[
+					['E', 'video1'],
+					['K', '22'],
+					['e', 'comment1'],
+					['k', '1111']
+				],
+				ME
+			)
+		).toEqual({ id: 'comment1', kind: 'comment', rootKind: 22, mine: true });
+	});
+
+	it('matches author hints case-insensitively', () => {
+		const tags = [
+			['E', 'pic1', RELAY, ME.toUpperCase()],
+			['K', '20']
+		];
+		expect(commentTarget(tags, ME)).toEqual({
+			id: 'pic1',
+			kind: 'note',
+			rootKind: 20,
+			mine: true
+		});
 	});
 });

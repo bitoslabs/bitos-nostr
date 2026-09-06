@@ -163,6 +163,8 @@ export interface NotificationItem {
 	targetId?: string;
 	/** Whether the activity targets an original note or a comment/reply. */
 	targetKind?: 'note' | 'comment';
+	/** Kind of the commented root event (NIP-22 comments; e.g. 22 = video). */
+	rootKind?: number;
 	content: string;
 	createdAt: number;
 	read: boolean;
