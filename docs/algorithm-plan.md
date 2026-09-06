@@ -49,6 +49,10 @@ src/lib/algorithm/
 └── algorithm.test.ts           # vitest: off=chronological, scoring, diversity, affinity
 ```
 
+Negative feedback (dismissal learning, soft mutes, machine-envelope
+filtering) is documented separately in
+[`negative-feedback.md`](negative-feedback.md).
+
 UI: `src/lib/components/settings/AlgorithmSettings.svelte`, surfaced as a new
 **Settings → Algorithm** tab (`src/lib/settings/sections.ts`).
 

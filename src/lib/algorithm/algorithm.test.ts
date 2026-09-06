@@ -234,6 +234,81 @@ describe('negative feedback (topics / penalties / dismissal)', () => {
 		expect(ranked.map((n) => n.id)).toContain('kept');
 	});
 
+	it('keeps dismissed notes hidden even when the surface master switch is off', () => {
+		algorithmPreferences.toggleSurface('feed', false);
+		interactionProfile.dismissNote('dismissed');
+		const ranked = rankNotes(
+			'feed',
+			[note('dismissed', 'a', 9_000), note('kept', 'a', 1_000)],
+			ctx()
+		);
+		expect(ranked.map((n) => n.id)).toEqual(['kept']);
+		// Same contract for the explainer variant.
+		const withBreakdown = rankNotesWithBreakdown(
+			'feed',
+			[note('dismissed', 'a', 9_000), note('kept2', 'a', 1_000)],
+			ctx()
+		);
+		expect(withBreakdown.notes.map((n) => n.id)).toEqual(['kept2']);
+	});
+
+	it('learns from "not interested" so future notes from the same author sink', () => {
+		// Disable everything but engagement so the disfavor multiplier is the
+		// only thing that can flip the ordering.
+		for (const id of Object.keys(algorithmPreferences.config.feed.signals)) {
+			algorithmPreferences.config.feed.signals[id].enabled = id === 'engagement';
+		}
+		// User dismisses one noisy note…
+		interactionProfile.dismissNote('n1', {
+			pubkey: 'noisy',
+			content: '',
+			tags: []
+		});
+		expect(interactionProfile.disfavorFor('noisy')).toBeGreaterThan(0);
+
+		// …a later note from the same author (fresh id, identical signals)
+		// loses to an equal peer — only the learned disfavor separates them.
+		const noisy2 = note('n2', 'noisy', 5_000_000, {
+			reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+		});
+		const peer = note('p', 'friend', 4_999_000, {
+			reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+		});
+		const ranked = rankNotes('feed', [noisy2, peer], ctx());
+		expect(ranked[0].id).toBe('p');
+	});
+
+	it('escalates disfavor toward a near-mute with repeated dismissals', () => {
+		for (const id of Object.keys(algorithmPreferences.config.feed.signals)) {
+			algorithmPreferences.config.feed.signals[id].enabled = id === 'engagement';
+		}
+		for (let i = 0; i < 6; i++) {
+			interactionProfile.dismissNote(`n${i}`, { pubkey: 'noisy', content: '', tags: [] });
+		}
+		// Six dismissals → disfavor ≈ 0.89 → multiplier ≈ 0.25, matching the
+		// explicit "Show less from" mute floor — without the user ever muting.
+		const penalized = negativePenalty(note('later', 'noisy', 5, {}));
+		expect(penalized).toBeGreaterThan(0.15);
+		expect(penalized).toBeLessThan(0.3);
+
+		const noisy = note('later', 'noisy', 5_000_000, {
+			reactions: [{ emoji: '❤️', count: 10, byMe: false }]
+		});
+		const peer = note('p2', 'friend', 4_999_000, {
+			reactions: [{ emoji: '❤️', count: 12, byMe: false }]
+		});
+		const ranked = rankNotes('feed', [noisy, peer], ctx());
+		expect(ranked[0].id).toBe('p2');
+	});
+
+	it('extractTags ignores machine envelope payloads', () => {
+		const tags = extractTags({
+			content: '{"v":1,"to":"*","from":"peer_x","t":"mixbeacon"}',
+			tags: [['t', 'aegismixv2']]
+		});
+		expect(tags).toEqual([]);
+	});
+
 	it('penalizes soft-muted authors (still visible, pushed down)', () => {
 		interactionProfile.toggleMutedAuthor('noisy');
 		// noisier note would otherwise win on engagement, but the penalty pushes it down.

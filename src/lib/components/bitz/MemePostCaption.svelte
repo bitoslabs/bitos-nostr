@@ -5,6 +5,7 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
+	import RecentHashtagChips from '$lib/components/ui/RecentHashtagChips.svelte';
 	import { shortKey } from '$lib/utils/format';
 	import {
 		detectMentionTrigger,
@@ -102,6 +103,25 @@
 		mention = null;
 		const pos = before.length + insert.length;
 		queueMicrotask(() => el?.setSelectionRange(pos, pos));
+	}
+
+	/** Recent-hashtag chip tap — insert at the cursor and keep editing.
+	 *  Hashtags only parse after whitespace, so pad when following a word. */
+	function insertHashtag(tag: string) {
+		const insert = `#${tag} `;
+		if (!el) {
+			value += insert;
+			return;
+		}
+		const start = el.selectionStart ?? value.length;
+		const needsSpace = start > 0 && !/\s/.test(value[start - 1] ?? '');
+		const payload = `${needsSpace ? ' ' : ''}${insert}`;
+		value = value.slice(0, start) + payload + value.slice(el.selectionEnd ?? value.length);
+		const pos = start + payload.length;
+		queueMicrotask(() => {
+			el?.focus();
+			el?.setSelectionRange(pos, pos);
+		});
 	}
 
 	function onKey(e: KeyboardEvent) {
@@ -204,6 +224,7 @@
 			: undefined}
 		class="w-full resize-none bg-transparent text-[15px] leading-relaxed text-[var(--ui-text)] outline-none placeholder:text-[var(--ui-text-dimmed)]"
 	></textarea>
+	<RecentHashtagChips activeText={value} onpick={insertHashtag} class="mt-1.5" />
 	{#if mention && filteredMentions.length}
 		<div
 			bind:this={mentionPanel}

@@ -7,6 +7,8 @@
  *
  *   • authorAffinity  — who you react to / zap / bookmark (decayed, ~30d half-life)
  *   • tagInterest     — #topics you engage with
+ *   • authorDisfavor  — "Not interested" pressure per author (learned, decays)
+ *   • tagDisfavor     — "Not interested" pressure per topic (learned, decays)
  *   • dismissedNotes  — "Not interested" (hidden + scored against)
  *   • mutedAuthors    — soft "Show less from" (penalty, NOT a hard block)
  *   • mutedTags       — soft "Show less about" (penalty)
@@ -16,7 +18,7 @@
  */
 import { browser } from '$app/environment';
 import { bookmarks } from '$lib/stores/bookmarks.svelte';
-import { humanTags } from '$lib/nostr/content-classification';
+import { humanTags, isMachineEnvelope } from '$lib/nostr/content-classification';
 import type { FeedNote } from '$lib/nostr/types';
 
 export const PROFILE_STORAGE_KEY = 'bitos:algorithm-interaction-profile';
@@ -37,6 +39,11 @@ const MAX_DISMISSED = 1000;
 const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
 export function extractTags(note: Pick<FeedNote, 'content' | 'tags'>): string[] {
+	// Machine envelopes (encrypted-mesh handshakes, mix beacons, telemetry
+	// probes) carry no human topic — their tags are protocol routing ids, not
+	// #hashtags. Returning [] here keeps the Topics signal, tag mutes, and tag
+	// chips from learning/boosting machine coordination tags in one place.
+	if (isMachineEnvelope(note.content)) return [];
 	const declared = note.tags
 		.filter((tag) => tag[0] === 't' && tag[1])
 		.map((tag) => tag[1].toLowerCase());
@@ -59,6 +66,11 @@ export function extractTags(note: Pick<FeedNote, 'content' | 'tags'>): string[] 
 export interface InteractionProfileState {
 	authorAffinity: Record<string, number>;
 	tagInterest: Record<string, number>;
+	/** "Not interested" ledger — how often the user has dismissed content from
+	 *  each author / topic. Kept separate from the mute lists (which act
+	 *  immediately) so the two can evolve independently. */
+	authorDisfavor: Record<string, number>;
+	tagDisfavor: Record<string, number>;
 	dismissedNotes: string[];
 	mutedAuthors: string[];
 	mutedTags: string[];
@@ -68,6 +80,8 @@ export interface InteractionProfileState {
 const DEFAULT_STATE: InteractionProfileState = {
 	authorAffinity: {},
 	tagInterest: {},
+	authorDisfavor: {},
+	tagDisfavor: {},
 	dismissedNotes: [],
 	mutedAuthors: [],
 	mutedTags: [],
@@ -77,6 +91,14 @@ const DEFAULT_STATE: InteractionProfileState = {
 function decayedValue(value: number, elapsedDays: number): number {
 	return value * Math.pow(0.5, elapsedDays / DECAY_HALF_LIFE_DAYS);
 }
+
+/** Bound on the "Not interested" ledger so it can never fossilize into a
+ *  permanent shadow-mute. Each disfavor unit decays with the same ~30d
+ *  half-life as affinity; the caps keep a single trigger-happy session from
+ *  burying an author forever. */
+const DISFAVOR_MAX_AUTHORS = 400;
+const DISFAVOR_MAX_TAGS = 120;
+const DISFAVOR_CEILING = 8;
 
 class InteractionProfileStore {
 	state = $state<InteractionProfileState>(structuredClone(DEFAULT_STATE));
@@ -105,9 +127,25 @@ class InteractionProfileStore {
 					const decayed = decayedValue(Number(value) || 0, elapsedDays);
 					if (decayed > 0.01) tagInterest[tag] = decayed;
 				}
+				// Disfavor decays like affinity, so an old "not interested" fades
+				// unless the user keeps dismissing similar content.
+				const disfavorDecay = {
+					authorDisfavor: {} as Record<string, number>,
+					tagDisfavor: {} as Record<string, number>
+				};
+				for (const [pk, value] of Object.entries(parsed.authorDisfavor ?? {})) {
+					const decayed = decayedValue(Number(value) || 0, elapsedDays);
+					if (decayed > 0.01) disfavorDecay.authorDisfavor[pk] = decayed;
+				}
+				for (const [tag, value] of Object.entries(parsed.tagDisfavor ?? {})) {
+					const decayed = decayedValue(Number(value) || 0, elapsedDays);
+					if (decayed > 0.01) disfavorDecay.tagDisfavor[tag] = decayed;
+				}
 				this.state = {
 					authorAffinity,
 					tagInterest,
+					authorDisfavor: disfavorDecay.authorDisfavor,
+					tagDisfavor: disfavorDecay.tagDisfavor,
 					dismissedNotes: (parsed.dismissedNotes ?? []).slice(0, MAX_DISMISSED),
 					mutedAuthors: parsed.mutedAuthors ?? [],
 					mutedTags: parsed.mutedTags ?? [],
@@ -147,6 +185,8 @@ class InteractionProfileStore {
 		};
 		this.state.authorAffinity = trimRecord(this.state.authorAffinity, MAX_AUTHORS);
 		this.state.tagInterest = trimRecord(this.state.tagInterest, MAX_TAGS);
+		this.state.authorDisfavor = trimRecord(this.state.authorDisfavor, DISFAVOR_MAX_AUTHORS);
+		this.state.tagDisfavor = trimRecord(this.state.tagDisfavor, DISFAVOR_MAX_TAGS);
 	}
 
 	// --- positive signals -------------------------------------------------
@@ -191,8 +231,34 @@ class InteractionProfileStore {
 
 	// --- negative signals -------------------------------------------------
 
-	dismissNote(noteId: string) {
-		if (!noteId || this.state.dismissedNotes.includes(noteId)) return;
+	/** "Not interested" — hide this note AND learn from it, so *future* notes
+	 *  from the same author / about the same topics rank lower. Pure id-hiding
+	 *  is useless against id-rotating swarm traffic (each protocol message is a
+	 *  brand-new event id), which is exactly what "show less like this" must
+	 *  catch. Weights are small, capped, and decay (~30d half-life) like the
+	 *  positive ledger so an accidental tap never fossilizes. */
+	dismissNote(noteId: string, note?: Pick<FeedNote, 'pubkey' | 'content' | 'tags'>) {
+		if (!noteId) return;
+		if (note) {
+			const pk = note.pubkey;
+			if (pk) {
+				this.state.authorDisfavor = {
+					...this.state.authorDisfavor,
+					[pk]: Math.min(DISFAVOR_CEILING, (this.state.authorDisfavor[pk] ?? 0) + 1)
+				};
+			}
+			for (const tag of extractTags(note).slice(0, 5)) {
+				this.state.tagDisfavor = {
+					...this.state.tagDisfavor,
+					[tag]: Math.min(DISFAVOR_CEILING, (this.state.tagDisfavor[tag] ?? 0) + 0.8)
+				};
+			}
+			this.trim();
+		}
+		if (this.state.dismissedNotes.includes(noteId)) {
+			this.bump();
+			return;
+		}
 		this.state.dismissedNotes = [noteId, ...this.state.dismissedNotes].slice(0, MAX_DISMISSED);
 		this.bump();
 	}
@@ -229,6 +295,21 @@ class InteractionProfileStore {
 	}
 
 	// --- read helpers -----------------------------------------------------
+
+	/** Normalized "not interested" pressure 0–1 for an author. Capped at 1 at
+	 *  the DISFAVOR_CEILING, log-scaled so the first dismissals matter most. */
+	disfavorFor(pubkey: string): number {
+		const raw = this.state.authorDisfavor[pubkey];
+		if (!raw) return 0;
+		return Math.min(1, Math.log10(1 + raw) / Math.log10(1 + DISFAVOR_CEILING));
+	}
+
+	/** Normalized "not interested" pressure 0–1 for a topic. */
+	tagDisfavorFor(tag: string): number {
+		const raw = this.state.tagDisfavor[tag.toLowerCase()];
+		if (!raw) return 0;
+		return Math.min(1, Math.log10(1 + raw) / Math.log10(1 + DISFAVOR_CEILING));
+	}
 
 	/** Normalized affinity 0–1 for an author (log-scaled against the max). */
 	affinityFor(pubkey: string): number {

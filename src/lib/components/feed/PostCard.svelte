@@ -593,7 +593,7 @@
 	/** "Not interested" — hide + record a soft negative signal so similar notes
 	 *  rank lower. The single most important trust action in any feed. */
 	function notInterested() {
-		interactionProfile.dismissNote(note.id);
+		interactionProfile.dismissNote(note.id, note);
 		feed.hideNote(note.id);
 		onNoteHide?.(note.id);
 		toasts.success("Got it — we'll show less like this");

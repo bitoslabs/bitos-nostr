@@ -13,6 +13,7 @@
 	import { blocks } from '$lib/stores/blocks.svelte';
 	import { mutes } from '$lib/stores/mutes.svelte';
 	import { hashtagFollows } from '$lib/stores/hashtag-follows.svelte';
+	import { recentHashtags } from '$lib/stores/recent-hashtags.svelte';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { titleBadge } from '$lib/stores/title-badge.svelte';
 	import { settingsSync } from '$lib/stores/settings-sync.svelte';
@@ -274,6 +275,7 @@
 		blocks.load();
 		mutes.load();
 		hashtagFollows.load();
+		recentHashtags.load();
 		privacyNotificationSettings.load();
 		relays.load();
 		identity.load();

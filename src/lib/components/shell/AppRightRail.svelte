@@ -10,7 +10,7 @@
 	import { contacts } from '$lib/nostr/contacts.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { queryPrimaryFirst, subscribe } from '$lib/nostr/pool';
-	import { humanTags } from '$lib/nostr/content-classification';
+	import { humanTags, isMachineEnvelope } from '$lib/nostr/content-classification';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { NOSTR_KINDS } from '$lib/nostr/types';
@@ -308,6 +308,10 @@
 		created_at: number;
 	}) {
 		if (trendEvents.has(event.id)) return;
+		// Machine envelopes (swarm handshakes, mix beacons, probes) carry only
+		// protocol routing tags — counting them would swamp Trends with ids no
+		// human can read or search for.
+		if (isMachineEnvelope(event.content)) return;
 		const tags = [
 			...new Set([
 				...humanTags(
