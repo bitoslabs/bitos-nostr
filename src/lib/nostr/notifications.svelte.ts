@@ -63,6 +63,49 @@ function replyTarget(tags: string[][]): { id: string | undefined; kind: 'note' |
 		: { id: root, kind: 'note' };
 }
 
+/**
+ * Resolve what a NIP-22 comment (kind 1111) is addressing for the viewer's
+ * notification. Uppercase `E`/`K`/`P` tags anchor the commented root; lowercase
+ * `e`/`k` point at the immediate parent — the comment being replied to, or the
+ * root itself for top-level comments (the parent's author rides as the 4th
+ * element of the `e` tag). A reply to *my* comment surfaces the parent; a
+ * comment on *my* post surfaces the post. When no author hints point at `me`,
+ * `mine` is false and the caller treats the #p tag as an inline mention.
+ */
+export function commentTarget(
+	tags: string[][],
+	me?: string
+): { id: string | undefined; kind: 'note' | 'comment'; rootKind?: number; mine: boolean } {
+	const rootTag = tags.find((tag) => tag[0] === 'E' && tag[1]);
+	const rootId = rootTag?.[1];
+	const rootAuthor = (
+		tags.find((tag) => tag[0] === 'P' && tag[1])?.[1] ?? rootTag?.[3]
+	)?.toLowerCase();
+	const parentTag = tags.find((tag) => tag[0] === 'e' && tag[1]);
+	const parentAuthor = parentTag?.[3]?.toLowerCase();
+	const parentIsComment =
+		tags.find((tag) => tag[0] === 'k' && tag[1])?.[1] === String(NOSTR_KINDS.COMMENT);
+	const rootKindValue = Number(tags.find((tag) => tag[0] === 'K' && tag[1])?.[1]);
+	const rootKind = Number.isFinite(rootKindValue) && rootKindValue > 0 ? rootKindValue : undefined;
+
+	if (me && rootAuthor && rootAuthor === me.toLowerCase()) {
+		// On my post — even nested replies should open the post itself.
+		return { id: rootId ?? parentTag?.[1], kind: 'note', rootKind, mine: true };
+	}
+	if (me && parentAuthor && parentAuthor === me.toLowerCase()) {
+		return { id: parentTag?.[1] ?? rootId, kind: 'comment', rootKind, mine: true };
+	}
+	if (rootAuthor || parentAuthor) {
+		// Author hints exist but none is me — only an inline #p mention.
+		return { id: rootId ?? parentTag?.[1], kind: 'note', rootKind, mine: false };
+	}
+	// No author hints to check (non-BitOS clients): best effort from the
+	// parent kind tag, which NIP-22 requires.
+	return parentIsComment && parentTag?.[1]
+		? { id: parentTag[1], kind: 'comment', rootKind, mine: true }
+		: { id: rootId ?? parentTag?.[1], kind: 'note', rootKind, mine: true };
+}
+
 export function parseNotificationContent(content: string): string {
 	const text = content.trim();
 	if (!text) return '';
@@ -221,6 +264,12 @@ class NotificationsStore {
 	 * Keep zap receipts in their own filter. Relay limits apply to the combined
 	 * result of a filter, so a busy account's notes/reactions could otherwise
 	 * crowd valid kind 9735 receipts out of the notification history.
+	 *
+	 * NIP-22 comments ride in the first filter via their lowercase `p` tags
+	 * (this client tags the post owner both ways), but strict NIP-22 clients
+	 * tag the root author only in an uppercase `P` tag — so a separate `#P`
+	 * filter is needed to catch their top-level comments. Duplicate deliveries
+	 * dedupe by event id in ingest().
 	 */
 	private notificationFilters(me: string, until?: number) {
 		const timeBound = until ? { until } : {};
@@ -231,9 +280,16 @@ class NotificationsStore {
 					NOSTR_KINDS.CONTACT_LIST,
 					NOSTR_KINDS.REACTION,
 					NOSTR_KINDS.REPOST,
-					NOSTR_KINDS.GENERIC_REPOST
+					NOSTR_KINDS.GENERIC_REPOST,
+					NOSTR_KINDS.COMMENT
 				],
 				'#p': [me],
+				limit: PAGE_LIMIT,
+				...timeBound
+			},
+			{
+				kinds: [NOSTR_KINDS.COMMENT],
+				'#P': [me],
 				limit: PAGE_LIMIT,
 				...timeBound
 			},
@@ -317,6 +373,18 @@ class NotificationsStore {
 				targetKind: target.kind
 			});
 		}
+		if (ev.kind === NOSTR_KINDS.COMMENT) {
+			const target = commentTarget(ev.tags, identity.current?.pk);
+			// The comment neither posts on my content nor replies to my comment —
+			// it reached us via an inline #p tag, so treat it as a mention.
+			if (!target.mine) {
+				return this.makeItem(ev, 'mention', target.id, parseNotificationContent(ev.content));
+			}
+			return this.makeItem(ev, 'comment', target.id, parseNotificationContent(ev.content), {
+				targetKind: target.kind,
+				rootKind: target.rootKind
+			});
+		}
 		if (ev.kind === NOSTR_KINDS.TEXT_NOTE && isReply(ev.tags)) {
 			const target = replyTarget(ev.tags);
 			return this.makeItem(ev, 'comment', target.id, parseNotificationContent(ev.content), {
@@ -350,7 +418,7 @@ class NotificationsStore {
 		type: NotificationItem['type'],
 		targetId: string | undefined,
 		content: string,
-		extra: Partial<Pick<NotificationItem, 'amountSats' | 'targetKind'>> = {}
+		extra: Partial<Pick<NotificationItem, 'amountSats' | 'targetKind' | 'rootKind'>> = {}
 	): NotificationItem {
 		return {
 			id: ev.id,

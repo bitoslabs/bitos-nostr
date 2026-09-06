@@ -22,10 +22,10 @@
 	import { getPow } from 'nostr-tools/nip13';
 	import PowBadge from '$lib/components/ui/PowBadge.svelte';
 	import { feed } from '$lib/nostr/feed.svelte';
-	import { BITZ_MEDIA_KINDS } from '$lib/nostr/bitz-codec';
+	import { BITZ_MEDIA_KINDS, BITZ_VIDEO_KINDS } from '$lib/nostr/bitz-codec';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { npubEncode } from 'nostr-tools/nip19';
-	import type { NotificationItem } from '$lib/nostr/types';
+	import { NOSTR_KINDS, type NotificationItem } from '$lib/nostr/types';
 
 	type Filter = 'all' | 'unread' | 'mention' | 'zap' | 'like' | 'repost' | 'follow' | 'comment';
 
@@ -59,6 +59,11 @@
 	function verbFor(item: NotificationItem) {
 		if (item.type === 'like' && item.targetKind === 'comment') return 'liked your comment';
 		if (item.type === 'comment' && item.targetKind === 'comment') return 'replied to your comment';
+		// NIP-22 comments on bitz media — the root kind comes from the K tag.
+		if (item.type === 'comment' && item.rootKind !== undefined) {
+			if (item.rootKind === NOSTR_KINDS.PICTURE) return 'commented on your picture';
+			if (BITZ_VIDEO_KINDS.includes(item.rootKind)) return 'commented on your video';
+		}
 		return TYPE_META[item.type].verb;
 	}
 
