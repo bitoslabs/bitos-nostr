@@ -122,6 +122,10 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   caption-sync, non-destructive video clips.
 - Layers: images, animated GIF/WebP (WebCodecs decode), stickers, emoji packs
   (NIP-30), bundled Bitz Buddy mascot/Bitzverse SVG props, Iconify picker.
+  One Stickers & GIFs hub dialog (`MemeMediaHubDialog`) consolidates emoji,
+  Nostr packs (browse/install inline), Giphy GIF multi-pick (mass staggered
+  layers), SVG icons, and a pack builder that publishes your own kind-30030
+  pack or exports portable JSON (`meme/pack-builder.ts`).
 - Sound: synthesized SFX (OfflineAudioContext, no audio assets), cue mixing,
   shared sounds via NIP-78 kind-30078 (license + sha-256 verified), trending
   ranking (`/more/sounds`).

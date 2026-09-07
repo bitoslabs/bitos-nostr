@@ -1771,7 +1771,6 @@
 
 	// ---- sticker picker (#3) --------------------------------------------------
 	// (UI lives in MemeStickerPicker.svelte — this is the state it drives.)
-	let stickerMenuId = `meme-stickers-${Math.random().toString(36).slice(2, 8)}`;
 	let buddyMenuId = `meme-buddy-${Math.random().toString(36).slice(2, 8)}`;
 	/** Sticker count this session — feeds the anchor rotation so consecutive
 	 *  stickers land on different spots instead of stacking. */
@@ -5580,7 +5579,6 @@
 							     they ride the same schema/wire format as captions. Nostr picks
 							     (kind-30030 custom emojis) are PICTURES → image layers. -->
 							<MemeStickerPicker
-								id={stickerMenuId}
 								onAdd={addSticker}
 								onPickCustom={(emoji) => {
 									void addImageLayer({ url: emoji.url }, undefined, {
@@ -5592,6 +5590,24 @@
 										atMs: timelineActive ? Math.round(stageSeconds * 1000) : undefined
 									});
 								}}
+								onPickGif={(gif) =>
+									void addLayerFromGifLib(
+										gif,
+										timelineActive ? Math.round(stageSeconds * 1000) : undefined
+									)}
+								onAddGifs={(gifs) => {
+									// Mass production: each pick lands as a layer with a 2s window at
+									// the playhead, staggered 250ms apart (same as Image-layer tools).
+									const base = Math.round(stageSeconds * 1000);
+									for (let i = 0; i < gifs.length; i++) {
+										void addLayerFromGifLib(gifs[i]!, timelineActive ? base + i * 250 : undefined);
+									}
+								}}
+								onBrowse={() => {
+									pendingLayerAtMs = timelineActive ? Math.round(stageSeconds * 1000) : null;
+									layerInput?.click();
+								}}
+								layerSlots={Math.max(0, MAX_IMAGE_OVERLAYS - imageLayers.length)}
 							/>
 
 							<!-- Buddy picker (tp-bitcoin §16): the Bitz Buddy mascot pack as
