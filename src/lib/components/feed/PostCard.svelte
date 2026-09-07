@@ -33,7 +33,7 @@
 	import { interactionProfile, extractTags } from '$lib/algorithm';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
-	import type { FeedNote } from '$lib/nostr/types';
+	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { extractNotificationMedia, stripMediaUrls } from '$lib/utils/imeta';
 	import {
@@ -144,6 +144,7 @@
 				author: note.pubkey,
 				authorNpub,
 				createdAt: note.createdAt,
+				kind: note.raw?.kind ?? NOSTR_KINDS.TEXT_NOTE,
 				content: note.content,
 				tags: note.tags,
 				replyTo: note.replyTo,
