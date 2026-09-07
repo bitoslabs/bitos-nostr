@@ -128,7 +128,10 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   pack or exports portable JSON (`meme/pack-builder.ts`).
 - Sound: synthesized SFX (OfflineAudioContext, no audio assets), cue mixing,
   shared sounds via NIP-78 kind-30078 (license + sha-256 verified), trending
-  ranking (`/more/sounds`).
+  ranking (`/more/sounds`); "use this sound" from any bitz — the reel rail
+  and the Sound Studio lift a video's audio into the library
+  (`meme/sound-from-video.ts`: proxy fetch → WebAudio decode → mono → 15s
+  trim → 16-bit WAV), staged into the studio via the sound seed handoff.
 - Export: canvas WYSIWYG render → JPEG still / MediaRecorder WebM/MP4 / pure-TS
   GIF encoder (median-cut + LZW).
 - Creator economy: value-splits manifest (basis points, display-only V1),

@@ -33,7 +33,9 @@ remix chain, NIP-50 search, adaptive renditions, sensitive-media blurring.
   Record, GIF input, templates, zap-gated template marketplace, batch queue,
   remix lineage, value-splits manifest. One Stickers & GIFs hub dialog
   (emoji · Nostr packs · GIF multi-pick · SVG icons) also builds and
-  publishes your own kind-30030 emoji pack or exports it as JSON.
+  publishes your own kind-30030 emoji pack or exports it as JSON. TikTok-style
+  "use this sound": grab any bitz's audio from the reel rail or the Sound
+  Studio and remix with it.
 - **Bitz composer** — fast-lane 9:16 short-video composer with trim, browser
   re-encode, PoW "rare bitz" option, and a verify→sign→publish state machine.
 

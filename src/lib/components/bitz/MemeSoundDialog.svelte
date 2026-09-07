@@ -48,7 +48,10 @@
 		recording = false,
 		recordingPaused = false,
 		micDenied = false,
-		recordingElapsedSec = 0
+		recordingElapsedSec = 0,
+		videoSources = [],
+		videoSoundBusy = false,
+		onAddFromVideo
 	}: {
 		open?: boolean;
 		cues?: MemeSfxCue[];
@@ -81,12 +84,20 @@
 		recordingPaused?: boolean;
 		micDenied?: boolean;
 		recordingElapsedSec?: number;
+		/** Recent video bitz offered as sound sources ("use this sound"). */
+		videoSources?: { id: string; label: string; url: string }[];
+		/** True while a video-sound extraction is running. */
+		videoSoundBusy?: boolean;
+		/** Extract + import + cue audio from a video URL/bit. */
+		onAddFromVideo?: (source: { label: string; url: string }) => void;
 	} = $props();
 
 	let query = $state('');
 	let recordingName = $state('');
 	/** Entry id currently playing (for the equalizer indicator). */
 	let playingId = $state('');
+	/** URL typed into the "from a video" row. */
+	let videoUrl = $state('');
 
 	const synth = $derived(synthEntries(labels, durations));
 	const library: SoundEntry[] = $derived.by(() => {
@@ -265,6 +276,66 @@
 			<p class="-mt-1 text-[10.5px] font-medium text-[var(--tone-error-text)]">
 				Microphone access is blocked — allow it in your browser settings to record.
 			</p>
+		{/if}
+
+		<!-- From a video (TikTok-style "use this sound"): tap a recent bitz or paste
+		     any video URL — its audio lands in the library and cues at the playhead. -->
+		{#if onAddFromVideo}
+			<div class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 p-2">
+				<p
+					class="mb-1.5 flex items-center gap-1.5 px-0.5 text-[10.5px] font-bold text-[var(--ui-text-dimmed)]"
+				>
+					<Icon name="i-lucide-disc-3" class="size-3.5 {videoSoundBusy ? 'animate-spin' : ''}" />
+					Use a sound from a video — any bitz
+				</p>
+				{#if videoSources?.length}
+					<div class="mb-1.5 flex flex-wrap gap-1">
+						{#each videoSources as source (source.id)}
+							<button
+								type="button"
+								disabled={videoSoundBusy}
+								onclick={() => onAddFromVideo({ label: source.label, url: source.url })}
+								title={`Grab the audio from “${source.label}”`}
+								class="max-w-full truncate rounded-full bg-[var(--ui-bg)] px-2.5 py-1 text-[10.5px] font-bold text-[var(--ui-text-muted)] transition hover:bg-warm-500/10 hover:text-warm-600 disabled:opacity-50"
+							>
+								<Icon name="i-lucide-clapperboard" class="mr-1 inline size-3" />
+								{source.label}
+							</button>
+						{/each}
+					</div>
+				{/if}
+				<div class="flex items-center gap-1">
+					<input
+						type="url"
+						inputmode="url"
+						bind:value={videoUrl}
+						placeholder="https://…/video.mp4"
+						aria-label="Video URL to grab audio from"
+						disabled={videoSoundBusy}
+						class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500 disabled:opacity-50"
+					/>
+					<button
+						type="button"
+						disabled={videoSoundBusy || !videoUrl.trim()}
+						onclick={() => {
+							const url = videoUrl.trim();
+							if (!url) return;
+							onAddFromVideo({ label: '', url });
+							videoUrl = '';
+						}}
+						title="Extract this video's audio into your sounds"
+						class="grid size-8 shrink-0 place-items-center rounded-full bg-warm-500/12 text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-40"
+					>
+						<Icon
+							name={videoSoundBusy ? 'i-lucide-loader-circle' : 'i-lucide-download'}
+							class="size-3.5 {videoSoundBusy ? 'animate-spin' : ''}"
+						/>
+					</button>
+				</div>
+				<p class="mt-1 px-0.5 text-[9.5px] text-[var(--ui-text-dimmed)]">
+					First 15s, saved to My sounds — credit the creator in your caption.
+				</p>
+			</div>
 		{/if}
 
 		<!-- Cue sheet first: what's already staged (editable in place). -->

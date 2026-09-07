@@ -61,6 +61,8 @@
 	import type { RemixHandoff } from '$lib/components/bitz/MemeStudio.svelte';
 	import { studioHandoff } from '$lib/stores/studio-handoff.svelte';
 	import { remixLayoutOf, remixOf, rightsOf, canRemix } from '$lib/meme/remix';
+	import { extractVideoAudio } from '$lib/meme/sound-from-video';
+	import { soundIO } from '$lib/stores/meme-sound-io.svelte';
 	import RemixChainDialog from '$lib/components/bitz/RemixChainDialog.svelte';
 	import BitzCommentsPanel from '$lib/components/bitz/BitzCommentsPanel.svelte';
 	import { splitsOf } from '$lib/meme/splits';
@@ -498,6 +500,45 @@
 		}
 	}
 
+	// --- "Use this sound" (TikTok-style) ---------------------------------------
+	let soundStartingId = $state('');
+
+	/** Lift this reel's audio into the personal sound library and open the
+	 *  studio with it staged — every bitz becomes a reusable sound. Walks the
+	 *  media fallback chain so dead mirrors don't kill the grab. */
+	async function useReelSound(reel: ReelNote) {
+		if (soundStartingId || reel.mediaType !== 'video') return;
+		soundStartingId = reel.id;
+		const label = `${bitzAuthorName(reel) || 'bitz'} sound`.slice(0, 40);
+		const urls = [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])];
+		try {
+			let extracted: Awaited<ReturnType<typeof extractVideoAudio>> | null = null;
+			let lastError = '';
+			for (const url of urls.slice(0, 3)) {
+				try {
+					extracted = await extractVideoAudio(url, { label });
+					break;
+				} catch (e) {
+					lastError = e instanceof Error ? e.message : '';
+				}
+			}
+			if (!extracted) throw new Error(lastError || 'Could not grab that sound');
+			const saved = await soundIO.importBlob(
+				extracted.file,
+				extracted.durationSec,
+				'device',
+				label
+			);
+			if (!saved) return;
+			if (extracted.trimmed) toasts.info('Trimmed to the first 15s (library cap)', 3500);
+			await studioHandoff.useSound({ kind: 'custom', id: saved.id, label: saved.label });
+		} catch (e) {
+			toasts.error(e instanceof Error ? e.message : 'Could not grab that sound');
+		} finally {
+			soundStartingId = '';
+		}
+	}
+
 	async function copyText(value: string, label: string) {
 		try {
 			await navigator.clipboard.writeText(value);
@@ -791,7 +832,9 @@
 			// Author mode: every filter is scoped to one author; discovery relays
 			// never contribute (the profile grid is configured-relay territory).
 			const authorFilter = requestedAuthorPubkey ? { authors: [requestedAuthorPubkey] } : {};
-			const filters = [{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter }];
+			const filters = [
+				{ kinds: REEL_MEDIA_KINDS, limit: REELS_MEDIA_INITIAL_LIMIT, ...authorFilter }
+			];
 			const discoveryPromise = queryUrls(isAuthorPlayback ? [] : discoveryUrls(), filters);
 			const events = await queryParallelProgressive(filters, {
 				onSecondary: (mergedEvents) => {
@@ -2246,6 +2289,31 @@
 									{remixStartingId === reel.id ? 'Opening' : 'Remix'}
 								</span>
 							</button>
+							<!-- TikTok-style "use this sound": lift this bitz's audio into the
+							     sound library and open the studio with it staged. Video reels
+							     only — image bitz carry no track. -->
+							{#if reel.mediaType === 'video'}
+								<button
+									type="button"
+									onclick={() => void useReelSound(reel)}
+									class="reel-action"
+									disabled={!!soundStartingId}
+									aria-busy={soundStartingId === reel.id}
+									aria-label="Use this bitz's sound in the Meme Studio"
+								>
+									<span class="icon-circle">
+										<Icon
+											name={soundStartingId === reel.id
+												? 'i-lucide-loader-circle'
+												: 'i-lucide-disc-3'}
+											class="size-5 {soundStartingId === reel.id ? 'animate-spin' : ''}"
+										/>
+									</span>
+									<span class="text-[10px] sm:text-[11px]">
+										{soundStartingId === reel.id ? 'Grabbing' : 'Sound'}
+									</span>
+								</button>
+							{/if}
 							<!-- Lineage (audit #12): only remixed bitz carry a chain worth
 							     browsing — the button stays hidden on original memes. -->
 							{#if remixOf(reel.tags)}

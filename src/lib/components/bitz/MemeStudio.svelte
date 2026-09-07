@@ -39,6 +39,8 @@
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { soundIO } from '$lib/stores/meme-sound-io.svelte';
+	import { bitzSession, type ReelNote } from '$lib/stores/bitz-session.svelte';
+	import { extractVideoAudio } from '$lib/meme/sound-from-video';
 	import { sharedSoundsStore } from '$lib/stores/meme-shared-sounds.svelte';
 	import { fetchSourceFile, MAX_SOURCE_BYTES } from '$lib/meme/source-fetch';
 	import { memeTemplates } from '$lib/stores/meme-templates.svelte';
@@ -2861,10 +2863,68 @@
 				`${soundHandoff.label ?? sfxLabels[soundHandoff.id as MemeSfxId]} staged at the playhead`,
 				3500
 			);
+		} else {
+			// Custom library sound ("use this sound" from a bitz video): resolve
+			// + stage it the same way the sound picker does.
+			addCustomCueById(soundHandoff.id);
+			toasts.info(`${soundHandoff.label ?? 'That sound'} staged at the playhead`, 3500);
 		}
-		// Custom library sounds resolve inside the sound picker — the seed
-		// only carries synth ids for now (the Sounds page lists synth cards).
 	});
+
+	// ---- sound from a video (TikTok-style "use this sound") ------------------
+	let videoSoundBusy = $state(false);
+	/** Recent video bitz from this session — tap to lift their audio. */
+	const videoSoundSources = $derived(
+		[
+			...new Map(
+				bitzSession.reels.filter((r) => r.mediaType === 'video').map((r) => [r.id, r])
+			).values()
+		]
+			.slice(-8)
+			.reverse()
+			.map((r) => ({ id: r.id, label: reelSoundLabel(r), url: r.mediaUrl }))
+	);
+
+	function reelSoundLabel(reel: ReelNote): string {
+		const line =
+			reel.content
+				.split('\n')
+				.map((s) => s.trim())
+				.find((s) => s.length) ?? '';
+		return (
+			line
+				.replace(/^#\S+\s*/g, '')
+				.slice(0, 24)
+				.trim() || 'a bitz'
+		);
+	}
+
+	function urlSoundLabel(url: string): string {
+		try {
+			const u = new URL(url);
+			return `${u.hostname.split('.')[0]} sound`.slice(0, 40);
+		} catch {
+			return 'video sound';
+		}
+	}
+
+	/** Extract a video's audio → library → cue at the playhead. */
+	async function addSoundFromVideo(source: { label: string; url: string }): Promise<void> {
+		if (videoSoundBusy) return;
+		videoSoundBusy = true;
+		const label = source.label.trim() || urlSoundLabel(source.url);
+		try {
+			const { file, durationSec, trimmed } = await extractVideoAudio(source.url, { label });
+			const saved = await soundIO.importBlob(file, durationSec, 'device', label);
+			if (!saved) return;
+			addCustomCueById(saved.id);
+			if (trimmed) toasts.info('Trimmed to the first 15s (library cap)', 3500);
+		} catch (e) {
+			toasts.error(e instanceof Error ? e.message : 'Could not grab that sound');
+		} finally {
+			videoSoundBusy = false;
+		}
+	}
 
 	// ---- overlay editing -------------------------------------------------------
 	function addOverlay(y = 0.5) {
@@ -5980,6 +6040,9 @@
 	recordingPaused={soundIO.recordingPaused}
 	micDenied={soundIO.micDenied}
 	recordingElapsedSec={soundIO.recordingElapsedSec}
+	videoSources={videoSoundSources}
+	{videoSoundBusy}
+	onAddFromVideo={(source) => void addSoundFromVideo(source)}
 >
 	{#snippet waveform()}
 		{#if lastAnalysis && analysisWindows.length}
