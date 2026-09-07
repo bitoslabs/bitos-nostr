@@ -11,6 +11,8 @@
 		title,
 		closeOnOverlay = true,
 		zIndex = 100,
+		/** Panel width class — widen pickers/hubs past the default form width. */
+		width = 'max-w-md',
 		onClose,
 		children,
 		footer
@@ -20,6 +22,8 @@
 		closeOnOverlay?: boolean;
 		/** Raise this when a dialog is opened from another dialog. */
 		zIndex?: number;
+		/** Tailwind max-width class for the panel (default `max-w-md`). */
+		width?: string;
 		onClose?: () => void;
 		children?: Snippet;
 		footer?: Snippet;
@@ -88,7 +92,7 @@
 			onclick={dismiss}
 		></button>
 		<div
-			class="surface-card animate-rise relative z-10 flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden border-white/30 shadow-2xl ring-1 shadow-black/30 ring-white/15"
+			class="surface-card animate-rise relative z-10 flex max-h-[85vh] w-full {width} flex-col overflow-hidden border-white/30 shadow-2xl ring-1 shadow-black/30 ring-white/15"
 			role="dialog"
 			aria-modal="true"
 		>
