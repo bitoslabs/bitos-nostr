@@ -516,7 +516,9 @@
 				id: reel.id,
 				pubkey: reel.pubkey,
 				created_at: reel.createdAt,
-				kind: 'media',
+				// Actual event kind (20 picture / 21 video / 22 short-form…),
+				// not a label — from the signed event when we still hold it.
+				kind: reel.raw?.kind,
 				tags: reel.tags,
 				content: reel.content,
 				zapTotalSats: reel.zapTotalSats
