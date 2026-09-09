@@ -29,6 +29,7 @@
 		onOpenStudio,
 		onOpenShareSound,
 		onPreviewSynth,
+		onStopPreview,
 		onAddSynth,
 		onAddCustom,
 		onRemoveLibrarySound,
@@ -55,6 +56,7 @@
 		onOpenStudio: () => void;
 		onOpenShareSound: () => void;
 		onPreviewSynth: (sfx: MemeSfxId, limitMs?: number) => void;
+		onStopPreview: () => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
 		onRemoveLibrarySound: (id: string) => void;
@@ -82,7 +84,10 @@
 			return;
 		}
 		const sound = soundLibrary.list.find((item) => item.id === cue.soundId);
-		if (sound) void soundIO.preview(sound, limitSec);
+		if (sound) {
+			onStopPreview();
+			void soundIO.preview(sound, limitSec);
+		}
 	}
 </script>
 
@@ -120,7 +125,12 @@
 			<Icon name="i-lucide-music-plus" class="size-3.5" />
 			Add sound
 		</button>
-		<button type="button" onclick={onOpenShareSound} class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"><Icon name="i-lucide-share-2" class="size-3.5" />Share sound</button>
+		<button
+			type="button"
+			onclick={onOpenShareSound}
+			class="flex items-center gap-1 rounded-full bg-primary-500/10 px-2.5 py-1 text-[11px] font-bold text-primary-600 transition hover:bg-primary-500/20"
+			><Icon name="i-lucide-share-2" class="size-3.5" />Share sound</button
+		>
 		<MemeSharedSoundsPicker
 			sounds={sharedSoundsStore.list}
 			loading={sharedSoundsStore.loading}
@@ -179,6 +189,7 @@
 		iconFor={cueIcon}
 		{onSeek}
 		onPreview={previewCue}
+		{onStopPreview}
 		onRemove={onRemoveCue}
 	/>
 </div>

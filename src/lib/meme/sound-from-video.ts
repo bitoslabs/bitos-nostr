@@ -12,6 +12,13 @@
 import { fetchRemoteMedia } from '$lib/meme/remote-media';
 /** WAV extraction is intentionally bounded: uncompressed PCM grows quickly. */
 export const MAX_VIDEO_SOUND_SECONDS = 15;
+/**
+ * Audio extraction must download a complete container before WebAudio can
+ * decode it. Keep a remote reel from turning a small "use this sound" action
+ * into an unbounded download (the finished WAV is limited to 8 MB by the
+ * sound library).
+ */
+export const MAX_VIDEO_SOUND_SOURCE_BYTES = 64 * 1024 * 1024;
 
 /** Average N channels into one mono channel, clamped to [-1, 1]. */
 export function monoMix(channels: Float32Array[]): Float32Array {
@@ -92,22 +99,38 @@ export async function extractVideoAudio(
 	const response = await fetchRemoteMedia(url);
 	if (!response) throw new SoundFromVideoError('Could not fetch that video — try another source');
 	const total = Number(response.headers.get('content-length') ?? '');
+	if (Number.isFinite(total) && total > MAX_VIDEO_SOUND_SOURCE_BYTES) {
+		throw new SoundFromVideoError('That video is over 64 MB — choose a shorter or smaller clip');
+	}
 	const reader = response.body?.getReader();
 	let blob: Blob;
 	if (!reader) {
 		blob = await response.blob();
+		if (blob.size > MAX_VIDEO_SOUND_SOURCE_BYTES) {
+			throw new SoundFromVideoError('That video is over 64 MB — choose a shorter or smaller clip');
+		}
 		options.onProgress?.(100);
 	} else {
 		const chunks: BlobPart[] = [];
 		let loaded = 0;
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			chunks.push(value as unknown as BlobPart);
-			loaded += value.byteLength;
-			if (Number.isFinite(total) && total > 0) {
-				options.onProgress?.(Math.min(99, Math.round((loaded / total) * 100)));
+		try {
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				loaded += value.byteLength;
+				if (loaded > MAX_VIDEO_SOUND_SOURCE_BYTES) {
+					throw new SoundFromVideoError(
+						'That video is over 64 MB — choose a shorter or smaller clip'
+					);
+				}
+				chunks.push(value as unknown as BlobPart);
+				if (Number.isFinite(total) && total > 0) {
+					options.onProgress?.(Math.min(99, Math.round((loaded / total) * 100)));
+				}
 			}
+		} catch (error) {
+			await reader.cancel().catch(() => undefined);
+			throw error;
 		}
 		blob = new Blob(chunks, { type: response.headers.get('content-type') ?? 'video/mp4' });
 		options.onProgress?.(100);
