@@ -78,6 +78,7 @@
 		onOpenSoundStudio,
 		onOpenShareSound,
 		onPreviewSynth,
+		onStopPreview,
 		onAddSynth,
 		onAddCustom,
 		onRemoveLibrarySound,
@@ -173,6 +174,7 @@
 		onOpenSoundStudio: () => void;
 		onOpenShareSound: () => void;
 		onPreviewSynth: (id: MemeSfxId) => void;
+		onStopPreview: () => void;
 		onAddSynth: (id: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
 		onRemoveLibrarySound: (id: string) => void;
@@ -334,6 +336,7 @@
 			onOpenStudio={onOpenSoundStudio}
 			{onOpenShareSound}
 			{onPreviewSynth}
+			{onStopPreview}
 			{onAddSynth}
 			{onAddCustom}
 			{onRemoveLibrarySound}

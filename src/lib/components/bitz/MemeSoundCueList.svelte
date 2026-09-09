@@ -11,6 +11,7 @@
 		iconFor,
 		onSeek,
 		onPreview,
+		onStopPreview,
 		onRemove
 	}: {
 		cues: MemeSfxCue[];
@@ -20,8 +21,34 @@
 		iconFor: (cue: MemeSfxCue) => string;
 		onSeek: (seconds: number) => void;
 		onPreview: (cue: MemeSfxCue) => void;
+		onStopPreview: () => void;
 		onRemove: (id: string) => void;
 	} = $props();
+
+	let playingCueId = $state<string | null>(null);
+	let stopTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function stop(): void {
+		if (stopTimer) clearTimeout(stopTimer);
+		stopTimer = null;
+		playingCueId = null;
+		onStopPreview();
+	}
+
+	function preview(cue: MemeSfxCue): void {
+		if (playingCueId === cue.id) {
+			stop();
+			return;
+		}
+		if (stopTimer) clearTimeout(stopTimer);
+		playingCueId = cue.id;
+		onPreview(cue);
+		// The play/stop state needs to settle even when the browser ends a short
+		// WebAudio source without emitting an event to this display component.
+		stopTimer = setTimeout(() => {
+			if (playingCueId === cue.id) playingCueId = null;
+		}, 30_000);
+	}
 </script>
 
 {#if cues.length}
@@ -48,9 +75,12 @@
 						type="button"
 						class="rounded-md p-1 text-[var(--ui-text-dimmed)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
 						aria-label={`Preview ${labelFor(cue)}`}
-						onclick={() => onPreview(cue)}
+						onclick={() => preview(cue)}
 					>
-						<Icon name="i-lucide-play" class="size-3.5" />
+						<Icon
+							name={playingCueId === cue.id ? 'i-lucide-square' : 'i-lucide-play'}
+							class="size-3.5"
+						/>
 					</button>
 					<button
 						type="button"

@@ -84,12 +84,18 @@
 		recordingPaused?: boolean;
 		micDenied?: boolean;
 		recordingElapsedSec?: number;
-	/** Recent video bitz offered as sound sources ("use this sound"). */
-	videoSources?: { id: string; label: string; url: string; thumb?: string }[];
+		/** Recent video bitz offered as sound sources ("use this sound"). */
+		videoSources?: {
+			id: string;
+			label: string;
+			url: string;
+			fallbacks?: string[];
+			thumb?: string;
+		}[];
 		/** True while a video-sound extraction is running. */
 		videoSoundBusy?: boolean;
 		/** Extract + import + cue audio from a video URL/bit. */
-		onAddFromVideo?: (source: { label: string; url: string }) => void;
+		onAddFromVideo?: (source: { label: string; url: string; fallbacks?: string[] }) => void;
 	} = $props();
 
 	let query = $state('');
@@ -344,7 +350,12 @@
 							<button
 								type="button"
 								disabled={videoSoundBusy}
-								onclick={() => onAddFromVideo({ label: source.label, url: source.url })}
+								onclick={() =>
+									onAddFromVideo({
+										label: source.label,
+										url: source.url,
+										fallbacks: source.fallbacks
+									})}
 								title={`Grab the audio from “${source.label}”`}
 								class="group w-20 shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] text-left transition hover:border-warm-500/60 disabled:opacity-50"
 							>

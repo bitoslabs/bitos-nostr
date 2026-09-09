@@ -604,6 +604,7 @@
 	/** Audition a library sound immediately (store owns the AudioContext).
 	 *  `limitSec` honors a cue's play-length cut so previews match exports. */
 	async function previewSound(sound: LibrarySound, limitSec?: number) {
+		stopSfxPreview();
 		await soundIO.preview(sound, limitSec);
 	}
 
@@ -1369,8 +1370,7 @@
 			: mediaKind === 'image'
 				? gif
 					? (pinnedLengthSec ?? gif.duration)
-					: (pinnedLengthSec ??
-						(sfxCues.length ? cueTrackDurationSec(sfxCues, cueLengthSec) : 0))
+					: (pinnedLengthSec ?? (sfxCues.length ? cueTrackDurationSec(sfxCues, cueLengthSec) : 0))
 				: 0
 	);
 	/** True when the timeline has a real clock (video trim duration, GIF, or
@@ -2900,7 +2900,15 @@
 		]
 			.slice(-8)
 			.reverse()
-			.map((r) => ({ id: r.id, label: reelSoundLabel(r), url: r.mediaUrl, thumb: r.thumb }))
+			.map((r) => ({
+				id: r.id,
+				label: reelSoundLabel(r),
+				url: r.mediaUrl,
+				// Keep the same mirror retry behavior as the Bitz feed's Sound
+				// button. Relays often retain an event after one media host expires.
+				fallbacks: r.mediaFallbacks ?? [],
+				thumb: r.thumb
+			}))
 	);
 
 	function reelSoundLabel(reel: ReelNote): string {
@@ -2927,12 +2935,27 @@
 	}
 
 	/** Extract a video's audio → library → cue at the playhead. */
-	async function addSoundFromVideo(source: { label: string; url: string }): Promise<void> {
+	async function addSoundFromVideo(source: {
+		label: string;
+		url: string;
+		fallbacks?: string[];
+	}): Promise<void> {
 		if (videoSoundBusy) return;
 		videoSoundBusy = true;
 		const label = source.label.trim() || urlSoundLabel(source.url);
 		try {
-			const { file, durationSec, trimmed } = await extractVideoAudio(source.url, { label });
+			let extracted: Awaited<ReturnType<typeof extractVideoAudio>> | null = null;
+			let lastError = '';
+			for (const url of [...new Set([source.url, ...(source.fallbacks ?? [])])].slice(0, 3)) {
+				try {
+					extracted = await extractVideoAudio(url, { label });
+					break;
+				} catch (error) {
+					lastError = error instanceof Error ? error.message : '';
+				}
+			}
+			if (!extracted) throw new Error(lastError || 'Could not grab that sound');
+			const { file, durationSec, trimmed } = extracted;
 			const saved = await soundIO.importBlob(file, durationSec, 'device', label);
 			if (!saved) return;
 			addCustomCueById(saved.id);
@@ -3329,10 +3352,34 @@
 		if (selectedCueId === id) selectedCueId = null;
 	}
 
+	let previewSfxSource: AudioBufferSourceNode | null = null;
+	let previewSfxCtx: AudioContext | null = null;
+	let previewSfxRun = 0;
+
+	/** Stop whichever layer sound is currently auditioning. */
+	function stopSfxPreview(): void {
+		previewSfxRun += 1;
+		try {
+			previewSfxSource?.stop();
+		} catch {
+			/* source already ended */
+		}
+		previewSfxSource = null;
+		void previewSfxCtx?.close().catch(() => undefined);
+		previewSfxCtx = null;
+	}
+
+	function stopSoundPreview(): void {
+		stopSfxPreview();
+		soundIO.stopPreview();
+	}
+
 	/** Audition one recipe immediately so placement isn't guesswork. An
 	 *  optional `limitMs` plays only the cue's cut of the recipe. */
 	function previewSfx(sfx: MemeSfxId, limitMs?: number) {
 		void (async () => {
+			stopSoundPreview();
+			const run = previewSfxRun;
 			const { renderSfxTrack, scheduleSfx } = await import('$lib/meme/sfx');
 			const limitSec = limitMs ? Math.min(SFX_RECIPES[sfx].duration, limitMs / 1000) : undefined;
 			const playSec = limitSec ?? SFX_RECIPES[sfx].duration;
@@ -3351,14 +3398,27 @@
 			const OfflineCtx = window.OfflineAudioContext;
 			if (!OfflineCtx) return;
 			const buffer = await renderSfxTrack(schedule, playSec + 0.25, OfflineCtx);
+			if (run !== previewSfxRun) return;
 			const AudioCtx = window.AudioContext;
 			if (!AudioCtx) return;
 			const ctx = new AudioCtx();
+			if (run !== previewSfxRun) {
+				void ctx.close().catch(() => undefined);
+				return;
+			}
 			const source = ctx.createBufferSource();
 			source.buffer = buffer;
 			source.connect(ctx.destination);
+			previewSfxCtx = ctx;
+			previewSfxSource = source;
 			source.start();
-			source.onended = () => void ctx.close().catch(() => undefined);
+			source.onended = () => {
+				if (previewSfxSource === source) {
+					previewSfxSource = null;
+					previewSfxCtx = null;
+				}
+				void ctx.close().catch(() => undefined);
+			};
 		})();
 	}
 
@@ -4952,9 +5012,10 @@
 														name="i-lucide-loader-circle"
 														class="mx-auto size-8 animate-spin text-warm-500"
 													/>
-							<p class="mt-2 text-[12px] font-bold text-white">
-								{progressLabel}{#if phase === 'rendering' || phase === 'uploading'} · {Math.round(progress)}%{/if}
-							</p>
+													<p class="mt-2 text-[12px] font-bold text-white">
+														{progressLabel}{#if phase === 'rendering' || phase === 'uploading'}
+															· {Math.round(progress)}%{/if}
+													</p>
 													{#if phase === 'rendering' || phase === 'uploading'}
 														<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20">
 															<div
@@ -5880,6 +5941,7 @@
 							onOpenSoundStudio={() => (soundDialogOpen = true)}
 							onOpenShareSound={() => (shareSoundDialogOpen = true)}
 							onPreviewSynth={previewSfx}
+							onStopPreview={stopSoundPreview}
 							onAddSynth={addSfxCue}
 							onAddCustom={addCustomCue}
 							onRemoveLibrarySound={removeSoundFromLibrary}
@@ -6060,7 +6122,7 @@
 	{exportFormat}
 	{mediaKind}
 	videoExportSupported={videoMemeSupported}
-	previewUrl={previewUrl}
+	{previewUrl}
 	posterUrl={posterDataUrl}
 	onFormat={(format) => (exportFormat = format)}
 	onCancelMining={() => mineController?.abort()}
@@ -6090,7 +6152,7 @@
 	{busy}
 	onPreviewSynth={(sfx) => previewSfx(sfx)}
 	onPreviewLibrary={(soundId) => previewSoundById(soundId)}
-	onStopPreview={() => soundIO.stopPreview()}
+	onStopPreview={stopSoundPreview}
 	onAddSynth={(sfx) => addSfxCue(sfx)}
 	onAddLibrary={(soundId) => addCustomCueById(soundId)}
 	onRemoveLibrary={removeSoundFromLibrary}
