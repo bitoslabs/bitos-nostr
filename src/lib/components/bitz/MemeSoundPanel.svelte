@@ -54,7 +54,7 @@
 		onApplySmartMatch: (match: SmartResolution) => void;
 		onOpenStudio: () => void;
 		onOpenShareSound: () => void;
-		onPreviewSynth: (sfx: MemeSfxId) => void;
+		onPreviewSynth: (sfx: MemeSfxId, limitMs?: number) => void;
 		onAddSynth: (sfx: MemeSfxId) => void;
 		onAddCustom: (sound: LibrarySound) => void;
 		onRemoveLibrarySound: (id: string) => void;
@@ -76,12 +76,13 @@
 	}
 
 	function previewCue(cue: MemeSfxCue): void {
+		const limitSec = cue.durationMs ? cue.durationMs / 1000 : undefined;
 		if (cue.sfx !== CUSTOM_SOUND_KEY) {
-			onPreviewSynth(cue.sfx);
+			onPreviewSynth(cue.sfx, cue.durationMs);
 			return;
 		}
 		const sound = soundLibrary.list.find((item) => item.id === cue.soundId);
-		if (sound) void soundIO.preview(sound);
+		if (sound) void soundIO.preview(sound, limitSec);
 	}
 </script>
 

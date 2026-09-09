@@ -506,7 +506,15 @@ class StoriesStore {
 			/** Blur the images until tapped in the viewer (content-warning tag). */
 			sensitive?: boolean;
 			/** Attach a video instead of images (NIP-92 imeta with a video mime). */
-			video?: { url: string; mime?: string; bytes?: number; dim?: string; thumb?: string };
+			video?: {
+				url: string;
+				mime?: string;
+				bytes?: number;
+				dim?: string;
+				thumb?: string;
+				/** Hash-verified NIP-92 mirror URLs (for example, Blossom). */
+				fallback?: string[];
+			};
 		} = {}
 	): Promise<string> {
 		if (!browser) throw new Error('browser only');
@@ -543,6 +551,9 @@ class StoriesStore {
 			if ((video.bytes ?? 0) > 0) imeta.push(`size ${video.bytes}`);
 			if (video.dim) imeta.push(`dim ${video.dim}`);
 			if (video.thumb) imeta.push(`thumb ${video.thumb}`);
+			for (const fallback of video.fallback ?? []) {
+				if (fallback && fallback !== video.url) imeta.push(`fallback ${fallback}`);
+			}
 			if (alt) imeta.push(`alt ${alt}`);
 			tags.push(['imeta', ...imeta]);
 		}

@@ -327,6 +327,25 @@ export function scheduleGainSum(schedule: SfxScheduleEntry[]): number {
 	return schedule.reduce((sum, { cue, recipe }) => sum + (recipe?.level ?? 1) * cue.gain, 0);
 }
 
+/** A cue's play-length cut in seconds; Infinity = the sound's natural length. */
+export function sfxCueLimitSec(cue: Pick<MemeSfxCue, 'durationMs'>): number {
+	return cue.durationMs && cue.durationMs > 0 ? cue.durationMs / 1000 : Infinity;
+}
+
+/** Recipe notes that fit inside a trim limit — notes starting past the cut
+ *  drop; notes straddling it play shortened (the envelope compresses into
+ *  the shorter window, so the cut fades instead of clicking). */
+export function notesWithinLimit(notes: SfxNote[], limitSec: number): SfxNote[] {
+	if (!Number.isFinite(limitSec)) return notes;
+	const out: SfxNote[] = [];
+	for (const note of notes) {
+		if (note.t >= limitSec) continue;
+		const d = Math.min(note.d, limitSec - note.t);
+		if (d > 0) out.push({ ...note, d });
+	}
+	return out;
+}
+
 /** Render the cue schedule (synthesized recipes AND custom PCM) into an
  *  AudioBuffer via OfflineAudioContext. */
 export async function renderSfxTrack(
@@ -343,9 +362,16 @@ export async function renderSfxTrack(
 		// one-shot comedy cues) at the cue's gain, full band.
 		if (pcm && sampleRate) {
 			// Output length: the remaining window at render rate, capped by
-			// however many source samples exist.
+			// however many source samples exist and the cue's length cut.
 			const maxOut = Math.floor((pcm.length * renderRate) / sampleRate);
-			const target = Math.max(1, Math.min(Math.round((total - startSec) * renderRate), maxOut));
+			const limitSec = sfxCueLimitSec(cue);
+			const limitOut = Number.isFinite(limitSec)
+				? Math.max(1, Math.floor(limitSec * renderRate))
+				: Infinity;
+			const target = Math.max(
+				1,
+				Math.min(Math.round((total - startSec) * renderRate), maxOut, limitOut)
+			);
 			const buffer = offline.createBuffer(1, target, renderRate);
 			const channel = buffer.getChannelData(0);
 			const ratio = sampleRate / renderRate;
@@ -363,7 +389,7 @@ export async function renderSfxTrack(
 			continue;
 		}
 		if (!recipe) continue;
-		for (const note of recipe.notes) {
+		for (const note of notesWithinLimit(recipe.notes, sfxCueLimitSec(cue))) {
 			const osc = offline.createOscillator();
 			const gain = offline.createGain();
 			osc.type = note.type;

@@ -2,14 +2,9 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import RichText from '$lib/components/feed/RichText.svelte';
 	import type { TrackedMention } from '$lib/utils/mentions';
-	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import Popover from '$lib/components/ui/Popover.svelte';
 	import PowCard from '$lib/components/ui/PowCard.svelte';
 	import MemePostCaption from './MemePostCaption.svelte';
 	import type { PowProgress } from '$lib/nostr/feed.svelte';
-	import type { MediaProviderId } from '$lib/media/uploaders';
-	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
 	import { SPLIT_ROLES, TOTAL_BASIS_POINTS, validateSplits, type SplitRow } from '$lib/meme/splits';
 	import type { RemixLicense } from '$lib/meme/remix';
 	import {
@@ -32,7 +27,6 @@
 		aiAssisted = $bindable(),
 		splitsOpen = $bindable(),
 		splitRows = $bindable(),
-		selectedProvider = $bindable(),
 		pow = $bindable(),
 		busy,
 		phase,
@@ -42,6 +36,8 @@
 		exportFormat,
 		mediaKind,
 		videoExportSupported,
+		previewUrl,
+		posterUrl,
 		softCaptionLimit = 300,
 		hardCaptionLimit = 1000,
 		onCancelMining,
@@ -58,7 +54,6 @@
 		aiAssisted: boolean;
 		splitsOpen: boolean;
 		splitRows: SplitRow[];
-		selectedProvider: MediaProviderId | 'none';
 		pow: number;
 		busy: boolean;
 		phase: MemeStudioPhase;
@@ -68,21 +63,21 @@
 		exportFormat: MemeExportFormat;
 		mediaKind: 'image' | 'video' | null;
 		videoExportSupported: boolean;
+		/** Local staged media used only for the pre-publish visual check. */
+		previewUrl?: string;
+		/** Creator-picked composed video cover, when one exists. */
+		posterUrl?: string | null;
 		softCaptionLimit?: number;
 		hardCaptionLimit?: number;
 		onCancelMining: () => void;
 		onPublish: () => void;
 		onFormat: (format: MemeExportFormat) => void;
 	} = $props();
-	const providerMenuId = `meme-provider-${Math.random().toString(36).slice(2, 8)}`;
 	const splitCheck = $derived(
 		splitRows.length ? validateSplits(splitRows) : ({ ok: true } as const)
 	);
 	const splitTotal = $derived(splitRows.reduce((sum, row) => sum + row.basisPoints, 0));
 	const noteOnly = $derived(destinations.length === 1 && destinations[0] === 'note');
-	const selectedProviderLabel = $derived(
-		providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)
-	);
 	function toggleDestination(id: MemeDestination) {
 		destinations = destinations.includes(id)
 			? destinations.length > 1
@@ -170,6 +165,33 @@
 							</div>
 						</div>
 					</div>
+					{#if previewUrl}
+						<div
+							class="relative mt-3 overflow-hidden rounded-xl border border-[var(--ui-border-muted)] bg-black"
+						>
+							{#if mediaKind === 'video'}
+								<video
+									src={previewUrl}
+									poster={posterUrl || undefined}
+									muted
+									playsinline
+									preload="metadata"
+									aria-label="Video cover preview"
+									class="aspect-[4/5] max-h-64 w-full object-contain"
+								></video>
+							{:else}
+								<img
+									src={previewUrl}
+									alt="Meme preview"
+									class="aspect-[4/5] max-h-64 w-full object-contain"
+								/>
+							{/if}
+							<span
+								class="absolute right-2 bottom-2 rounded-full bg-black/70 px-2 py-1 text-[10px] font-bold text-white backdrop-blur"
+								>{mediaKind === 'video' ? (posterUrl ? 'Selected cover' : 'Video cover') : 'Image preview'}</span
+							>
+						</div>
+					{/if}
 				</section>
 				<section>
 					<h3 class="text-[12px] font-bold">{noteOnly ? 'Note text' : 'Public description'}</h3>
@@ -349,58 +371,12 @@
 							</p>
 						</div>{/if}
 				</section>
-				<section>
-					<h3 class="text-[12px] font-bold">Upload provider</h3>
+				<section aria-label="Public media delivery">
+					<h3 class="text-[12px] font-bold">Public media delivery</h3>
 					<p class="mt-0.5 text-[11px] text-[var(--ui-text-muted)]">
-						Choose where the public meme file is stored. This does not change where the Nostr post
-						is published.
+						BitOS is the primary upload. Files under 20 MiB also receive a verified Blossom
+						fallback URL; larger files publish from BitOS alone.
 					</p>
-					<Popover
-						id={providerMenuId}
-						placement="top-start"
-						width="lg"
-						label="Upload provider"
-						triggerClass="mt-2 flex items-center gap-1.5 rounded-full px-3 py-2 text-[12px] font-semibold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-						triggerActiveClass="bg-primary-500/10 text-primary-600"
-					>
-						{#snippet trigger()}<Icon
-								name="i-lucide-cloud-upload"
-								class="size-[15px] text-primary-500"
-							/><span class="max-w-[120px] truncate">{selectedProviderLabel}</span>{/snippet}
-						<MenuItem
-							icon="i-lucide-hard-drive-upload"
-							onclick={() => (selectedProvider = 'none')}
-							tone={selectedProvider === 'none' ? 'accent' : 'default'}
-						>
-							BitOS uploads
-							{#snippet trailing()}{#if selectedProvider === 'none'}<Icon
-										name="i-lucide-check"
-										class="size-4 shrink-0"
-									/>{/if}{/snippet}
-						</MenuItem>
-						<MenuDivider />
-						{#each MEDIA_PROVIDERS as provider (provider.id)}
-							<MenuItem
-								icon={provider.icon}
-								disabled={!media.isConfigured(provider.id)}
-								tone={selectedProvider === provider.id ? 'accent' : 'default'}
-								onclick={() => (selectedProvider = provider.id)}
-							>
-								<div class="min-w-0">
-									<div>{provider.label}</div>
-									<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-										{media.isConfigured(provider.id)
-											? provider.description
-											: 'Configure this provider in Settings first'}
-									</div>
-								</div>
-								{#snippet trailing()}{#if selectedProvider === provider.id}<Icon
-											name="i-lucide-check"
-											class="size-4 shrink-0"
-										/>{/if}{/snippet}
-							</MenuItem>
-						{/each}
-					</Popover>
 				</section>
 			</div>
 			<footer

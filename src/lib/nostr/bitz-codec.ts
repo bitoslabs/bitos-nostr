@@ -59,6 +59,8 @@ export interface BitzMedia {
 	dim?: string;
 	/** Duration in seconds from the imeta `duration` segment, when present. */
 	duration?: number;
+	/** Poster/thumbnail URL from the imeta `thumb` segment, when present. */
+	thumb?: string;
 }
 
 type ParseableEvent = Pick<Event, 'kind' | 'content' | 'tags'> & {
@@ -176,10 +178,13 @@ function mediaFromImeta(event: ParseableEvent): BitzMedia | null {
 		if (tag[0] !== 'imeta') continue;
 		if (isVideoImeta(tag)) {
 			const url = imetaValue(tag, 'url')!;
-			// NIP-92 allows several `fallback` mirrors; keep order, drop dupes.
-			const fallbacks = imetaValues(tag, 'fallback').filter(
-				(core, index, all) => core !== url && all.indexOf(core) === index
-			);
+			// NIP-92's example emits one URL per repeated `fallback` segment,
+			// but NIP-94 heritage also permits comma-joined lists — accept both,
+			// keep order, drop dupes.
+			const fallbacks = imetaValues(tag, 'fallback')
+				.flatMap((value) => value.split(',').map((part) => part.trim()))
+				.filter(Boolean)
+				.filter((core, index, all) => core !== url && all.indexOf(core) === index);
 			return withOptionalMeta(tag, {
 				url,
 				type: 'video',
@@ -203,7 +208,7 @@ function mediaFromImeta(event: ParseableEvent): BitzMedia | null {
 	return null;
 }
 
-/** Attach validated optional imeta metadata (x/dim/duration) to a descriptor. */
+/** Attach validated optional imeta metadata (x/dim/duration/thumb) to a descriptor. */
 function withOptionalMeta(tag: string[], media: BitzMedia): BitzMedia {
 	const hash = imetaValue(tag, 'x');
 	if (hash && HASH_RE.test(hash)) media.hash = hash;
@@ -211,6 +216,8 @@ function withOptionalMeta(tag: string[], media: BitzMedia): BitzMedia {
 	if (dim && DIM_RE.test(dim)) media.dim = dim;
 	const duration = Number(imetaValue(tag, 'duration'));
 	if (Number.isFinite(duration) && duration > 0) media.duration = duration;
+	const thumb = imetaValue(tag, 'thumb');
+	if (thumb && /^https?:\/\//i.test(thumb)) media.thumb = thumb;
 	return media;
 }
 
@@ -269,7 +276,10 @@ export function buildKind22(params: {
 		bytes?: number;
 		dim?: string;
 		thumb?: string;
-		fallback?: string;
+		/** Hash-verified mirror URLs — each becomes its own NIP-92
+		 *  `fallback` segment (the convention of NIP-92's own example:
+		 *  repeated segments, one URL each). */
+		fallback?: string | string[];
 		/** SHA-256 blob hash (imeta `x`) — publish after verifying bytes. */
 		hash?: string;
 		/** Duration in seconds (NIP-71 `duration`, fractional allowed). */
@@ -288,7 +298,14 @@ export function buildKind22(params: {
 	if (params.media.bytes && params.media.bytes > 0) imeta.push(`size ${params.media.bytes}`);
 	if (params.media.dim) imeta.push(`dim ${params.media.dim}`);
 	if (params.media.thumb) imeta.push(`thumb ${params.media.thumb}`);
-	if (params.media.fallback) imeta.push(`fallback ${params.media.fallback}`);
+	const fallbacks = Array.isArray(params.media.fallback)
+		? params.media.fallback
+		: params.media.fallback
+			? [params.media.fallback]
+			: [];
+	for (const fallback of fallbacks) {
+		if (fallback && fallback !== params.media.url) imeta.push(`fallback ${fallback}`);
+	}
 	if (params.media.hash) imeta.push(`x ${params.media.hash}`);
 	const duration = params.media.duration;
 	if (duration !== undefined && Number.isFinite(duration) && duration > 0) {
@@ -325,6 +342,10 @@ export interface BitzMediaConstraints {
 	httpsOnly?: boolean;
 }
 
+/** Product boundary for NIP-71's short-form kind (22). Longer public videos
+ * use the regular video kind (21); this never limits the rendered file. */
+export const SHORT_VIDEO_MAX_SECONDS = 60;
+
 /**
  * Pre-signing validation (plan §6.4 "Validation before signing"). Returns the
  * list of problems; an empty array means the candidate may be signed.
@@ -336,7 +357,7 @@ export function validateBitzMedia(
 		hash?: string;
 		duration?: number;
 		dim?: string;
-		fallback?: string;
+		fallback?: string | string[];
 	},
 	constraints: BitzMediaConstraints = {}
 ): BitzMediaValidationIssue[] {
@@ -366,10 +387,15 @@ export function validateBitzMedia(
 	if (media.dim !== undefined && !DIM_RE.test(media.dim)) {
 		issues.push({ field: 'dim', reason: 'must be `WxH` with positive integers' });
 	}
-	if (media.fallback !== undefined) {
-		if (!/^https?:\/\//.test(media.fallback)) {
+	const fallbacks = Array.isArray(media.fallback)
+		? media.fallback
+		: media.fallback
+			? [media.fallback]
+			: [];
+	for (const fallback of fallbacks) {
+		if (!/^https?:\/\//.test(fallback)) {
 			issues.push({ field: 'fallback', reason: 'not a valid absolute URL' });
-		} else if (httpsOnly && !media.fallback.startsWith('https://')) {
+		} else if (httpsOnly && !fallback.startsWith('https://')) {
 			issues.push({ field: 'fallback', reason: 'production URLs must be https' });
 		}
 	}

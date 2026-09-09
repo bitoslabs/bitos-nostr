@@ -14,11 +14,15 @@ import {
 	uploadToBlossom,
 	uploadWithProvider,
 	uploadWithRetries,
+	BLOSSOM_MIRROR_SERVERS,
+	wantsMirrorReplica,
 	type CloudinaryConfig,
 	type MediaProviderId,
 	type MediaSettings,
+	type MirrorUpload,
 	type S3Config,
 	type UploadOptions,
+	type UploadProgress,
 	type UploadedMedia,
 	type UploadedMediaProviderId
 } from '$lib/media/uploaders';
@@ -132,7 +136,16 @@ class MediaStore {
 		options: UploadOptions = {}
 	): Promise<UploadedMedia> => {
 		const sanitized = await sanitizeMediaForUpload(file);
-		const id = provider ?? this.state.defaultProvider;
+		return this.dispatch(sanitized, provider ?? this.state.defaultProvider, options);
+	};
+
+	/** Provider dispatch over ALREADY-sanitized bytes (see uploadWithMirrors). */
+	private dispatch = async (
+		sanitized: File,
+		id: MediaProviderId | 'none',
+		options: UploadOptions = {},
+		blossomServer?: string
+	): Promise<UploadedMedia> => {
 		// Retryable providers only: the server route is our own infra and its
 		// failures are visible there, so keep it as a single attempt (plan §11.3).
 		const perform = async (candidate: File): Promise<UploadedMedia> => {
@@ -142,7 +155,7 @@ class MediaStore {
 			if (id === 'blossom') {
 				const account = identity.current;
 				if (!account) throw new Error('Sign in to Nostr before uploading to Blossom');
-				return uploadToBlossom(candidate, account.sk, options.onProgress);
+				return uploadToBlossom(candidate, account.sk, options.onProgress, blossomServer);
 			}
 			if (id !== 'cloudinary' && id !== 's3') throw new Error(`Unknown provider: ${id}`);
 			// Same bytes + purpose retry to the same S3 object key (idempotent).
@@ -167,6 +180,139 @@ class MediaStore {
 				attempts: id === 'none' ? 1 : 3
 			}
 		);
+	};
+
+	/**
+	 * Multi-destination upload (BitOS canonical + Blossom replicas).
+	 *
+	 * The BitOS server API is the canonical URL; images and videos under the
+	 * Blossom size cap ALSO get a hash-verified replica on EVERY server in
+	 * `BLOSSOM_MIRROR_SERVERS`, and each verified replica URL becomes one
+	 * NIP-92 `fallback` segment in the signed event.
+	 *
+	 * Availability semantics — redundancy must not become a hard dependency on
+	 * free third-party servers: the BitOS canonical upload is always sufficient
+	 * to publish. Verified Blossom replicas become fallback URLs when available;
+	 * replica failures degrade silently via `onReplicaError`. All destinations
+	 * upload in parallel from ONE
+	 * sanitized copy (the sanitizer is not byte-stable, so sanitizing per
+	 * destination could diverge the hashes), each replica hash must equal the
+	 * canonical hash, and a canonical failure aborts every replica.
+	 */
+	uploadWithMirrors = async (
+		file: File,
+		options: UploadOptions & {
+			/** Aggregated replica progress (canonical rides `onProgress`). */
+			onMirrorProgress?: (progress: UploadProgress) => void;
+			/** Fired once before dispatch with the decided destinations. */
+			onPlan?: (plan: { mirror: boolean; replicas: number }) => void;
+			/** Per replica server that ultimately failed (non-fatal while at
+			 *  least one replica verified). */
+			onReplicaError?: (info: { server: string; error: string }) => void;
+		} = {}
+	): Promise<UploadedMedia> => {
+		const { onMirrorProgress, onPlan, onReplicaError, ...canonicalOptions } = options;
+		const sanitized = await sanitizeMediaForUpload(file);
+		const servers = wantsMirrorReplica(sanitized) && identity.current ? BLOSSOM_MIRROR_SERVERS : [];
+		onPlan?.({ mirror: servers.length > 0, replicas: servers.length });
+		// Immediate 0% pings so the UI can name both destinations right away.
+		canonicalOptions.onProgress?.({
+			loaded: 0,
+			total: sanitized.size,
+			percent: 0,
+			deterministic: true
+		});
+		if (servers.length) {
+			onMirrorProgress?.({ loaded: 0, total: sanitized.size, percent: 0, deterministic: true });
+		}
+		if (!servers.length) return this.dispatch(sanitized, 'none', canonicalOptions);
+
+		// Aggregated replica progress: every server reports independently; the
+		// UI sees one mean-of-destinations stream. Whole-percent steps keep
+		// reactive writes cheap (mirrors xhrUpload's own throttling).
+		const replicaPercents = servers.map(() => 0);
+		let lastReplicaPercent = -1;
+		const reportReplicas = () => {
+			const mean = Math.round(replicaPercents.reduce((a, b) => a + b, 0) / servers.length);
+			if (mean === lastReplicaPercent) return;
+			lastReplicaPercent = mean;
+			onMirrorProgress?.({
+				loaded: Math.round((mean / 100) * sanitized.size),
+				total: sanitized.size,
+				percent: mean,
+				deterministic: true
+			});
+		};
+
+		// Cross-abort only for the REQUIRED destination: a canonical failure
+		// aborts every replica (the call rejects anyway); a replica failure
+		// never touches the others — surviving one is the whole point.
+		const callerSignal = canonicalOptions.signal;
+		const canonicalCtl = new AbortController();
+		const replicaCtls = servers.map(() => new AbortController());
+		callerSignal?.addEventListener(
+			'abort',
+			() => {
+				canonicalCtl.abort();
+				for (const ctl of replicaCtls) ctl.abort();
+			},
+			{ once: true }
+		);
+		const canonicalPromise = this.dispatch(sanitized, 'none', {
+			...canonicalOptions,
+			signal: canonicalCtl.signal
+		}).catch((error) => {
+			for (const ctl of replicaCtls) ctl.abort();
+			throw error;
+		});
+		const replicaPromises = servers.map((server, index) =>
+			this.dispatch(
+				sanitized,
+				'blossom',
+				{
+					...canonicalOptions,
+					signal: replicaCtls[index].signal,
+					onProgress: (p) => {
+						replicaPercents[index] = p.percent;
+						reportReplicas();
+					}
+				},
+				server
+			).then(
+				(replica) => ({ server, replica }),
+				(error) => {
+					// Non-fatal here — quorum is decided once every server settles.
+					const message = (error as Error).message;
+					onReplicaError?.({ server, error: message });
+					return { server, replica: null, error: message };
+				}
+			)
+		);
+		const canonical = await canonicalPromise;
+		const settled = await Promise.all(replicaPromises);
+		const mirrors: MirrorUpload[] = [];
+		for (const outcome of settled) {
+			if (!outcome.replica) continue;
+			// Same bytes left the browser for every destination: a replica
+			// whose verified hash disagrees is discarded, never signed against.
+			if (
+				outcome.replica.sha256 &&
+				canonical.sha256 &&
+				outcome.replica.sha256 !== canonical.sha256
+			) {
+				onReplicaError?.({
+					server: outcome.server,
+					error: 'replica stored different bytes than the BitOS upload'
+				});
+				continue;
+			}
+			mirrors.push({
+				url: outcome.replica.url,
+				provider: 'blossom',
+				sha256: outcome.replica.sha256
+			});
+		}
+		return mirrors.length ? { ...canonical, mirrors } : canonical;
 	};
 }
 

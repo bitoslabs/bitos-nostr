@@ -4,15 +4,12 @@
 	import { neventEncode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
-	import Popover from '$lib/components/ui/Popover.svelte';
-	import MenuItem from '$lib/components/ui/MenuItem.svelte';
-	import MenuDivider from '$lib/components/ui/MenuDivider.svelte';
 	import PowCard from '$lib/components/ui/PowCard.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
-	import { media, MEDIA_PROVIDERS, providerLabel } from '$lib/stores/media.svelte';
+	import { media } from '$lib/stores/media.svelte';
 	import { DEFAULT_PROBE_LIMITS, probeMedia } from '$lib/media/video-probe';
 	import {
 		adjustTrim,
@@ -44,9 +41,8 @@
 		draftTrimToSeconds,
 		readBitzDraft
 	} from '$lib/stores/bitz-drafts';
-	import type { MediaProviderId } from '$lib/media/uploaders';
-	import type { UploadedMedia } from '$lib/media/uploaders';
-	import { humanBytes } from '$lib/media/uploaders';
+	import type { UploadedMedia, UploadProgress } from '$lib/media/uploaders';
+	import { BLOSSOM_MIRROR_SERVERS, humanBytes, wantsMirrorReplica } from '$lib/media/uploaders';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { formatDuration } from '$lib/utils/format';
@@ -85,10 +81,22 @@
 	let meta = $state<BitMeta | null>(null);
 
 	// ---- upload state ------------------------------------------------------
+	// Destination policy: the BitOS API is always the canonical URL; images
+	// and videos under the Blossom size cap ALSO get hash-verified replicas
+	// on EVERY Blossom mirror server (each becomes one NIP-92 `fallback`
+	// segment). Large videos upload to the single BitOS destination.
 	let uploaded = $state<UploadedMedia | null>(null);
 	let uploading = $state(false);
 	let uploadPercent = $state(0);
 	let uploadDeterministic = $state(false);
+	/** Aggregated Blossom replica progress while all destinations are in flight. */
+	let replicaPercent = $state(0);
+	/** A replica upload was planned for the bytes being published — the
+	 *  publish machine refuses to unlock signing without at least one
+	 *  hash-verified replica (see submit). */
+	let replicaExpected = $state(false);
+	/** The replica destinations are uploading right now (footer copy). */
+	let replicaActive = $state(false);
 	let uploadError = $state<string | null>(null);
 	/** Guards against a finished upload landing after the file was replaced. */
 	let uploadToken = 0;
@@ -150,21 +158,6 @@
 	 *  transitions guard ordering (never sign before the descriptor verified);
 	 *  effects stay in this component so toasts keep their context. */
 	let machine = $state<PublishState>(INITIAL_PUBLISH_STATE);
-	/** One-word stage label for the busy UI, null when nothing is running. */
-	const machineStageLabel = $derived.by(() => {
-		switch (machine.stage) {
-			case 'rendering':
-				return 'Rendering';
-			case 'verifying':
-				return 'Verifying';
-			case 'signing':
-				return 'Signing';
-			case 'publishing':
-				return 'Publishing';
-			default:
-				return null;
-		}
-	});
 
 	// ---- draft persistence (PUB-010) ------------------------------------------
 	/** Debounced localStorage writer; flush on close, clear on publish. */
@@ -176,10 +169,6 @@
 	// Opt-in: also publish a kind-1 quote note linking the fresh bitz so it
 	// reaches clients that do not render the Bitz media feed.
 	let quoteTimeline = $state(false);
-
-	// Per-bitz provider selection, defaulting to the configured default.
-	let selectedProvider = $state<MediaProviderId | 'none'>(media.state.defaultProvider);
-	let providerInitialized = $state(false);
 
 	// ---- publish state -----------------------------------------------------
 	let posting = $state(false);
@@ -221,9 +210,14 @@
 	const overHard = $derived(caption.length > HARD_CAP);
 	const canPost = $derived(!!uploaded && !posting && !uploadError && !overHard && !!mediaKind);
 	const writeRelayCount = $derived(relays.list.filter((r) => r.write).length);
-	const configuredProviders = $derived(MEDIA_PROVIDERS.filter((p) => media.isConfigured(p.id)));
-	const selectedProviderLabel = $derived(
-		providerLabel(selectedProvider === 'none' ? 'server' : selectedProvider)
+	/** Destination plan for the CURRENT file: small media mirrors to Blossom
+	 *  next to the BitOS canonical upload; large media stays single-destination. */
+	const dualDestination = $derived(!!file && wantsMirrorReplica(file));
+	/** Mirror-server count the plan will use, for destination copy. */
+	const replicaCount = $derived(dualDestination ? BLOSSOM_MIRROR_SERVERS.length : 0);
+	/** Overall upload completion across every in-flight destination. */
+	const stageUploadPercent = $derived(
+		replicaActive ? Math.round((uploadPercent + replicaPercent) / 2) : uploadPercent
 	);
 	const oversizeWarn = $derived(!!file && file.size > SIZE_WARN_BYTES);
 
@@ -265,23 +259,6 @@
 		caption = caption.replace(/#([\p{L}\p{N}_]+)$/u, `#${tag} `);
 	}
 
-	// Keep the selection valid whenever providers/defaults change (mirrors the
-	// main composer so the two never disagree about what is configured).
-	$effect(() => {
-		const current = selectedProvider;
-		const valid = (id: MediaProviderId | 'none') => id === 'none' || media.isConfigured(id);
-		if (!providerInitialized) {
-			providerInitialized = true;
-			const def = media.state.defaultProvider;
-			if (def !== 'none' && media.isConfigured(def)) selectedProvider = def;
-			return;
-		}
-		if (valid(current)) return;
-		const def = media.state.defaultProvider;
-		selectedProvider =
-			def !== 'none' && media.isConfigured(def) ? def : (configuredProviders[0]?.id ?? 'none');
-	});
-
 	$effect(() => {
 		if (me) profiles.ensure([me.pk]);
 	});
@@ -319,8 +296,16 @@
 				mimeType: draft.upload.mimeType,
 				bytes: draft.upload.bytes,
 				provider: draft.upload.providerId as UploadedMedia['provider'],
-				sha256: draft.upload.sha256
+				sha256: draft.upload.sha256,
+				mirrors: draft.upload.mirrors?.map((mirror) => ({
+					url: mirror.url,
+					provider: (mirror.provider ?? 'blossom') as UploadedMedia['provider'],
+					sha256: mirror.sha256
+				}))
 			};
+			// A checkpointed replica was hash-verified before the crash — it
+			// stays a required destination for the resumed publish.
+			replicaExpected = !!draft.upload.mirrors?.length;
 		}
 		draftRestored = draft.file
 			? `Restored your last draft — re-pick “${draft.file.name}” to publish, or start fresh`
@@ -349,6 +334,7 @@
 						providerId: uploaded.provider,
 						url: uploaded.url,
 						sha256: uploaded.sha256,
+						mirrors: uploaded.mirrors,
 						mimeType: uploaded.mimeType,
 						bytes: uploaded.bytes,
 						uploadedAt: Date.now()
@@ -378,6 +364,9 @@
 		uploaded = null;
 		uploading = false;
 		uploadPercent = 0;
+		replicaPercent = 0;
+		replicaExpected = false;
+		replicaActive = false;
 		uploadError = null;
 		caption = '';
 		sensitive = false;
@@ -438,6 +427,9 @@
 		uploadError = null;
 		uploadPercent = 0;
 		uploadDeterministic = false;
+		replicaPercent = 0;
+		replicaExpected = false;
+		replicaActive = false;
 		meta = {
 			width: result.width,
 			height: result.height,
@@ -489,20 +481,44 @@
 		scrubSeconds = 0;
 	}
 
+	/** Shared destination-plan + per-destination progress wiring for every
+	 *  Bitz media upload (accept-time and submit-time rendered cuts alike):
+	 *  BitOS canonical on `onProgress`, aggregated Blossom replicas on
+	 *  `onMirrorProgress`. */
+	function mirrorUploadOptions(token: number) {
+		return {
+			pubkey: me?.pk,
+			purpose: 'note' as const,
+			onPlan: (plan: { mirror: boolean; replicas: number }) => {
+				if (token !== uploadToken) return;
+				replicaExpected = plan.mirror && plan.replicas > 0;
+				replicaActive = plan.mirror && plan.replicas > 0;
+			},
+			onProgress: (p: UploadProgress) => {
+				if (token !== uploadToken) return;
+				uploadPercent = p.percent;
+				uploadDeterministic = p.deterministic;
+			},
+			onMirrorProgress: (p: UploadProgress) => {
+				if (token !== uploadToken) return;
+				replicaPercent = p.percent;
+			},
+			// Non-fatal while at least one replica verified (the store enforces
+			// that quorum): say which mirror dropped out of the fallback list.
+			onReplicaError: (info: { server: string; error: string }) => {
+				if (token !== uploadToken) return;
+				toasts.warning(
+					`Mirror ${new URL(info.server).host} failed — publishing with fewer fallbacks`
+				);
+			}
+		};
+	}
+
 	async function runUpload(target: File) {
 		const token = uploadToken;
-		const provider = selectedProvider;
 		uploading = true;
 		try {
-			const result = await media.upload(target, provider, {
-				pubkey: me?.pk,
-				purpose: 'note',
-				onProgress: (p) => {
-					if (token !== uploadToken) return;
-					uploadPercent = p.percent;
-					uploadDeterministic = p.deterministic;
-				}
-			});
+			const result = await media.uploadWithMirrors(target, mirrorUploadOptions(token));
 			if (token !== uploadToken) return; // replaced meanwhile — drop it
 			uploaded = result;
 		} catch (e) {
@@ -559,10 +575,10 @@
 		}
 		coverUploading = true;
 		try {
-			const provider = selectedProvider;
+			// Covers are thumbs, not the signed media: single BitOS destination.
 			const shot = await media.upload(
 				new File([blob], `bitz-cover-${Date.now()}.jpg`, { type: 'image/jpeg' }),
-				provider,
+				'none',
 				{ pubkey: me?.pk, purpose: 'note' }
 			);
 			cover = shot.url;
@@ -648,19 +664,28 @@
 							}
 						}
 					);
-					// Upload the rendered bytes (hash chain from PUB-006 keeps
-					// the descriptor honest), then re-capture the cover from the
-					// rendered pixels so `thumb` matches what clients decode.
-					const provider = selectedProvider;
+					// Upload the rendered bytes under the same destination policy
+					// (BitOS canonical + Blossom replica under the size cap; the
+					// PUB-006 hash chain keeps every descriptor honest), then
+					// re-capture the cover from the rendered pixels so `thumb`
+					// matches what clients decode.
 					const renderedFile = new File(
 						[cut.blob],
 						`bitz-cut-${Date.now()}.${cut.mimeType.includes('mp4') ? 'mp4' : 'webm'}`,
 						{ type: cut.mimeType }
 					);
-					publishUploaded = await media.upload(renderedFile, provider, {
-						pubkey: me?.pk,
-						purpose: 'note'
-					});
+					uploading = true;
+					uploadPercent = 0;
+					replicaPercent = 0;
+					replicaActive = false;
+					try {
+						publishUploaded = await media.uploadWithMirrors(
+							renderedFile,
+							mirrorUploadOptions(uploadToken)
+						);
+					} finally {
+						uploading = false;
+					}
 					publishMeta = {
 						width: cut.width,
 						height: cut.height,
@@ -671,7 +696,8 @@
 							type: 'image/jpeg'
 						});
 						try {
-							const shot = await media.upload(coverFile, provider, {
+							// Rendered covers stay single-destination thumbs.
+							const shot = await media.upload(coverFile, 'none', {
 								pubkey: me?.pk,
 								purpose: 'note'
 							});
@@ -690,13 +716,21 @@
 			}
 			// Verify the descriptor before anything is signed (§5.1: publish
 			// waits for media readiness; a broken hash chain blocks here).
+			// Every REQUIRED destination must have hash-verified — the BitOS
+			// canonical upload, plus AT LEAST ONE Blossom replica for small
+			// media (large videos upload to BitOS alone; extra replicas that
+			// failed merely shrink the NIP-92 fallback list).
 			machine = completeRender(machine, {
 				url: publishUploaded.url,
 				sha256: publishUploaded.sha256,
 				mimeType: publishUploaded.mimeType,
-				bytes: publishUploaded.bytes
+				bytes: publishUploaded.bytes,
+				mirrors: publishUploaded.mirrors
 			});
-			machine = verifyDescriptor(machine, {});
+			machine = verifyDescriptor(machine, {
+				sha256: publishUploaded.sha256,
+				mirrorsExpected: replicaExpected ? 1 : 0
+			});
 			if (machine.stage === 'blocked') {
 				throw new Error(machine.error ?? 'The uploaded media failed verification');
 			}
@@ -830,8 +864,6 @@
 		dragOver = false;
 		acceptFiles(event.dataTransfer?.files ?? null);
 	}
-
-	const providerMenuId = 'bitz-composer-provider-menu';
 </script>
 
 <svelte:window
@@ -1082,13 +1114,13 @@
 													stroke-width="3"
 													stroke-linecap="round"
 													stroke-dasharray={2 * Math.PI * 15}
-													stroke-dashoffset={2 * Math.PI * 15 * (1 - uploadPercent / 100)}
+													stroke-dashoffset={2 * Math.PI * 15 * (1 - stageUploadPercent / 100)}
 													class="transition-[stroke-dashoffset] duration-200 ease-out"
 												/>
 											</svg>
 											{#if uploadDeterministic}
 												<span class="absolute text-[11px] font-bold text-white tabular-nums"
-													>{uploadPercent}%</span
+													>{stageUploadPercent}%</span
 												>
 											{:else}
 												<Icon
@@ -1419,55 +1451,19 @@
 									<Icon name="i-lucide-repeat" class="size-4" />
 									Quote to timeline
 								</button>
-								<Popover
-									id={providerMenuId}
-									placement="top-start"
-									width="lg"
-									label="Upload provider"
-									triggerClass="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)] transition hover:bg-[var(--ui-bg-muted)] hover:text-[var(--ui-text)]"
-									triggerActiveClass="bg-primary-500/10 text-primary-600"
+								<span
+									class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold text-[var(--ui-text-muted)]"
+									title={dualDestination
+										? `Uploads to the BitOS API as the canonical URL plus ${replicaCount} hash-verified Blossom replicas (images and videos under 20 MB) — each becomes a NIP-92 fallback mirror`
+										: 'Uploads to the BitOS API as the single canonical URL'}
 								>
-									{#snippet trigger()}
-										<Icon name="i-lucide-cloud-upload" class="size-4 text-primary-500" />
-										<span class="max-w-[110px] truncate">{selectedProviderLabel}</span>
-									{/snippet}
-
-									<MenuItem
-										icon="i-lucide-hard-drive-upload"
-										onclick={() => (selectedProvider = 'none')}
-										tone={selectedProvider === 'none' ? 'accent' : 'default'}
-									>
-										BitOS uploads
-										{#snippet trailing()}
-											{#if selectedProvider === 'none'}
-												<Icon name="i-lucide-check" class="size-4 shrink-0" />
-											{/if}
-										{/snippet}
-									</MenuItem>
-									<MenuDivider />
-									{#each MEDIA_PROVIDERS as provider (provider.id)}
-										<MenuItem
-											icon={provider.icon}
-											disabled={!media.isConfigured(provider.id)}
-											tone={selectedProvider === provider.id ? 'accent' : 'default'}
-											onclick={() => (selectedProvider = provider.id)}
-										>
-											<div class="min-w-0">
-												<div>{provider.label}</div>
-												<div class="text-[11px] font-medium text-[var(--ui-text-dimmed)]">
-													{media.isConfigured(provider.id)
-														? provider.description
-														: 'Configure this provider in Settings first'}
-												</div>
-											</div>
-											{#snippet trailing()}
-												{#if selectedProvider === provider.id}
-													<Icon name="i-lucide-check" class="size-4 shrink-0" />
-												{/if}
-											{/snippet}
-										</MenuItem>
-									{/each}
-								</Popover>
+									<Icon name="i-lucide-cloud-upload" class="size-4 text-primary-500" />
+									{#if dualDestination}
+										BitOS + {replicaCount} Blossom {replicaCount === 1 ? 'replica' : 'replicas'}
+									{:else}
+										BitOS upload
+									{/if}
+								</span>
 							</div>
 
 							{#if showPow}
@@ -1497,13 +1493,34 @@
 						class="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-[var(--ui-text-muted)]"
 					>
 						{#if uploading}
-							Uploading {uploadPercent}% via {selectedProviderLabel}…
+							{#if replicaActive}
+								Uploading · BitOS {uploadPercent}% · Blossom {replicaCount === 1
+									? 'replica'
+									: `replicas ×${replicaCount}`}
+								{replicaPercent}%…
+							{:else}
+								Uploading to BitOS {uploadPercent}%…
+							{/if}
 						{:else if uploadError}
 							<span class="text-[var(--tone-error-text)]">Upload failed — retry to publish</span>
+						{:else if posting}
+							{#if rendering}
+								Rendering…
+							{:else if postPhase === 'mining'}
+								Mining rare bitz…
+							{:else if postPhase === 'publishing' || machine.stage === 'publishing'}
+								Publishing to {writeRelayCount}
+								{writeRelayCount === 1 ? 'relay' : 'relays'}…
+							{:else if machine.stage === 'signing'}
+								Awaiting signer…
+							{:else}
+								Posting…
+							{/if}
 						{:else if uploaded}
-							{kindInfo?.label ?? 'Bitz'} ready — {humanBytes(uploaded.bytes)} on {providerLabel(
-								uploaded.provider
-							)}
+							{kindInfo?.label ?? 'Bitz'} ready — {humanBytes(uploaded.bytes)} on BitOS{#if uploaded.mirrors?.length}
+								+ {uploaded.mirrors.length} Blossom {uploaded.mirrors.length === 1
+									? 'replica'
+									: 'replicas'}{/if}
 						{:else}
 							Your media and caption stay on this device until you post.
 						{/if}
@@ -1520,13 +1537,19 @@
 							class="size-4 {posting || uploading ? 'animate-spin' : ''}"
 						/>
 						{#if posting}
-							{machineStageLabel && machineStageLabel !== 'Signing'
-								? `${machineStageLabel}…`
-								: postPhase === 'mining'
-									? 'Mining…'
-									: postPhase === 'publishing'
-										? 'Publishing…'
-										: 'Posting…'}
+							{#if rendering}
+								Rendering…
+							{:else if uploading}
+								Uploading {uploadPercent}%
+							{:else if postPhase === 'mining'}
+								Mining…
+							{:else if postPhase === 'publishing' || machine.stage === 'publishing'}
+								Publishing to relays…
+							{:else if machine.stage === 'signing'}
+								Awaiting signer…
+							{:else}
+								Posting…
+							{/if}
 						{:else if uploading}
 							Uploading {uploadPercent}%
 						{:else}

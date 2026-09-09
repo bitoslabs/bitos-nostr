@@ -6,7 +6,7 @@
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import type { ReelNote } from '$lib/stores/bitz-session.svelte';
 	import { shortKey, formatDuration } from '$lib/utils/format';
-	import { lazyVideoMetadata } from '$lib/utils/media';
+	import { lazyVideoMetadata, mirrorSrc } from '$lib/utils/media';
 	import {
 		highlightSegments,
 		type BitzMatchMeta,
@@ -220,6 +220,7 @@
 							{#if reel.mediaType === 'video'}
 								<video
 									use:lazyVideoMetadata
+									use:mirrorSrc={{ sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])] }}
 									src={reel.mediaUrl}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
 									muted
@@ -241,6 +242,7 @@
 								<img
 									src={reel.mediaUrl}
 									alt={search.captionFor(reel) || 'Bitz picture'}
+									use:mirrorSrc={{ sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])] }}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105"
 									loading="lazy"
 								/>

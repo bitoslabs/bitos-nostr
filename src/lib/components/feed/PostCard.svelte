@@ -36,6 +36,7 @@
 	import { NOSTR_KINDS, type FeedNote } from '$lib/nostr/types';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { extractNotificationMedia, stripMediaUrls } from '$lib/utils/imeta';
+	import { mirrorSrc } from '$lib/utils/media';
 	import {
 		isEventReference,
 		parseContent,
@@ -1207,7 +1208,10 @@
 									alt="Blurred sensitive attachment"
 									loading="lazy"
 									referrerpolicy="no-referrer"
-									onerror={() => markMediaFailed(media.url)}
+									use:mirrorSrc={{
+										sources: [media.url, ...(media.fallbacks ?? [])],
+										onExhausted: () => markMediaFailed(media.url)
+									}}
 									class="{contentClass} scale-105 object-cover blur-2xl saturate-50 transition"
 								/>
 								<button
@@ -1240,7 +1244,10 @@
 									alt="Note attachment"
 									loading="lazy"
 									referrerpolicy="no-referrer"
-									onerror={() => markMediaFailed(media.url)}
+									use:mirrorSrc={{
+										sources: [media.url, ...(media.fallbacks ?? [])],
+										onExhausted: () => markMediaFailed(media.url)
+									}}
 									class="{contentClass} {media.isGif || visibleMediaAttachments.length === 1
 										? 'object-contain'
 										: 'object-cover'} transition group-hover:scale-[1.02]"

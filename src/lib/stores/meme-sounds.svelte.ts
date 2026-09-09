@@ -17,7 +17,6 @@ export const SOUND_LIBRARY_VERSION = 1;
 /** Sounds are short one-shots; keep the library snappy. */
 export const MAX_LIBRARY_SOUNDS = 30;
 export const MAX_SOUND_BYTES = 8 * 1024 * 1024; // 8 MB per sound
-export const MAX_SOUND_SECONDS = 15;
 
 /** Decoded metadata for one library sound. */
 export interface LibrarySound {
@@ -54,7 +53,7 @@ function parseSound(raw: unknown): LibrarySound | null {
 		source: s.source === 'mic' ? 'mic' : 'device',
 		durationSec:
 			Number.isFinite(durationSec) && durationSec > 0
-				? Math.min(Math.round(durationSec * 1000) / 1000, MAX_SOUND_SECONDS)
+				? Math.round(durationSec * 1000) / 1000
 				: 0,
 		createdAt:
 			Number.isFinite(Number(s.createdAt)) && Number(s.createdAt) > 0
@@ -149,9 +148,6 @@ class SoundLibraryStore {
 		if (input.blob.size <= 0) throw new Error('That sound is empty');
 		if (input.blob.size > MAX_SOUND_BYTES) throw new Error('That sound is larger than 8 MB');
 		if (!(input.durationSec > 0)) throw new Error('That sound has no duration');
-		if (input.durationSec > MAX_SOUND_SECONDS) {
-			throw new Error(`Sounds top out at ${MAX_SOUND_SECONDS}s — trim it first`);
-		}
 		const sound = parseSound({
 			label: input.label,
 			source: input.source,

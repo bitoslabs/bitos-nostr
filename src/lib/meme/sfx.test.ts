@@ -12,6 +12,8 @@ import {
 	scheduleGainSum,
 	attachCustomPcm,
 	monoNormalize,
+	notesWithinLimit,
+	sfxCueLimitSec,
 	SFX_MASTER_GAIN
 } from './sfx';
 
@@ -39,6 +41,20 @@ describe('sfx cue schema', () => {
 		expect(normalizeSfxCues(many)).toHaveLength(16);
 		expect(normalizeSfxCues([{ sfx: 'nope' }, { sfx: 'ding', atMs: 10 }])).toHaveLength(1);
 		expect(normalizeSfxCues('nope')).toEqual([]);
+	});
+
+	it('rounds a positive play-length cut and drops junk / zero ones', () => {
+		expect(normalizeSfxCue({ sfx: 'boom', atMs: 0, gain: 1, durationMs: 1234.6 })?.durationMs).toBe(
+			1235
+		);
+		expect(normalizeSfxCue({ sfx: 'boom', atMs: 0, gain: 1, durationMs: 0 })?.durationMs).toBeUndefined();
+		expect(
+			normalizeSfxCue({ sfx: 'boom', atMs: 0, gain: 1, durationMs: -200 })?.durationMs
+		).toBeUndefined();
+		expect(
+			normalizeSfxCue({ sfx: 'boom', atMs: 0, gain: 1, durationMs: 'nope' })?.durationMs
+		).toBeUndefined();
+		expect(normalizeSfxCue({ sfx: 'boom', atMs: 0, gain: 1 })?.durationMs).toBeUndefined();
 	});
 
 	it('windows cues to the render duration', () => {
@@ -115,6 +131,41 @@ describe('scheduleSfx', () => {
 describe('SFX_MASTER_GAIN sanity', () => {
 	it('leaves headroom below unity', () => {
 		expect(SFX_MASTER_GAIN).toBeLessThanOrEqual(0.5);
+	});
+});
+
+describe('cue play-length cut (trim)', () => {
+	it('treats a missing or non-positive cut as the natural length', () => {
+		expect(sfxCueLimitSec({})).toBe(Infinity);
+		expect(sfxCueLimitSec({ durationMs: 0 })).toBe(Infinity);
+		expect(sfxCueLimitSec({ durationMs: -5 })).toBe(Infinity);
+		expect(sfxCueLimitSec({ durationMs: 1500 })).toBe(1.5);
+	});
+
+	it('drops notes past the cut and shortens straddlers', () => {
+		const notes = [
+			{ type: 'sine' as const, t: 0, d: 0.4, f: 200, g: 1 },
+			{ type: 'sine' as const, t: 0.3, d: 0.5, f: 180, g: 0.8 },
+			{ type: 'sine' as const, t: 0.9, d: 0.2, f: 90, g: 0.5 }
+		];
+		const cut = notesWithinLimit(notes, 0.5);
+		expect(cut).toHaveLength(2);
+		expect(cut[0]).toEqual(notes[0]);
+		expect(cut[1]).toEqual({ ...notes[1], d: 0.2 }); // 0.5 − 0.3
+	});
+
+	it('passes notes through untouched without a finite limit', () => {
+		const notes = SFX_RECIPES.boom.notes;
+		expect(notesWithinLimit(notes, Infinity)).toBe(notes);
+	});
+
+	it('every recipe survives a full-length cut', () => {
+		for (const recipe of Object.values(SFX_RECIPES)) {
+			// +ε mirrors the envelope tolerance: t+d may sit exactly on duration.
+			expect(notesWithinLimit(recipe.notes, recipe.duration + 0.001), recipe.id).toEqual(
+				recipe.notes
+			);
+		}
 	});
 });
 

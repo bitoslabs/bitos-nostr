@@ -18,6 +18,8 @@ export type ReelNote = FeedNote & {
 	/** Alternate quality renditions (READ-002), high→low. The player may
 	 * swap `mediaUrl` for one of these to match the viewport. */
 	mediaRenditions?: BitzRendition[];
+	/** Poster/thumbnail URL (imeta `thumb`), when the event declares one. */
+	thumb?: string;
 };
 
 /**
@@ -118,7 +120,8 @@ export function toReelNote(
 			mediaUrl: media.url,
 			mediaType: media.type,
 			mediaFallbacks: media.fallbacks,
-			mediaRenditions: media.renditions
+			mediaRenditions: media.renditions,
+			...(media.thumb ? { thumb: media.thumb } : {})
 		};
 	}
 }

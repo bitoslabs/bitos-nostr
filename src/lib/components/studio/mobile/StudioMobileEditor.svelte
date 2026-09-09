@@ -733,6 +733,7 @@
 	/** Close the current sheet without changing the editor route. */
 	function closeSheet() {
 		if (publishBusy || pubPhase === 'done') return;
+		soundIO.stopPreview();
 		panel = null;
 		editingId = null;
 		layerEditingId = null;
@@ -4497,6 +4498,13 @@
 	<!-- Soundboard sheet (Phase 4 — the Audio quick tool). -->
 	<StudioSheet open={panel === 'audio'} title="Sounds" icon="i-lucide-music" onclose={closeSheet}>
 		<div class="flex flex-col gap-4">
+			<button
+				type="button"
+				onclick={() => soundIO.stopPreview()}
+				class="self-start rounded-full border border-white/15 px-3 py-1 text-[10.5px] font-bold text-white/70 transition hover:border-warm-500/60 hover:text-warm-400"
+			>
+				<Icon name="i-lucide-square" class="mr-1 inline size-3" /> Stop sound preview
+			</button>
 			<!-- Staged cues -->
 			{#if sfxCues.length}
 				<div>

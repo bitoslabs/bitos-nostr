@@ -196,6 +196,9 @@ export interface MemeSfxCue {
 	lane?: number;
 	/** Custom sound-library id — required when sfx === 'custom'. */
 	soundId?: string;
+	/** Play-length cut (integer ms, > 0). Missing = the sound's natural
+	 *  length; the renderer stops both synth notes and custom PCM at it. */
+	durationMs?: number;
 }
 
 /** Tolerant cue parser — mirrors normalizeOverlay's coerce/clamp/drop rules. */
@@ -210,13 +213,15 @@ export function normalizeSfxCue(raw: unknown): MemeSfxCue | null {
 	const at = Number(c.atMs);
 	const gain = Number(c.gain);
 	const lane = Number(c.lane);
+	const durationMs = optionalMs(c.durationMs);
 	return {
 		id: typeof c.id === 'string' && c.id.trim() ? c.id.slice(0, 64) : newId(),
 		sfx: c.sfx === CUSTOM_SOUND_KEY ? CUSTOM_SOUND_KEY : (c.sfx as MemeSfxId),
 		...(c.sfx === CUSTOM_SOUND_KEY && soundId ? { soundId } : {}),
 		atMs: Number.isFinite(at) && at > 0 ? Math.round(at) : 0,
 		gain: Number.isFinite(gain) ? clamp(gain, 0, 1) : 1,
-		...(Number.isFinite(lane) && lane > 0 ? { lane: Math.min(3, Math.floor(lane)) } : {})
+		...(Number.isFinite(lane) && lane > 0 ? { lane: Math.min(3, Math.floor(lane)) } : {}),
+		...(durationMs ? { durationMs } : {})
 	};
 }
 

@@ -48,7 +48,10 @@
 		recording = false,
 		recordingPaused = false,
 		micDenied = false,
-		recordingElapsedSec = 0
+		recordingElapsedSec = 0,
+		videoSources = [],
+		videoSoundBusy = false,
+		onAddFromVideo
 	}: {
 		open?: boolean;
 		cues?: MemeSfxCue[];
@@ -81,12 +84,55 @@
 		recordingPaused?: boolean;
 		micDenied?: boolean;
 		recordingElapsedSec?: number;
+	/** Recent video bitz offered as sound sources ("use this sound"). */
+	videoSources?: { id: string; label: string; url: string; thumb?: string }[];
+		/** True while a video-sound extraction is running. */
+		videoSoundBusy?: boolean;
+		/** Extract + import + cue audio from a video URL/bit. */
+		onAddFromVideo?: (source: { label: string; url: string }) => void;
 	} = $props();
 
 	let query = $state('');
 	let recordingName = $state('');
 	/** Entry id currently playing (for the equalizer indicator). */
 	let playingId = $state('');
+	/** URL typed into the "from a video" row. */
+	let videoUrl = $state('');
+
+	// ---- pasted-URL thumbnail preview ----------------------------------------
+	/** A URL only previews once it at least looks like one. */
+	const URL_SHAPE_RE = /^https?:\/\/\S+\.\S+/i;
+	/** Debounced mirror of `videoUrl` — the <video> element must not re-probe
+	 *  the network on every keystroke. '' = nothing to preview. */
+	let videoPreviewUrl = $state('');
+	let videoPreviewError = $state(false);
+	/** Duration from loadedmetadata; null until the browser knows. */
+	let videoPreviewSec = $state<number | null>(null);
+
+	const videoUrlShaped = $derived(URL_SHAPE_RE.test(videoUrl.trim()));
+	const videoPreviewHost = $derived.by(() => {
+		try {
+			return new URL(videoPreviewUrl).hostname;
+		} catch {
+			return '';
+		}
+	});
+
+	$effect(() => {
+		const raw = videoUrl.trim();
+		if (!open || !URL_SHAPE_RE.test(raw)) {
+			videoPreviewUrl = '';
+			videoPreviewError = false;
+			videoPreviewSec = null;
+			return;
+		}
+		const timer = setTimeout(() => {
+			videoPreviewError = false;
+			videoPreviewSec = null;
+			videoPreviewUrl = raw;
+		}, 450);
+		return () => clearTimeout(timer);
+	});
 
 	const synth = $derived(synthEntries(labels, durations));
 	const library: SoundEntry[] = $derived.by(() => {
@@ -133,6 +179,15 @@
 	});
 	const sortedCues = $derived(sortCues(cues));
 	const cueFull = $derived(cues.length >= maxCues);
+
+	// Closing the picker must also stop an in-flight or playing device preview.
+	// This is especially important for long files whose decode can finish after
+	// the dialog has gone away.
+	$effect(() => {
+		if (open) return;
+		playingId = '';
+		onStopPreview();
+	});
 
 	function fmt(sec: number): string {
 		if (!Number.isFinite(sec) || sec < 0) return '0:00';
@@ -190,6 +245,11 @@
 
 	function removeCue(cue: MemeSfxCue) {
 		cues = cues.filter((c) => c.id !== cue.id);
+	}
+
+	/** A dead thumbnail URL reveals the clapperboard placeholder behind it. */
+	function hideBrokenThumb(e: Event) {
+		(e.currentTarget as HTMLElement).style.display = 'none';
 	}
 </script>
 
@@ -265,6 +325,125 @@
 			<p class="-mt-1 text-[10.5px] font-medium text-[var(--tone-error-text)]">
 				Microphone access is blocked — allow it in your browser settings to record.
 			</p>
+		{/if}
+
+		<!-- From a video (TikTok-style "use this sound"): tap a recent bitz or paste
+		     any video URL — its audio lands in the library and cues at the playhead. -->
+		{#if onAddFromVideo}
+			<div class="rounded-xl border border-[var(--ui-border-muted)] bg-[var(--ui-bg-muted)]/60 p-2">
+				<p
+					class="mb-1.5 flex items-center gap-1.5 px-0.5 text-[10.5px] font-bold text-[var(--ui-text-dimmed)]"
+				>
+					<Icon name="i-lucide-disc-3" class="size-3.5 {videoSoundBusy ? 'animate-spin' : ''}" />
+					Use a sound from a video — any bitz
+				</p>
+				{#if videoSources?.length}
+					<!-- Recent bitz as thumbnail cards — pick by sight, like a feed. -->
+					<div class="scrollbar-thin mb-1.5 flex gap-1.5 overflow-x-auto pb-0.5">
+						{#each videoSources as source (source.id)}
+							<button
+								type="button"
+								disabled={videoSoundBusy}
+								onclick={() => onAddFromVideo({ label: source.label, url: source.url })}
+								title={`Grab the audio from “${source.label}”`}
+								class="group w-20 shrink-0 overflow-hidden rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] text-left transition hover:border-warm-500/60 disabled:opacity-50"
+							>
+								<span
+									class="relative block h-12 w-full bg-black/20"
+									aria-hidden="true"
+								>
+									<span class="grid size-full place-items-center text-[var(--ui-text-dimmed)]">
+										<Icon name="i-lucide-clapperboard" class="size-4" />
+									</span>
+									{#if source.thumb}
+										<img
+											src={source.thumb}
+											alt=""
+											loading="lazy"
+											class="absolute inset-0 size-full object-cover"
+											onerror={hideBrokenThumb}
+										/>
+									{/if}
+									<span
+										class="absolute right-0.5 bottom-0.5 grid size-4 place-items-center rounded bg-black/60 text-white"
+									>
+										<Icon name="i-lucide-music-2" class="size-2.5" />
+									</span>
+								</span>
+								<span
+									class="block w-full truncate px-1 py-0.5 text-center text-[9.5px] font-bold text-[var(--ui-text-muted)] group-hover:text-warm-600"
+								>
+									{source.label}
+								</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+				<div class="flex items-center gap-1">
+					<input
+						type="url"
+						inputmode="url"
+						bind:value={videoUrl}
+						placeholder="https://…/video.mp4"
+						aria-label="Video URL to grab audio from"
+						disabled={videoSoundBusy}
+						class="h-8 min-w-0 flex-1 rounded-full border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] px-3 text-[11.5px] outline-none placeholder:text-[var(--ui-text-dimmed)] focus:border-warm-500 disabled:opacity-50"
+					/>
+					<button
+						type="button"
+						disabled={videoSoundBusy || !videoUrl.trim()}
+						onclick={() => {
+							const url = videoUrl.trim();
+							if (!url) return;
+							onAddFromVideo({ label: '', url });
+							videoUrl = '';
+						}}
+						title="Extract this video's audio into your sounds"
+						class="grid size-8 shrink-0 place-items-center rounded-full bg-warm-500/12 text-warm-600 transition hover:bg-warm-500/20 disabled:opacity-40"
+					>
+						<Icon
+							name={videoSoundBusy ? 'i-lucide-loader-circle' : 'i-lucide-download'}
+							class="size-3.5 {videoSoundBusy ? 'animate-spin' : ''}"
+						/>
+					</button>
+				</div>
+				{#if videoPreviewUrl}
+					<!-- Live first-frame preview of the pasted URL. Display-only: a
+					     failed preview never blocks the extract (the proxy fetch path
+					     can still succeed where the <video> element cannot). -->
+					<div
+						class="mt-1.5 flex items-center gap-2 rounded-lg border border-[var(--ui-border-muted)] bg-[var(--ui-bg)] p-1.5"
+					>
+						<video
+							src={videoPreviewUrl}
+							preload="metadata"
+							muted
+							playsinline
+							aria-hidden="true"
+							class="h-12 w-20 shrink-0 rounded-md bg-black object-cover"
+							onloadedmetadata={(e) => (videoPreviewSec = e.currentTarget.duration)}
+							onerror={() => (videoPreviewError = true)}
+						></video>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-[11px] font-semibold">{videoPreviewHost || 'Video'}</p>
+							<p class="text-[10px] text-[var(--ui-text-dimmed)] tabular-nums">
+								{#if videoPreviewError}
+									No preview here — extraction can still work
+								{:else if videoPreviewSec !== null}
+									{fmt(videoPreviewSec)}{videoPreviewSec > 15
+										? ' · first 15s become the sound'
+										: ' of sound'}
+								{:else}
+									Loading preview…
+								{/if}
+							</p>
+						</div>
+					</div>
+				{/if}
+				<p class="mt-1 px-0.5 text-[9.5px] text-[var(--ui-text-dimmed)]">
+					First 15s, saved to My sounds — credit the creator in your caption.
+				</p>
+			</div>
 		{/if}
 
 		<!-- Cue sheet first: what's already staged (editable in place). -->

@@ -11,7 +11,6 @@
 	import type { MemeSfxCue, MemeSfxId } from '$lib/meme/schema';
 	import type { MemeSuggestion } from '$lib/ai/suggest';
 	import type { SmartResolution } from '$lib/ai/smart-templates';
-	import type { MediaProviderId } from '$lib/media/uploaders';
 	import type { PowProgress } from '$lib/nostr/feed.svelte';
 	import type { RemixLicense } from '$lib/meme/remix';
 	import type { SplitRow } from '$lib/meme/splits';
@@ -98,7 +97,6 @@
 		aiAssisted = $bindable(false),
 		splitsOpen = $bindable(false),
 		splitRows = $bindable<SplitRow[]>([]),
-		selectedProvider = $bindable<MediaProviderId | 'none'>('none'),
 		pow = $bindable(0),
 		phase,
 		powProgress,
@@ -194,7 +192,6 @@
 		aiAssisted: boolean;
 		splitsOpen: boolean;
 		splitRows: SplitRow[];
-		selectedProvider: MediaProviderId | 'none';
 		pow: number;
 		phase: MemeStudioPhase;
 		powProgress: PowProgress | null;

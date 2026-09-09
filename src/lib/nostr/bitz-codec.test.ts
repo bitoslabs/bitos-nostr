@@ -137,7 +137,7 @@ describe('parseBitz', () => {
 		]);
 	});
 
-	it('carries validated x/dim/duration metadata from imeta', () => {
+	it('carries validated x/dim/duration/thumb metadata from imeta', () => {
 		const media = parseBitz({
 			kind: NOSTR_KINDS.VIDEO,
 			content: 'reel https://v.example.com/a.mp4',
@@ -148,13 +148,15 @@ describe('parseBitz', () => {
 					'm video/mp4',
 					`x ${'ab'.repeat(32)}`,
 					'dim 1080x1920',
-					'duration 8.4'
+					'duration 8.4',
+					'thumb https://img.example.com/a.jpg'
 				]
 			]
 		});
 		expect(media?.hash).toBe('ab'.repeat(32));
 		expect(media?.dim).toBe('1080x1920');
 		expect(media?.duration).toBe(8.4);
+		expect(media?.thumb).toBe('https://img.example.com/a.jpg');
 	});
 
 	it('drops malformed optional metadata instead of failing the parse', () => {
@@ -168,7 +170,8 @@ describe('parseBitz', () => {
 					'm video/mp4',
 					'x not-a-hash',
 					'dim not-dims',
-					'duration -1'
+					'duration -1',
+					'thumb not-a-url'
 				]
 			]
 		});
@@ -176,6 +179,7 @@ describe('parseBitz', () => {
 		expect(media?.hash).toBeUndefined();
 		expect(media?.dim).toBeUndefined();
 		expect(media?.duration).toBeUndefined();
+		expect(media?.thumb).toBeUndefined();
 	});
 
 	it('decodes the plan §6.2 golden kind-22 sample via content URL only', () => {
@@ -288,6 +292,72 @@ describe('buildKind22', () => {
 		expect(imeta).toContain('x aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 		expect(imeta).toContain('duration 5.912');
 		expect(imeta).toContain('bitrate 1234568');
+	});
+
+	it('names the hash-verified Blossom replica as the imeta fallback mirror', () => {
+		const event = buildKind22({
+			pubkey: 'pk'.padEnd(64, 'x'),
+			caption: 'mirrored reel',
+			media: {
+				...baseMedia,
+				hash: 'a'.repeat(64),
+				fallback: 'https://blossom.example/abc.mp4'
+			},
+			sensitive: false
+		});
+		const imeta = event.tags.find((t) => t[0] === 'imeta')!;
+		expect(imeta).toContain('fallback https://blossom.example/abc.mp4');
+		// The replica must round-trip through the parser's fallback chain.
+		const parsed = parseBitz(event as Parameters<typeof parseBitz>[0]);
+		expect(parsed?.fallbacks).toEqual(['https://blossom.example/abc.mp4']);
+	});
+
+	it('emits one fallback segment per verified mirror, in order (NIP-92 example shape)', () => {
+		const event = buildKind22({
+			pubkey: 'pk'.padEnd(64, 'x'),
+			caption: 'multi-mirrored reel',
+			media: {
+				...baseMedia,
+				hash: 'a'.repeat(64),
+				fallback: ['https://blossom.nostr.build/abc.mp4', 'https://blossom.primal.net/abc.mp4']
+			},
+			sensitive: false
+		});
+		const imeta = event.tags.find((t) => t[0] === 'imeta')!;
+		expect(imeta.filter((seg) => seg.startsWith('fallback '))).toEqual([
+			'fallback https://blossom.nostr.build/abc.mp4',
+			'fallback https://blossom.primal.net/abc.mp4'
+		]);
+		// Ordered fallback chain survives the round-trip.
+		const parsed = parseBitz(event as Parameters<typeof parseBitz>[0]);
+		expect(parsed?.fallbacks).toEqual([
+			'https://blossom.nostr.build/abc.mp4',
+			'https://blossom.primal.net/abc.mp4'
+		]);
+	});
+
+	it('parses comma-joined NIP-94-style fallback values into the chain', () => {
+		const event = {
+			kind: 22,
+			pubkey: 'pk'.padEnd(64, 'x'),
+			id: 'e'.repeat(64),
+			content: 'https://v.example.com/reel.mp4',
+			tags: [
+				[
+					'imeta',
+					'url https://v.example.com/reel.mp4',
+					'm video/mp4',
+					'fallback https://a.example/x.mp4, https://b.example/x.mp4',
+					'fallback https://c.example/x.mp4'
+				]
+			] as string[][]
+		};
+		const parsed = parseBitz(event);
+		expect(parsed?.fallbacks).toEqual([
+			'https://a.example/x.mp4',
+			'https://b.example/x.mp4',
+			'https://c.example/x.mp4'
+		]);
 	});
 
 	it('drops non-positive durations instead of emitting garbage segments', () => {

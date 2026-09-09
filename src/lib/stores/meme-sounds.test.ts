@@ -69,7 +69,22 @@ describe('soundLibrary store', () => {
 		expect(soundLibrary.list).toEqual([]);
 	});
 
-	it('rejects oversized / empty / overlong additions', async () => {
+	it('keeps the full duration of a saved long sound', () => {
+		memory.set(
+			SOUND_LIBRARY_KEY,
+			JSON.stringify({
+				schema: 'bitos.meme.sounds',
+				version: 1,
+				list: [{ id: 'long-sound', label: 'Long sound', durationSec: 90, createdAt: 1 }]
+			})
+		);
+
+		soundLibrary.load();
+
+		expect(soundLibrary.list).toMatchObject([{ id: 'long-sound', durationSec: 90 }]);
+	});
+
+	it('rejects oversized and empty additions', async () => {
 		await expect(
 			soundLibrary.add({ source: 'device', blob: new Blob(['x']), durationSec: 1 })
 		).resolves.toBeDefined();
@@ -86,7 +101,7 @@ describe('soundLibrary store', () => {
 		).rejects.toThrow(/8 MB/);
 		await expect(
 			soundLibrary.add({ source: 'mic', blob: new Blob(['x']), durationSec: 30 })
-		).rejects.toThrow(/15s/);
+		).resolves.toMatchObject({ durationSec: 30 });
 	});
 
 	it('adds a sound, persists meta and returns the stored blob', async () => {
