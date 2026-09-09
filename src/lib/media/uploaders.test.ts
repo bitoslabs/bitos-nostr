@@ -13,11 +13,13 @@ import {
 	classifyUploadError,
 	getSigningKey,
 	isUrlReadable,
+	MIRROR_REPLICA_MAX_BYTES,
 	signAwsRequestV4,
 	signCloudinaryRequest,
 	toHex,
 	uploadBlob,
 	uploadWithRetries,
+	wantsMirrorReplica,
 	type UploadedMedia
 } from './uploaders';
 
@@ -70,6 +72,35 @@ describe('Cloudinary signature', () => {
 			'ABCD'
 		);
 		expect(sig).toBe('1e23a85e3499dc42e90d47c15771834a6beae46c');
+	});
+});
+
+describe('wantsMirrorReplica (multi-destination policy)', () => {
+	it('mirrors images and small videos next to the canonical upload', () => {
+		expect(
+			wantsMirrorReplica(new File([new Uint8Array(64)], 'p.jpg', { type: 'image/jpeg' }))
+		).toBe(true);
+		expect(wantsMirrorReplica(new File([new Uint8Array(64)], 'v.mp4', { type: 'video/mp4' }))).toBe(
+			true
+		);
+	});
+
+	it('keeps files at or over the 20 MiB Blossom cap single-destination', () => {
+		const atCap = new File([new Uint8Array(MIRROR_REPLICA_MAX_BYTES)], 'v.mp4', {
+			type: 'video/mp4'
+		});
+		expect(wantsMirrorReplica(atCap)).toBe(false);
+		const over = new File([new Uint8Array(MIRROR_REPLICA_MAX_BYTES + 1)], 'v.mp4', {
+			type: 'video/mp4'
+		});
+		expect(wantsMirrorReplica(over)).toBe(false);
+	});
+
+	it('never mirrors non-media or empty files', () => {
+		expect(
+			wantsMirrorReplica(new File([new Uint8Array(8)], 'doc.pdf', { type: 'application/pdf' }))
+		).toBe(false);
+		expect(wantsMirrorReplica(new File([], 'empty.mp4', { type: 'video/mp4' }))).toBe(false);
 	});
 });
 

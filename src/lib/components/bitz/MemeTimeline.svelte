@@ -12,11 +12,15 @@
 	 * truth. Reading is open to everyone; dragging emits `onscrub`.
 	 *
 	 * Timeline editing:
-	 *   • zoom — scroll/⌘-scroll zooms around the cursor, ⇧-scroll pans,
-	 *     +/−/Fit buttons cover touch (zoom = px per media second)
+	 *   • zoom — ⌘/Ctrl-scroll or pinch zoomes around the cursor, ⇧-scroll
+	 *     pans, +/−/Fit buttons cover touch (zoom = px per media second);
+	 *     plain vertical scroll scrolls the rows once they overflow (and
+	 *     still zoomes when everything fits)
 	 *   • move/resize — caption + image-layer spans drag to move, their edge
 	 *     handles resize the window (patches flow back via onPatch*)
-	 *   • cue ticks drag to retime (onPatchCue)
+	 *   • cue ticks drag to retime (onPatchCue); sound blocks drag their
+	 *     right edge to cut the play length (onPatchCueLength, double-click
+	 *     resets to the full sound)
 	 *   • snaps — clip edges, the playhead and whole seconds
 	 */
 
@@ -47,6 +51,7 @@
 		onRemoveLayer,
 		onReorderLayer,
 		onPatchCue,
+		onPatchCueLength,
 		onPatchCueLane,
 		cueMetaFor,
 		onSelectOverlay,
@@ -102,11 +107,19 @@
 		onReorderLayer?: (id: string, dir: -1 | 1) => void;
 		/** Drag a cue tick to a new time (ms). */
 		onPatchCue?: (id: string, atMs: number) => void;
+		/** Cut a sound block's play length (ms); null resets to the full sound. */
+		onPatchCueLength?: (id: string, durationMs: number | null) => void;
 		/** Move a cue between the visual mixer lanes. */
 		onPatchCueLane?: (id: string, lane: number) => void;
 		/** Sound blocks: label + play length per cue — turns cue ticks into
-		 *  duration spans on the timeline (falls back to ticks when absent). */
-		cueMetaFor?: (cue: MemeSfxCue) => { label: string; durationSec: number } | null;
+		 *  duration spans on the timeline (falls back to ticks when absent).
+		 *  `durationSec` is the effective (cut) length; `naturalSec` is the
+		 *  untrimmed cap the trim handle can grow back to. */
+		cueMetaFor?: (cue: MemeSfxCue) => {
+			label: string;
+			durationSec: number;
+			naturalSec?: number;
+		} | null;
 		onSelectOverlay?: (id: string) => void;
 		onSelectLayer?: (id: string) => void;
 		onSelectDrawing?: (id: string) => void;
@@ -117,6 +130,8 @@
 	const ROW_HEIGHT = 18;
 	/** Shortest draggable window (seconds) — edges can't cross. */
 	const MIN_WINDOW_SEC = 0.2;
+	/** Shortest sound cut (seconds) — a trim can't mute the cue entirely. */
+	const MIN_CUE_LEN_SEC = 0.1;
 	/** Snap strength in px, converted to seconds at the current zoom. */
 	const SNAP_PX = 7;
 	/** Zoom clamp (px per media second) + step for the +/− buttons. High
@@ -133,6 +148,7 @@
 	// ---- zoom + horizontal scroll --------------------------------------------
 	let scrollEl = $state<HTMLDivElement | null>(null);
 	let trackEl = $state<HTMLDivElement | null>(null);
+	let rowsEl = $state<HTMLDivElement | null>(null);
 	let viewportW = $state(0);
 	/** User zoom (px/s); 0 = auto-fit the viewport. */
 	let zoomPxPerSec = $state(0);
@@ -199,6 +215,18 @@
 	function onWheel(e: WheelEvent) {
 		if (busy) return;
 		if (e.altKey) return; // Alt hands vertical wheel to the rows scroller
+		// Plain vertical wheel scrolls the rows whenever they overflow — Y
+		// scrolling shouldn't need a modifier. When the rows fit, it falls
+		// through to zoom (the historical behavior) so the wheel never dies.
+		if (
+			!e.shiftKey &&
+			!e.ctrlKey &&
+			!e.metaKey &&
+			Math.abs(e.deltaY) > Math.abs(e.deltaX) &&
+			rowsEl &&
+			rowsEl.scrollHeight > rowsEl.clientHeight + 1
+		)
+			return;
 		e.preventDefault();
 		if (e.shiftKey) {
 			// ⇧-scroll pans (classic vertical→horizontal swap).
@@ -274,6 +302,8 @@
 	}
 	let spanDrag: SpanDrag | null = null;
 	let cueDragId: string | null = null;
+	/** Sound-block trim: dragging the right edge cuts the play length. */
+	let cueTrimDrag: { id: string; startSec: number; naturalSec: number } | null = null;
 
 	function windowOf(item: WindowItem): { start: number; end: number } {
 		return {
@@ -394,6 +424,7 @@
 	function endSpanDrag() {
 		spanDrag = null;
 		cueDragId = null;
+		cueTrimDrag = null;
 		dragFrozenPx = null;
 	}
 
@@ -420,6 +451,38 @@
 		// Cue retiming needs to feel continuous. Snapping every move to the
 		// playhead/whole seconds made short drags appear frozen around a snap point.
 		onPatchCue?.(cueDragId, Math.round(timeAtClientX(e.clientX) * 1000));
+	}
+
+	function onCueTrimPointerDown(e: PointerEvent, cue: MemeSfxCue, naturalSec: number) {
+		if (busy || !onPatchCueLength) return;
+		e.preventDefault();
+		e.stopPropagation();
+		try {
+			(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		} catch {
+			/* synthetic/unowned pointer — drag on without capture */
+		}
+		dragFrozenPx = pxPerSec;
+		cueTrimDrag = { id: cue.id, startSec: cue.atMs / 1000, naturalSec };
+		onSelectCue?.(cue.id);
+	}
+
+	function onCueTrimPointerMove(e: PointerEvent) {
+		const d = cueTrimDrag;
+		if (!d || busy) return;
+		const el = scrollEl;
+		if (el) {
+			const box = el.getBoundingClientRect();
+			if (e.clientX > box.right - 20) el.scrollLeft += 10;
+			else if (e.clientX < box.left + 20) el.scrollLeft -= 10;
+		}
+		// Cut length = block end − cue start, clamped to [min, natural]. The
+		// cut can't stretch past the sound's real length — only shorten it.
+		const len = Math.max(
+			MIN_CUE_LEN_SEC,
+			Math.min(d.naturalSec, snapSec(timeAtClientX(e.clientX)) - d.startSec)
+		);
+		onPatchCueLength?.(d.id, Math.round(len * 1000));
 	}
 
 	// ---- ruler ----------------------------------------------------------------
@@ -502,7 +565,7 @@
 		<span
 			class="ml-auto hidden text-[9.5px] font-bold tracking-wider text-[var(--ui-text-dimmed)] uppercase sm:inline"
 		>
-			Timeline · drag to scrub · scroll to zoom
+			Timeline · drag to scrub · wheel scrolls rows · ⌘-wheel zooms
 		</span>
 		<!-- Zoom: +/− buttons + readout (click the % to fit). Scroll/pinch covers pointer users. -->
 		<div class="flex items-center gap-0.5 rounded-full bg-[var(--ui-bg-accented)] p-0.5">
@@ -575,8 +638,8 @@
 			</div>
 
 			<!-- Rows: every caption/layer gets its own row; past ~9 rows they
-			     scroll vertically (Alt+wheel or the scrollbar). -->
-			<div class="relative max-h-[168px] scrollbar-thin overflow-y-auto">
+			     scroll vertically (plain wheel, Alt+wheel or the scrollbar). -->
+			<div bind:this={rowsEl} class="relative max-h-[168px] scrollbar-thin overflow-y-auto">
 				{#if baseTrack}
 					<!-- Base media row: the video's trim window (draggable — same
 					     move/resize grammar as captions) or the GIF loop (badge). -->
@@ -865,13 +928,20 @@
 								{@const meta = cueMetaFor?.(cue) ?? null}
 								{@const selected = selectedCueId === cue.id}
 								{#if meta && meta.durationSec > 0}
+									{@const natural = meta.naturalSec ?? meta.durationSec}
+									{@const canTrim = !!onPatchCueLength && natural > MIN_CUE_LEN_SEC}
+									{@const trimmed =
+										cue.durationMs !== undefined && cue.durationMs / 1000 < natural - 0.05}
 									<!-- Sound block: a span as long as the sound plays, labeled
-								     when there's room — reads like a real editor's audio row. -->
+								     when there's room — reads like a real editor's audio row.
+								     The right edge cuts the play length; double-click resets. -->
 									<span
 										role="button"
 										tabindex="-1"
 										class="absolute top-0 h-3.5 rounded-sm bg-warm-500/80 {selected
 											? 'ring-1 ring-white ring-offset-1 ring-offset-warm-500'
+											: ''} {trimmed
+											? 'border-r-2 border-dashed border-white/80'
 											: ''} {onPatchCue ? 'cursor-ew-resize hover:brightness-110' : ''}"
 										style="left:{(cue.atMs / 1000) * pxPerSec}px; width:{Math.max(
 											8,
@@ -879,12 +949,20 @@
 										)}px;"
 										title="{meta.label} @ {(cue.atMs / 1000).toFixed(
 											1
-										)}s · {meta.durationSec.toFixed(1)}s{onPatchCue ? ' · drag to retime' : ''}"
+										)}s · plays {meta.durationSec.toFixed(1)}s{trimmed
+											? ` of ${natural.toFixed(1)}s`
+											: ''}{onPatchCue ? ' · drag to retime' : ''}{canTrim
+											? ' · drag the right edge to cut · double-click to reset'
+											: ''}"
 										aria-label={`${meta.label} cue at ${(cue.atMs / 1000).toFixed(1)}s`}
 										onpointerdown={(e) => onCuePointerDown(e, cue)}
 										onpointermove={onCuePointerMove}
 										onpointerup={endSpanDrag}
 										onpointercancel={endSpanDrag}
+										ondblclick={(e) => {
+											e.stopPropagation();
+											if (trimmed) onPatchCueLength?.(cue.id, null);
+										}}
 									>
 										{#if meta.durationSec * pxPerSec > 34}
 											<span
@@ -894,9 +972,23 @@
 												{meta.label}
 											</span>
 										{/if}
+										{#if canTrim}
+											<span
+												role="presentation"
+												aria-hidden="true"
+												class="absolute inset-y-0 right-0 w-2.5 cursor-ew-resize rounded-r-sm hover:bg-white/50"
+												title="Cut the play length"
+												onpointerdown={(e) => onCueTrimPointerDown(e, cue, natural)}
+												onpointermove={onCueTrimPointerMove}
+												onpointerup={endSpanDrag}
+												onpointercancel={endSpanDrag}
+											></span>
+										{/if}
 										{#if onPatchCueLane}
 											<span
-												class="absolute top-0 right-0 flex h-full items-center rounded bg-black/30"
+												class="absolute top-0 {canTrim
+													? 'right-3'
+													: 'right-0'} flex h-full items-center rounded bg-black/30"
 											>
 												<button
 													type="button"

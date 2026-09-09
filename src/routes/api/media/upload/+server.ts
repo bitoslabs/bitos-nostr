@@ -2,7 +2,9 @@ import { env } from '$env/dynamic/private';
 import { json } from '@sveltejs/kit';
 import { signCloudinaryRequest } from '$lib/media/uploaders';
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+// Keep the server route aligned with Meme Studio's 200 MiB source limit so
+// large exports bypass Blossom's 20 MiB cap instead of failing locally first.
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const PURPOSES = new Set(['note', 'story', 'message', 'profile', 'test']);
 
 function cloudinaryConfig() {
@@ -88,7 +90,7 @@ export async function POST({ request }) {
 		return json({ error: 'Uploaded file is empty' }, { status: 400 });
 	}
 	if (maybeFile.size > MAX_UPLOAD_BYTES) {
-		return json({ error: 'File exceeds 100 MB upload limit' }, { status: 413 });
+		return json({ error: 'File exceeds 200 MB upload limit' }, { status: 413 });
 	}
 
 	const upstreamForm = new FormData();

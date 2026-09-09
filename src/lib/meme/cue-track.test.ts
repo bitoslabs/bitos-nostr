@@ -18,4 +18,16 @@ describe('cue-track (AI-002 static/GIF timeline)', () => {
 	it('never below 1s even with a tiny cue', () => {
 		expect(cueTrackDurationSec([{ atMs: 100 }])).toBe(1);
 	});
+
+	it('runs to a cue END (start + length) when lengths are given', () => {
+		// A 10s sound cued at 0 used to get chopped at ~1s (last start + tail).
+		expect(cueTrackDurationSec([{ atMs: 0 }], () => 10)).toBe(10.5);
+		expect(cueTrackDurationSec([{ atMs: 1500 }], () => 2)).toBeCloseTo(4);
+		// The longest end wins across cues.
+		expect(cueTrackDurationSec([{ atMs: 0 }, { atMs: 900 }], (c) => (c.atMs ? 1 : 8))).toBe(8.5);
+	});
+
+	it('a zero/absent length keeps the legacy last-start math', () => {
+		expect(cueTrackDurationSec([{ atMs: 2500 }], () => 0)).toBe(3);
+	});
 });

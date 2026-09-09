@@ -128,10 +128,17 @@ export function parseImeta(tags: string[][]): Map<string, ImageMeta> {
 					meta.sensitive = value || 'true';
 					break;
 				case 'fallback': {
-					// NIP-92 mirrors: keep order, drop dupes + self-references
-					// (mirrors bitz-codec semantics for the reel pipeline).
-					if (value && value !== url && !meta.fallbacks?.includes(value)) {
-						(meta.fallbacks ??= []).push(value);
+					// NIP-92 mirrors: one URL per repeated segment (the spec's
+					// example) or comma-joined lists (NIP-94 heritage) — accept
+					// both, keep order, drop dupes + self-references (mirrors
+					// bitz-codec semantics for the reel pipeline).
+					for (const part of value
+						.split(',')
+						.map((p) => p.trim())
+						.filter(Boolean)) {
+						if (part !== url && !meta.fallbacks?.includes(part)) {
+							(meta.fallbacks ??= []).push(part);
+						}
 					}
 					break;
 				}

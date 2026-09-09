@@ -13,7 +13,7 @@
 	import { goto } from '$app/navigation';
 	import { npubEncode } from 'nostr-tools/nip19';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { lazyVideoMetadata } from '$lib/utils/media';
+	import { lazyVideoMetadata, mirrorSrc } from '$lib/utils/media';
 	import { formatDuration } from '$lib/utils/format';
 	import { bitzHashLink } from '$lib/utils/bitz-links';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
@@ -111,6 +111,10 @@
 				{:else if reel.mediaType === 'video'}
 					<video
 						use:lazyVideoMetadata
+						use:mirrorSrc={{
+							sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])],
+							onExhausted: () => (failed = { ...failed, [reel.id]: true })
+						}}
 						src={reel.mediaUrl}
 						class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {covered
 							? 'scale-105 blur-2xl saturate-50'
@@ -155,7 +159,10 @@
 						alt={caption || 'Bitz picture'}
 						loading="lazy"
 						referrerpolicy="no-referrer"
-						onerror={() => (failed = { ...failed, [reel.id]: true })}
+						use:mirrorSrc={{
+							sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])],
+							onExhausted: () => (failed = { ...failed, [reel.id]: true })
+						}}
 						class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {covered
 							? 'scale-105 blur-2xl saturate-50'
 							: ''}"

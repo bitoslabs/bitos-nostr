@@ -41,7 +41,7 @@
 	import { popovers } from '$lib/stores/popovers.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
 	import { shortKey, timeAgo, formatDuration, formatCompact } from '$lib/utils/format';
-	import { lazyVideoMetadata } from '$lib/utils/media';
+	import { lazyVideoMetadata, mirrorSrc } from '$lib/utils/media';
 	import { isEventReference, parseContent } from '$lib/utils/note-content';
 	import { hasLightning } from '$lib/utils/verification';
 	import { sensitiveMediaReason } from '$lib/utils/sensitive-media';
@@ -530,7 +530,7 @@
 				label
 			);
 			if (!saved) return;
-			if (extracted.trimmed) toasts.info('Trimmed to the first 15s (library cap)', 3500);
+			if (extracted.trimmed) toasts.info('Trimmed to the first 15s (video extraction cap)', 3500);
 			await studioHandoff.useSound({ kind: 'custom', id: saved.id, label: saved.label });
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : 'Could not grab that sound');
@@ -1626,6 +1626,7 @@
 							{#if reel.mediaType === 'video'}
 								<video
 									use:lazyVideoMetadata
+									use:mirrorSrc={{ sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])] }}
 									src={reel.mediaUrl}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {reelCovered
 										? 'scale-105 blur-2xl saturate-50'
@@ -1676,6 +1677,7 @@
 								<img
 									src={reel.mediaUrl}
 									alt={captionFor(reel) || 'Bitz picture'}
+									use:mirrorSrc={{ sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])] }}
 									class="absolute inset-0 size-full object-cover transition group-hover:scale-105 {reelCovered
 										? 'scale-105 blur-2xl saturate-50'
 										: ''}"
@@ -1861,6 +1863,7 @@
 								<img
 									src={reel.mediaUrl}
 									alt={reel.content || 'Relay picture note'}
+									use:mirrorSrc={{ sources: [reel.mediaUrl, ...(reel.mediaFallbacks ?? [])] }}
 									onload={(event) => {
 										const image = event.currentTarget as HTMLImageElement;
 										setReelAspectRatio(reel.id, image.naturalWidth, image.naturalHeight);

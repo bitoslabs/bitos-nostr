@@ -298,3 +298,38 @@ describe('remix publish cycle guard (CRE-006)', () => {
 		expect(vi.mocked(publish)).not.toHaveBeenCalled();
 	});
 });
+
+describe('public video kind selection', () => {
+	const video: import('$lib/media/uploaders').UploadedMedia = {
+		url: 'https://cdn.example/meme.mp4',
+		kind: 'video',
+		mimeType: 'video/mp4',
+		bytes: 12_345,
+		provider: 'server'
+	};
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		vi.stubGlobal('localStorage', {
+			getItem: vi.fn(() => null),
+			setItem: vi.fn(),
+			removeItem: vi.fn()
+		});
+		const { identity } = await import('./identity.svelte');
+		identity.importSecret('ab'.repeat(32));
+	});
+
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('uses regular kind 21 for portrait videos longer than one minute', async () => {
+		const { publish } = await import('./pool');
+		await feed.postBitz(video, { portrait: true, duration: 60.001 });
+		expect(vi.mocked(publish).mock.calls.at(-1)![0].kind).toBe(NOSTR_KINDS.VIDEO);
+	});
+
+	it('keeps one-minute portrait videos on short-form kind 22', async () => {
+		const { publish } = await import('./pool');
+		await feed.postBitz(video, { portrait: true, duration: 60 });
+		expect(vi.mocked(publish).mock.calls.at(-1)![0].kind).toBe(NOSTR_KINDS.SHORT_VIDEO);
+	});
+});

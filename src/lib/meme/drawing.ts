@@ -254,23 +254,25 @@ export function paintDrawingGroups(
 			const x2 = last.x * canvas.width;
 			const y2 = last.y * canvas.height;
 			ctx.beginPath();
-			ctx.moveTo(x1, y1);
-			if (stroke.tool === 'line' || stroke.tool === 'arrow') ctx.lineTo(x2, y2);
-			else if (stroke.tool === 'rectangle') ctx.rect(x1, y1, x2 - x1, y2 - y1);
-			else if (stroke.tool === 'ellipse') {
-				ctx.ellipse(
-					(x1 + x2) / 2,
-					(y1 + y2) / 2,
-					Math.abs(x2 - x1) / 2,
-					Math.abs(y2 - y1) / 2,
-					0,
-					0,
-					Math.PI * 2
-				);
+			if (stroke.tool === 'ellipse') {
+				const cx = (x1 + x2) / 2;
+				const cy = (y1 + y2) / 2;
+				const rx = Math.abs(x2 - x1) / 2;
+				const ry = Math.abs(y2 - y1) / 2;
+				// ellipse() connects from the current point, so the subpath must
+				// start on the rim (angle 0) — a moveTo on the drag corner would
+				// stroke a stray chord from the corner to the rim.
+				ctx.moveTo(cx + rx, cy);
+				ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
 			} else {
-				for (let index = 1; index < points.length; index++) {
-					const point = points[index]!;
-					ctx.lineTo(point.x * canvas.width, point.y * canvas.height);
+				ctx.moveTo(x1, y1);
+				if (stroke.tool === 'line' || stroke.tool === 'arrow') ctx.lineTo(x2, y2);
+				else if (stroke.tool === 'rectangle') ctx.rect(x1, y1, x2 - x1, y2 - y1);
+				else {
+					for (let index = 1; index < points.length; index++) {
+						const point = points[index]!;
+						ctx.lineTo(point.x * canvas.width, point.y * canvas.height);
+					}
 				}
 			}
 			if (points.length === 1) {

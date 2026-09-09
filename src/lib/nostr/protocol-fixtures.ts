@@ -35,6 +35,7 @@ export interface ExpectedMedia {
 	hash?: string;
 	dim?: string;
 	duration?: number;
+	thumb?: string;
 }
 
 export interface ProtocolFixture {
@@ -130,7 +131,8 @@ function readExpected(raw: unknown): ProtocolFixture['expect'] {
 			address: typeof media.address === 'string' ? media.address : '',
 			...(typeof media.hash === 'string' ? { hash: media.hash } : {}),
 			...(typeof media.dim === 'string' ? { dim: media.dim } : {}),
-			...(typeof media.duration === 'number' ? { duration: media.duration } : {})
+			...(typeof media.duration === 'number' ? { duration: media.duration } : {}),
+			...(typeof media.thumb === 'string' ? { thumb: media.thumb } : {})
 		}
 	};
 }

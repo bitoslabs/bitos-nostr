@@ -2,7 +2,7 @@
  * Sound-from-video extraction — the TikTok-style "use this sound" loop:
  * any bitz's video becomes a sound in the personal library. Bytes are
  * fetched through the CORS-safe media seam, decoded with WebAudio, mono-
- * mixed, trimmed to the library cap, and encoded as 16-bit PCM WAV (a
+ * mixed, trimmed to a conservative extraction cap, and encoded as 16-bit PCM WAV (a
  * format every decodeAudioData path in the studio already handles).
  *
  * Pure DSP (monoMix / trimTo / encodeWav) is node-testable; the fetch +
@@ -10,7 +10,8 @@
  */
 
 import { fetchRemoteMedia } from '$lib/meme/remote-media';
-import { MAX_SOUND_SECONDS } from '$lib/stores/meme-sounds.svelte';
+/** WAV extraction is intentionally bounded: uncompressed PCM grows quickly. */
+export const MAX_VIDEO_SOUND_SECONDS = 15;
 
 /** Average N channels into one mono channel, clamped to [-1, 1]. */
 export function monoMix(channels: Float32Array[]): Float32Array {
@@ -83,7 +84,10 @@ export async function extractVideoAudio(
 	url: string,
 	options: { maxSeconds?: number; onProgress?: (percent: number) => void; label?: string } = {}
 ): Promise<ExtractedSound> {
-	const maxSec = Math.min(Math.max(options.maxSeconds ?? MAX_SOUND_SECONDS, 1), MAX_SOUND_SECONDS);
+	const maxSec = Math.min(
+		Math.max(options.maxSeconds ?? MAX_VIDEO_SOUND_SECONDS, 1),
+		MAX_VIDEO_SOUND_SECONDS
+	);
 
 	const response = await fetchRemoteMedia(url);
 	if (!response) throw new SoundFromVideoError('Could not fetch that video — try another source');

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { OUTPUT_FORMATS, type MemeExportFormat } from './meme-studio-config';
+	import { OUTPUT_FORMATS, type MemeExportFormat, type MemeStudioPhase } from './meme-studio-config';
 
 	let {
 		captionCount,
@@ -12,6 +12,8 @@
 		busy,
 		canPost,
 		progressLabel,
+		progress,
+		phase,
 		destinations,
 		exportFormat,
 		outputFormatLabel,
@@ -30,6 +32,8 @@
 		busy: boolean;
 		canPost: boolean;
 		progressLabel: string;
+		progress: number;
+		phase: MemeStudioPhase;
 		destinations: Array<'bitz' | 'story' | 'note'>;
 		exportFormat: MemeExportFormat;
 		outputFormatLabel: 'Image' | 'GIF' | 'Video';
@@ -118,7 +122,7 @@
 		>
 			{#if busy}
 				<Icon name="i-lucide-loader-circle" class="size-4 animate-spin" />
-				{progressLabel || 'Working…'}
+				{progressLabel || 'Working…'}{#if phase === 'rendering' || phase === 'uploading'} · {Math.round(progress)}%{/if}
 			{:else}
 				<Icon name="i-lucide-send" class="size-4" />
 				{publishActionLabel}

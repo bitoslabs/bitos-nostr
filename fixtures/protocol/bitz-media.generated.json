@@ -54,7 +54,8 @@
 					"address": "",
 					"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"dim": "720x1280",
-					"duration": 12.5
+					"duration": 12.5,
+				"thumb": "https://media.example/p.jpg"
 				}
 			}
 		},

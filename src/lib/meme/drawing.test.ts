@@ -3,6 +3,7 @@ import {
 	makeDrawingStroke,
 	normalizeDrawingGroups,
 	normalizeDrawingPoints,
+	paintDrawingGroups,
 	simplifyDrawingPoints
 } from './drawing';
 
@@ -47,5 +48,68 @@ describe('drawing model', () => {
 		expect(makeDrawingStroke({ tool: 'arrow' }).tool).toBe('arrow');
 		expect(makeDrawingStroke({ tool: 'rectangle' }).tool).toBe('rectangle');
 		expect(makeDrawingStroke({ tool: 'ellipse' }).tool).toBe('ellipse');
+	});
+});
+
+describe('paintDrawingGroups', () => {
+	function recordedContext() {
+		const calls: string[] = [];
+		const ctx = {
+			calls,
+			save: () => {},
+			restore: () => {},
+			beginPath: () => {},
+			moveTo: (x: number, y: number) => calls.push(`moveTo ${x} ${y}`),
+			lineTo: (x: number, y: number) => calls.push(`lineTo ${x} ${y}`),
+			rect: (x: number, y: number) => calls.push(`rect ${x} ${y}`),
+			ellipse: (x: number, y: number, rx: number, ry: number) =>
+				calls.push(`ellipse ${x} ${y} ${rx} ${ry}`),
+			arc: (x: number, y: number, r: number) => calls.push(`arc ${x} ${y} ${r}`),
+			stroke: () => calls.push('stroke'),
+			fill: () => calls.push('fill')
+		};
+		return ctx as unknown as CanvasRenderingContext2D & { calls: string[] };
+	}
+
+	it('strokes ellipses without a stray chord from the drag corner', () => {
+		const ctx = recordedContext();
+		const stroke = makeDrawingStroke({
+			tool: 'ellipse',
+			points: [
+				{ x: 0.2, y: 0.2, atMs: 0 },
+				{ x: 0.8, y: 0.6, atMs: 120 }
+			]
+		});
+		paintDrawingGroups(
+			ctx,
+			[{ id: 'g1', label: 'Shape', playback: 'static', startMs: 0, visibleFromMs: 0, strokes: [stroke] }],
+			{ width: 100, height: 100 }
+		);
+		// The subpath starts on the rim at angle 0 (cx+rx, cy), never on the
+		// drag corner, and nothing may bridge the two with a straight line.
+		expect(ctx.calls).toEqual(['moveTo 80 40', 'ellipse 50 40 30 20', 'stroke']);
+	});
+
+	it('still paths freehand strokes through every recorded point', () => {
+		const ctx = recordedContext();
+		const stroke = makeDrawingStroke({
+			tool: 'pen',
+			points: [
+				{ x: 0.1, y: 0.1, atMs: 0 },
+				{ x: 0.5, y: 0.5, atMs: 50 },
+				{ x: 0.9, y: 0.9, atMs: 100 }
+			]
+		});
+		paintDrawingGroups(
+			ctx,
+			[{ id: 'g1', label: 'Scribble', playback: 'static', startMs: 0, visibleFromMs: 0, strokes: [stroke] }],
+			{ width: 100, height: 100 }
+		);
+		expect(ctx.calls).toEqual([
+			'moveTo 10 10',
+			'lineTo 50 50',
+			'lineTo 90 90',
+			'stroke'
+		]);
 	});
 });

@@ -15,6 +15,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import MediaPlayer from '$lib/components/media/MediaPlayer.svelte';
 	import { blurhashToDataUrl } from '$lib/utils/blurhash';
+	import { mirrorSrc } from '$lib/utils/media';
 	import { sensitiveMediaReason as getSensitiveMediaReason } from '$lib/utils/sensitive-media';
 	import { privacyNotificationSettings } from '$lib/stores/privacy-notification-settings.svelte';
 	import type { ImageMeta } from '$lib/utils/imeta';
@@ -184,11 +185,14 @@
 							loop
 							playsinline
 							preload="metadata"
+							use:mirrorSrc={{
+								sources: [item.url, ...(item.fallbacks ?? [])],
+								onExhausted: () => (failed = { ...failed, [item.url]: true })
+							}}
 							class="absolute inset-0 size-full object-cover transition duration-500 group-hover:scale-[1.03] {isLoaded
 								? 'opacity-100'
 								: 'opacity-0'}"
 							onloadeddata={() => (loaded = { ...loaded, [item.url]: true })}
-							onerror={() => (failed = { ...failed, [item.url]: true })}
 						></video>
 					{:else if !isFailed}
 						<img
@@ -197,13 +201,16 @@
 							loading="lazy"
 							decoding="async"
 							referrerpolicy="no-referrer"
+							use:mirrorSrc={{
+								sources: [...(item.thumb ? [item.thumb] : []), item.url, ...(item.fallbacks ?? [])],
+								onExhausted: () => (failed = { ...failed, [item.url]: true })
+							}}
 							class="absolute inset-0 size-full {contain
 								? 'object-contain'
 								: 'object-cover'} transition duration-500 group-hover:scale-[1.03] {isLoaded
 								? 'opacity-100'
 								: 'opacity-0'}"
 							onload={() => (loaded = { ...loaded, [item.url]: true })}
-							onerror={() => (failed = { ...failed, [item.url]: true })}
 						/>
 					{/if}
 

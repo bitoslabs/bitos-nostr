@@ -24,7 +24,7 @@ import {
 	pollClosedAt
 } from './types';
 import { toFeedNote } from './feed-note';
-import { buildKind22, validateBitzMedia } from './bitz-codec';
+import { buildKind22, SHORT_VIDEO_MAX_SECONDS, validateBitzMedia } from './bitz-codec';
 import { wouldCycle, remixOf } from '$lib/meme/remix';
 import { applyActivityToNotes, zapSats, zapTarget } from './zaps';
 import { extractMentionEntities } from '$lib/utils/nip27';
@@ -59,7 +59,10 @@ const FEED_POST_KINDS = [
 ];
 const MAX_BUFFERED_REACTIONS = 2_000;
 
-type PostMediaAttachment = Pick<UploadedMedia, 'url' | 'kind' | 'mimeType' | 'bytes' | 'sha256'> & {
+type PostMediaAttachment = Pick<
+	UploadedMedia,
+	'url' | 'kind' | 'mimeType' | 'bytes' | 'sha256' | 'mirrors'
+> & {
 	/** Optional public poster/cover URL for video `imeta` metadata (NIP-92). */
 	thumb?: string;
 };
@@ -789,6 +792,11 @@ class FeedStore {
 				if (attachment.bytes > 0) imeta.push(`size ${attachment.bytes}`);
 				if (attachment.thumb) imeta.push(`thumb ${attachment.thumb}`);
 				if (attachment.sha256) imeta.push(`x ${attachment.sha256}`);
+				// NIP-92 `fallback`: hash-verified mirror copies of the same
+				// bytes (BitOS canonical + Blossom replica flow).
+				for (const mirror of attachment.mirrors ?? []) {
+					if (mirror.url && mirror.url !== attachment.url) imeta.push(`fallback ${mirror.url}`);
+				}
 				tags.push(['imeta', ...imeta]);
 			}
 		}
@@ -877,7 +885,8 @@ class FeedStore {
 		const kind =
 			media.kind === 'image'
 				? NOSTR_KINDS.PICTURE
-				: options.portrait === false
+				: options.portrait === false ||
+						(options.duration !== undefined && options.duration > SHORT_VIDEO_MAX_SECONDS)
 					? NOSTR_KINDS.VIDEO
 					: NOSTR_KINDS.SHORT_VIDEO;
 		// NIP-71 encoding lives in BitzEventCodec (ADR-002: isolate the draft
@@ -907,6 +916,10 @@ class FeedStore {
 			if (media.bytes > 0) imeta.push(`size ${media.bytes}`);
 			if (options.dim) imeta.push(`dim ${options.dim}`);
 			if (options.thumb) imeta.push(`thumb ${options.thumb}`);
+			// NIP-92 `fallback`: hash-verified mirror copies of the same bytes.
+			for (const mirror of media.mirrors ?? []) {
+				if (mirror.url && mirror.url !== url) imeta.push(`fallback ${mirror.url}`);
+			}
 			const tags = [...prefixTags, ['imeta', ...imeta]];
 			if (options.sensitive) tags.push(['content-warning', 'Sensitive content']);
 			unsignedBody = {
@@ -925,7 +938,8 @@ class FeedStore {
 					url,
 					hash: media.sha256,
 					dim: options.dim,
-					duration: options.duration
+					duration: options.duration,
+					fallback: media.mirrors?.map((mirror) => mirror.url)
 				},
 				{ httpsOnly: import.meta.env.PROD }
 			);
@@ -943,6 +957,9 @@ class FeedStore {
 					bytes: media.bytes,
 					dim: options.dim,
 					thumb: options.thumb,
+					// Every hash-verified replica becomes its own NIP-92
+					// `fallback` mirror segment in the signed event.
+					fallback: media.mirrors?.map((mirror) => mirror.url),
 					hash: media.sha256,
 					duration: options.duration,
 					bitrate: options.bitrate
@@ -976,7 +993,10 @@ class FeedStore {
 		// nonce changes it, so the pre-sign body could not be checked. Unknown
 		// history refuses rather than risks a loop (wouldCycle contract).
 		const lineage = remixOf(event.tags);
-		if (lineage && (await wouldCycle(event.id, lineage, (id, hints) => this.loadAncestorTags(id, hints)))) {
+		if (
+			lineage &&
+			(await wouldCycle(event.id, lineage, (id, hints) => this.loadAncestorTags(id, hints)))
+		) {
 			throw new Error('This remix chains back to itself — re-open the source and try again');
 		}
 		options.onPhase?.('publishing');

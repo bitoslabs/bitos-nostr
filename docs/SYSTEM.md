@@ -119,7 +119,8 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   event): text overlays normalized 0–1, fonts/colors, SFX cues, timing.
 - Edit tracks: frame FX (glitch/flash/shake/pixelate/…), punch-in zooms,
   speed ramps, ambient layer motion, Draw & Record strokes (replayable),
-  caption-sync, non-destructive video clips.
+  caption-sync, non-destructive video clips. The timeline scrolls its layer
+  rows with a plain wheel once they overflow (⌘/pinch still zooms).
 - Layers: images, animated GIF/WebP (WebCodecs decode), stickers, emoji packs
   (NIP-30), bundled Bitz Buddy mascot/Bitzverse SVG props, Iconify picker.
   One Stickers & GIFs hub dialog (`MemeMediaHubDialog`) consolidates emoji,
@@ -131,7 +132,13 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   ranking (`/more/sounds`); "use this sound" from any bitz — the reel rail
   and the Sound Studio lift a video's audio into the library
   (`meme/sound-from-video.ts`: proxy fetch → WebAudio decode → mono → 15s
-  trim → 16-bit WAV), staged into the studio via the sound seed handoff.
+  extraction trim → 16-bit WAV), staged into the studio via the sound seed handoff.
+  Cue `durationMs` cuts a sound's play length (timeline right-edge drag,
+  double-click resets); static/GIF meme clocks run to the cue END
+  (`cue-track.ts`), honored by previews and every export mix
+  (`sfx.ts` renderer). The sound dialog shows video sources as imeta-`thumb`
+  cards, and a pasted URL grows a live first-frame preview card (display
+  only — a failed preview never blocks extraction).
 - Export: canvas WYSIWYG render → JPEG still / MediaRecorder WebM/MP4 / pure-TS
   GIF encoder (median-cut + LZW).
 - Creator economy: value-splits manifest (basis points, display-only V1),
@@ -175,8 +182,25 @@ account switcher. Protected prefixes (`lib/auth/access.ts`): `/messages`,
   event, sha-256 verify, default `blossom.nostr.build`), **Cloudinary**
   (unsigned preset or signed), **S3/R2** (client-side AWS SigV4 via Web Crypto);
   XHR progress/retry/abort. Server Cloudinary fallback at `/api/media/upload`.
+- Multi-destination uploads (`media.uploadWithMirrors`): the BitOS API is the
+  canonical URL; images and videos under the 20 MiB Blossom cap
+  (`wantsMirrorReplica`) ALSO get a hash-verified replica on EVERY server in
+  `BLOSSOM_MIRROR_SERVERS` — one sanitized copy dispatches to all destinations
+  in parallel, each locally-hashed descriptor must agree, and every verified
+  replica URL becomes its own NIP-92 `fallback` segment (the repeated-segment
+  shape of NIP-92's example event; readers also accept comma-joined values).
+  Quorum semantics: the canonical upload plus at least one verified replica
+  are required before signing; extra replicas degrade silently via
+  `onReplicaError`. Large videos stay single-destination.
+- Playback failover (F-017): MediaPlayer walks `src → fallbackSrcs` on load
+  errors (feed cards, lightbox, notifications, bitz reels); plain tiles
+  (feed/notification images, bitz reel pictures, explore/search/profile grids)
+  use the `mirrorSrc` action for the same chain.
 - `publish-machine.ts`: render → verify (hash) → sign (+ optional PoW) →
-  publish; blocked on hash mismatch.
+  publish; blocked on hash mismatch — including a replica quorum shortfall or
+  any hash-mismatched mirror (`mirrorsExpected` is the minimum verified-replica
+  count), so signing stays unavailable until every required destination has
+  hash-verified.
 - Video: client probe (size/duration/megapixel bomb guards), draft trim,
   browser re-encode (MediaRecorder), portability-ranked codec policy.
 - Privacy: EXIF strip + neutral filenames on upload.

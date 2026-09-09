@@ -80,6 +80,81 @@ describe('verifyDescriptor', () => {
 	});
 });
 
+describe('verifyDescriptor mirrors (multi-destination uploads)', () => {
+	const mirror = { url: 'https://blossom.example/abc.mp4', sha256: descriptor.sha256 };
+
+	it('unlocks signing when every required destination hash-verified', () => {
+		const s = completeRender(INITIAL_PUBLISH_STATE, { ...descriptor, mirrors: [mirror] });
+		expect(verifyDescriptor(s, { sha256: descriptor.sha256, mirrorsExpected: 1 }).stage).toBe(
+			'signing'
+		);
+	});
+
+	it('blocks when a required replica is missing from the descriptor', () => {
+		const out = verifyDescriptor(rendered(), { mirrorsExpected: 1 });
+		expect(out.stage).toBe('blocked');
+		expect(out.reason).toBe('missing-descriptor');
+		expect(out.error).toContain('mirror replica');
+	});
+
+	it('blocks when the replica hash disagrees with the canonical bytes', () => {
+		const bad = { ...descriptor, mirrors: [{ ...mirror, sha256: 'b'.repeat(64) }] };
+		const out = verifyDescriptor(completeRender(INITIAL_PUBLISH_STATE, bad), {
+			mirrorsExpected: 1
+		});
+		expect(out.stage).toBe('blocked');
+		expect(out.reason).toBe('hash-mismatch');
+	});
+
+	it('blocks when the replica hash disagrees with the locally hashed bytes', () => {
+		const out = verifyDescriptor(
+			completeRender(INITIAL_PUBLISH_STATE, { ...descriptor, mirrors: [mirror] }),
+			{
+				sha256: 'c'.repeat(64),
+				mirrorsExpected: 1
+			}
+		);
+		// The canonical hash ALSO disagrees here — either mismatch must block.
+		expect(out.reason).toBe('hash-mismatch');
+	});
+
+	it('blocks on a replica without a usable URL', () => {
+		const bad = { ...descriptor, mirrors: [{ url: 'javascript:alert(1)' }] };
+		const out = verifyDescriptor(completeRender(INITIAL_PUBLISH_STATE, bad), {
+			mirrorsExpected: 1
+		});
+		expect(out.reason).toBe('missing-descriptor');
+	});
+
+	it('still validates carried mirrors on a single-destination run', () => {
+		// mirrorsExpected 0 (large-video run) never excuses a corrupt replica
+		// that tagged along — present mirrors must hash-verify either way.
+		const good = verifyDescriptor(
+			completeRender(INITIAL_PUBLISH_STATE, { ...descriptor, mirrors: [mirror] }),
+			{}
+		);
+		expect(good.stage).toBe('signing');
+		const bad = completeRender(INITIAL_PUBLISH_STATE, {
+			...descriptor,
+			mirrors: [{ ...mirror, sha256: 'b'.repeat(64) }]
+		});
+		expect(verifyDescriptor(bad, {}).reason).toBe('hash-mismatch');
+	});
+
+	it('treats mirrorsExpected as a quorum minimum — extra replicas never block', () => {
+		const second = { url: 'https://cdn2.example/abc.mp4', sha256: descriptor.sha256 };
+		// A multi-server run with 2 verified replicas satisfies the 1-replica
+		// quorum even when only one of the two survives.
+		const both = completeRender(INITIAL_PUBLISH_STATE, {
+			...descriptor,
+			mirrors: [mirror, second]
+		});
+		const oneSurvivor = completeRender(INITIAL_PUBLISH_STATE, { ...descriptor, mirrors: [second] });
+		expect(verifyDescriptor(both, { mirrorsExpected: 1 }).stage).toBe('signing');
+		expect(verifyDescriptor(oneSurvivor, { mirrorsExpected: 1 }).stage).toBe('signing');
+	});
+});
+
 describe('failures and cancellation', () => {
 	it('fails sign with a reason', () => {
 		const s = verifyDescriptor(rendered(), {});

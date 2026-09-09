@@ -32,9 +32,10 @@
 	import { relays } from '$lib/nostr/relays.svelte';
 	import { lookupEventTags } from '$lib/nostr/pool';
 	import { feed, type PowProgress } from '$lib/nostr/feed.svelte';
+	import { SHORT_VIDEO_MAX_SECONDS } from '$lib/nostr/bitz-codec';
 	import { stories } from '$lib/nostr/stories.svelte';
 	import { media } from '$lib/stores/media.svelte';
-	import type { MediaProviderId, UploadedMedia } from '$lib/media/uploaders';
+	import type { UploadedMedia } from '$lib/media/uploaders';
 	import { humanBytes } from '$lib/media/uploaders';
 	import { powPrefs } from '$lib/stores/pow-prefs.svelte';
 	import { toasts } from '$lib/stores/toasts.svelte';
@@ -564,14 +565,34 @@
 			`Smart template applied — ${match.overlays.length} captions · ${match.zoomWindows.length} zooms · ${match.imageLayers.length} stickers`
 		);
 	}
-	/** Timeline sound blocks: label + play length per cue (synth recipes have
-	 *  fixed lengths; custom sounds carry theirs in the library). */
-	function cueMeta(cue: MemeSfxCue): { label: string; durationSec: number } | null {
+	/** Natural (untrimmed) play length of a cue's sound, seconds — synth
+	 *  recipes have fixed lengths; custom sounds carry theirs in the library. */
+	function cueNaturalSec(cue: Pick<MemeSfxCue, 'sfx' | 'soundId' | 'durationMs'>): number {
+		if (cue.sfx === CUSTOM_SOUND_KEY) {
+			return soundLibrary.list.find((s) => s.id === cue.soundId)?.durationSec ?? 0;
+		}
+		return sfxDurations[cue.sfx] ?? 0.5;
+	}
+	/** Effective play length: the natural sound capped by the cue's cut. */
+	function cueLengthSec(cue: Pick<MemeSfxCue, 'sfx' | 'soundId' | 'durationMs'>): number {
+		const capSec = cue.durationMs ? cue.durationMs / 1000 : Infinity;
+		return Math.max(0.05, Math.min(cueNaturalSec(cue), capSec));
+	}
+	/** Timeline sound blocks: label + effective play length (natural length
+	 *  rides along so the trim handle knows how far it can grow back). */
+	function cueMeta(cue: MemeSfxCue): {
+		label: string;
+		durationSec: number;
+		naturalSec?: number;
+	} | null {
 		if (cue.sfx === CUSTOM_SOUND_KEY) {
 			const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
-			return sound ? { label: sound.label, durationSec: sound.durationSec } : null;
+			return sound
+				? { label: sound.label, durationSec: cueLengthSec(cue), naturalSec: sound.durationSec }
+				: null;
 		}
-		return { label: sfxLabels[cue.sfx], durationSec: sfxDurations[cue.sfx] ?? 0.5 };
+		const naturalSec = sfxDurations[cue.sfx] ?? 0.5;
+		return { label: sfxLabels[cue.sfx], durationSec: cueLengthSec(cue), naturalSec };
 	}
 
 	// ---- custom sound library (device / mic one-shots) -----------------------
@@ -580,9 +601,10 @@
 	// NOTE: read reactive fields via `soundIO.x` — destructuring would snapshot.
 	let soundFileInput = $state<HTMLInputElement | null>(null);
 
-	/** Audition a library sound immediately (store owns the AudioContext). */
-	async function previewSound(sound: LibrarySound) {
-		await soundIO.preview(sound);
+	/** Audition a library sound immediately (store owns the AudioContext).
+	 *  `limitSec` honors a cue's play-length cut so previews match exports. */
+	async function previewSound(sound: LibrarySound, limitSec?: number) {
+		await soundIO.preview(sound, limitSec);
 	}
 
 	/** Measure a candidate audio blob by decoding it. */
@@ -1320,9 +1342,9 @@
 			if (!crossed && !startsNow) continue;
 			if (cue.sfx === CUSTOM_SOUND_KEY) {
 				const sound = soundLibrary.list.find((s) => s.id === cue.soundId);
-				if (sound) void previewSound(sound);
+				if (sound) void previewSound(sound, cue.durationMs ? cue.durationMs / 1000 : undefined);
 			} else {
-				previewSfx(cue.sfx);
+				previewSfx(cue.sfx, cue.durationMs);
 			}
 		}
 	});
@@ -1347,7 +1369,8 @@
 			: mediaKind === 'image'
 				? gif
 					? (pinnedLengthSec ?? gif.duration)
-					: (pinnedLengthSec ?? (sfxCues.length ? cueTrackDurationSec(sfxCues) : 0))
+					: (pinnedLengthSec ??
+						(sfxCues.length ? cueTrackDurationSec(sfxCues, cueLengthSec) : 0))
 				: 0
 	);
 	/** True when the timeline has a real clock (video trim duration, GIF, or
@@ -1436,6 +1459,16 @@
 	 *  audio and pixels share one timeline (see speed-track.ts). */
 	const mediaSpanExportSec = $derived(
 		mediaMsToExportMs(speedWindows, trimDuration * 1000) / 1000 / (playbackRate || 1)
+	);
+	/** Determines NIP-71 kind selection only; rendering is never capped here. */
+	const publicVideoDurationSec = $derived(
+		mediaKind === 'video'
+			? speedWindows.length
+				? mediaSpanExportSec
+				: exportDurationSec
+			: mediaKind === 'image' && sfxCues.length
+				? (pinnedLengthSec ?? cueTrackDurationSec(sfxCues, cueLengthSec))
+				: 0
 	);
 
 	// Speed ramps in preview: while the stage video plays, drive its rate
@@ -2287,8 +2320,6 @@
 	let phase = $state<Phase>('idle');
 	let progress = $state(0);
 	let progressLabel = $state('');
-	let selectedProvider = $state<MediaProviderId | 'none'>(media.state.defaultProvider);
-	let providerInitialized = $state(false);
 	let powProgress = $state<PowProgress | null>(null);
 	let showPow = $state(false);
 	let pow = $state(powPrefs.state.lastDifficulty);
@@ -2327,35 +2358,22 @@
 			canRenderVideoMeme()
 	);
 	const kindInfo = $derived.by(() => {
+		const shortForm = publicVideoDurationSec <= SHORT_VIDEO_MAX_SECONDS;
 		if (mediaKind === 'image') {
 			// Sound-on-static ships as a video file, so publish under NIP-71.
 			if (sfxCues.length > 0) {
-				return portrait
+				return portrait && shortForm
 					? { label: 'Sound meme', kind: 22, nip: 'NIP-71' }
 					: { label: 'Sound meme', kind: 21, nip: 'NIP-71' };
 			}
 			return { label: 'Photo meme', kind: 20, nip: 'NIP-68' };
 		}
 		if (mediaKind === 'video') {
-			return portrait
+			return portrait && shortForm
 				? { label: 'Video meme', kind: 22, nip: 'NIP-71' }
 				: { label: 'Video meme', kind: 21, nip: 'NIP-71' };
 		}
 		return null;
-	});
-
-	// A provider can become unavailable when the user signs out or edits its
-	// settings. Keep the publish dialog on a working choice instead of showing
-	// Free Blossom as selected when it cannot authorize an upload.
-	$effect(() => {
-		const valid = (id: MediaProviderId | 'none') => id === 'none' || media.isConfigured(id);
-		const current = selectedProvider;
-		if (!providerInitialized) {
-			providerInitialized = true;
-			if (!valid(current)) selectedProvider = 'none';
-			return;
-		}
-		if (!valid(current)) selectedProvider = 'none';
 	});
 
 	// ---- drag logic (pointer events, works with touch) -----------------------
@@ -2882,7 +2900,7 @@
 		]
 			.slice(-8)
 			.reverse()
-			.map((r) => ({ id: r.id, label: reelSoundLabel(r), url: r.mediaUrl }))
+			.map((r) => ({ id: r.id, label: reelSoundLabel(r), url: r.mediaUrl, thumb: r.thumb }))
 	);
 
 	function reelSoundLabel(reel: ReelNote): string {
@@ -2918,7 +2936,7 @@
 			const saved = await soundIO.importBlob(file, durationSec, 'device', label);
 			if (!saved) return;
 			addCustomCueById(saved.id);
-			if (trimmed) toasts.info('Trimmed to the first 15s (library cap)', 3500);
+			if (trimmed) toasts.info('Trimmed to the first 15s (video extraction cap)', 3500);
 		} catch (e) {
 			toasts.error(e instanceof Error ? e.message : 'Could not grab that sound');
 		} finally {
@@ -3246,6 +3264,20 @@
 		sfxCues = sfxCues.map((c) => (c.id === id ? { ...c, atMs: Math.max(0, Math.round(atMs)) } : c));
 	}
 
+	/** Timeline trim-handle drag: cut a cue's play length. `null` (or a
+	 *  ~full-length value) resets to the sound's natural length. */
+	function trimSfxCue(id: string, durationMs: number | null) {
+		sfxCues = sfxCues.map((c) => {
+			if (c.id !== id) return c;
+			if (durationMs === null || durationMs >= cueNaturalSec(c) * 1000 - 50) {
+				if (c.durationMs === undefined) return c;
+				const { durationMs: _reset, ...rest } = c;
+				return rest;
+			}
+			return { ...c, durationMs: Math.max(50, Math.round(durationMs)) };
+		});
+	}
+
 	function moveSfxCueLane(id: string, lane: number) {
 		sfxCues = sfxCues.map((c) =>
 			c.id === id ? { ...c, lane: Math.max(0, Math.min(3, lane)) } : c
@@ -3297,17 +3329,28 @@
 		if (selectedCueId === id) selectedCueId = null;
 	}
 
-	/** Audition one recipe immediately so placement isn't guesswork. */
-	function previewSfx(sfx: MemeSfxId) {
+	/** Audition one recipe immediately so placement isn't guesswork. An
+	 *  optional `limitMs` plays only the cue's cut of the recipe. */
+	function previewSfx(sfx: MemeSfxId, limitMs?: number) {
 		void (async () => {
 			const { renderSfxTrack, scheduleSfx } = await import('$lib/meme/sfx');
+			const limitSec = limitMs ? Math.min(SFX_RECIPES[sfx].duration, limitMs / 1000) : undefined;
+			const playSec = limitSec ?? SFX_RECIPES[sfx].duration;
 			const schedule = scheduleSfx(
-				[{ id: 'preview', sfx, atMs: 0, gain: 1 }],
-				SFX_RECIPES[sfx].duration + 0.25
+				[
+					{
+						id: 'preview',
+						sfx,
+						atMs: 0,
+						gain: 1,
+						...(limitSec ? { durationMs: Math.round(limitSec * 1000) } : {})
+					}
+				],
+				playSec + 0.25
 			);
 			const OfflineCtx = window.OfflineAudioContext;
 			if (!OfflineCtx) return;
-			const buffer = await renderSfxTrack(schedule, SFX_RECIPES[sfx].duration + 0.25, OfflineCtx);
+			const buffer = await renderSfxTrack(schedule, playSec + 0.25, OfflineCtx);
 			const AudioCtx = window.AudioContext;
 			if (!AudioCtx) return;
 			const ctx = new AudioCtx();
@@ -3496,7 +3539,7 @@
 		const plan = planGifExport(
 			gif?.frames,
 			layerFrameSets,
-			Math.max(sfxCues.length ? cueTrackDurationSec(sfxCues) : 0, replayEndMs / 1000),
+			Math.max(sfxCues.length ? cueTrackDurationSec(sfxCues, cueLengthSec) : 0, replayEndMs / 1000),
 			pinnedLengthSec
 		);
 		// GIFs stay light: ≤640px long edge, ≤360 frames.
@@ -3788,7 +3831,10 @@
 		a.height = Math.max(2, size.height - (size.height % 2));
 		// Duration: last cue end + tail. A pinned Length overrides —
 		// shorter drops late cues, longer holds the last frame in silence.
-		const durationSec = Math.max(pinnedLengthSec ?? cueTrackDurationSec(sfxCues), 0.5);
+		const durationSec = Math.max(
+			pinnedLengthSec ?? cueTrackDurationSec(sfxCues, cueLengthSec),
+			0.5
+		);
 		track('rendering', 'Recording sound meme…', 0);
 		const cueTrack = await cueAudioTrack(durationSec, sfxCues, libraryDecodeSound);
 		// Real-time pass: paint the static frame (look + image layers + timed
@@ -3837,12 +3883,19 @@
 	}
 
 	async function uploadRendered(rendered: File): Promise<UploadedMediaLike> {
-		track('uploading', 'Uploading meme…', 0);
-		return media.upload(rendered, selectedProvider, {
+		track('uploading', 'Uploading meme to BitOS…', 0);
+		return media.uploadWithMirrors(rendered, {
 			pubkey: me?.pk,
 			purpose: destinations.length === 1 && destinations[0] === 'story' ? 'story' : 'note',
 			signal: mineController?.signal,
-			onProgress: (p) => track('uploading', 'Uploading meme…', p.percent),
+			onPlan: ({ mirror }) => {
+				if (mirror) track('uploading', 'Uploading to BitOS + Blossom…', 0);
+			},
+			onProgress: (p) => track('uploading', 'Uploading meme to BitOS…', p.percent),
+			onMirrorProgress: (p) => track('uploading', 'Uploading Blossom fallback…', p.percent),
+			onReplicaError: ({ server }) => {
+				toasts.warning(`Blossom fallback unavailable at ${new URL(server).host}`);
+			},
 			onRetry: ({ attempt, delayMs }) => {
 				toasts.info(`Upload hiccup — retrying in ${(delayMs / 1000).toFixed(1)}s`);
 				track('uploading', `Retrying upload (attempt ${attempt})…`, 0);
@@ -3860,7 +3913,7 @@
 		const posterFile = new File([posterBlob], `poster-${Date.now()}.jpg`, {
 			type: 'image/jpeg'
 		});
-		const uploaded = await media.upload(posterFile, selectedProvider, {
+		const uploaded = await media.uploadWithMirrors(posterFile, {
 			pubkey: me?.pk,
 			purpose: 'note',
 			signal: mineController?.signal
@@ -3879,7 +3932,7 @@
 			gifDuration: gif?.duration,
 			exportFormat,
 			pinnedLengthSec,
-			cueRuntimeSec: sfxCues.length ? cueTrackDurationSec(sfxCues) : undefined,
+			cueRuntimeSec: sfxCues.length ? cueTrackDurationSec(sfxCues, cueLengthSec) : undefined,
 			// Ramp-integrated length (mediaMsToExportMs) when ramps exist, else
 			// the flat trim/rate math — imeta must match the exported file.
 			exportDurationSec: speedWindows.length ? mediaSpanExportSec : exportDurationSec
@@ -3894,7 +3947,8 @@
 				kind: uploaded.kind as 'image' | 'video',
 				mimeType: uploaded.mimeType,
 				bytes: uploaded.bytes,
-				sha256: uploaded.sha256
+				sha256: uploaded.sha256,
+				mirrors: uploaded.mirrors
 			},
 			{
 				caption,
@@ -3950,7 +4004,8 @@
 						url: uploaded.url,
 						mime: uploaded.mimeType,
 						bytes: uploaded.bytes,
-						thumb
+						thumb,
+						fallback: uploaded.mirrors?.map((mirror) => mirror.url)
 					}
 				: undefined
 		});
@@ -3973,7 +4028,8 @@
 					mimeType: uploaded.mimeType,
 					bytes: uploaded.bytes,
 					sha256: uploaded.sha256,
-					thumb
+					thumb,
+					mirrors: uploaded.mirrors
 				}
 			],
 			pow: showPow ? pow : 0,
@@ -4896,7 +4952,9 @@
 														name="i-lucide-loader-circle"
 														class="mx-auto size-8 animate-spin text-warm-500"
 													/>
-													<p class="mt-2 text-[12px] font-bold text-white">{progressLabel}</p>
+							<p class="mt-2 text-[12px] font-bold text-white">
+								{progressLabel}{#if phase === 'rendering' || phase === 'uploading'} · {Math.round(progress)}%{/if}
+							</p>
 													{#if phase === 'rendering' || phase === 'uploading'}
 														<div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20">
 															<div
@@ -5031,6 +5089,7 @@
 									id,
 									atMs + (usesTrimmedTimeline ? Math.round(trimStartSec * 1000) : 0)
 								)}
+							onPatchCueLength={trimSfxCue}
 							onPatchCueLane={moveSfxCueLane}
 							cueMetaFor={cueMeta}
 						/>
@@ -5838,7 +5897,6 @@
 							bind:aiAssisted
 							bind:splitsOpen
 							bind:splitRows
-							bind:selectedProvider
 							bind:pow
 							{phase}
 							{powProgress}
@@ -5927,6 +5985,8 @@
 					{busy}
 					{canPost}
 					{progressLabel}
+					{progress}
+					{phase}
 					{destinations}
 					{exportFormat}
 					{outputFormatLabel}
@@ -5989,7 +6049,6 @@
 	bind:aiAssisted
 	bind:splitsOpen
 	bind:splitRows
-	bind:selectedProvider
 	bind:pow
 	{busy}
 	{phase}
@@ -6001,6 +6060,8 @@
 	{exportFormat}
 	{mediaKind}
 	videoExportSupported={videoMemeSupported}
+	previewUrl={previewUrl}
+	posterUrl={posterDataUrl}
 	onFormat={(format) => (exportFormat = format)}
 	onCancelMining={() => mineController?.abort()}
 	onPublish={() => void submit()}

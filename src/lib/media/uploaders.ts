@@ -12,6 +12,11 @@
  *                   must have CORS configured to allow PUT from this origin.
  *   • Blossom     — Nostr-authorized uploads to a Blossom server. The built-in
  *                   option uses nostr.build's free shared endpoint.
+ *
+ * Multi-destination uploads (BitOS canonical + Blossom replica for images and
+ * small videos) are layered on top by the media store's `uploadWithMirrors`;
+ * the policy lives here (`wantsMirrorReplica`) next to the size cap it derives
+ * from.
  */
 import { finalizeEvent } from 'nostr-tools/pure';
 import { hexToBytes } from '$lib/nostr/hex';
@@ -71,10 +76,51 @@ export interface S3Config {
 
 export const FREE_BLOSSOM_SERVER = 'https://blossom.nostr.build';
 
+/**
+ * Mirror-destination servers for multi-destination uploads: every small
+ * media file lands on the BitOS API (canonical) plus EACH server here as a
+ * hash-verified replica, and each replica URL becomes one NIP-92 `fallback`
+ * segment in the signed event. Keep this list short — every entry multiplies
+ * the bytes a mobile connection pushes — and only list servers expected to
+ * stay free and healthy; a slow/dead entry degrades to fewer fallbacks, never
+ * a blocked publish (see `uploadWithMirrors` quorum semantics).
+ */
+export const BLOSSOM_MIRROR_SERVERS: readonly string[] = [
+	'https://blossom.nostr.build',
+	'https://blossom.primal.net'
+];
+
+/**
+ * Files at or under this size ALSO get a mirror replica on a second server
+ * (Blossom). The cap matches the free Blossom endpoint's 20 MiB per-file
+ * limit — anything bigger would only orphan a rejected replica.
+ */
+export const MIRROR_REPLICA_MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Multi-destination policy: images and videos below the Blossom size cap
+ * upload to a canonical server PLUS a hash-verified mirror replica; larger
+ * videos upload to the single canonical server only.
+ */
+export function wantsMirrorReplica(file: File): boolean {
+	const kind = classifyMime(file.type);
+	return (
+		(kind === 'image' || kind === 'video') && file.size > 0 && file.size < MIRROR_REPLICA_MAX_BYTES
+	);
+}
+
 export interface MediaSettings {
 	defaultProvider: MediaProviderId | 'none';
 	cloudinary: CloudinaryConfig;
 	s3: S3Config;
+}
+
+/** One hash-verified mirror copy of the canonical upload on another server. */
+export interface MirrorUpload {
+	url: string;
+	provider: UploadedMediaProviderId;
+	/** Verified SHA-256 of the mirrored bytes — must equal the canonical hash. */
+	sha256?: string;
 }
 
 export interface UploadedMedia {
@@ -85,6 +131,12 @@ export interface UploadedMedia {
 	provider: UploadedMediaProviderId;
 	/** Verified SHA-256 blob hash when the flow could confirm bytes. */
 	sha256?: string;
+	/**
+	 * Hash-verified mirror replicas (e.g. the Blossom copy next to the BitOS
+	 * canonical upload). Each entry rode through the same hash chain as the
+	 * canonical descriptor, so signing against them is safe (NIP-92 `fallback`).
+	 */
+	mirrors?: MirrorUpload[];
 }
 
 type BlossomDescriptor = {

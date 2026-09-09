@@ -3,8 +3,9 @@ import { suggestTimelines } from '$lib/ai/suggest';
 import { recommendSmartTemplates, type SmartResolution } from '$lib/ai/smart-templates';
 import { buildCueMixBuffer, type CueMixDeps } from '$lib/meme/cue-mix';
 import { cueTrackDurationSec } from '$lib/meme/cue-track';
+import { SFX_DURATIONS } from '$lib/meme/sound-catalog';
 import { monoNormalize } from '$lib/meme/sfx';
-import type { MemeSfxCue } from '$lib/meme/schema';
+import { CUSTOM_SOUND_KEY, type MemeSfxCue } from '$lib/meme/schema';
 import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
 import { soundIO } from '$lib/stores/meme-sound-io.svelte';
 
@@ -51,8 +52,9 @@ export async function cueTrackMonoPcm(
 	const AudioCtx = typeof window === 'undefined' ? null : window.AudioContext;
 	if (!OfflineCtx || !AudioCtx) return null;
 	try {
-		// Reuse the export mix builder — identical recipe/custom-sound handling.
-		const durationSec = cueTrackDurationSec(sfxCues);
+		// Reuse the export mix builder — identical recipe/custom-sound handling,
+		// sized by the same length math (cue ends, not just cue starts).
+		const durationSec = cueTrackDurationSec(sfxCues, cueEndSec);
 		const mix = await buildCueMixBuffer(sfxCues, durationSec, {
 			offlineCtor: OfflineCtx,
 			decodeSound
@@ -68,6 +70,17 @@ export async function cueTrackMonoPcm(
 export function libraryDecodeSound(id: string): Promise<MonoPcm | null> {
 	const sound: LibrarySound | undefined = soundLibrary.list.find((s) => s.id === id);
 	return sound ? soundIO.decode(sound) : Promise.resolve(null);
+}
+
+/** A cue's play length for duration math: the sound's natural length
+ *  (library sounds + synth recipes) capped by the cue's cut. */
+function cueEndSec(cue: Pick<MemeSfxCue, 'sfx' | 'soundId' | 'durationMs'>): number {
+	const natural =
+		cue.sfx === CUSTOM_SOUND_KEY
+			? (soundLibrary.list.find((s) => s.id === cue.soundId)?.durationSec ?? 0)
+			: (SFX_DURATIONS[cue.sfx] ?? 0);
+	const capSec = cue.durationMs ? cue.durationMs / 1000 : Infinity;
+	return Math.min(natural, capSec);
 }
 
 /** Run the full ladder: audio in → analysis + timelines back. */

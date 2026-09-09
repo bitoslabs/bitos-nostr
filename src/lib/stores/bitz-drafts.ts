@@ -36,6 +36,12 @@ export interface BitzUploadCheckpoint {
 	url: string;
 	/** SHA-256 of the uploaded bytes, when the chain verified it (PUB-006). */
 	sha256?: string;
+	/**
+	 * Hash-verified mirror replicas checkpointed alongside the canonical URL
+	 * (BitOS + Blossom replica flow) — a resumed publish still names them as
+	 * required destinations and NIP-92 `fallback` mirrors.
+	 */
+	mirrors?: { url: string; provider?: string; sha256?: string }[];
 	/** MIME type reported at upload time. */
 	mimeType: string;
 	/** Byte size at upload time. */
@@ -82,11 +88,25 @@ function parseCheckpoint(raw: unknown): BitzUploadCheckpoint | null {
 	if (typeof raw.providerId !== 'string' || typeof raw.url !== 'string') return null;
 	if (!/^https?:\/\//i.test(raw.url)) return null;
 	if (typeof raw.mimeType !== 'string' || !isFiniteNumber(raw.bytes)) return null;
+	// Mirrors are best-effort: a corrupted row drops the replica (the resumed
+	// publish degrades to canonical-only) rather than the whole checkpoint.
+	const mirrors = Array.isArray(raw.mirrors)
+		? raw.mirrors.filter(
+				(m): m is { url: string; provider?: string; sha256?: string } =>
+					isPlainObject(m) &&
+					typeof m.url === 'string' &&
+					/^https?:\/\//i.test(m.url) &&
+					(m.provider === undefined || typeof m.provider === 'string') &&
+					(m.sha256 === undefined ||
+						(typeof m.sha256 === 'string' && /^[0-9a-f]{64}$/.test(m.sha256)))
+			)
+		: undefined;
 	return {
 		providerId: raw.providerId,
 		url: raw.url,
 		sha256:
 			typeof raw.sha256 === 'string' && /^[0-9a-f]{64}$/.test(raw.sha256) ? raw.sha256 : undefined,
+		mirrors: mirrors?.length ? mirrors : undefined,
 		mimeType: raw.mimeType,
 		bytes: raw.bytes,
 		uploadedAt: isFiniteNumber(raw.uploadedAt) ? raw.uploadedAt : Date.now()

@@ -11,6 +11,10 @@
  *
  *   • "publish waits for media readiness" — the event is NEVER signed before
  *     the upload descriptor has been verified (hash chain from PUB-006)
+ *   • multi-destination uploads verify EVERY required destination: the
+ *     canonical server plus each expected mirror replica (see
+ *     `verifyDescriptor`'s `mirrorsExpected`) must hash-verify before the
+ *     signing stage unlocks
  *   • §5.1 "ห้าม publish event ก่อน media ready" — a failed verify halts the
  *     machine in `blocked`, never falls through to sign
  *   • abort/cancel is a first-class transition at every stage
@@ -42,24 +46,25 @@ export interface PublishState {
 		| 'aborted';
 	error?: string;
 	/** The verified upload descriptor handed to the signer. */
-	descriptor?: {
-		url: string;
-		sha256?: string;
-		mimeType: string;
-		bytes: number;
-	};
+	descriptor?: Descriptor;
 	/** Signed event id once publish completes. */
 	eventId?: string;
 }
-
-export const INITIAL_PUBLISH_STATE: PublishState = { stage: 'idle', history: [] };
 
 interface Descriptor {
 	url: string;
 	sha256?: string;
 	mimeType: string;
 	bytes: number;
+	/**
+	 * Hash-verified mirror replicas of the canonical upload. Signing stays
+	 * unavailable until every REQUIRED destination (canonical + expected
+	 * mirrors) has hash-verified — see `verifyDescriptor`.
+	 */
+	mirrors?: { url: string; sha256?: string }[];
 }
+
+export const INITIAL_PUBLISH_STATE: PublishState = { stage: 'idle', history: [] };
 
 function step(
 	state: PublishState,
@@ -83,8 +88,19 @@ export function completeRender(state: PublishState, descriptor: Descriptor): Pub
 /**
  * Verify the descriptor the provider returned (PUB-006 chain): the URL must
  * exist and any locally-computed hash must match what the descriptor claims.
+ *
+ * Multi-destination runs also verify every mirror replica: `mirrorsExpected`
+ * is the MINIMUM number of verified replicas the upload plan requires (small
+ * media ⇒ canonical + at least one replica; large media ⇒ canonical only), so
+ * a run that loses its whole replica quorum — or any replica whose hash
+ * disagrees with the canonical bytes — blocks here and never reaches the
+ * signer. Extra replicas beyond the minimum are validated too, but never
+ * required (a dead mirror server must not block a publish).
  */
-export function verifyDescriptor(state: PublishState, locals: { sha256?: string }): PublishState {
+export function verifyDescriptor(
+	state: PublishState,
+	locals: { sha256?: string; mirrorsExpected?: number } = {}
+): PublishState {
 	if (state.stage !== 'verifying') return state;
 	const d = state.descriptor;
 	if (!d || !/^https?:\/\//i.test(d.url)) {
@@ -98,6 +114,38 @@ export function verifyDescriptor(state: PublishState, locals: { sha256?: string 
 			reason: 'hash-mismatch',
 			error: 'Provider stored different bytes than were hashed locally'
 		});
+	}
+	const mirrors = d.mirrors ?? [];
+	const expected = Math.max(0, locals.mirrorsExpected ?? 0);
+	if (mirrors.length < expected) {
+		return step(state, 'blocked', {
+			reason: 'missing-descriptor',
+			error: 'Upload descriptor is missing a verified mirror replica'
+		});
+	}
+	// Present mirrors are ALL validated (a corrupt replica must never ride
+	// into a signed fallback list) — only the minimum count is a gate.
+	for (const mirror of mirrors) {
+		if (!/^https?:\/\//i.test(mirror.url)) {
+			return step(state, 'blocked', {
+				reason: 'missing-descriptor',
+				error: 'Mirror replica is missing a usable URL'
+			});
+		}
+		// Replicas are the same bytes as the canonical upload: any hash side
+		// that disagrees blocks the run before signing.
+		if (mirror.sha256 && d.sha256 && mirror.sha256 !== d.sha256) {
+			return step(state, 'blocked', {
+				reason: 'hash-mismatch',
+				error: 'Mirror replica stored different bytes than the canonical upload'
+			});
+		}
+		if (mirror.sha256 && locals.sha256 && mirror.sha256 !== locals.sha256) {
+			return step(state, 'blocked', {
+				reason: 'hash-mismatch',
+				error: 'Mirror replica stored different bytes than were hashed locally'
+			});
+		}
 	}
 	return step(state, 'signing');
 }

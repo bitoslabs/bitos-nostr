@@ -1,5 +1,5 @@
 import { toasts } from '$lib/stores/toasts.svelte';
-import { MAX_SOUND_SECONDS, soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
+import { soundLibrary, type LibrarySound } from '$lib/stores/meme-sounds.svelte';
 import {
 	CUSTOM_SOUND_KEY,
 	type MemeSfxCue,
@@ -47,6 +47,7 @@ class MemeSoundIOStore {
 	#previewCtx: AudioContext | null = null;
 	#previewAudio: HTMLAudioElement | null = null;
 	#previewUrl: string | null = null;
+	#previewStopTimer: ReturnType<typeof setTimeout> | null = null;
 
 	#stopTimer() {
 		if (this.#timer) clearInterval(this.#timer);
@@ -56,6 +57,8 @@ class MemeSoundIOStore {
 	/** Stop the current library-sound audition, if any. */
 	stopPreview(): void {
 		this.#previewRun += 1;
+		if (this.#previewStopTimer) clearTimeout(this.#previewStopTimer);
+		this.#previewStopTimer = null;
 		try {
 			this.#previewSource?.stop();
 		} catch {
@@ -109,8 +112,9 @@ class MemeSoundIOStore {
 		}
 	}
 
-	/** Audition a library sound immediately. */
-	async preview(sound: LibrarySound): Promise<void> {
+	/** Audition a library sound immediately. `limitSec` caps the audition at
+	 *  a cue's play-length cut so what you preview is what exports. */
+	async preview(sound: LibrarySound, limitSec?: number): Promise<void> {
 		this.stopPreview();
 		const run = this.#previewRun;
 		// Create and unlock the context while this function is still running from
@@ -138,6 +142,17 @@ class MemeSoundIOStore {
 				decoded = null;
 			}
 		}
+		// Decoding a long device file is asynchronous. A user may hit Stop (or
+		// close the picker) while it is decoding; never start that stale preview
+		// after their cancellation has already been recorded.
+		if (run !== this.#previewRun) {
+			void ctx?.close().catch(() => undefined);
+			return;
+		}
+		const capped =
+			limitSec && limitSec > 0 && decoded
+				? Math.min(decoded.length, Math.floor(limitSec * decoded.sampleRate))
+				: null;
 		if (!decoded) {
 			// decodeAudioData is stricter than the browser's native media player
 			// (notably for some MediaRecorder WebM/MP4 outputs). Fall back to it.
@@ -150,6 +165,9 @@ class MemeSoundIOStore {
 			const audio = new Audio(url);
 			this.#previewAudio = audio;
 			this.#previewUrl = url;
+			if (limitSec && limitSec > 0) {
+				this.#previewStopTimer = setTimeout(() => this.stopPreview(), limitSec * 1000);
+			}
 			audio.onended = () => this.stopPreview();
 			audio.onerror = () => {
 				URL.revokeObjectURL(url);
@@ -163,7 +181,7 @@ class MemeSoundIOStore {
 		}
 		// copyToChannel needs a Float32Array backed by a plain ArrayBuffer.
 		if (!ctx) return;
-		const pcm = new Float32Array(decoded.length);
+		const pcm = new Float32Array(capped ?? decoded.length);
 		decoded.copyFromChannel(pcm, 0);
 		const buffer = ctx.createBuffer(1, pcm.length, decoded.sampleRate);
 		buffer.copyToChannel(pcm, 0);
@@ -220,10 +238,6 @@ class MemeSoundIOStore {
 	): Promise<LibrarySound | null> {
 		if (!(durationSec > 0)) {
 			toasts.error('Could not read that audio — try WAV/MP3/M4A/OGG/WebM');
-			return null;
-		}
-		if (durationSec > MAX_SOUND_SECONDS) {
-			toasts.error(`Sounds top out at ${MAX_SOUND_SECONDS}s — trim it first`);
 			return null;
 		}
 		try {
