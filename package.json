@@ -3,6 +3,7 @@
 	"private": true,
 	"version": "0.6.11",
 	"type": "module",
+	"license": "MIT",
 	"description": "BitOS Nostr client - Decentralized social media platform",
 	"scripts": {
 		"dev": "vite dev",
