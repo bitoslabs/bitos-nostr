@@ -30,3 +30,5 @@ scripts/run.txt
 
 docs/source
 docs/ui
+
+deploy-social.sh
