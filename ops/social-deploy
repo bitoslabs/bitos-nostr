@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sha="${1:-}"
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Expected a full Git commit SHA' >&2; exit 2; }
+[[ $EUID -eq 0 ]] || { echo 'Run as root on the social server' >&2; exit 1; }
+
+export PATH=/root/.nvm/versions/node/v24.19.0/bin:/usr/bin:/bin
+base=/srv/apps/bitos-nostr
+releases="$base/releases"
+current="$base/current"
+old_app=/var/www/social.bitos.space/app
+release="$releases/$sha"
+repo=https://github.com/bitoslabs/bitos-nostr.git
+
+for tool in git yarn pm2 curl; do
+  command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }
+done
+
+mkdir -p "$releases"
+if [[ ! -d "$release" ]]; then
+  staging="$releases/.staging-$sha"
+  rm -rf -- "$staging"
+  mkdir "$staging"
+  trap 'rm -rf -- "$staging"' EXIT
+  git -C "$staging" init -q
+  git -C "$staging" remote add origin "$repo"
+  git -C "$staging" fetch -q --no-tags origin main
+  main_head=$(git -C "$staging" rev-parse FETCH_HEAD)
+  git -C "$staging" fetch -q --no-tags origin "$sha"
+  [[ "$(git -C "$staging" rev-parse FETCH_HEAD)" == "$sha" ]]
+  git -C "$staging" merge-base --is-ancestor "$sha" "$main_head" || {
+    echo 'Commit is not on origin/main' >&2
+    exit 1
+  }
+  git -C "$staging" checkout -q --detach "$sha"
+  if [[ -f "$base/.env" ]]; then
+    ln -s "$base/.env" "$staging/.env"
+  fi
+  (cd "$staging" && yarn install --frozen-lockfile --non-interactive && yarn build)
+  mv "$staging" "$release"
+  trap - EXIT
+fi
+
+previous=''
+[[ ! -L "$current" ]] || previous=$(readlink "$current")
+ln -s "$release" "$base/.current-next"
+mv -Tf "$base/.current-next" "$current"
+
+start_app() {
+  local directory="$1"
+  pm2 delete social >/dev/null 2>&1 || true
+  pm2 start yarn --name social --cwd "$directory" -- preview --host 127.0.0.1 --port 5173 --strictPort
+}
+
+if start_app "$current"; then
+  for attempt in {1..20}; do
+    if curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:5173/; then
+      pm2 save
+      echo "Deployed $sha"
+      exit 0
+    fi
+    sleep 1
+  done
+fi
+
+if [[ -n "$previous" ]]; then
+  ln -s "$previous" "$base/.current-rollback"
+  mv -Tf "$base/.current-rollback" "$current"
+  start_app "$current"
+else
+  rm -f "$current"
+  start_app "$old_app"
+fi
+pm2 save
+echo 'Deployment failed health check; previous app restored' >&2
+exit 1
