@@ -41,6 +41,13 @@ function safePubkey(value: FormDataEntryValue | null) {
 	return /^[0-9a-f]{64}$/.test(trimmed) ? trimmed : '';
 }
 
+function withCors(response: Response) {
+	for (const [name, value] of Object.entries(CORS_HEADERS)) {
+		response.headers.set(name, value);
+	}
+	return response;
+}
+
 function safePurpose(value: FormDataEntryValue | null) {
 	if (typeof value !== 'string') return 'upload';
 	const trimmed = value.trim().toLowerCase();
@@ -49,7 +56,7 @@ function safePurpose(value: FormDataEntryValue | null) {
 
 export async function GET() {
 	const cfg = cloudinaryConfig();
-	return json({ enabled: cfg.enabled });
+	return withCors(json({ enabled: cfg.enabled }));
 }
 
 export function OPTIONS() {
@@ -59,9 +66,11 @@ export function OPTIONS() {
 export async function POST({ request }) {
 	const cfg = cloudinaryConfig();
 	if (!cfg.enabled) {
-		return json(
-			{ error: 'Server media uploads are not configured' },
-			{ status: 503 }
+		return withCors(
+			json(
+				{ error: 'Server media uploads are not configured' },
+				{ status: 503 }
+			)
 		);
 	}
 
@@ -95,13 +104,13 @@ export async function POST({ request }) {
 	}
 
 	if (!(maybeFile instanceof File)) {
-		return json({ error: 'Missing file upload' }, { status: 400 });
+		return withCors(json({ error: 'Missing file upload' }, { status: 400 }));
 	}
 	if (!maybeFile.size) {
-		return json({ error: 'Uploaded file is empty' }, { status: 400 });
+		return withCors(json({ error: 'Uploaded file is empty' }, { status: 400 }));
 	}
 	if (maybeFile.size > MAX_UPLOAD_BYTES) {
-		return json({ error: 'File exceeds 200 MB upload limit' }, { status: 413 });
+		return withCors(json({ error: 'File exceeds 200 MB upload limit' }, { status: 413 }));
 	}
 
 	const upstreamForm = new FormData();
@@ -148,18 +157,20 @@ export async function POST({ request }) {
 			typeof payload?.error === 'object' && payload?.error && 'message' in payload.error
 				? String(payload.error.message)
 				: `${response.status} ${response.statusText}`;
-		return json({ error: `Cloudinary upload failed: ${detail}` }, { status: response.status });
+		return withCors(json({ error: `Cloudinary upload failed: ${detail}` }, { status: response.status }));
 	}
 
 	const resourceType = String(payload?.resource_type ?? '');
 	const kind = resourceType === 'video' ? 'video' : resourceType === 'image' ? 'image' : 'file';
 	const format = typeof payload?.format === 'string' ? payload.format : '';
 
-	return json({
-		url: String(payload?.secure_url ?? ''),
-		kind,
-		mimeType: format ? `${resourceType}/${format}` : maybeFile.type || 'application/octet-stream',
-		bytes: typeof payload?.bytes === 'number' ? payload.bytes : maybeFile.size,
-		provider: 'server'
-	});
+	return withCors(
+		json({
+			url: String(payload?.secure_url ?? ''),
+			kind,
+			mimeType: format ? `${resourceType}/${format}` : maybeFile.type || 'application/octet-stream',
+			bytes: typeof payload?.bytes === 'number' ? payload.bytes : maybeFile.size,
+			provider: 'server'
+		})
+	);
 }
