@@ -50,7 +50,12 @@ mv -Tf "$base/.current-next" "$current"
 start_app() {
   local directory="$1"
   pm2 delete social >/dev/null 2>&1 || true
-  pm2 start yarn --name social --cwd "$directory" -- preview --host 127.0.0.1 --port 5173 --strictPort
+  if [[ -f "$directory/build/index.js" ]]; then
+    ORIGIN=https://social.bitos.space HOST=127.0.0.1 PORT=5173 BODY_SIZE_LIMIT=209715200 \
+      pm2 start "$directory/build/index.js" --name social --cwd "$directory" --node-args="--env-file-if-exists=$directory/.env"
+  else
+    pm2 start yarn --name social --cwd "$directory" -- preview --host 127.0.0.1 --port 5173 --strictPort
+  fi
 }
 
 if start_app "$current"; then
