@@ -32,3 +32,5 @@ docs/source
 docs/ui
 
 deploy-social.sh
+
+.secret

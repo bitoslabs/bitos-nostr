@@ -6,6 +6,13 @@ import { signCloudinaryRequest } from '$lib/media/uploaders';
 // large exports bypass Blossom's 20 MiB cap instead of failing locally first.
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const PURPOSES = new Set(['note', 'story', 'message', 'profile', 'test']);
+const CORS_HEADERS = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+	'Access-Control-Allow-Headers':
+		'Content-Type, Authorization, X-Upload-Filename, X-SHA-256',
+	'Access-Control-Max-Age': '86400'
+};
 
 function cloudinaryConfig() {
 	const cloudName = env.BITOS_CLOUDINARY_CLOUD_NAME?.trim() ?? '';
@@ -43,6 +50,10 @@ function safePurpose(value: FormDataEntryValue | null) {
 export async function GET() {
 	const cfg = cloudinaryConfig();
 	return json({ enabled: cfg.enabled });
+}
+
+export function OPTIONS() {
+	return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
 
 export async function POST({ request }) {

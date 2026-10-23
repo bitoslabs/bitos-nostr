@@ -1,0 +1,40 @@
+name: Deploy social.bitos.space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: social-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: yarn
+      - name: Install and build
+        run: |
+          corepack enable
+          yarn install --frozen-lockfile --non-interactive
+          yarn build
+      - name: Deploy checked commit
+        env:
+          SOCIAL_DEPLOY_SSH_KEY: ${{ secrets.SOCIAL_DEPLOY_SSH_KEY }}
+        run: |
+          test -n "$SOCIAL_DEPLOY_SSH_KEY"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SOCIAL_DEPLOY_SSH_KEY" > ~/.ssh/social_deploy
+          chmod 600 ~/.ssh/social_deploy
+          printf '%s\n' '[46.224.89.32]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJ9tbDbYWgbobzMlhRn/f1DHvtsd+JmFccAiO2dh4sVB' > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/social_deploy -o IdentitiesOnly=yes -o BatchMode=yes -p 2222 root@46.224.89.32 /usr/local/bin/social-deploy "$GITHUB_SHA"
