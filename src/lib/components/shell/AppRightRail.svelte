@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
+	import { SvelteDate, SvelteMap } from 'svelte/reactivity';
 	import { goto } from '$app/navigation';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
@@ -27,14 +27,6 @@
 	const TREND_LIMIT = 6;
 	const SUGGESTION_LIMIT = 4;
 	const SAMPLE_LIMIT = 300;
-	const THROUGHPUT_WINDOW_MS = 60_000;
-	const THROUGHPUT_BUCKETS = 30;
-	const HISTORY_WINDOW_MS = 24 * 60 * 60_000;
-	const HISTORY_BUCKETS = 24;
-	const TELEMETRY_BUCKET_MS = 5 * 60_000;
-	const TELEMETRY_RETENTION_MS = 7 * 24 * 60 * 60_000;
-	const TELEMETRY_CACHE_KEY = 'bitos:relay-telemetry:v1';
-	const LIVE_THROUGHPUT_CACHE_KEY = 'bitos:live-throughput:v1';
 	const TREND_WINDOW_MS = 24 * 60 * 60_000;
 	const TREND_BUCKETS = 24;
 	// The persisted trend cache stores just tag names with their total note
@@ -48,14 +40,6 @@
 	const TREND_DAILY_RETENTION_DAYS = 30;
 	const TREND_HOUR_MS = 60 * 60_000;
 	const LIVE_RENDER_DEBOUNCE_MS = 400;
-	/** Rolling window for the “Sats 24h” network pulse stat. */
-	const ZAP_WINDOW_MS = 24 * 60 * 60 * 1000;
-	const ZAP_SAMPLE_LIMIT = 500;
-	/** Re-pull the zap backfill periodically — relays cap query results, so the
-	 * live total drifts low between refreshes without this. */
-	const ZAP_REFRESH_MS = 10 * 60 * 1000;
-	/** Upper bound on cached receipts so a chatty relay cannot grow memory. */
-	const MAX_TRACKED_ZAPS = 5_000;
 	const hashtagPattern = /(?:^|\s)#([\p{L}\p{N}_-]{2,60})/gu;
 
 	let loading = $state(false);
@@ -63,20 +47,6 @@
 	let trends = $state<Trend[]>([]);
 	let trendRange = $state<'day' | 'week'>('day');
 	let suggested = $state<Array<{ pubkey: string; count: number; latest: number }>>([]);
-	let network = $state({
-		activePubkeys: 0,
-		eventsPerMin: 0,
-		relaysOnline: 0,
-		sats24h: 0,
-		throughput: Array<number>(THROUGHPUT_BUCKETS).fill(0),
-		throughputBucketSeconds: 2,
-		history: Array<number>(HISTORY_BUCKETS).fill(0),
-		events24h: 0
-	});
-	const liveEventTimes = new SvelteMap<string, number>();
-	/** Five-minute observed-event buckets, retained locally for seven days. */
-	const telemetryBuckets = new SvelteMap<number, number>();
-	let telemetrySaveTimer: number | undefined;
 	let liveRenderTimer: number | undefined;
 	/** ID, timestamp, and hashtags only — no note content is stored. Kept in
 	 * memory for this session only; just the ranked tag names are persisted. */
@@ -86,8 +56,6 @@
 	const trendDailyTotals = new SvelteMap<string, SvelteMap<string, number>>();
 	let lastTrendPruneAt = 0;
 	let trendSaveTimer: number | undefined;
-	/** zap receipt id → { sats, received ms } — feeds the rolling Sats 24h total. */
-	const trackedZaps = new SvelteMap<string, { sats: number; at: number }>();
 	const me = $derived(identity.current?.pk ?? '');
 	const visibleSuggested = $derived(
 		suggested
@@ -133,122 +101,13 @@
 		);
 	}
 
-	function throughputBucketSeconds(eventCount: number) {
-		if (eventCount <= 2) return 30;
-		if (eventCount <= 6) return 10;
-		if (eventCount <= 20) return 5;
-		return 2;
-	}
-
-	function throughputBuckets(now = Date.now()) {
-		const seconds = throughputBucketSeconds(liveEventTimes.size);
-		const bucketMs = seconds * 1_000;
-		const buckets = Array<number>(THROUGHPUT_WINDOW_MS / bucketMs).fill(0);
-		for (const receivedAt of liveEventTimes.values()) {
-			const bucket = Math.floor((receivedAt - (now - THROUGHPUT_WINDOW_MS)) / bucketMs);
-			if (bucket >= 0 && bucket < buckets.length) buckets[bucket] += 1;
-		}
-		const peak = Math.max(...buckets, 1);
-		return { data: buckets.map((count) => count / peak), seconds };
-	}
-
-	function refreshTelemetryHistory(now = Date.now()) {
-		const retentionStart = now - TELEMETRY_RETENTION_MS;
-		for (const [bucketStart] of telemetryBuckets) {
-			if (bucketStart < retentionStart) telemetryBuckets.delete(bucketStart);
-		}
-		const hourMs = HISTORY_WINDOW_MS / HISTORY_BUCKETS;
-		const buckets = Array<number>(HISTORY_BUCKETS).fill(0);
-		const historyStart = now - HISTORY_WINDOW_MS;
-		for (const [bucketStart, count] of telemetryBuckets) {
-			// A five-minute bucket may start just before the rolling 24h boundary.
-			// Keep it when it overlaps the visible period instead of dropping recent events.
-			if (bucketStart + TELEMETRY_BUCKET_MS <= historyStart) continue;
-			const bucket = Math.max(0, Math.floor((bucketStart - historyStart) / hourMs));
-			if (bucket >= 0 && bucket < HISTORY_BUCKETS) buckets[bucket] += count;
-		}
-		const peak = Math.max(...buckets, 1);
-		network = {
-			...network,
-			history: buckets.map((count) => count / peak),
-			events24h: buckets.reduce((sum, count) => sum + count, 0)
-		};
-	}
-
-	function saveTelemetry() {
-		try {
-			localStorage.setItem(TELEMETRY_CACHE_KEY, JSON.stringify([...telemetryBuckets]));
-		} catch {
-			/* Storage is optional; live telemetry continues without it. */
-		}
-	}
-
-	function saveLiveThroughput() {
-		try {
-			const cutoff = Date.now() - THROUGHPUT_WINDOW_MS;
-			const recent = [...liveEventTimes].filter(([, receivedAt]) => receivedAt >= cutoff);
-			localStorage.setItem(LIVE_THROUGHPUT_CACHE_KEY, JSON.stringify(recent));
-		} catch {
-			/* Storage is optional; the live subscription remains the source of truth. */
-		}
-	}
-
-	function loadLiveThroughput() {
-		try {
-			const cached = JSON.parse(localStorage.getItem(LIVE_THROUGHPUT_CACHE_KEY) ?? '[]') as unknown;
-			if (!Array.isArray(cached)) return;
-			const cutoff = Date.now() - THROUGHPUT_WINDOW_MS;
-			for (const entry of cached) {
-				if (!Array.isArray(entry) || entry.length !== 2) continue;
-				const [id, receivedAt] = entry;
-				if (typeof id === 'string' && typeof receivedAt === 'number' && receivedAt >= cutoff)
-					liveEventTimes.set(id, receivedAt);
-			}
-		} catch {
-			/* Ignore malformed or unavailable local cache. */
-		}
-		refreshLiveThroughput();
-	}
-
-	function scheduleTelemetrySave() {
-		if (telemetrySaveTimer) return;
-		telemetrySaveTimer = window.setTimeout(() => {
-			telemetrySaveTimer = undefined;
-			saveTelemetry();
-			saveLiveThroughput();
-		}, 5_000);
-	}
-
-	function loadTelemetry() {
-		try {
-			const cached = JSON.parse(localStorage.getItem(TELEMETRY_CACHE_KEY) ?? '[]') as unknown;
-			if (!Array.isArray(cached)) return;
-			for (const entry of cached) {
-				if (!Array.isArray(entry) || entry.length !== 2) continue;
-				const [bucketStart, count] = entry;
-				if (typeof bucketStart === 'number' && typeof count === 'number' && count > 0)
-					telemetryBuckets.set(bucketStart, count);
-			}
-		} catch {
-			/* Ignore malformed or unavailable local cache. */
-		}
-		refreshTelemetryHistory();
-	}
-
-	function recordTelemetryEvent(receivedAt: number) {
-		const bucketStart = Math.floor(receivedAt / TELEMETRY_BUCKET_MS) * TELEMETRY_BUCKET_MS;
-		telemetryBuckets.set(bucketStart, (telemetryBuckets.get(bucketStart) ?? 0) + 1);
-		scheduleTelemetrySave();
-	}
-
-	/** Coalesce busy relay traffic so charts update at most 2.5 times per second. */
+	/** Coalesce busy relay traffic so the trending ranking updates at most 2.5
+	 * times per second. */
 	function scheduleLiveRender() {
 		if (liveRenderTimer) return;
 		liveRenderTimer = window.setTimeout(() => {
 			liveRenderTimer = undefined;
-			refreshLiveThroughput();
 			refreshTrends();
-			refreshTelemetryHistory();
 		}, LIVE_RENDER_DEBOUNCE_MS);
 	}
 
@@ -286,21 +145,6 @@
 		});
 	}
 
-	function refreshLiveThroughput() {
-		const cutoff = Date.now() - THROUGHPUT_WINDOW_MS;
-		for (const [id, receivedAt] of liveEventTimes) {
-			if (receivedAt < cutoff) liveEventTimes.delete(id);
-		}
-		const throughput = throughputBuckets();
-		network = {
-			...network,
-			eventsPerMin: liveEventTimes.size,
-			relaysOnline: relayRows.filter((relay) => relay.status === 'connected').length,
-			throughput: throughput.data,
-			throughputBucketSeconds: throughput.seconds
-		};
-	}
-
 	function addTrendEvent(event: {
 		id: string;
 		tags: string[][];
@@ -315,9 +159,7 @@
 		const tags = [
 			...new Set([
 				...humanTags(
-					event.tags
-						.filter((tag) => tag[0] === 't' && tag[1])
-						.map((tag) => tag[1].toLowerCase())
+					event.tags.filter((tag) => tag[0] === 't' && tag[1]).map((tag) => tag[1].toLowerCase())
 				),
 				...humanTags(tagsFromContent(event.content))
 			])
@@ -442,63 +284,9 @@
 		}
 	}
 
-	/** Sats carried by a kind 9735 zap receipt (NIP-57 `amount` tag, msat). */
-	function zapSatsFromTags(tags: string[][]): number {
-		const amount = tags.find((tag) => tag[0] === 'amount' && tag[1])?.[1];
-		const msat = amount ? Number(amount) : 0;
-		return Number.isFinite(msat) && msat > 0 ? Math.round(msat / 1000) : 0;
-	}
-
-	/** Fold received zap receipts into the tracked set (dedup by event id). */
-	function applyZapSample(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
-		for (const event of events) {
-			if (event.kind !== NOSTR_KINDS.ZAP) continue;
-			if (trackedZaps.has(event.id)) continue;
-			trackedZaps.set(event.id, { sats: zapSatsFromTags(event.tags), at: event.created_at * 1000 });
-		}
-		refreshZapVolume();
-	}
-
-	/** Recompute Sats 24h: drop receipts older than the window, sum the rest. */
-	function refreshZapVolume() {
-		const cutoff = Date.now() - ZAP_WINDOW_MS;
-		for (const [id, zap] of trackedZaps) {
-			if (zap.at < cutoff) trackedZaps.delete(id);
-		}
-		if (trackedZaps.size > MAX_TRACKED_ZAPS) {
-			const byAge = [...trackedZaps.entries()].sort((a, b) => a[1].at - b[1].at);
-			for (const [id] of byAge.slice(0, trackedZaps.size - MAX_TRACKED_ZAPS))
-				trackedZaps.delete(id);
-		}
-		let sats24h = 0;
-		for (const zap of trackedZaps.values()) sats24h += zap.sats;
-		network = { ...network, sats24h };
-	}
-
-	/** Best-effort backfill of recent zap volume from the user's relays. */
-	async function loadZapVolume() {
-		try {
-			const events = await queryPrimaryFirst(
-				[
-					{
-						kinds: [NOSTR_KINDS.ZAP],
-						since: Math.floor((Date.now() - ZAP_WINDOW_MS) / 1000),
-						limit: ZAP_SAMPLE_LIMIT
-					}
-				],
-				{ onSecondary: applyZapSample }
-			);
-			applyZapSample(events);
-		} catch {
-			/* zap telemetry is best-effort — keep the last known total */
-		}
-	}
-
 	function applyRelaySample(events: Awaited<ReturnType<typeof queryPrimaryFirst>>) {
-		const authors = new SvelteSet<string>();
 		const authorStats = new SvelteMap<string, { count: number; latest: number }>();
 		for (const event of events) {
-			authors.add(event.pubkey);
 			if (event.pubkey !== me) {
 				const stats = authorStats.get(event.pubkey) ?? { count: 0, latest: 0 };
 				stats.count += 1;
@@ -514,16 +302,6 @@
 			.slice(0, SUGGESTION_LIMIT * 3)
 			.map(([pubkey, stats]) => ({ pubkey, ...stats }));
 		void profiles.ensure(suggested.map((person) => person.pubkey));
-		network = {
-			activePubkeys: authors.size,
-			eventsPerMin: liveEventTimes.size,
-			relaysOnline: relayRows.filter((relay) => relay.status === 'connected').length,
-			sats24h: network.sats24h, // maintained by refreshZapVolume — do not reset here
-			throughput: network.throughput,
-			throughputBucketSeconds: network.throughputBucketSeconds,
-			history: network.history,
-			events24h: network.events24h
-		};
 		hasLoaded = true;
 	}
 
@@ -596,64 +374,37 @@
 	}
 
 	onMount(() => {
-		// Drop the legacy heavy trend cache (event ids + hourly/daily counts).
+		// Drop legacy caches: the heavy trend cache and the removed network
+		// pulse telemetry.
 		try {
 			localStorage.removeItem('bitos:trending-tags:v1');
 			localStorage.removeItem('bitos:trending-tags:v2');
+			localStorage.removeItem('bitos:relay-telemetry:v1');
+			localStorage.removeItem('bitos:live-throughput:v1');
 		} catch {
 			/* Storage access is optional; the live view still works. */
 		}
-		loadTelemetry();
-		loadLiveThroughput();
 		feedPreferences.load();
 		// Instant paint from the names-only cache while the relay query runs.
 		loadTrendNames();
 		void loadRelayData();
-		void loadZapVolume();
 		const receivedAt = Math.floor(Date.now() / 1000);
-		const unsubscribe = subscribe(
-			[
-				{ kinds: [NOSTR_KINDS.TEXT_NOTE], since: receivedAt },
-				// Live zap receipts keep Sats 24h growing between backfill refreshes.
-				{ kinds: [NOSTR_KINDS.ZAP], since: receivedAt }
-			],
-			{
-				onevent: (event) => {
-					if (event.kind === NOSTR_KINDS.ZAP) {
-						applyZapSample([event]);
-						return;
-					}
-					const receivedAt = Date.now();
-					const isNew = !liveEventTimes.has(event.id);
-					liveEventTimes.set(event.id, receivedAt);
-					if (isNew) recordTelemetryEvent(receivedAt);
-					addTrendEvent(event);
-					scheduleLiveRender();
-				}
+		const unsubscribe = subscribe([{ kinds: [NOSTR_KINDS.TEXT_NOTE], since: receivedAt }], {
+			onevent: (event) => {
+				addTrendEvent(event);
+				scheduleLiveRender();
 			}
-		);
-		const timer = window.setInterval(() => {
-			refreshLiveThroughput();
-			refreshTrends();
-			refreshTelemetryHistory();
-		}, 5_000);
-		// Roll the 24h window and periodically re-fill the sampled zap volume.
-		const zapTimer = window.setInterval(refreshZapVolume, 30_000);
-		const zapBackfillTimer = window.setInterval(() => void loadZapVolume(), ZAP_REFRESH_MS);
+		});
+		const timer = window.setInterval(refreshTrends, 5_000);
 
 		return () => {
 			unsubscribe();
 			window.clearInterval(timer);
-			window.clearInterval(zapTimer);
-			window.clearInterval(zapBackfillTimer);
-			if (telemetrySaveTimer) window.clearTimeout(telemetrySaveTimer);
 			if (liveRenderTimer) window.clearTimeout(liveRenderTimer);
 			if (trendSaveTimer) {
 				window.clearTimeout(trendSaveTimer);
 				saveTrendNames();
 			}
-			saveTelemetry();
-			saveLiveThroughput();
 		};
 	});
 </script>
@@ -746,9 +497,7 @@
 									: `Follow #${trend.tag} (synced via NIP-51)`}
 							>
 								<Icon
-									name={hashtagFollows.has(trend.tag)
-										? 'i-lucide-bell-ring'
-										: 'i-lucide-bell-plus'}
+									name={hashtagFollows.has(trend.tag) ? 'i-lucide-bell-ring' : 'i-lucide-bell-plus'}
 									class="size-4"
 								/>
 							</button>
@@ -839,7 +588,6 @@
 <RightRail
 	{trends}
 	relays={relayRows}
-	{network}
 	{showTrending}
 	onSubmit={submitSearch}
 	onSelectTag={selectTag}

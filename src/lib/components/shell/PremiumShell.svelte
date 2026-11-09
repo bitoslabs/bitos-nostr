@@ -7,21 +7,14 @@
 	import type { Trend } from '$lib/components/shell/TrendingWidget.svelte';
 	import type { RelayRow } from '$lib/components/shell/RelayWidget.svelte';
 
-	type NetworkStats = {
-		activePubkeys?: number;
-		eventsPerMin?: number;
-		relaysOnline?: number;
-		sats24h?: number;
-	};
-
 	/**
 	 * The full premium application shell: ambient backdrop, film grain, the top
-	 * throughput bar, and a responsive 3-column grid (sidebar · content · rail).
+	 * relay-health bar, and a responsive 3-column grid (sidebar · content · rail).
 	 *
 	 * The center column is the page's `children`. The sidebar is wired from data
 	 * props (and supports in-app SPA navigation via `onNavigate` + `activePage`).
-	 * The right column defaults to the home rail (search + pulse + trending +
-	 * relays); pass a `rail` snippet to render page-specific widgets instead.
+	 * The right column defaults to the home rail (search + trending + relays);
+	 * pass a `rail` snippet to render page-specific widgets instead.
 	 */
 	let {
 		nav = [],
@@ -30,7 +23,6 @@
 		onNavigate,
 		trends = [],
 		relays = [],
-		network = {},
 		balance = 12847,
 		connected = 6,
 		total = 7,
@@ -50,7 +42,6 @@
 		onNavigate?: (page: string) => void;
 		trends?: Trend[];
 		relays?: RelayRow[];
-		network?: NetworkStats;
 		balance?: number;
 		connected?: number;
 		total?: number;
@@ -95,7 +86,7 @@
 			{#if rail}
 				{@render rail()}
 			{:else}
-				<RightRail {trends} {relays} {network} {onSearch} {onSelectTag} {onManageRelays} />
+				<RightRail {trends} {relays} {onSearch} {onSelectTag} {onManageRelays} />
 			{/if}
 		</div>
 	</div>

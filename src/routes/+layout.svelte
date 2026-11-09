@@ -518,7 +518,7 @@
 	</PublicShell>
 {:else}
 	<!-- Premium shell (docs/ui.html): film grain, a top
-	     throughput bar, and a responsive nav · main · right-rail grid. -->
+	     relay-health bar, and a responsive nav · main · right-rail grid. -->
 	<div class="grain" aria-hidden="true"></div>
 	<NetworkBar connected={relayConnected} total={relayTotal} checking={relayChecking} />
 
@@ -557,7 +557,7 @@
 				{/if}
 			</main>
 
-			<!-- Right rail: network pulse · trending · active relays (xl and up) -->
+			<!-- Right rail: trending · active relays (xl and up) -->
 			{#if showRail}
 				<div class="hidden w-[340px] shrink-0 overflow-y-auto xl:block">
 					<AppRightRail

@@ -52,7 +52,7 @@ sync, outbox, call alerts. Services restart on identity or relay changes.
 | `/pulse` | **Dev-only showcase** | — | Premium-UI mock with fake data; 404s outside `dev` (§9) |
 | `+error.svelte` | Error | — | Styled 404/500 |
 
-**Navigation** — desktop: `NavRail` sidebar + `AppRightRail` (network pulse,
+**Navigation** — desktop: `NavRail` sidebar + `AppRightRail` (trending,
 trending, follow suggestions, relay widget). Mobile: `MobileTabBar` (Home,
 Bitz, Discover, Chats, Activity, "You" → `/more`). Top: `NetworkBar` relay
 connectivity. Global overlays: incoming call banner, toasts, confirm dialog,

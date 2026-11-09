@@ -1,23 +1,21 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import NetworkPulse from '$lib/components/shell/NetworkPulse.svelte';
 	import TrendingWidget from '$lib/components/shell/TrendingWidget.svelte';
 	import RelayWidget from '$lib/components/shell/RelayWidget.svelte';
 	import type { Trend } from '$lib/components/shell/TrendingWidget.svelte';
 	import type { RelayRow } from '$lib/components/shell/RelayWidget.svelte';
 
 	/**
-	 * Default right rail: search field, network pulse, trending tags, and
-	 * active relays, plus a slim footer. The caller supplies the data; pages
-	 * that need bespoke content can pass an `extra` snippet above the footer.
+	 * Default right rail: search field, trending tags, and active relays, plus
+	 * a slim footer. The caller supplies the data; pages that need bespoke
+	 * content can pass an `extra` snippet above the footer.
 	 */
 	let {
 		search = '',
 		trends = [],
 		relays = [],
 		showTrending = true,
-		network = {},
 		onSearch,
 		onSubmit,
 		onSelectTag,
@@ -30,16 +28,6 @@
 		trends?: Trend[];
 		relays?: RelayRow[];
 		showTrending?: boolean;
-		network?: {
-			activePubkeys?: number;
-			eventsPerMin?: number;
-			relaysOnline?: number;
-			sats24h?: number;
-			throughput?: number[];
-			throughputBucketSeconds?: number;
-			history?: number[];
-			events24h?: number;
-		};
 		onSearch?: (value: string) => void;
 		onSubmit?: (value: string) => void;
 		onSelectTag?: (tag: string) => void;
@@ -84,8 +72,6 @@
 			</button>
 		{/if}
 	</form>
-
-	<NetworkPulse {...network} />
 
 	{#if showTrending}
 		{#if trendingContent}

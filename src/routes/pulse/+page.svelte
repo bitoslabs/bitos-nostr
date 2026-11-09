@@ -68,7 +68,6 @@
 	balance={12847}
 	connected={relays.filter((r) => r.status === 'connected').length}
 	total={relays.length}
-	network={{ activePubkeys: 47392, eventsPerMin: 312, relaysOnline: 1247, sats24h: 2_400_000 }}
 	{trends}
 	{relays}
 	onSelectTag={() => (page = 'explore')}
@@ -80,12 +79,6 @@
 			<RightRail
 				{trends}
 				{relays}
-				network={{
-					activePubkeys: 47392,
-					eventsPerMin: 312,
-					relaysOnline: 1247,
-					sats24h: 2_400_000
-				}}
 				onSelectTag={() => (page = 'explore')}
 				onManageRelays={() => (page = 'relays')}
 			/>
