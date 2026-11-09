@@ -2008,19 +2008,6 @@ html[data-reduced-motion='true'] *::after {
 		color: var(--ui-color-primary-300);
 	}
 
-	/* Network throughput shimmer bar. */
-	.throughput-fill {
-		animation: premium-throughput 3s linear infinite;
-	}
-	@keyframes premium-throughput {
-		0% {
-			transform: translateX(-100%);
-		}
-		100% {
-			transform: translateX(100%);
-		}
-	}
-
 	/* PoW difficulty range slider. */
 	.pow-slider {
 		-webkit-appearance: none;
@@ -2281,7 +2268,6 @@ html[data-reduced-motion='true'] *::after {
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.throughput-fill,
 		.premium-rise,
 		.heart-pop,
 		.zap-particle,
