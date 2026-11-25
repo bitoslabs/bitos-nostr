@@ -8,7 +8,6 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Input from '$lib/components/ui/Input.svelte';
-	import HexMark from '$lib/components/ui/HexMark.svelte';
 	import { bytesToHex, hexToBytes } from '$lib/nostr/hex';
 
 	let mode = $state<'intro' | 'create' | 'import'>('intro');
@@ -71,7 +70,22 @@
 	<div class="w-full max-w-md">
 		<!-- Brand -->
 		<div class="mb-7 flex flex-col items-center text-center">
-		    <HexMark size={64} class="rounded-[22%]" />
+			<img
+				src="/icons/bitos-logo-animated.svg"
+				alt=""
+				aria-hidden="true"
+				width="399"
+				height="268"
+				class="h-16 w-auto dark:hidden"
+			/>
+			<img
+				src="/icons/bitos-logo-animated-dark.svg"
+				alt=""
+				aria-hidden="true"
+				width="399"
+				height="268"
+				class="hidden h-16 w-auto dark:block"
+			/>
 			<h1 class="font-display text-[26px] font-bold tracking-tight">Welcome to BitOS</h1>
 			<p class="mt-1.5 text-[13.5px] text-[var(--ui-text-muted)]">
 				A local-first Nostr client. Your keys never leave this device.
@@ -164,7 +178,7 @@
 						bind:value={secret}
 						icon="i-lucide-key-round"
 						placeholder="nsec1… or 64-char hex"
-						class="font-mono text-[12.5px] w-full"
+						class="w-full font-mono text-[12.5px]"
 					/>
 					<Button
 						block
@@ -190,7 +204,9 @@
 		<p class="mt-5 text-center text-[11px] text-[var(--ui-text-dimmed)]">
 			Powered by the Nostr protocol · NIP-01 · NIP-04 · NIP-19
 		</p>
-		<nav class="mt-2 flex items-center justify-center gap-3 text-[11px] font-semibold text-[var(--ui-text-dimmed)]">
+		<nav
+			class="mt-2 flex items-center justify-center gap-3 text-[11px] font-semibold text-[var(--ui-text-dimmed)]"
+		>
 			<a href="/about" class="transition hover:text-primary-500">About</a>
 			<span aria-hidden="true">·</span>
 			<a href="/privacy" class="transition hover:text-primary-500">Privacy</a>
