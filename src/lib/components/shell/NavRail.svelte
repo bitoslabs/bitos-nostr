@@ -4,7 +4,6 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Logo from '$lib/components/ui/Logo.svelte';
-	import HexMark from '$lib/components/ui/HexMark.svelte';
 	import { identity } from '$lib/nostr/identity.svelte';
 	import { profiles } from '$lib/nostr/profiles.svelte';
 	import { dms } from '$lib/nostr/dms.svelte';
@@ -254,8 +253,23 @@
 					class="rounded-2xl border border-[var(--ui-border-muted)] bg-[var(--surface-bg)] p-3.5"
 				>
 					<div class="flex items-center gap-2.5">
-						<!-- BitOS brand hex badge (HexMark) -->
-						<HexMark size={36} class="rounded-[22%]" />
+						<!-- BitOS brand bee mark -->
+						<img
+							src="/icons/bitos-logo-animated.svg"
+							alt=""
+							aria-hidden="true"
+							width="399"
+							height="268"
+							class="h-9 w-auto dark:hidden"
+						/>
+						<img
+							src="/icons/bitos-logo-animated-dark.svg"
+							alt=""
+							aria-hidden="true"
+							width="399"
+							height="268"
+							class="hidden h-9 w-auto dark:block"
+						/>
 						<p class="text-[13px] leading-snug font-bold">Sign in to unlock everything</p>
 					</div>
 					<p class="mt-2 text-[11.5px] leading-relaxed text-[var(--ui-text-muted)]">

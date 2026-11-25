@@ -16,13 +16,16 @@
 			content="BitOS — a local-first Nostr social client. Feed, chat, and relays."
 		/>
 		<link rel="manifest" href="/manifest.webmanifest" />
-		<link rel="apple-touch-icon" href="/icons/icon-192-192.png" />
+		<link rel="icon" href="/icons/bitos-icon.svg" type="image/svg+xml" />
+		<link rel="icon" href="/favicon.ico" sizes="any" />
+		<link rel="apple-touch-icon" href="/icons/bitos-icon-180.png" />
 		<link rel="mask-icon" href="/mask.svg" color="#0f172a" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<meta name="apple-mobile-web-app-title" content="BitOS" />
 		<!-- Preload the dark-mode logo so the splash swaps instantly. -->
-		<link rel="preload" as="image" href="/icons/logo-white.png" />
+		<link rel="preload" as="image" href="/icons/bitos-logo-animated-dark.svg" />
+		<link rel="preload" as="image" href="/icons/logo-wordmark-white.png" />
 		<!-- No-flash theme: apply stored color mode before first paint -->
 		<script>
 			(function () {
@@ -112,21 +115,39 @@
 						<circle class="bs-spark" r="16" fill="#fff" />
 					</svg>
 				</div>
-				<!-- Official logo: dark artwork on light bg, white variant in dark mode. -->
-				<img
-					class="bs-logo bs-logo-light"
-					src="/icons/logo.png"
-					alt="BitOS"
-					width="156"
-					height="62"
-				/>
-				<img
-					class="bs-logo bs-logo-dark"
-					src="/icons/logo-white.png"
-					alt="BitOS"
-					width="1904"
-					height="651"
-				/>
+				<!-- Official logo lockup: animated bee + wordmark, swaps with the color mode. -->
+				<span class="bs-logo-row">
+					<img
+						class="bs-bee bs-logo-light"
+						src="/icons/bitos-logo-animated.svg"
+						alt=""
+						aria-hidden="true"
+						width="399"
+						height="268"
+					/>
+					<img
+						class="bs-bee bs-logo-dark"
+						src="/icons/bitos-logo-animated-dark.svg"
+						alt=""
+						aria-hidden="true"
+						width="399"
+						height="268"
+					/>
+					<img
+						class="bs-wordmark bs-logo-light"
+						src="/icons/logo-wordmark.png"
+						alt="BitOS"
+						width="568"
+						height="216"
+					/>
+					<img
+						class="bs-wordmark bs-logo-dark"
+						src="/icons/logo-wordmark-white.png"
+						alt="BitOS"
+						width="568"
+						height="216"
+					/>
+				</span>
 				<div class="bs-pow" aria-hidden="true">
 					<span></span><span></span><span></span><span></span><span></span><span></span
 					><span></span>
@@ -232,9 +253,19 @@
 					filter: drop-shadow(0 0 4px rgb(255 255 255 / 0.95));
 					animation: bs-spark-run 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
 				}
-				.bs-logo {
+				.bs-logo-row {
+					display: flex;
+					align-items: center;
+					gap: 4.602px;
+				}
+				.bs-bee {
 					display: block;
 					height: 26px;
+					width: auto;
+				}
+				.bs-wordmark {
+					display: block;
+					height: 14.625px;
 					width: auto;
 				}
 				.bs-logo-dark {

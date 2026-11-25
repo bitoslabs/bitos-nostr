@@ -45,27 +45,47 @@
 				<circle class="bs-spark" r="5" fill="#fff" />
 			</svg>
 		</div>
-		<!-- Official logo wordmark: swaps with the color mode. -->
-		<img
-			src="/icons/logo.png"
-			alt="BitOS"
-			width="156"
-			height="62"
-			class="h-[26px] w-auto dark:hidden"
-		/>
-		<img
-			src="/icons/logo-white.png"
-			alt="BitOS"
-			width="640"
-			height="219"
-			class="hidden h-[26px] w-auto dark:block"
-		/>
+		<!-- Official logo lockup: animated bee + wordmark, swaps with the color mode. -->
+		<span class="inline-flex items-center" style="height:26px;gap:4.602px">
+			<img
+				src="/icons/bitos-logo-animated.svg"
+				alt=""
+				aria-hidden="true"
+				width="399"
+				height="268"
+				class="h-[26px] w-auto dark:hidden"
+			/>
+			<img
+				src="/icons/bitos-logo-animated-dark.svg"
+				alt=""
+				aria-hidden="true"
+				width="399"
+				height="268"
+				class="hidden h-[26px] w-auto dark:block"
+			/>
+			<img
+				src="/icons/logo-wordmark.png"
+				alt="BitOS"
+				width="568"
+				height="216"
+				style="height:14.625px;width:auto"
+				class="dark:hidden"
+			/>
+			<img
+				src="/icons/logo-wordmark-white.png"
+				alt="BitOS"
+				width="568"
+				height="216"
+				style="height:14.625px;width:auto"
+				class="hidden dark:block"
+			/>
+		</span>
 		<div class="mt-1 flex flex-col items-center gap-2.5">
 			<!-- Proof-of-Work segments sweeping while the app initializes. -->
 			<div class="pow-bar" aria-hidden="true">
 				{#each Array(9).keys() as i (i)}
 					<span class="pow-boot-seg" style="animation-delay:{i * 0.12}s"></span>
-					{/each}
+				{/each}
 			</div>
 			<p class="font-mono text-[11px] text-[var(--ui-text-dimmed)]">{status}</p>
 		</div>
